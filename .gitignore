@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+dist/
+.smoke-persist/
+.dev.vars
+*.log
+.DS_Store
+Thumbs.db
+worker-configuration.d.ts
