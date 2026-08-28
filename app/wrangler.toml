@@ -1,0 +1,43 @@
+# Gripfactory Lite. Database ids are placeholders labeled TBD until deploy day.
+name = "gripfactory-lite"
+main = "src/index.ts"
+compatibility_date = "2026-08-28"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[vars]
+THEME = "grip"
+
+# Local / default env (wrangler dev). Replace id on deploy day if this env is ever published.
+[[d1_databases]]
+binding = "DB"
+database_name = "gripfactory-lite-local"
+database_id = "TBD-local-d1-id"
+migrations_dir = "migrations"
+
+[env.grip]
+name = "gripfactory-lite-grip"
+
+[env.grip.vars]
+THEME = "grip"
+
+[[env.grip.d1_databases]]
+binding = "DB"
+database_name = "gripfactory-lite-grip"
+database_id = "TBD-grip-d1-id"
+migrations_dir = "migrations"
+
+[env.c10]
+name = "gripfactory-lite-c10"
+
+[env.c10.vars]
+THEME = "c10"
+
+[[env.c10.d1_databases]]
+binding = "DB"
+database_name = "gripfactory-lite-c10"
+database_id = "TBD-c10-d1-id"
+migrations_dir = "migrations"

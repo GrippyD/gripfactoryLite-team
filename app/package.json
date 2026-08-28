@@ -1,0 +1,24 @@
+{
+  "name": "gripfactory-lite",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler d1 migrations apply gripfactory-lite-local --local && wrangler dev",
+    "deploy:grip": "wrangler deploy --env grip",
+    "deploy:c10": "wrangler deploy --env c10",
+    "test": "vitest run",
+    "smoke": "node scripts/smoke.mjs",
+    "typecheck": "wrangler types && tsc --noEmit",
+    "types": "wrangler types",
+    "db:migrate:local": "wrangler d1 migrations apply gripfactory-lite-local --local"
+  },
+  "dependencies": {
+    "hono": "^4.13.5"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.127.0"
+  }
+}
