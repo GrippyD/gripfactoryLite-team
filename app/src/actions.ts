@@ -9,7 +9,7 @@ import {
   type TransitionName,
 } from "./config";
 import { HttpError, nowIso, parseGrams, requireReason, requireText, textOrNull } from "./audit";
-import { assertHbnAvailable, HbnCollisionError, mintHbn } from "./mint";
+import { assertHbnAvailable, harvestYearFromEntryDate, HbnCollisionError, mintHbn, nextLotSerial } from "./mint";
 import {
   assertTable,
   getHarvestByHbn,
@@ -63,85 +63,110 @@ export async function createHarvestBatch(db: D1Database, form: FormData): Promis
     .first<{ hbn_code: string }>();
   if (!strain) throw new HttpError(400, "Unknown strain.");
 
-  const hbn = mintHbn({
-    entryDate,
-    farmCode,
-    growHbnCode: grow.hbn_code,
-    strainHbnCode: strain.hbn_code,
-    manicure,
-    siloNumber,
-  });
-  try {
-    assertHbnAvailable(await getHarvestByHbn(db, hbn), hbn);
-  } catch (err) {
-    if (err instanceof HbnCollisionError) throw new HttpError(409, err.message);
-    throw err;
-  }
-
+  const harvestYear = harvestYearFromEntryDate(entryDate);
   const id = crypto.randomUUID();
   const ts = nowIso();
-  const record = {
-    id,
-    entry_date: entryDate,
-    farm_code: farmCode,
-    grow_method_code: growMethodCode,
-    strain_id: strainId,
-    manicure,
-    silo_number: siloNumber,
-    start_time: startTime,
-    zone,
-    rows_text: rowsText,
-    metrc_harvest_tag: metrc,
-    hbn,
-    status: HARVEST_STATUS.open,
-    created_at: ts,
-    created_by: actor.id,
-    updated_at: ts,
-    updated_by: actor.id,
-  };
-  const stmts: D1PreparedStatement[] = [
-    db
-      .prepare(
-        `INSERT INTO harvest_batches (
-          id, entry_date, farm_code, grow_method_code, strain_id, manicure, silo_number,
-          start_time, zone, rows_text, metrc_harvest_tag, hbn, status,
-          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
-      )
-      .bind(
-        id,
-        entryDate,
-        farmCode,
-        growMethodCode,
-        strainId,
-        manicure,
-        siloNumber,
-        startTime,
-        zone,
-        rowsText,
-        metrc,
-        hbn,
-        HARVEST_STATUS.open,
-        ts,
-        actor.id,
-        ts,
-        actor.id
-      ),
-    ...logsForInsert(db, "harvest_batches", id, record, actor.id, SYSTEM_REASON.create, ts),
-  ];
-  try {
-    await db.batch(stmts);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.toLowerCase().includes("unique")) {
-      throw new HttpError(
-        409,
-        `HBN already exists: ${hbn}. The mint was not changed. Adjust the batch fields and try again.`
-      );
+  const maxAttempts = 8;
+  let hbn = "";
+  let lotSerial = 0;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // Next serial is 1 + MAX for this harvest_year, including voided rows (no reuse).
+    // Insert and log rows share one db.batch(). UNIQUE(harvest_year, lot_serial) plus
+    // retry stops two stations from keeping the same serial.
+    const maxRow = await db
+      .prepare(`SELECT MAX(lot_serial) AS m FROM harvest_batches WHERE harvest_year = ?`)
+      .bind(harvestYear)
+      .first<{ m: number | null }>();
+    lotSerial = nextLotSerial(maxRow?.m ?? null);
+    hbn = mintHbn({
+      entryDate,
+      farmCode,
+      growHbnCode: grow.hbn_code,
+      strainHbnCode: strain.hbn_code,
+      manicure,
+      siloNumber,
+      lotSerial,
+    });
+    try {
+      assertHbnAvailable(await getHarvestByHbn(db, hbn), hbn);
+    } catch (err) {
+      if (err instanceof HbnCollisionError && attempt < maxAttempts - 1) continue;
+      if (err instanceof HbnCollisionError) throw new HttpError(409, err.message);
+      throw err;
     }
-    throw err;
+
+    const record = {
+      id,
+      entry_date: entryDate,
+      farm_code: farmCode,
+      grow_method_code: growMethodCode,
+      strain_id: strainId,
+      manicure,
+      silo_number: siloNumber,
+      start_time: startTime,
+      zone,
+      rows_text: rowsText,
+      metrc_harvest_tag: metrc,
+      hbn,
+      lot_serial: lotSerial,
+      harvest_year: harvestYear,
+      status: HARVEST_STATUS.open,
+      created_at: ts,
+      created_by: actor.id,
+      updated_at: ts,
+      updated_by: actor.id,
+    };
+    const stmts: D1PreparedStatement[] = [
+      db
+        .prepare(
+          `INSERT INTO harvest_batches (
+          id, entry_date, farm_code, grow_method_code, strain_id, manicure, silo_number,
+          start_time, zone, rows_text, metrc_harvest_tag, hbn, lot_serial, harvest_year, status,
+          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+        )
+        .bind(
+          id,
+          entryDate,
+          farmCode,
+          growMethodCode,
+          strainId,
+          manicure,
+          siloNumber,
+          startTime,
+          zone,
+          rowsText,
+          metrc,
+          hbn,
+          lotSerial,
+          harvestYear,
+          HARVEST_STATUS.open,
+          ts,
+          actor.id,
+          ts,
+          actor.id
+        ),
+      ...logsForInsert(db, "harvest_batches", id, record, actor.id, SYSTEM_REASON.create, ts),
+    ];
+    try {
+      await db.batch(stmts);
+      return { redirect: `/station/acquire_hbn?minted=${encodeURIComponent(hbn)}` };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.toLowerCase().includes("unique") && attempt < maxAttempts - 1) {
+        continue;
+      }
+      if (message.toLowerCase().includes("unique")) {
+        throw new HttpError(
+          409,
+          `HBN already exists: ${hbn}. The mint was not changed. Adjust the batch fields and try again.`
+        );
+      }
+      throw err;
+    }
   }
-  return { redirect: `/station/acquire_hbn?minted=${encodeURIComponent(hbn)}` };
+  throw new HttpError(409, `Could not allocate a lot serial for ${harvestYear}.`);
 }
 
 export async function createWetWeight(db: D1Database, form: FormData): Promise<ActionOk> {

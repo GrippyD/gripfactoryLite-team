@@ -1,4 +1,7 @@
+-- Slice 1.1 edited in place before first deploy (wrangler.toml still TBD ids).
+-- After the first deploy, schema and seed changes ride new numbered migrations only.
 -- Generated from seed/strains.csv (78 rows). Do not seed people.
+-- Slice 1.1: Blue Andeez hbn_code 078; Gelato 41 keeps 071.
 INSERT OR IGNORE INTO strains (
   id, name, abbr, hbn_code, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
 ) VALUES
@@ -12,7 +15,7 @@ INSERT OR IGNORE INTO strains (
   ('abf7ef5f-ef25-4a54-b6a0-435e7df4ee07', 'BCC x Jealousy', 'BCCXJ', '008', '2026-08-27T00:00:00.000Z', NULL, '2026-08-27T00:00:00.000Z', NULL, NULL, NULL),
   ('ddeaef39-e90c-47d8-97e0-1f2139c164bd', 'Bermuda Triangle', 'BT', '009', '2026-08-27T00:00:00.000Z', NULL, '2026-08-27T00:00:00.000Z', NULL, NULL, NULL),
   ('4e3d6f84-3e4a-46ee-ae30-7b931ec64838', 'Blackout Truffle', 'BOT', '010', '2026-08-27T00:00:00.000Z', NULL, '2026-08-27T00:00:00.000Z', NULL, NULL, NULL),
-  ('fc6f0077-2d09-4357-8b61-9c8bad2a2c25', 'Blue Andeez', 'BA', '071', '2026-08-27T00:00:00.000Z', NULL, '2026-08-27T00:00:00.000Z', NULL, NULL, NULL),
+  ('fc6f0077-2d09-4357-8b61-9c8bad2a2c25', 'Blue Andeez', 'BA', '078', '2026-08-27T00:00:00.000Z', NULL, '2026-08-27T00:00:00.000Z', NULL, NULL, NULL),
   ('159271ce-8a1c-494b-b661-af315d04aa8e', 'Candyman', 'CANDY', '011', '2026-08-27T00:00:00.000Z', NULL, '2026-08-27T00:00:00.000Z', NULL, NULL, NULL),
   ('f57e6133-153b-4958-81d0-3595ef2d3640', 'Cap Junky', 'CJ', '012', '2026-08-27T00:00:00.000Z', NULL, '2026-08-27T00:00:00.000Z', NULL, NULL, NULL),
   ('376be675-653f-462b-ada3-6c47aefc22bc', 'Cereal Milk', 'CM', '013', '2026-08-27T00:00:00.000Z', NULL, '2026-08-27T00:00:00.000Z', NULL, NULL, NULL),

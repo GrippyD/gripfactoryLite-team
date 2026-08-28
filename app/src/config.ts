@@ -37,9 +37,9 @@ export const SYSTEM_REASON = {
   release: "release",
 } as const;
 
-/** Mint format: YYDDD-farm-grow_code-strain_code-manicure-silo-YY */
+/** Mint format: YYDDD-farm-grow_code-strain_code-manicure-silo-YY### */
 export const HBN_MINT_FORMAT =
-  "<YYDDD>-<farm>-<grow_code>-<strain_code>-<manicure>-<silo>-<YY>";
+  "<YYDDD>-<farm>-<grow_code>-<strain_code>-<manicure>-<silo>-<YY###>";
 export const HBN_BLANK_SILO = "NA";
 
 /** is_bud routing: BUD types enter the Cryo Queue; all others stay created. */

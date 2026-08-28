@@ -195,13 +195,13 @@ async function run() {
     });
     if (create.status !== 303) fail("acquire HBN", `status ${create.status} ${await create.text()}`);
     const minted = new URL(create.headers.get("location") || "", base).searchParams.get("minted");
-    assert(minted === "26244-ARL-GH-027-0-NA-26", `unexpected HBN ${minted}`);
+    assert(minted === "26244-ARL-GH-027-0-NA-26001", `unexpected HBN ${minted}`);
 
     counts = await homeCounts();
     assert(counts.hbn === 1, `hbn after acquire expected 1 got ${counts.hbn}`);
     assert(counts.dry === 0, `dry after acquire expected 0 got ${counts.dry}`);
 
-    const dup = await req("/station/acquire_hbn", {
+    const second = await req("/station/acquire_hbn", {
       method: "POST",
       body: form({
         person_id: personId,
@@ -211,12 +211,15 @@ async function run() {
         strain_id: strainId,
       }),
     });
-    assert(dup.status === 409, `duplicate HBN expected 409 got ${dup.status}`);
-    const dupBody = await dup.text();
-    assert(/already exists/.test(dupBody), "duplicate HBN should explain collision");
+    if (second.status !== 303) fail("second mint", `status ${second.status}`);
+    const minted2 = new URL(second.headers.get("location") || "", base).searchParams.get("minted");
+    assert(minted2 === "26244-ARL-GH-027-0-NA-26002", `unexpected second HBN ${minted2}`);
+
+    counts = await homeCounts();
+    assert(counts.hbn === 2, `hbn after second mint expected 2 got ${counts.hbn}`);
 
     const wetPage = await text("/station/wet_weight");
-    const batchId = optionValue(wetPage.body, "26244-ARL-GH-027-0-NA-26");
+    const batchId = optionValue(wetPage.body, "26244-ARL-GH-027-0-NA-26001");
     const drySpaceId = optionValue(wetPage.body, "Silo 1");
     const wet = await req("/station/wet_weight", {
       method: "POST",
@@ -231,11 +234,11 @@ async function run() {
     if (wet.status !== 303) fail("wet weight", `status ${wet.status}`);
 
     counts = await homeCounts();
-    assert(counts.hbn === 1, `hbn after wet expected 1 got ${counts.hbn}`);
+    assert(counts.hbn === 2, `hbn after wet expected 2 got ${counts.hbn}`);
     assert(counts.dry === 1, `dry after wet expected 1 got ${counts.dry}`);
 
     const trimPage = await text("/station/trim_packages");
-    const lotId = optionValue(trimPage.body, "26244-ARL-GH-027-0-NA-26");
+    const lotId = optionValue(trimPage.body, "26244-ARL-GH-027-0-NA-26001");
     const trim = await req("/station/trim_packages", {
       method: "POST",
       body: form({

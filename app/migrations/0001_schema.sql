@@ -1,3 +1,6 @@
+-- Slice 1.1 edited in place before first deploy (wrangler.toml still TBD ids).
+-- After the first deploy, schema and seed changes ride new numbered migrations only.
+
 CREATE TABLE farms (
   code TEXT PRIMARY KEY,
   display_name TEXT NOT NULL,
@@ -83,13 +86,16 @@ CREATE TABLE harvest_batches (
   rows_text TEXT,
   metrc_harvest_tag TEXT,
   hbn TEXT NOT NULL UNIQUE,
+  lot_serial INTEGER NOT NULL,
+  harvest_year INTEGER NOT NULL,
   status TEXT NOT NULL,
   created_at TEXT NOT NULL,
   created_by TEXT,
   updated_at TEXT NOT NULL,
   updated_by TEXT,
   deleted_at TEXT,
-  deleted_by TEXT
+  deleted_by TEXT,
+  UNIQUE (harvest_year, lot_serial)
 );
 
 CREATE TABLE wet_weight_entries (
