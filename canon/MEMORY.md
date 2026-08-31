@@ -2,33 +2,39 @@
 
 **Project:** Gripfactory Lite (working title), repo folder "gripfactory Practical"
 **Owner:** Dennis (OCG Companies / Grip Cannabis)
-**Last session:** 2026-08-27: canon stood up and grounded (v0.1.0 → v0.3.0); B01 adopted as human; B02 sourced from both opsdash versions; hosting pivot folded (two Cloudflare sites, D1, portable SQL); slice 1 queue-spine prompt issued to Cursor.
+**Last session:** 2026-08-31 (local Claude Code Scribe sitting): pending stack deployed (worker 92a0a590) and the wet weight rebuild live-verified end to end; Cloudflare Access stood up and enforcing; Penn North confirmed; pointers refolded at canon 0.6.0; wipe armed on "wipe it".
 
 ## Pinned state
 
-- **Canon version: 0.3.0** (folded 2026-08-27: hosting pivot, ADR-5 queue spine, YYDDD mint, G-4 rewritten)
+- **Canon version: 0.6.0** (folded 2026-08-31: deploy + live verification + Access live + Penn North confirmed + pointer refresh)
+- Hosting facts: Dennis's personal Cloudflare account (wallacedennis1985@gmail.com), workers.dev subdomain **gflite**, worker name gripfactory-lite-grip, D1 gripfactory-lite-grip id 2a70ba1f-3cc0-4eea-b9dd-54c42afd1789 (**this id dies at the wipe; re-pin after**). No API tokens on the account.
+- **Access facts:** Zero Trust org **gflite** (free plan), Worker Access on gripfactory-lite-grip, scope All traffic, policy Allow emails ending @gripcannabis.com, One-time PIN, 24 hour sessions. Login page shows auto-generated label aged-snowflake-24fc (rename parked). Unauthenticated verification browsers stop at the wall: post-Access live checks = wrangler remote D1 queries + Dennis's authenticated browser.
+- **Deploy lanes:** the LOCAL Scribe sitting (Dennis's machine) runs wrangler itself: from `app/`, `npx wrangler d1 migrations apply gripfactory-lite-grip --env grip --remote` then `npm run deploy:grip`, read back version id + URL. The CLOUD Scribe shells stay proxy-blocked from api.cloudflare.com (their lanes: Chrome dashboard + Dennis's terminal). Never deploy c10 without Dennis's say-so.
 - **Go-live: 2026-09-01** (Grip harvest). C10 Compliance Console hard need: 2026-09-09.
-- Repo: `Documents\Claude\Projects\gripfactory Practical` (ratified home). `canon/`, `prompts/`, `app/seed/strains.csv` emplaced 2026-08-27.
-- **Active line: slice 1 build.** Prompt at `prompts/2026-08-27_slice1_queue_spine.md`; Cursor builds, no deploy; session report + sealed check come back for Scribe verification.
-- Deployment shape: Cloudflare Workers + D1, wrangler envs `grip` (Corey) and `c10` (Christine), same behavior, different CSS tokens, data on-site per env. SQL Postgres-portable (Aurora someday-case). Source workbooks: 25H (chat upload), 26H suite ("Harvest 2026" connected folder).
+- Repo: `Documents\Claude\Projects\gripfactory Practical` (ratified home). Local git, commits only, no remotes (G-1).
+- **Active line: go-live hardening.** Wipe armed, fires only on Dennis's words "wipe it" (recreate grip D1, remigrate, new id into wrangler.toml, redeploy, verify empty, commit toml). All current DB content is test data (mints 26001-26007).
 
 ## Open threads
 
-- Verify the slice 1 session report when it lands (sealed check verbatim, smoke chain end to end), then surface the five owner flags: queue-exit rules, trailing YY, wet weight split, dry space seed, Cloudflare Access
-- Deploy day: wrangler login is Dennis's; real D1 ids per env; Access on the Grip site before crew data
-- Then the walk resumes in map order (`canon/PROCESS_MAP.md`): B02 leftovers (ABC meaning, Cuts/Plants timing, audit shape), wet weights deepening, B03/B04
-- The "Harvest 2026" folder holds the 26H suite (trim, trim trailers, cryo, prepack workbooks mapped in the registry)
-- Console incorporation shape: decide when the walk reaches console-shaped boxes
-- Product name, 9/1 day-one minimum, HBN spec confirm at B02
-- Repo skeleton Cursor prompt lands with the first built box (stack per ADR-2)
+- Wipe on the words, then re-pin the new D1 id here and in _NOW
+- 26H workbook Abbr one-cell edit (Blue Andeez 071 → 078): Dennis, tonight
+- After go-live hardening: B05/B10 deepening talk-through, then B03/B04 in map order (`canon/PROCESS_MAP.md`)
+- B02 leftovers (ABC meaning, Cuts/Plants timing, audit shape); console incorporation shape when the walk reaches console-shaped boxes
+- c10 deploy for Christine; C10 exposure model; theme token sets; product name
+- Server-side Move To enforcement awaits a ruling (UI-filtered only today)
 
 ## Project gotchas (hard-won)
 
 - **Style law: NO em or en dashes in anything, chat included.** Plain hyphens, commas, colons. (Owner directive 2026-08-11, carried in as G-8.)
 - **Rulings go through AskUserQuestion, never chat lists.** A stranded list in an hours-old conversation hinders (Dennis, 2026-08-27).
-- Connected-folder mounts block unlink and rename: a live .git cannot run on them from this side (lock files become undeletable); Cursor's native git on Windows is fine; repos travel as zips (Harvest Console precedent).
-- Write repo text via device_bash heredoc or device_commit_files and **verify every write**: wc -c plus tail; sha256 from both sides when views disagree; the side that wrote last is authoritative (SCRIBE_NOTES pattern).
-- opsHelpers architecture = Plato Bible §4/§5/§6. The Access .accdb backups do not parse with access-parser; the Bible is the usable source.
+- Dennis works the live site in parallel with the Scribe's verification; unexplained rows are usually his (confirmed 2026-08-31: "I was running those lots"). Check timestamps before suspecting a bug.
+- Connected-folder mounts block unlink and rename on the cloud side; local git on Windows is fine; repos travel as zips.
+- Write repo text via verified writes: wc -c plus tail; sha256 when views disagree; the side that wrote last is authoritative.
+- opsHelpers architecture = Plato Bible §4/§5/§6. The Access .accdb backups do not parse; the Bible is the usable source.
+- When sampling sheet values, print untruncated; the formula is the truth, read it to the end.
+- Local dev gotcha: `app/.wrangler` can hold an already-applied local schema; delete once after in-place migration edits. Smoke uses its own persist dir and is immune.
+- Never save the live 26H .xlsm from openpyxl (slicers and validations would break). The Scribe only reads it.
+- Browser-pane automation quirk (local sitting, 2026-08-31): ref-based clicks can miss after flash banners shift layout; click by screenshot coordinate after a fresh screenshot, and re-read the page after each 303. A focused select swallows keyboard input (End changed a strain once); re-set via form_input.
 - Sibling canons (read-only sources): `gripfactory/PLATO_BIBLE.md`, `gripfactory/SCRIBE_NOTES_V4.md`, `Harvest Console/harvest-console-CANON.md`, `Harvest Console/new-farm/NEW-FARM-CANON.md`, `Harvest Console/handoff/HOSTING.md`, `SalesHelper/CANON.md`, `Compliance Console/ComplianceConsole_CANON.md`.
 - Claude Project mirror paths: `canon/CANON.md`, `canon/PROCESS_MAP.md`, `canon/MEMORY.md`, `canon/_NOW.md`.
 
