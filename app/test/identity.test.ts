@@ -53,6 +53,8 @@ describe("PIN gate page (owner ruling 2026-08-31)", () => {
   it("keeps unlock redirects on this site", () => {
     expect(safeNextPath("/admin/queues?x=1")).toBe("/admin/queues?x=1");
     expect(safeNextPath("/interco")).toBe("/interco");
+    // Fulfillment sits behind the same gate (owner ruling 2026-08-31).
+    expect(safeNextPath("/fulfillment/")).toBe("/fulfillment/");
     expect(safeNextPath("//evil.example")).toBe("/admin");
     expect(safeNextPath("https://evil.example")).toBe("/admin");
     expect(safeNextPath("")).toBe("/admin");

@@ -2,14 +2,15 @@
 
 **Project:** Gripfactory Lite (working title), repo folder "gripfactory Practical"
 **Owner:** Dennis (OCG Companies / Grip Cannabis)
-**Last session:** 2026-08-31 (local Claude Code Scribe sitting): wet weight rebuild deployed and live-verified; Cloudflare Access stood up; Penn North confirmed; identity law (login email = actor) and PIN gate (21319 on Admin/Interco) ruled, built as slice 4, deployed (worker a2416f32, migration 0008); baton cleanup commit; wipe armed on "wipe it".
+**Last session:** 2026-08-31 (local Claude Code Scribe sitting): wet weight rebuild deployed and live-verified; Cloudflare Access stood up; Penn North confirmed; identity law (login email = actor) and PIN gate (21319 on Admin/Interco) ruled, built as slice 4, deployed (worker a2416f32, migration 0008); baton cleanup commit; wipe armed on "wipe it". Same day (cloud Scribe sitting): Fulfillment surface built per owner ruling, folded at 0.7.1, deploy pending.
 
 ## Pinned state
 
-- **Canon version: 0.7.0** (folded 2026-08-31: ADR-7 auth surface on top of the 0.6.0 deploy + Access + Penn North folds)
+- **Canon version: 0.7.2** (folded 2026-08-31: Fulfillment slice deployed, worker dcb4791c-a27a-4511-8c5e-def27e100b29, Access wall verified on /fulfillment/)
 - Hosting facts: Dennis's personal Cloudflare account (wallacedennis1985@gmail.com), workers.dev subdomain **gflite**, worker name gripfactory-lite-grip, D1 gripfactory-lite-grip id 2a70ba1f-3cc0-4eea-b9dd-54c42afd1789 (**this id dies at the wipe; re-pin after**). No API tokens on the account.
 - **Access facts:** Zero Trust org **gflite** (free plan), Worker Access on gripfactory-lite-grip, scope All traffic, policy Allow emails ending @gripcannabis.com, One-time PIN, 24 hour sessions. Login page shows auto-generated label aged-snowflake-24fc (rename parked). Unauthenticated verification browsers stop at the wall: post-Access live checks = wrangler remote D1 queries + Dennis's authenticated browser.
-- **ADR-7 auth surface (2026-08-31):** actor = Access login email via Cf-Access-Authenticated-User-Email, people auto-create on first login (unique email, migration 0008), actor injected server-side, Lead stays a picker (lead_person_id on the lot), dev/smoke act as dev@local. PIN 21319 gates /admin* and /interco, stored in app_config, 12 h cookie. Parked: JWT/AUD verification, PIN editable in Admin.
+- **ADR-7 auth surface (2026-08-31):** actor = Access login email via Cf-Access-Authenticated-User-Email, people auto-create on first login (unique email, migration 0008), actor injected server-side, Lead stays a picker (lead_person_id on the lot), dev/smoke act as dev@local. PIN 21319 gates /admin*, /interco, and /fulfillment* (0.7.1), stored in app_config, 12 h cookie. Parked: JWT/AUD verification, PIN editable in Admin.
+- **Fulfillment surface (0.7.1):** home tile [Fulfillment] (es Despacho) lands on our vendored copy of the SalesHelper node: app/public/saleshelper/{index.html, menu.json} served worker-first at /fulfillment/ with no-store (wrangler [assets] + per-env blocks: directory public, binding ASSETS, run_worker_first true, html_handling none). /fulfillment redirects to the trailing slash so the form's relative menu.json fetch resolves. The form's /api/send is unrouted here and falls back to CSV/JSON download plus mailto. **Vendored-pair law: never edit those two files in place, only replace by copy from the SalesHelper repo.** Deployed 2026-08-31 (worker dcb4791c).
 - **Deploy lanes:** the LOCAL Scribe sitting (Dennis's machine) runs wrangler itself: from `app/`, `npx wrangler d1 migrations apply gripfactory-lite-grip --env grip --remote` then `npm run deploy:grip`, read back version id + URL. The CLOUD Scribe shells stay proxy-blocked from api.cloudflare.com (their lanes: Chrome dashboard + Dennis's terminal). Never deploy c10 without Dennis's say-so.
 - **Go-live: 2026-09-01** (Grip harvest). C10 Compliance Console hard need: 2026-09-09.
 - Repo: `Documents\Claude\Projects\gripfactory Practical` (ratified home). Local git, commits only, no remotes (G-1).
@@ -17,7 +18,8 @@
 
 ## Open threads
 
-- Dennis's production visual check of slice 4 (chrome email, PIN gate, Lead picker, auto-created person row)
+- Dennis's production visual check of slice 4 plus Fulfillment (chrome email, PIN gate on all three surfaces, Lead picker, auto-created person row, order form loads with honest data-age badge)
+- Fulfillment follow-ups parked: menu refresh lane, /api/send order capture, Corey's pages.dev copy's fate
 - Wipe on the words, then re-pin the new D1 id here and in _NOW
 - 26H workbook Abbr one-cell edit (Blue Andeez 071 → 078): Dennis, tonight
 - After go-live hardening: B05/B10 deepening talk-through, then B03/B04 in map order (`canon/PROCESS_MAP.md`)
@@ -35,6 +37,7 @@
 - opsHelpers architecture = Plato Bible §4/§5/§6. The Access .accdb backups do not parse; the Bible is the usable source.
 - When sampling sheet values, print untruncated; the formula is the truth, read it to the end.
 - Local dev gotcha: `app/.wrangler` can hold an already-applied local schema; delete once after in-place migration edits. Smoke uses its own persist dir and is immune.
+- Assets gotcha: `html_handling = "none"` is required or the ASSETS binding answers /saleshelper/index.html with a 307 instead of the file; run_worker_first keeps the PIN in front of every asset byte. worker-configuration.d.ts regenerates via `npx wrangler types` and carries vendor doc-comment dashes (generated file, exempt from the G-8 audit like the vendored saleshelper pair).
 - Never save the live 26H .xlsm from openpyxl (slicers and validations would break). The Scribe only reads it.
 - Browser-pane automation quirk (local sitting, 2026-08-31): ref-based clicks can miss after flash banners shift layout; click by screenshot coordinate after a fresh screenshot, and re-read the page after each 303. A focused select swallows keyboard input (End changed a strain once); re-set via form_input.
 - Sibling canons (read-only sources): `gripfactory/PLATO_BIBLE.md`, `gripfactory/SCRIBE_NOTES_V4.md`, `Harvest Console/harvest-console-CANON.md`, `Harvest Console/new-farm/NEW-FARM-CANON.md`, `Harvest Console/handoff/HOSTING.md`, `SalesHelper/CANON.md`, `Compliance Console/ComplianceConsole_CANON.md`.

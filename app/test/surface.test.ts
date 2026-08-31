@@ -38,6 +38,23 @@ describe("surfaces (owner ruling 2026-08-27)", () => {
   });
 });
 
+describe("fulfillment tile (owner ruling 2026-08-31)", () => {
+  it("home carries the Fulfillment tile after Interco, linking /fulfillment", () => {
+    const html = homePage(PIPELINE);
+    expect(html).toContain('data-pipeline-key="fulfillment"');
+    expect(html).toContain('href="/fulfillment"');
+    expect(html.indexOf('href="/interco"')).toBeLessThan(html.indexOf('href="/fulfillment"'));
+  });
+
+  it("labels the tile kind Admin, not a stub, and titles it through i18n", () => {
+    const en = homePage(PIPELINE, "en");
+    expect(en).toContain('<a class="tile" href="/fulfillment" data-pipeline-key="fulfillment">');
+    expect(en).toContain("Fulfillment");
+    const es = homePage(PIPELINE, "es");
+    expect(es).toContain("Despacho");
+  });
+});
+
 describe("wet weight header form (owner ruling 2026-08-28)", () => {
   it("carries Lead, Move To, single line Notes, and Start lot; no weight fields", () => {
     const station = stationByKey("wet_weight")!;

@@ -108,6 +108,9 @@ async function pinGate(c: AppContext, next: () => Promise<void>) {
 app.use("/admin", pinGate);
 app.use("/admin/*", pinGate);
 app.use("/interco", pinGate);
+// Owner ruling 2026-08-31: Fulfillment sits behind the same PIN as Admin and Interco.
+app.use("/fulfillment", pinGate);
+app.use("/fulfillment/*", pinGate);
 
 app.post("/pin", async (c) => {
   const form = await c.req.formData();
@@ -183,6 +186,21 @@ app.get("/interco", async (c) => {
   const s = await shell(c);
   return html(c, s, "Interco Logistics", intercoPage(s.locale));
 });
+
+// Owner ruling 2026-08-31: Fulfillment lands on our hosted copy of the SalesHelper
+// order-form node, vendored verbatim under public/saleshelper/. The form fetches
+// menu.json relative to its own URL, so the page lives at /fulfillment/ and the
+// bare path redirects to the trailing slash. The form posts orders to /api/send,
+// which stays unrouted here; it falls back to download plus mailto by design.
+app.get("/fulfillment", (c) => c.redirect("/fulfillment/", 302));
+
+app.get("/fulfillment/", (c) =>
+  salesHelperAsset(c, "/saleshelper/index.html", "text/html; charset=utf-8")
+);
+
+app.get("/fulfillment/menu.json", (c) =>
+  salesHelperAsset(c, "/saleshelper/menu.json", "application/json; charset=utf-8")
+);
 
 app.get("/admin", async (c) => {
   const s = await shell(c);
@@ -438,6 +456,21 @@ app.notFound(async (c) => {
   const s = await shell(c);
   return html(c, s, "Not found", "<h1>Not found</h1>", 404);
 });
+
+// Owner ruling 2026-08-31: serve a vendored SalesHelper file through the ASSETS
+// binding, never directly, so the PIN gate stays in front. cache-control no-store
+// is data-age honesty: the form reads dataAsOf from menu.json and a cache must
+// never hide staleness.
+async function salesHelperAsset(c: AppContext, path: string, contentType: string) {
+  const asset = await c.env.ASSETS.fetch(new Request(new URL(path, c.req.url)));
+  if (!asset.ok) return c.notFound();
+  return new Response(asset.body, {
+    headers: {
+      "content-type": contentType,
+      "cache-control": "no-store",
+    },
+  });
+}
 
 function queueMap(): Record<string, QueueDef> {
   const map: Record<string, QueueDef> = {};

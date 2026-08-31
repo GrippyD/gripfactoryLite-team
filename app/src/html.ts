@@ -225,8 +225,14 @@ export function homePage(pipeline: PipelineEntry[], locale: Locale = "en"): stri
         <span class="tile-kind">${esc(t(locale, "Admin"))}</span>
         <span class="tile-title">Interco Logistics</span>
       </a>`;
+  // Owner ruling 2026-08-31: Fulfillment is PIN gated like Admin and Interco and
+  // lands on the hosted SalesHelper order-form node at /fulfillment.
+  const fulfillmentTile = `<a class="tile" href="/fulfillment" data-pipeline-key="fulfillment">
+        <span class="tile-kind">${esc(t(locale, "Admin"))}</span>
+        <span class="tile-title">${esc(t(locale, "Fulfillment"))}</span>
+      </a>`;
   return `<h1>${esc(t(locale, "Harvest queue spine"))}</h1>
-    <div class="tiles">${tiles}${adminTile}${intercoTile}</div>`;
+    <div class="tiles">${tiles}${adminTile}${intercoTile}${fulfillmentTile}</div>`;
 }
 
 /** The Interco Logistics stub (owner ruling 2026-08-28): orange barreled, no function yet. */

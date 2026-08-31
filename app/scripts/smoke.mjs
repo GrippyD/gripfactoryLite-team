@@ -240,6 +240,12 @@ async function run() {
     assert(gatedInterco.body.includes("Enter PIN"), "gated interco missing the PIN prompt");
     const gatedAdmin = await text("/admin/queues");
     assert(gatedAdmin.res.status === 401, `gated admin expected 401 got ${gatedAdmin.res.status}`);
+    const gatedFulfillment = await text("/fulfillment");
+    assert(
+      gatedFulfillment.res.status === 401,
+      `gated fulfillment expected 401 got ${gatedFulfillment.res.status}`
+    );
+    assert(gatedFulfillment.body.includes("Enter PIN"), "gated fulfillment missing the PIN prompt");
     const wrongPin = await text("/pin", { method: "POST", body: form({ pin: "00000", next: "/admin" }) });
     assert(wrongPin.res.status === 401, `wrong PIN expected 401 got ${wrongPin.res.status}`);
     assert(wrongPin.body.includes("Wrong PIN."), "wrong PIN must say so");
@@ -256,6 +262,32 @@ async function run() {
     const interco = await text("/interco");
     if (interco.res.status !== 200) fail("GET /interco", `status ${interco.res.status}`);
     assert(interco.body.includes("Interco Logistics"), "interco stub missing its title");
+
+    // Fulfillment (owner ruling 2026-08-31): the hosted SalesHelper node behind the same PIN.
+    const fulfillRedirect = await req("/fulfillment");
+    assert(fulfillRedirect.status === 302, `fulfillment expected 302 got ${fulfillRedirect.status}`);
+    assert(
+      (fulfillRedirect.headers.get("location") || "").endsWith("/fulfillment/"),
+      "fulfillment must redirect to the trailing slash"
+    );
+    const fulfillment = await text("/fulfillment/");
+    if (fulfillment.res.status !== 200) fail("GET /fulfillment/", `status ${fulfillment.res.status}`);
+    assert(
+      fulfillment.body.includes("<title>GRIP Cannabis - Sales Order Form</title>"),
+      "fulfillment page missing the SalesHelper order form"
+    );
+    assert(
+      (fulfillment.res.headers.get("cache-control") || "").includes("no-store"),
+      "fulfillment page must send cache-control no-store"
+    );
+    const menu = await text("/fulfillment/menu.json");
+    if (menu.res.status !== 200) fail("GET /fulfillment/menu.json", `status ${menu.res.status}`);
+    assert(menu.body.startsWith("{"), "menu.json must start with {");
+    assert(menu.body.includes('"builtAt"'), "menu.json missing builtAt");
+    assert(
+      (menu.res.headers.get("content-type") || "").includes("application/json"),
+      "menu.json content type must be application/json"
+    );
 
     const adminLanding = await text("/admin");
     if (adminLanding.res.status !== 200) fail("GET /admin", `status ${adminLanding.res.status}`);

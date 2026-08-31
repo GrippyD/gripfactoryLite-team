@@ -83,6 +83,8 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "Orange barreled. Not built yet.",
     es: "Con barriles naranjas. Aún no construido.",
   },
+  // Fulfillment tile (owner ruling 2026-08-31): the hosted SalesHelper node.
+  "Fulfillment": { en: "Fulfillment", es: "Despacho" },
 };
 
 /** Look a display string up by its English key; unknown keys render as-is. */

@@ -12,6 +12,9 @@ describe("i18n dictionary (owner ruling 2026-08-28)", () => {
     expect(t("es", "Mark trimmed")).toBe("Marcar podado");
     expect(t("es", "Pick from the left to begin.")).toBe("Elija de la izquierda para comenzar.");
     expect(t("es", "HBN minted.")).toBe("HBN generado.");
+    // Fulfillment tile (owner ruling 2026-08-31)
+    expect(t("es", "Fulfillment")).toBe("Despacho");
+    expect(t("en", "Fulfillment")).toBe("Fulfillment");
   });
 
   it("returns English strings for locale en", () => {
@@ -82,6 +85,17 @@ describe("Interco Logistics stub (owner ruling 2026-08-28)", () => {
     const es = intercoPage("es");
     expect(es).toContain("<h1>Interco Logistics</h1>");
     expect(es).toContain("Con barriles naranjas. Aún no construido.");
+  });
+});
+
+describe("Fulfillment tile (owner ruling 2026-08-31)", () => {
+  it("home titles the tile Fulfillment in en and Despacho in es", () => {
+    const en = homePage(PIPELINE, "en");
+    expect(en).toContain('href="/fulfillment"');
+    expect(en).toContain("Fulfillment");
+    const es = homePage(PIPELINE, "es");
+    expect(es).toContain('href="/fulfillment"');
+    expect(es).toContain("Despacho");
   });
 });
 

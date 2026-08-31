@@ -11,6 +11,17 @@ head_sampling_rate = 1
 [vars]
 THEME = "grip"
 
+# Vendored SalesHelper node under public/ (owner ruling 2026-08-31). run_worker_first
+# keeps every request on the worker so the PIN gate applies; assets are reachable only
+# through routed handlers via the ASSETS binding. html_handling "none" serves exact
+# file paths with no trailing-slash redirects. Environments do not inherit this
+# block; each env repeats it below.
+[assets]
+directory = "public"
+binding = "ASSETS"
+run_worker_first = true
+html_handling = "none"
+
 # Local / default env (wrangler dev). Replace id on deploy day if this env is ever published.
 [[d1_databases]]
 binding = "DB"
@@ -24,6 +35,12 @@ name = "gripfactory-lite-grip"
 [env.grip.vars]
 THEME = "grip"
 
+[env.grip.assets]
+directory = "public"
+binding = "ASSETS"
+run_worker_first = true
+html_handling = "none"
+
 [[env.grip.d1_databases]]
 binding = "DB"
 database_name = "gripfactory-lite-grip"
@@ -35,6 +52,12 @@ name = "gripfactory-lite-c10"
 
 [env.c10.vars]
 THEME = "c10"
+
+[env.c10.assets]
+directory = "public"
+binding = "ASSETS"
+run_worker_first = true
+html_handling = "none"
 
 [[env.c10.d1_databases]]
 binding = "DB"
