@@ -6,7 +6,7 @@
 
 ## Pinned state
 
-- **Canon version: 0.7.2** (folded 2026-08-31: Fulfillment slice deployed, worker dcb4791c-a27a-4511-8c5e-def27e100b29, Access wall verified on /fulfillment/)
+- **Canon version: 0.7.3** (folded 2026-08-31: void return law on top of the Fulfillment deploy; live worker 76e714ec-fb63-4ba2-8760-add03d440dac)
 - Hosting facts: Dennis's personal Cloudflare account (wallacedennis1985@gmail.com), workers.dev subdomain **gflite**, worker name gripfactory-lite-grip, D1 gripfactory-lite-grip id 2a70ba1f-3cc0-4eea-b9dd-54c42afd1789 (**this id dies at the wipe; re-pin after**). No API tokens on the account.
 - **Access facts:** Zero Trust org **gflite** (free plan), Worker Access on gripfactory-lite-grip, scope All traffic, policy Allow emails ending @gripcannabis.com, One-time PIN, 24 hour sessions. Login page shows auto-generated label aged-snowflake-24fc (rename parked). Unauthenticated verification browsers stop at the wall: post-Access live checks = wrangler remote D1 queries + Dennis's authenticated browser.
 - **ADR-7 auth surface (2026-08-31):** actor = Access login email via Cf-Access-Authenticated-User-Email, people auto-create on first login (unique email, migration 0008), actor injected server-side, Lead stays a picker (lead_person_id on the lot), dev/smoke act as dev@local. PIN 21319 gates /admin*, /interco, and /fulfillment* (0.7.1), stored in app_config, 12 h cookie. Parked: JWT/AUD verification, PIN editable in Admin.

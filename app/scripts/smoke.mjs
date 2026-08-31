@@ -532,6 +532,25 @@ async function run() {
     assert(csv.res.status === 200, "change log csv");
     assert(/smoke reasoned edit/.test(csv.body), "csv missing reasoned edit");
 
+    // Void returns to its source, never the homepage (owner ruling 2026-08-31).
+    const voidGet = await text(`/record/wip_packages/${testId}/void`, {
+      headers: { referer: `${base}/admin/queues` },
+    });
+    assert(
+      voidGet.body.includes('name="back" value="/admin/queues"'),
+      "void page must carry the referring page as back"
+    );
+    const voidPost = await req(`/record/wip_packages/${testId}/void`, {
+      method: "POST",
+      body: form({ back: "/admin/queues", reason: "smoke void" }),
+    });
+    assert(voidPost.status === 303, `void expected 303 got ${voidPost.status}`);
+    const voidLoc = voidPost.headers.get("location") || "";
+    assert(
+      new URL(voidLoc, base).pathname + new URL(voidLoc, base).search === "/admin/queues?ok=voided",
+      `void must return to Data Queues, got ${voidLoc}`
+    );
+
     process.stdout.write("SMOKE PASS\n");
   } finally {
     await stopWrangler(child);

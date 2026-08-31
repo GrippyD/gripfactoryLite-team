@@ -432,7 +432,18 @@ app.post("/record/:table/:id/edit", async (c) => {
 
 app.get("/record/:table/:id/void", async (c) => {
   const s = await shell(c);
-  return html(c, s, "Void", voidPage(c.req.param("table"), c.req.param("id")));
+  // The referring page rides the form so the void can return there (owner ruling 2026-08-31).
+  let back = "";
+  const referer = c.req.header("referer");
+  if (referer) {
+    try {
+      const u = new URL(referer);
+      back = u.pathname + u.search;
+    } catch {
+      back = "";
+    }
+  }
+  return html(c, s, "Void", voidPage(c.req.param("table"), c.req.param("id"), back));
 });
 
 app.post("/record/:table/:id/void", async (c) => {

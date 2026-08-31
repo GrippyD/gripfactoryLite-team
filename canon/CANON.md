@@ -1,6 +1,6 @@
 # GRIPFACTORY LITE, CANON
 
-**Version:** 0.7.2
+**Version:** 0.7.3
 **Status:** Active, Source of Truth
 **Owner (final authority):** Dennis, sole ratifier
 **Scribe:** persistent Claude session attached to the **gripfactoryPractical** project
@@ -172,6 +172,7 @@ The working method per box:
 | 2026-08-31 | Slice 4 (identity + PIN, ADR-7) built and verified by the local Scribe under G-2: tsc clean, 89 tests, smoke pass exercising the gate 401s, wrong-PIN refusal, unlock, dev fallback, auto-created login person, and the Lead flow; migration 0008 applied remotely and verified by D1 query; worker version a2416f32-76d3-4103-bdf1-a7f9a379f2e1 live. Production visual check is Dennis's (the Scribe's browser stops at Access) | 0.7.0 |
 | 2026-08-31 | **Fulfillment surface (owner ruling: "add a [Fulfillment] button to the home page, pin gated like the other two", landing on the SalesHelper node, "we'll host our own copy"):** home tile [Fulfillment] after Interco (i18n: Despacho); /fulfillment and /fulfillment/* join the ADR-7 PIN gate; our own copy of the SalesHelper order-form node (the v0.7.3 build, 651831 bytes, with its 2026-08-11 menu.json) is vendored verbatim at app/public/saleshelper/ and served worker-first (Workers assets, run_worker_first, html_handling none, no direct asset paths) at /fulfillment/ with cache-control no-store; /fulfillment redirects to the trailing slash so the form's relative menu.json fetch resolves. The form's /api/send order push stays unrouted here; it falls back to its built-in CSV/JSON download plus mailto by design. **Vendored-pair law: those two files are never edited in place, only replaced by copy from the SalesHelper repo (its own canon governs their content).** Built by a Scribe-directed code agent in the cloud sitting, Scribe-verified: tsc clean, 92 tests, dry-run deploys pass for grip and c10, dash audit zero on all authored files. Deploy pending on Dennis's machine | 0.7.1 |
 | 2026-08-31 | Fulfillment slice deployed by the local Scribe on Dennis's word ("deploy"): local gate green first (tsc clean, 92 tests, smoke pass, migrations 0001-0008 clean on fresh persist), no new remote migrations, both saleshelper assets uploaded, ASSETS binding live, **worker version dcb4791c-a27a-4511-8c5e-def27e100b29**. Access wall verified fronting /fulfillment/ from an unauthenticated browser. The cloud sitting's slice was again uncommitted; committed as-deployed with this fold. Dennis's authenticated visual check owed: Fulfillment tile, PIN gate, order form loads with menu and data-age badge | 0.7.2 |
+| 2026-08-31 | **Void return law (owner bug report: voiding a wet weight from Admin returned to the homepage):** a void returns to the page it started from (the referring page rides the form as a hidden back path, on-site paths only), falling back to Data Queues, never the homepage. Built and deployed by the local Scribe: tsc clean, 94 tests, smoke asserts the round trip; worker version 76e714ec-fb63-4ba2-8760-add03d440dac | 0.7.3 |
 
 ## 9. Open items / parking lot
 
@@ -214,3 +215,4 @@ The working method per box:
 | 0.7.0 | 2026-08-31 | ADR-7 auth surface: identity = the Access login email (auto-created people rows, injected actor, Lead stays a picker on the lot) and the 21319 PIN gate on Admin and Interco (PIN in app_config). Migration 0008; slice 4 deployed as worker a2416f32; Dennis owns the production visual check. |
 | 0.7.1 | 2026-08-31 | Fulfillment surface: home tile behind the ADR-7 PIN gate, landing on our own vendored copy of the SalesHelper node served worker-first at /fulfillment/ (Workers assets, no-store). 92 tests, dry-runs green; deploy pending. |
 | 0.7.2 | 2026-08-31 | Fulfillment slice deployed (worker dcb4791c, assets uploaded, Access wall verified on /fulfillment/); cloud slice committed as-deployed. Dennis's authenticated visual check owed. |
+| 0.7.3 | 2026-08-31 | Void return law: voids return to their source page with Data Queues as fallback. Deployed as worker 76e714ec. |

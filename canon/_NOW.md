@@ -5,7 +5,7 @@
 
 ## One-line status
 
-Canon v0.7.2. Live at https://gripfactory-lite-grip.gflite.workers.dev, worker version dcb4791c-a27a-4511-8c5e-def27e100b29, migrations 0001-0008 remote. Access enforcing; identity = login email (ADR-7); PIN 21319 gates Admin, Interco, and the new Fulfillment surface (vendored SalesHelper form at /fulfillment/). Go-live is tomorrow, 2026-09-01.
+Canon v0.7.3. Live at https://gripfactory-lite-grip.gflite.workers.dev, worker version 76e714ec-fb63-4ba2-8760-add03d440dac, migrations 0001-0008 remote. Access enforcing; identity = login email (ADR-7); PIN 21319 gates Admin, Interco, and the new Fulfillment surface (vendored SalesHelper form at /fulfillment/). Go-live is tomorrow, 2026-09-01.
 
 ## Open box: go-live hardening
 

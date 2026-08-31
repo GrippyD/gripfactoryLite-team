@@ -164,10 +164,12 @@ function editInput(
   return `<label class="field">${esc(field.label)}<input type="${field.input}" name="${esc(field.name)}" value="${esc(current ?? "")}"${extra}></label>`;
 }
 
-export function voidPage(table: string, id: string): string {
+export function voidPage(table: string, id: string, back = ""): string {
+  // back = the referring page's path; the void returns there (owner ruling 2026-08-31).
   return `<h1>Void record</h1>
     <p>Soft-delete this ${esc(table)} row. It stays in the database with deleted_at set.</p>
     <form class="stack" method="post" action="/record/${esc(table)}/${esc(id)}/void">
+      <input type="hidden" name="back" value="${esc(back)}">
       <label class="field">Reason <input type="text" name="reason" required></label>
       <button type="submit" class="danger">Void</button>
     </form>`;

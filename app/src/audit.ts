@@ -31,6 +31,14 @@ export function requireText(raw: unknown, label: string): string {
   return s;
 }
 
+/** Where a void returns (owner ruling 2026-08-31): back to the page it started
+ * from, on-site paths only; the Data Queues screen is the fallback. */
+export function backRedirect(raw: unknown, fallback = "/admin/queues"): string {
+  const s = textOrNull(raw);
+  const back = s && s.startsWith("/") && !s.startsWith("//") ? s : fallback;
+  return back + (back.includes("?") ? "&" : "?") + "ok=voided";
+}
+
 export function parseGrams(raw: unknown, label: string): number {
   const s = textOrNull(raw);
   if (s == null) throw new HttpError(400, `${label} is required.`);

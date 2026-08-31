@@ -10,7 +10,7 @@ import {
   SYSTEM_REASON,
   type TransitionName,
 } from "./config";
-import { HttpError, nowIso, parseGrams, requireReason, requireText, textOrNull } from "./audit";
+import { backRedirect, HttpError, nowIso, parseGrams, requireReason, requireText, textOrNull } from "./audit";
 import { assertHbnAvailable, harvestYearFromEntryDate, HbnCollisionError, mintHbn, nextLotSerial } from "./mint";
 import {
   assertTable,
@@ -719,7 +719,9 @@ export async function voidRecord(
     stmts.push(lotTotalRecomputeStmt(db, String(existing.wet_weight_entry_id), actor.id, ts));
   }
   await db.batch(stmts);
-  return { redirect: `/?ok=voided` };
+  // Owner ruling 2026-08-31: a void returns to the page it started from,
+  // falling back to Data Queues, never the homepage.
+  return { redirect: backRedirect(form.get("back")) };
 }
 
 export async function addPerson(db: D1Database, form: FormData): Promise<ActionOk> {
