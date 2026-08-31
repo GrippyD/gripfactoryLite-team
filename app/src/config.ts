@@ -51,7 +51,17 @@ export const SYSTEM_REASON = {
   cryo_weight: "cryo weight entry",
   release: "release",
   finish_lot: "finish lot",
+  first_login: "first login",
 } as const;
+
+/** Owner ruling 2026-08-31: Admin and Interco Logistics sit behind a PIN.
+ * The PIN itself is data in app_config (canon L-4), seeded by migration 0008. */
+export const CONFIG_KEYS = {
+  admin_pin: "admin_pin",
+} as const;
+
+/** How long one PIN unlock holds on a device: one long floor shift. */
+export const PIN_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 12;
 
 /** Mint format: YYDDD-farm-grow_code-strain_code-manicure-silo-YY### */
 export const HBN_MINT_FORMAT =

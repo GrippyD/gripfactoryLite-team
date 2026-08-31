@@ -358,7 +358,7 @@ describe("lot weights page (owner ruling 2026-08-28)", () => {
   ];
 
   it("renders the header, read-only lot text, weight controls, and the total outside the pane", () => {
-    const html = lotPage(stationByKey("wet_weight")!, lot, weights, "p1", "Arlington", 1234.56);
+    const html = lotPage(stationByKey("wet_weight")!, lot, weights, "Arlington", 1234.56);
     expect(html).toContain("26240-ARL-GH-027-0-NA-26001 - Arlington</h2>");
     expect(html).toContain("Move To");
     expect(html).toContain("Silo 1");
@@ -376,7 +376,7 @@ describe("lot weights page (owner ruling 2026-08-28)", () => {
   });
 
   it("says no weights yet on an empty lot", () => {
-    const html = lotPage(stationByKey("wet_weight")!, lot, [], "p1", "Arlington", 0);
+    const html = lotPage(stationByKey("wet_weight")!, lot, [], "Arlington", 0);
     expect(html).toContain("No weights yet.");
     expect(html).toContain("Total: <strong>0.00</strong> g");
   });

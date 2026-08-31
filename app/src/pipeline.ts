@@ -124,6 +124,8 @@ export const EDITABLE_FIELDS: Record<string, EditFieldDef[]> = {
   ],
   people: [
     { name: "display_name", label: "Name", input: "text" },
+    // The login identity (owner ruling 2026-08-31); editable to attach or fix an email.
+    { name: "email", label: "Email", input: "text" },
     { name: "is_active", label: "Active?", input: "checkbox" },
   ],
   farms: [{ name: "display_name", label: "Display name", input: "text" }],

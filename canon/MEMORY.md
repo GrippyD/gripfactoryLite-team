@@ -2,13 +2,14 @@
 
 **Project:** Gripfactory Lite (working title), repo folder "gripfactory Practical"
 **Owner:** Dennis (OCG Companies / Grip Cannabis)
-**Last session:** 2026-08-31 (local Claude Code Scribe sitting): pending stack deployed (worker 92a0a590) and the wet weight rebuild live-verified end to end; Cloudflare Access stood up and enforcing; Penn North confirmed; pointers refolded at canon 0.6.0; wipe armed on "wipe it".
+**Last session:** 2026-08-31 (local Claude Code Scribe sitting): wet weight rebuild deployed and live-verified; Cloudflare Access stood up; Penn North confirmed; identity law (login email = actor) and PIN gate (21319 on Admin/Interco) ruled, built as slice 4, deployed (worker a2416f32, migration 0008); baton cleanup commit; wipe armed on "wipe it".
 
 ## Pinned state
 
-- **Canon version: 0.6.0** (folded 2026-08-31: deploy + live verification + Access live + Penn North confirmed + pointer refresh)
+- **Canon version: 0.7.0** (folded 2026-08-31: ADR-7 auth surface on top of the 0.6.0 deploy + Access + Penn North folds)
 - Hosting facts: Dennis's personal Cloudflare account (wallacedennis1985@gmail.com), workers.dev subdomain **gflite**, worker name gripfactory-lite-grip, D1 gripfactory-lite-grip id 2a70ba1f-3cc0-4eea-b9dd-54c42afd1789 (**this id dies at the wipe; re-pin after**). No API tokens on the account.
 - **Access facts:** Zero Trust org **gflite** (free plan), Worker Access on gripfactory-lite-grip, scope All traffic, policy Allow emails ending @gripcannabis.com, One-time PIN, 24 hour sessions. Login page shows auto-generated label aged-snowflake-24fc (rename parked). Unauthenticated verification browsers stop at the wall: post-Access live checks = wrangler remote D1 queries + Dennis's authenticated browser.
+- **ADR-7 auth surface (2026-08-31):** actor = Access login email via Cf-Access-Authenticated-User-Email, people auto-create on first login (unique email, migration 0008), actor injected server-side, Lead stays a picker (lead_person_id on the lot), dev/smoke act as dev@local. PIN 21319 gates /admin* and /interco, stored in app_config, 12 h cookie. Parked: JWT/AUD verification, PIN editable in Admin.
 - **Deploy lanes:** the LOCAL Scribe sitting (Dennis's machine) runs wrangler itself: from `app/`, `npx wrangler d1 migrations apply gripfactory-lite-grip --env grip --remote` then `npm run deploy:grip`, read back version id + URL. The CLOUD Scribe shells stay proxy-blocked from api.cloudflare.com (their lanes: Chrome dashboard + Dennis's terminal). Never deploy c10 without Dennis's say-so.
 - **Go-live: 2026-09-01** (Grip harvest). C10 Compliance Console hard need: 2026-09-09.
 - Repo: `Documents\Claude\Projects\gripfactory Practical` (ratified home). Local git, commits only, no remotes (G-1).
@@ -16,6 +17,7 @@
 
 ## Open threads
 
+- Dennis's production visual check of slice 4 (chrome email, PIN gate, Lead picker, auto-created person row)
 - Wipe on the words, then re-pin the new D1 id here and in _NOW
 - 26H workbook Abbr one-cell edit (Blue Andeez 071 → 078): Dennis, tonight
 - After go-live hardening: B05/B10 deepening talk-through, then B03/B04 in map order (`canon/PROCESS_MAP.md`)

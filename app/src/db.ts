@@ -269,7 +269,7 @@ export async function getLot(db: D1Database, id: string): Promise<LotRow | null>
        FROM wet_weight_entries w
        LEFT JOIN harvest_batches b ON b.id = w.harvest_batch_id
        LEFT JOIN dry_spaces d ON d.id = w.dry_space_id
-       LEFT JOIN people p ON p.id = w.created_by
+       LEFT JOIN people p ON p.id = COALESCE(w.lead_person_id, w.created_by)
        WHERE w.id = ? AND w.deleted_at IS NULL`
     )
     .bind(id)
@@ -317,6 +317,15 @@ export function lotTotalRecomputeStmt(
        WHERE id = ? AND deleted_at IS NULL`
     )
     .bind(lotId, ts, actorId, lotId);
+}
+
+/** app_config values (canon L-4: values live in data). NULL when the key is absent. */
+export async function getConfigValue(db: D1Database, key: string): Promise<string | null> {
+  const row = await db
+    .prepare(`SELECT value FROM app_config WHERE key = ? AND deleted_at IS NULL`)
+    .bind(key)
+    .first<{ value: string }>();
+  return row?.value ?? null;
 }
 
 export async function getHarvestByHbn(
@@ -399,7 +408,7 @@ export async function listAdminRows(
   if (table === "people") {
     const result = await db
       .prepare(
-        `SELECT id, display_name, is_active, created_at FROM people WHERE deleted_at IS NULL ORDER BY display_name`
+        `SELECT id, display_name, email, is_active, created_at FROM people WHERE deleted_at IS NULL ORDER BY display_name`
       )
       .all<Record<string, unknown>>();
     return result.results ?? [];

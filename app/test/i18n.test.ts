@@ -36,8 +36,7 @@ describe("locale pill and app bar (owner ruling 2026-08-28)", () => {
   const base = {
     title: "Home",
     theme: "grip",
-    people: [] as PersonRow[],
-    personId: "",
+    personEmail: "pat@gripcannabis.com",
     body: "<p>x</p>",
   };
 
@@ -48,7 +47,9 @@ describe("locale pill and app bar (owner ruling 2026-08-28)", () => {
     expect(html).toContain('action="/locale"');
     expect(html).toContain('value="es" class="locale-opt active"');
     expect(html).toContain('value="en" class="locale-opt"');
-    expect(html).toContain("Recordar");
+    // Owner ruling 2026-08-31: the chrome shows the login email, no person form.
+    expect(html).toContain("pat@gripcannabis.com");
+    expect(html).not.toContain('action="/person"');
   });
 
   it("renders Home and the pill with EN active in en", () => {

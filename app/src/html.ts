@@ -17,8 +17,8 @@ export type Flash = { kind: "ok" | "err"; text: string };
 export function layout(opts: {
   title: string;
   theme: string;
-  people: PersonRow[];
-  personId: string;
+  /** The Cloudflare Access login email shown in the chrome (owner ruling 2026-08-31). */
+  personEmail: string;
   flash?: Flash;
   minted?: string;
   body: string;
@@ -26,13 +26,6 @@ export function layout(opts: {
 }): string {
   const theme = opts.theme === "c10" ? "c10" : "grip";
   const locale = opts.locale ?? "en";
-  const personOptions = [
-    `<option value="">Select person</option>`,
-    ...opts.people.map(
-      (p) =>
-        `<option value="${esc(p.id)}"${p.id === opts.personId ? " selected" : ""}>${esc(p.display_name)}</option>`
-    ),
-  ].join("");
   const flash = opts.flash
     ? `<div class="banner ${opts.flash.kind}">${esc(opts.flash.text)}</div>`
     : "";
@@ -67,11 +60,7 @@ export function layout(opts: {
       <a href="/admin">${esc(t(locale, "Admin"))}</a>
       <a href="/log">${esc(t(locale, "Log"))}</a>
     </nav>
-    <form class="person-form" method="post" action="/person">
-      <label class="muted" for="gf_person">${esc(t(locale, "Person"))}</label>
-      <select id="gf_person" name="person_id" required>${personOptions}</select>
-      <button type="submit" class="secondary">${esc(t(locale, "Remember"))}</button>
-    </form>
+    <div class="person-form muted" data-login-email>${esc(opts.personEmail)}</div>
     ${localePill}
   </header>
   <main>
@@ -83,11 +72,14 @@ export function layout(opts: {
 </html>`;
 }
 
+/** A people picker. After the 2026-08-31 identity ruling the only caller is the
+ * wet weight Lead field (name lead_person_id); audit actors come from the login. */
 export function personSelect(
   people: PersonRow[],
   personId: string,
   required = true,
-  label = "Person"
+  label = "Person",
+  name = "person_id"
 ): string {
   const opts = [
     `<option value="">Select person</option>`,
@@ -97,7 +89,7 @@ export function personSelect(
     ),
   ].join("");
   return `<label class="field">${esc(label)}
-    <select name="person_id"${required ? " required" : ""}>${opts}</select>
+    <select name="${esc(name)}"${required ? " required" : ""}>${opts}</select>
   </label>`;
 }
 
@@ -275,8 +267,14 @@ function stationForm(
   fields: string,
   locale: Locale
 ): string {
+  // Owner ruling 2026-08-31: the actor is the login email, so stations carry no
+  // Person picker. A station with personLabel (wet weight's Lead) keeps a picker
+  // that stores on the record as lead_person_id, preselected to the login person.
+  const lead = station.personLabel
+    ? personSelect(people, personId, true, t(locale, station.personLabel), "lead_person_id")
+    : "";
   return `<form class="stack" method="post" action="/station/${esc(station.key)}">
-      ${personSelect(people, personId, true, t(locale, station.personLabel ?? "Person"))}
+      ${lead}
       ${fields}
       <button type="submit">${esc(t(locale, station.submitLabel ?? "Save"))}</button>
     </form>`;
@@ -397,7 +395,6 @@ export function stationPage(
   // forms cannot nest.
   const addTruckForm = isLedger
     ? `<form id="${ADD_TRUCK_FORM_ID}" method="post" action="/station/${esc(station.key)}/add_truck">
-        <input type="hidden" name="person_id" value="${esc(personId)}">
         <input type="hidden" name="pick" value="${esc(picked.id)}">
       </form>`
     : "";
@@ -425,7 +422,6 @@ export function lotPage(
     lead_name: string | null;
   },
   weights: Array<{ id: string; weight_grams: number; created_at: string }>,
-  personId: string,
   farmName: string,
   total: number,
   locale: Locale = "en"
@@ -457,12 +453,10 @@ export function lotPage(
       <h3>${esc(t(locale, "Weights"))}</h3>
       <div class="weights-controls">
         <form method="post" action="/station/${esc(station.key)}/lot/${esc(lot.id)}/weights" class="row-actions">
-          <input type="hidden" name="person_id" value="${esc(personId)}">
           <input type="number" name="weight_grams" step="0.01" min="0" placeholder="grams" required autofocus>
           <button type="submit">${esc(t(locale, "Add a weight"))}</button>
         </form>
         <form method="post" action="/station/${esc(station.key)}/lot/${esc(lot.id)}/finish" class="row-actions">
-          <input type="hidden" name="person_id" value="${esc(personId)}">
           <button type="submit" class="secondary">${esc(t(locale, "Finish lot"))}</button>
         </form>
       </div>
@@ -475,13 +469,11 @@ function controlForm(
   queue: QueueDef,
   control: QueueControlDef,
   rowId: string,
-  personId: string,
   locale: Locale
 ): string {
   if (control.key === "release") {
     const outcomes = TEST_OUTCOMES.map((o) => `<option value="${o}">${o}</option>`).join("");
     return `<form method="post" action="/queue/${esc(queue.key)}/control" class="row-actions">
-      <input type="hidden" name="person_id" value="${esc(personId)}">
       <input type="hidden" name="id" value="${esc(rowId)}">
       <input type="hidden" name="control" value="release">
       <select name="outcome" required>${outcomes}</select>
@@ -490,7 +482,6 @@ function controlForm(
     </form>`;
   }
   return `<form method="post" action="/queue/${esc(queue.key)}/control">
-    <input type="hidden" name="person_id" value="${esc(personId)}">
     <input type="hidden" name="id" value="${esc(rowId)}">
     <input type="hidden" name="control" value="${esc(control.key)}">
     <button type="submit">${esc(t(locale, control.label))}</button>
@@ -500,7 +491,6 @@ function controlForm(
 export function queueSection(
   queue: QueueDef,
   rows: QueueRow[],
-  personId: string,
   locale: Locale = "en"
 ): string {
   const heading = `<h2 data-pipeline-key="${esc(queue.key)}" data-count="${rows.length}">${esc(t(locale, queue.title))} <span class="tile-count">${rows.length}</span></h2>`;
@@ -519,7 +509,7 @@ export function queueSection(
             .map((c) => `<td>${esc(row.values[c.field] ?? "")}</td>`)
             .join("");
           const controls = [
-            ...queue.rowControls.map((ctl) => controlForm(queue, ctl, row.id, personId, locale)),
+            ...queue.rowControls.map((ctl) => controlForm(queue, ctl, row.id, locale)),
             `<a class="btn secondary" href="/record/${esc(queue.entity)}/${esc(row.id)}/edit">${esc(t(locale, "Edit"))}</a>`,
             `<a class="btn secondary" href="/record/${esc(queue.entity)}/${esc(row.id)}/void">${esc(t(locale, "Void"))}</a>`,
           ].join(" ");
@@ -534,11 +524,25 @@ export function queueSection(
 
 export function dataQueuesPage(
   sections: Array<{ queue: QueueDef; rows: QueueRow[] }>,
-  personId: string,
   locale: Locale = "en"
 ): string {
-  const body = sections.map((s) => queueSection(s.queue, s.rows, personId, locale)).join("\n");
+  const body = sections.map((s) => queueSection(s.queue, s.rows, locale)).join("\n");
   return `<h1>Data Queues</h1>${body}`;
+}
+
+/** The PIN gate page (owner ruling 2026-08-31): Admin and Interco Logistics open
+ * only after the PIN; one unlock holds on the device for a shift via cookie. */
+export function pinPage(next: string, locale: Locale = "en", wrong = false): string {
+  const error = wrong ? `<div class="banner err">${esc(t(locale, "Wrong PIN."))}</div>` : "";
+  return `<h1>${esc(t(locale, "Enter PIN"))}</h1>
+    ${error}
+    <form class="stack" method="post" action="/pin">
+      <input type="hidden" name="next" value="${esc(next)}">
+      <label class="field">${esc(t(locale, "PIN"))}
+        <input type="password" name="pin" inputmode="numeric" autocomplete="off" required autofocus>
+      </label>
+      <button type="submit">${esc(t(locale, "Unlock"))}</button>
+    </form>`;
 }
 
 function groupRows(rows: QueueRow[], groupBy?: string): Array<[string, QueueRow[]]> {

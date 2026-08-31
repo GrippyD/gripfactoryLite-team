@@ -9,7 +9,12 @@ const persist = join(appRoot, persistRel);
 const port = Number(process.env.SMOKE_PORT || 8788);
 const base = `http://127.0.0.1:${port}`;
 
-let cookie = "";
+// The whole suite acts as this Access login (owner ruling 2026-08-31); the
+// identity middleware auto-creates the person row on the first request.
+const SMOKE_EMAIL = "smoke@gripcannabis.com";
+const ADMIN_PIN = "21319";
+
+const jar = new Map();
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -17,10 +22,19 @@ function assert(cond, msg) {
 
 async function req(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
-  if (cookie) headers.cookie = cookie;
+  if (!("Cf-Access-Authenticated-User-Email" in headers) && !opts.noIdentity) {
+    headers["Cf-Access-Authenticated-User-Email"] = SMOKE_EMAIL;
+  }
+  if (jar.size > 0) {
+    headers.cookie = [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
   const res = await fetch(base + path, { redirect: "manual", ...opts, headers });
   const setCookie = res.headers.get("set-cookie");
-  if (setCookie) cookie = setCookie.split(";")[0];
+  if (setCookie) {
+    const [pair] = setCookie.split(";");
+    const eq = pair.indexOf("=");
+    if (eq > 0) jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1));
+  }
   return res;
 }
 
@@ -194,6 +208,13 @@ async function run() {
     assert(!/data-count=/.test(home.body), "home must carry no queue tiles");
     assert(/data-pipeline-key="admin"/.test(home.body), "home must carry the Admin tile");
 
+    // Identity chrome (owner ruling 2026-08-31): the login email replaces the Person picker.
+    assert(home.body.includes(SMOKE_EMAIL), "chrome must show the login email");
+    assert(!home.body.includes('id="gf_person"'), "chrome must carry no person picker");
+    assert(!home.body.includes('action="/person"'), "chrome must carry no person form");
+    const devHome = await text("/", { noIdentity: true });
+    assert(devHome.body.includes("dev@local"), "headerless request must act as dev@local");
+
     assert(
       home.body.includes('name="locale" value="en"') && home.body.includes(">EN</button>"),
       "home missing the EN side of the locale pill"
@@ -212,6 +233,25 @@ async function run() {
     if (toEn.status !== 303) fail("POST /locale en", `status ${toEn.status}`);
     const enHome = await text("/");
     assert(enHome.body.includes('href="/">Home</a>'), "en home missing Home after the restore");
+
+    // PIN gate (owner ruling 2026-08-31): Admin and Interco refuse without the PIN.
+    const gatedInterco = await text("/interco");
+    assert(gatedInterco.res.status === 401, `gated interco expected 401 got ${gatedInterco.res.status}`);
+    assert(gatedInterco.body.includes("Enter PIN"), "gated interco missing the PIN prompt");
+    const gatedAdmin = await text("/admin/queues");
+    assert(gatedAdmin.res.status === 401, `gated admin expected 401 got ${gatedAdmin.res.status}`);
+    const wrongPin = await text("/pin", { method: "POST", body: form({ pin: "00000", next: "/admin" }) });
+    assert(wrongPin.res.status === 401, `wrong PIN expected 401 got ${wrongPin.res.status}`);
+    assert(wrongPin.body.includes("Wrong PIN."), "wrong PIN must say so");
+    const evilNext = await req("/pin", {
+      method: "POST",
+      body: form({ pin: ADMIN_PIN, next: "//evil.example" }),
+    });
+    assert(evilNext.status === 303, `PIN unlock expected 303 got ${evilNext.status}`);
+    assert(
+      (evilNext.headers.get("location") || "").endsWith("/admin"),
+      "an off-site next must fall back to /admin"
+    );
 
     const interco = await text("/interco");
     if (interco.res.status !== 200) fail("GET /interco", `status ${interco.res.status}`);
@@ -242,14 +282,18 @@ async function run() {
     const loc = addPerson.headers.get("location") || "";
     const personId = new URL(loc, base).searchParams.get("person_id");
     if (!personId) fail("add person", "no person_id on redirect");
-    await req("/person", { method: "POST", body: form({ person_id: personId }) });
+
+    // The auto-created login person shows on Lookups with its email.
+    const lookupsAfterAdd = await text("/admin/lookups");
+    assert(lookupsAfterAdd.body.includes(SMOKE_EMAIL), "Lookups people missing the auto-created login person");
+    assert(lookupsAfterAdd.body.includes("Smoke Tester"), "Lookups people missing the added person");
 
     const acquireGet = await text("/station/acquire_hbn");
+    assert(!acquireGet.body.includes('name="person_id"'), "acquire form must carry no Person picker");
     const strainId = optionValue(acquireGet.body, "Fruity Pebbles");
     const create = await req("/station/acquire_hbn", {
       method: "POST",
       body: form({
-        person_id: personId,
         entry_date: "2026-09-01",
         farm_code: "ARL",
         grow_method_code: "GH",
@@ -268,7 +312,6 @@ async function run() {
     const second = await req("/station/acquire_hbn", {
       method: "POST",
       body: form({
-        person_id: personId,
         entry_date: "2026-09-01",
         farm_code: "ARL",
         grow_method_code: "GH",
@@ -298,6 +341,10 @@ async function run() {
       `picked page missing header ${pickedHbn} - Arlington`
     );
     assert(pickedPage.body.includes("Lead"), "picked page missing the Lead label");
+    assert(
+      pickedPage.body.includes('name="lead_person_id"'),
+      "picked page must carry the Lead picker as lead_person_id"
+    );
     assert(pickedPage.body.includes("Start lot"), "picked page missing the Start lot button");
     assert(!pickedPage.body.includes('name="weight_grams"'), "picked header must carry no bucked weight input");
     assert(!pickedPage.body.includes('name="wet_spear_weight_grams"'), "picked header must carry no spear input");
@@ -312,7 +359,7 @@ async function run() {
     const startLot = await req("/station/wet_weight", {
       method: "POST",
       body: form({
-        person_id: personId,
+        lead_person_id: personId,
         harvest_batch_id: batchId,
         dry_space_id: drySpaceId,
         notes: "smoke lot",
@@ -326,12 +373,13 @@ async function run() {
     assert(lotView.body.includes("Weights"), "lot page missing the Weights pane");
     assert(lotView.body.includes(`${pickedHbn} - Arlington`), "lot page missing the HBN header");
     assert(lotView.body.includes("smoke lot"), "lot page missing the note");
+    assert(lotView.body.includes("Smoke Tester"), "lot page must show the picked Lead");
     assert(lotView.body.includes("Finish lot"), "lot page missing the Finish lot button");
 
     for (const grams of ["1000.06", "234.50"]) {
       const addWeight = await req(`/station/wet_weight/lot/${wetLotId}/weights`, {
         method: "POST",
-        body: form({ person_id: personId, weight_grams: grams }),
+        body: form({ weight_grams: grams }),
       });
       if (addWeight.status !== 303) fail(`add weight ${grams}`, `status ${addWeight.status}`);
     }
@@ -340,7 +388,7 @@ async function run() {
 
     const finish = await req(`/station/wet_weight/lot/${wetLotId}/finish`, {
       method: "POST",
-      body: form({ person_id: personId }),
+      body: form({}),
     });
     if (finish.status !== 303) fail("finish lot", `status ${finish.status}`);
 
@@ -370,7 +418,6 @@ async function run() {
     const trim = await req("/station/trim_packages", {
       method: "POST",
       body: form({
-        person_id: personId,
         wet_weight_entry_id: lotId,
         package_code: ["BUD-SMOKE-1", "TRIM-SMOKE-1"],
         package_type_code: ["BUD", "TRIM"],
@@ -389,7 +436,6 @@ async function run() {
     const cryo = await req("/station/cryo_weight", {
       method: "POST",
       body: form({
-        person_id: personId,
         package_id: pkgId,
         cryo_weight_grams: "88.25",
       }),
@@ -405,7 +451,6 @@ async function run() {
     const release = await req("/queue/testing_queue/control", {
       method: "POST",
       body: form({
-        person_id: personId,
         id: testId,
         control: "release",
         outcome: "passed",
@@ -420,7 +465,6 @@ async function run() {
     const editOk = await req(`/record/wip_packages/${testId}/edit`, {
       method: "POST",
       body: form({
-        person_id: personId,
         package_code: "BUD-SMOKE-1",
         package_type_code: "BUD",
         weight_grams: "101.00",
@@ -439,7 +483,6 @@ async function run() {
     const editBad = await req(`/record/wip_packages/${testId}/edit`, {
       method: "POST",
       body: form({
-        person_id: personId,
         package_code: "BUD-SMOKE-1",
         package_type_code: "BUD",
         weight_grams: "102.00",

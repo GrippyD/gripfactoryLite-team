@@ -177,6 +177,9 @@ export async function createHarvestBatch(db: D1Database, form: FormData): Promis
  * weighing with a zero total; weights then collect on the lot page. */
 export async function createWetWeight(db: D1Database, form: FormData): Promise<ActionOk> {
   const actor = await requireActor(db, personIdFrom(form));
+  // Owner ruling 2026-08-31: the Lead stays a picker and stores on the lot;
+  // the actor (audit) is the login person.
+  const lead = await requireActor(db, textOrNull(form.get("lead_person_id")));
   const harvestBatchId = requireText(form.get("harvest_batch_id"), "HBN");
   const drySpaceId = requireText(form.get("dry_space_id"), "Move To");
   const notes = textOrNull(form.get("notes"));
@@ -203,6 +206,7 @@ export async function createWetWeight(db: D1Database, form: FormData): Promise<A
     harvest_batch_id: harvestBatchId,
     weight_grams: 0,
     dry_space_id: drySpaceId,
+    lead_person_id: lead.id,
     notes,
     status: LOT_STATUS.weighing,
     created_at: ts,
@@ -214,11 +218,11 @@ export async function createWetWeight(db: D1Database, form: FormData): Promise<A
     db
       .prepare(
         `INSERT INTO wet_weight_entries (
-          id, harvest_batch_id, weight_grams, wet_spear_weight_grams, dry_space_id, truck_number, notes, status,
+          id, harvest_batch_id, weight_grams, wet_spear_weight_grams, dry_space_id, truck_number, lead_person_id, notes, status,
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-        ) VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+        ) VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
       )
-      .bind(id, harvestBatchId, 0, drySpaceId, notes, LOT_STATUS.weighing, ts, actor.id, ts, actor.id),
+      .bind(id, harvestBatchId, 0, drySpaceId, lead.id, notes, LOT_STATUS.weighing, ts, actor.id, ts, actor.id),
     ...logsForInsert(db, "wet_weight_entries", id, record, actor.id, SYSTEM_REASON.create, ts),
   ]);
   return { redirect: `/station/wet_weight?lot=${encodeURIComponent(id)}` };
@@ -720,6 +724,8 @@ export async function voidRecord(
 
 export async function addPerson(db: D1Database, form: FormData): Promise<ActionOk> {
   const name = requireText(form.get("display_name"), "Name");
+  // Optional pre-attached login email (owner ruling 2026-08-31); first login also self-creates.
+  const email = textOrNull(form.get("email"))?.toLowerCase() ?? null;
   const ts = nowIso();
   const id = crypto.randomUUID();
   const actorId = textOrNull(form.get("person_id"));
@@ -729,20 +735,21 @@ export async function addPerson(db: D1Database, form: FormData): Promise<ActionO
     db
       .prepare(
         `INSERT INTO people (
-          id, display_name, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-        ) VALUES (?, ?, 1, ?, ?, ?, ?, NULL, NULL)`
+          id, display_name, email, is_active, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, NULL, NULL)`
       )
-      .bind(id, name, ts, createdBy, ts, createdBy),
+      .bind(id, name, email, ts, createdBy, ts, createdBy),
     ...logsForInsert(
       db,
       "people",
       id,
-      { id, display_name: name, is_active: 1, created_at: ts, created_by: createdBy },
+      { id, display_name: name, email, is_active: 1, created_at: ts, created_by: createdBy },
       createdBy,
       SYSTEM_REASON.create,
       ts
     ),
   ]);
+  // The new row id rides the redirect for tooling (smoke reads it); no picker consumes it.
   return { redirect: `/admin/lookups?ok=person&person_id=${encodeURIComponent(id)}` };
 }
 

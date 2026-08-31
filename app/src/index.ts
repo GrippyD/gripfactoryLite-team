@@ -1,8 +1,21 @@
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { HttpError } from "./audit";
-import { LOT_STATUS, moveToKindsForFarm, sumGrams } from "./config";
+import { HttpError, textOrNull } from "./audit";
+import {
+  CONFIG_KEYS,
+  LOT_STATUS,
+  PIN_COOKIE_MAX_AGE_SECONDS,
+  moveToKindsForFarm,
+  sumGrams,
+} from "./config";
+import {
+  ACCESS_EMAIL_HEADER,
+  DEV_FALLBACK_EMAIL,
+  resolveIdentity,
+  safeNextPath,
+  type Identity,
+} from "./identity";
 import {
   addDrySpace,
   addLotWeight,
@@ -19,6 +32,7 @@ import {
 } from "./actions";
 import {
   farmDisplayName,
+  getConfigValue,
   getLot,
   listAdminRows,
   listChangeLog,
@@ -41,6 +55,7 @@ import {
   intercoPage,
   layout,
   lotPage,
+  pinPage,
   stationPage,
   type Flash,
   type StationLedgerCtx,
@@ -59,20 +74,58 @@ import {
 } from "./pipeline";
 import { queueRowsToCsv, toCsv } from "./csv";
 
-const app = new Hono<{ Bindings: Env }>();
+type AppEnv = { Bindings: Env; Variables: { actor: Identity } };
+const app = new Hono<AppEnv>();
 
-const PERSON_COOKIE = "gf_person";
 const LOCALE_COOKIE = "gf_locale";
-type AppContext = Context<{ Bindings: Env }>;
+const PIN_COOKIE = "gf_pin";
+type AppContext = Context<AppEnv>;
 
-function rememberPerson(c: AppContext, personId: string): void {
-  if (!personId) return;
-  setCookie(c, PERSON_COOKIE, personId, {
-    path: "/",
-    maxAge: 60 * 60 * 24 * 365,
-    sameSite: "Lax",
-  });
+// Owner ruling 2026-08-31: the actor is the Cloudflare Access login email.
+// Access fronts all production traffic; without the header (local dev, smoke)
+// requests act as the dev fallback identity.
+app.use("*", async (c, next) => {
+  const email = c.req.header(ACCESS_EMAIL_HEADER) ?? DEV_FALLBACK_EMAIL;
+  c.set("actor", await resolveIdentity(c.env.DB, email));
+  await next();
+});
+
+/** The injected actor for writes: never trusted from the form (owner ruling 2026-08-31). */
+function actorForm(c: AppContext, form: FormData): FormData {
+  form.set("person_id", c.get("actor").id);
+  return form;
 }
+
+// Owner ruling 2026-08-31: Admin and Interco Logistics sit behind a PIN. The PIN
+// lives in app_config; a correct entry holds on the device via cookie for a shift.
+async function pinGate(c: AppContext, next: () => Promise<void>) {
+  const pin = await getConfigValue(c.env.DB, CONFIG_KEYS.admin_pin);
+  if (!pin || getCookie(c, PIN_COOKIE) === pin) return next();
+  const s = await shell(c);
+  const url = new URL(c.req.url);
+  return html(c, s, "Enter PIN", pinPage(url.pathname + url.search, s.locale), 401);
+}
+app.use("/admin", pinGate);
+app.use("/admin/*", pinGate);
+app.use("/interco", pinGate);
+
+app.post("/pin", async (c) => {
+  const form = await c.req.formData();
+  const next = safeNextPath(textOrNull(form.get("next")));
+  const pin = await getConfigValue(c.env.DB, CONFIG_KEYS.admin_pin);
+  const entered = textOrNull(form.get("pin"));
+  if (!pin || entered !== pin) {
+    const s = await shell(c);
+    return html(c, s, "Enter PIN", pinPage(next, s.locale, true), 401);
+  }
+  setCookie(c, PIN_COOKIE, pin, {
+    path: "/",
+    maxAge: PIN_COOKIE_MAX_AGE_SECONDS,
+    sameSite: "Lax",
+    httpOnly: true,
+  });
+  return c.redirect(next, 303);
+});
 
 function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
   const minted = url.searchParams.get("minted");
@@ -86,13 +139,15 @@ function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
 
 async function shell(c: AppContext) {
   const people = await listPeople(c.env.DB, true);
-  const personId = getCookie(c, PERSON_COOKIE) ?? "";
+  // The actor is absent only when the identity middleware itself threw (onError path).
+  const actor = c.get("actor") as Identity | undefined;
   const locale = asLocale(getCookie(c, LOCALE_COOKIE));
   const url = new URL(c.req.url);
   return {
     theme: c.env.THEME === "c10" ? "c10" : "grip",
     people,
-    personId,
+    personId: actor?.id ?? "",
+    personEmail: actor?.email ?? "",
     locale,
     flash: flashFromQuery(url, locale),
     minted: url.searchParams.get("minted") ?? undefined,
@@ -109,8 +164,7 @@ function html(
   const page = layout({
     title,
     theme: s.theme,
-    people: s.people,
-    personId: s.personId,
+    personEmail: s.personEmail,
     flash: s.flash,
     minted: s.minted,
     body,
@@ -141,14 +195,7 @@ app.get("/admin/queues", async (c) => {
   for (const q of queues()) {
     sections.push({ queue: q, rows: await listQueueRows(c.env.DB, q) });
   }
-  return html(c, s, "Data Queues", dataQueuesPage(sections, s.personId, s.locale));
-});
-
-app.post("/person", async (c) => {
-  const form = await c.req.formData();
-  const personId = String(form.get("person_id") ?? "");
-  rememberPerson(c, personId);
-  return c.redirect("/", 303);
+  return html(c, s, "Data Queues", dataQueuesPage(sections, s.locale));
 });
 
 // Owner ruling 2026-08-28: the EN/ES pill posts here and returns to the same page.
@@ -188,7 +235,7 @@ app.get("/station/:key", async (c) => {
       c,
       s,
       station.title,
-      lotPage(station, lot, weights, s.personId, farmName, total, s.locale)
+      lotPage(station, lot, weights, farmName, total, s.locale)
     );
   }
   const lookups = await lookupsForStation(c.env.DB, station);
@@ -239,8 +286,7 @@ app.get("/station/:key", async (c) => {
 app.post("/station/:key/add_truck", async (c) => {
   const station = stationByKey(c.req.param("key"));
   if (!station || !station.ledger) return c.notFound();
-  const form = await c.req.formData();
-  rememberPerson(c, String(form.get("person_id") ?? ""));
+  const form = actorForm(c, await c.req.formData());
   const result = await addTruck(c.env.DB, station.key, form);
   return c.redirect(result.redirect, 303);
 });
@@ -248,8 +294,7 @@ app.post("/station/:key/add_truck", async (c) => {
 app.post("/station/:key/lot/:lotId/weights", async (c) => {
   const station = stationByKey(c.req.param("key"));
   if (!station || !station.ledger) return c.notFound();
-  const form = await c.req.formData();
-  rememberPerson(c, String(form.get("person_id") ?? ""));
+  const form = actorForm(c, await c.req.formData());
   const result = await addLotWeight(c.env.DB, station.key, c.req.param("lotId"), form);
   return c.redirect(result.redirect, 303);
 });
@@ -257,8 +302,7 @@ app.post("/station/:key/lot/:lotId/weights", async (c) => {
 app.post("/station/:key/lot/:lotId/finish", async (c) => {
   const station = stationByKey(c.req.param("key"));
   if (!station || !station.ledger) return c.notFound();
-  const form = await c.req.formData();
-  rememberPerson(c, String(form.get("person_id") ?? ""));
+  const form = actorForm(c, await c.req.formData());
   const result = await finishLot(c.env.DB, station.key, c.req.param("lotId"), form);
   return c.redirect(result.redirect, 303);
 });
@@ -268,8 +312,7 @@ app.post("/station/:key", async (c) => {
   if (!station) return c.notFound();
   const action = STATION_ACTIONS[station.transition.action];
   if (!action) throw new HttpError(500, "Station action is not wired.");
-  const form = await c.req.formData();
-  rememberPerson(c, String(form.get("person_id") ?? ""));
+  const form = actorForm(c, await c.req.formData());
   const result = await action(c.env.DB, form);
   return c.redirect(result.redirect, 303);
 });
@@ -283,8 +326,7 @@ app.get("/queue/:key", (c) => {
 app.post("/queue/:key/control", async (c) => {
   const queue = queueByKey(c.req.param("key"));
   if (!queue) return c.notFound();
-  const form = await c.req.formData();
-  rememberPerson(c, String(form.get("person_id") ?? ""));
+  const form = actorForm(c, await c.req.formData());
   const control = String(form.get("control") ?? "");
   const allowed = new Set(queue.rowControls.map((r) => r.key as string));
   if (!allowed.has(control)) {
@@ -317,8 +359,6 @@ app.get("/export/:name", async (c) => {
 });
 
 app.get("/admin/lookups", async (c) => {
-  const qPerson = c.req.query("person_id");
-  if (qPerson) rememberPerson(c, qPerson);
   const s = await shell(c);
   const tables = {
     people: await listAdminRows(c.env.DB, "people"),
@@ -327,13 +367,12 @@ app.get("/admin/lookups", async (c) => {
     dry_spaces: await listAdminRows(c.env.DB, "dry_spaces"),
     package_types: await listAdminRows(c.env.DB, "package_types"),
   };
-  return html(c, s, "Lookups", adminPage(s.people, s.personId || qPerson || "", tables));
+  return html(c, s, "Lookups", adminPage(tables));
 });
 
 app.post("/admin/lookups/:table", async (c) => {
   const table = c.req.param("table");
-  const form = await c.req.formData();
-  rememberPerson(c, String(form.get("person_id") ?? ""));
+  const form = actorForm(c, await c.req.formData());
   const action = String(form.get("action") ?? "add");
   let result;
   if (table === "people" && action === "deactivate") result = await deactivatePerson(c.env.DB, form);
@@ -364,24 +403,22 @@ app.get("/record/:table/:id/edit", async (c) => {
     dry_spaces: await listLookup(c.env.DB, "dry_spaces"),
     package_types: await listLookup(c.env.DB, "package_types"),
   };
-  return html(c, s, "Edit", editPage(table, id, row, s.people, s.personId, lookups));
+  return html(c, s, "Edit", editPage(table, id, row, lookups));
 });
 
 app.post("/record/:table/:id/edit", async (c) => {
-  const form = await c.req.formData();
-  rememberPerson(c, String(form.get("person_id") ?? ""));
+  const form = actorForm(c, await c.req.formData());
   const result = await editRecord(c.env.DB, c.req.param("table"), c.req.param("id"), form);
   return c.redirect(result.redirect, 303);
 });
 
 app.get("/record/:table/:id/void", async (c) => {
   const s = await shell(c);
-  return html(c, s, "Void", voidPage(c.req.param("table"), c.req.param("id"), s.people, s.personId));
+  return html(c, s, "Void", voidPage(c.req.param("table"), c.req.param("id")));
 });
 
 app.post("/record/:table/:id/void", async (c) => {
-  const form = await c.req.formData();
-  rememberPerson(c, String(form.get("person_id") ?? ""));
+  const form = actorForm(c, await c.req.formData());
   const result = await voidRecord(c.env.DB, c.req.param("table"), c.req.param("id"), form);
   return c.redirect(result.redirect, 303);
 });

@@ -73,6 +73,11 @@ export const DICT: Record<string, { en: string; es: string }> = {
   // Flashes
   "Saved.": { en: "Saved.", es: "Guardado." },
   "HBN minted.": { en: "HBN minted.", es: "HBN generado." },
+  // PIN gate (owner ruling 2026-08-31)
+  "Enter PIN": { en: "Enter PIN", es: "Ingrese el PIN" },
+  "PIN": { en: "PIN", es: "PIN" },
+  "Unlock": { en: "Unlock", es: "Desbloquear" },
+  "Wrong PIN.": { en: "Wrong PIN.", es: "PIN incorrecto." },
   // Interco Logistics stub (owner ruling 2026-08-28)
   "Orange barreled. Not built yet.": {
     en: "Orange barreled. Not built yet.",

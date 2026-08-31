@@ -1,19 +1,15 @@
 import { DRY_SPACE_KINDS } from "./config";
 import { EDITABLE_FIELDS, type EditFieldDef } from "./pipeline";
-import { esc, personSelect } from "./html";
-import type { LookupOption, PersonRow } from "./db";
+import { esc } from "./html";
+import type { LookupOption } from "./db";
 
-export function adminPage(
-  people: PersonRow[],
-  personId: string,
-  tables: {
-    people: Record<string, unknown>[];
-    farms: Record<string, unknown>[];
-    strains: Record<string, unknown>[];
-    dry_spaces: Record<string, unknown>[];
-    package_types: Record<string, unknown>[];
-  }
-): string {
+export function adminPage(tables: {
+  people: Record<string, unknown>[];
+  farms: Record<string, unknown>[];
+  strains: Record<string, unknown>[];
+  dry_spaces: Record<string, unknown>[];
+  package_types: Record<string, unknown>[];
+}): string {
   const kindOpts = DRY_SPACE_KINDS.map((k) => `<option value="${k}">${k}</option>`).join("");
   // Blank scopes the space to no farm, meaning shared (owner ruling 2026-08-28).
   const farmOpts = [
@@ -24,22 +20,22 @@ export function adminPage(
     <p class="muted">People are entered here and live only in this site's database. Never commit names.</p>
 
     <h2>People</h2>
-    ${adminTable("people", ["display_name", "is_active"], tables.people, true, personId)}
+    <p class="muted">A person row auto-creates on first login; the email is the login identity. Edit to attach or fix an email.</p>
+    ${adminTable("people", ["display_name", "email", "is_active"], tables.people, true)}
     <form class="stack" method="post" action="/admin/lookups/people">
-      ${personSelect(people, personId, false)}
       <input type="hidden" name="action" value="add">
       <label class="field">Name <input type="text" name="display_name" required></label>
+      <label class="field">Email <input type="text" name="email"></label>
       <button type="submit">Add person</button>
     </form>
 
     <h2>Farms</h2>
     <p class="muted">Display names render on the wet weight header after the HBN. Edit to confirm or change them.</p>
-    ${adminTable("farms", ["code", "display_name"], tables.farms, false, personId)}
+    ${adminTable("farms", ["code", "display_name"], tables.farms, false)}
 
     <h2>Strains</h2>
-    ${adminTable("strains", ["name", "abbr", "hbn_code"], tables.strains, false, personId)}
+    ${adminTable("strains", ["name", "abbr", "hbn_code"], tables.strains, false)}
     <form class="stack" method="post" action="/admin/lookups/strains">
-      ${personSelect(people, personId)}
       <input type="hidden" name="action" value="add">
       <label class="field">Name <input type="text" name="name" required></label>
       <label class="field">Abbr <input type="text" name="abbr"></label>
@@ -48,9 +44,8 @@ export function adminPage(
     </form>
 
     <h2>Dry spaces</h2>
-    ${adminTable("dry_spaces", ["name", "kind", "farm_code"], tables.dry_spaces, false, personId)}
+    ${adminTable("dry_spaces", ["name", "kind", "farm_code"], tables.dry_spaces, false)}
     <form class="stack" method="post" action="/admin/lookups/dry_spaces">
-      ${personSelect(people, personId)}
       <input type="hidden" name="action" value="add">
       <label class="field">Name <input type="text" name="name" required></label>
       <label class="field">Kind <select name="kind">${kindOpts}</select></label>
@@ -59,9 +54,8 @@ export function adminPage(
     </form>
 
     <h2>Package types</h2>
-    ${adminTable("package_types", ["code", "display_name", "is_bud"], tables.package_types, false, personId)}
+    ${adminTable("package_types", ["code", "display_name", "is_bud"], tables.package_types, false)}
     <form class="stack" method="post" action="/admin/lookups/package_types">
-      ${personSelect(people, personId)}
       <input type="hidden" name="action" value="add">
       <label class="field">Code <input type="text" name="code" required></label>
       <label class="field">Display name <input type="text" name="display_name" required></label>
@@ -74,8 +68,7 @@ function adminTable(
   table: string,
   columns: string[],
   rows: Record<string, unknown>[],
-  isPeople: boolean,
-  personId: string
+  isPeople: boolean
 ): string {
   if (rows.length === 0) return `<p class="muted">None yet.</p>`;
   const head = `<tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}<th>Controls</th></tr>`;
@@ -86,7 +79,6 @@ function adminTable(
       const deactivate = isPeople
         ? `<form method="post" action="/admin/lookups/people" class="row-actions">
              <input type="hidden" name="action" value="deactivate">
-             <input type="hidden" name="person_id" value="${esc(personId)}">
              <input type="hidden" name="id" value="${esc(id)}">
              <input type="text" name="reason" placeholder="reason" required>
              <button type="submit" class="danger">Deactivate</button>
@@ -129,8 +121,6 @@ export function editPage(
   table: string,
   id: string,
   row: Record<string, unknown>,
-  people: PersonRow[],
-  personId: string,
   lookups: Record<string, LookupOption[]>
 ): string {
   const fields = EDITABLE_FIELDS[table];
@@ -140,7 +130,6 @@ export function editPage(
   const inputs = fields.map((f) => editInput(f, row, lookups)).join("\n");
   return `<h1>Edit ${esc(table)}</h1>
     <form class="stack" method="post" action="/record/${esc(table)}/${esc(id)}/edit">
-      ${personSelect(people, personId)}
       ${inputs}
       <label class="field">Reason <input type="text" name="reason" required></label>
       <button type="submit">Save</button>
@@ -175,16 +164,10 @@ function editInput(
   return `<label class="field">${esc(field.label)}<input type="${field.input}" name="${esc(field.name)}" value="${esc(current ?? "")}"${extra}></label>`;
 }
 
-export function voidPage(
-  table: string,
-  id: string,
-  people: PersonRow[],
-  personId: string
-): string {
+export function voidPage(table: string, id: string): string {
   return `<h1>Void record</h1>
     <p>Soft-delete this ${esc(table)} row. It stays in the database with deleted_at set.</p>
     <form class="stack" method="post" action="/record/${esc(table)}/${esc(id)}/void">
-      ${personSelect(people, personId)}
       <label class="field">Reason <input type="text" name="reason" required></label>
       <button type="submit" class="danger">Void</button>
     </form>`;
