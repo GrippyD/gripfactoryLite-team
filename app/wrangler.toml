@@ -27,7 +27,7 @@ THEME = "grip"
 [[env.grip.d1_databases]]
 binding = "DB"
 database_name = "gripfactory-lite-grip"
-database_id = "TBD-grip-d1-id"
+database_id = "2a70ba1f-3cc0-4eea-b9dd-54c42afd1789"
 migrations_dir = "migrations"
 
 [env.c10]

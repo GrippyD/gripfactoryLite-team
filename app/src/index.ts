@@ -2,28 +2,50 @@ import { Hono, type Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { HttpError } from "./audit";
+import { LOT_STATUS, moveToKindsForFarm, sumGrams } from "./config";
 import {
   addDrySpace,
+  addLotWeight,
   addPackageType,
   addPerson,
   addStrain,
+  addTruck,
   deactivatePerson,
   editRecord,
+  finishLot,
   runQueueControl,
   STATION_ACTIONS,
   voidRecord,
 } from "./actions";
 import {
-  countQueue,
+  farmDisplayName,
+  getLot,
   listAdminRows,
   listChangeLog,
+  listDrySpacesByKinds,
   listLookup,
+  listLotsByStatus,
+  listLotWeights,
+  listPaneRows,
   listPeople,
   listQueueRows,
   listTable,
   getRow,
+  type QueueRow,
 } from "./db";
-import { errorBody, homePage, layout, queuePage, stationPage, type Flash } from "./html";
+import {
+  adminHomePage,
+  dataQueuesPage,
+  errorBody,
+  homePage,
+  intercoPage,
+  layout,
+  lotPage,
+  stationPage,
+  type Flash,
+  type StationLedgerCtx,
+} from "./html";
+import { asLocale, t, type Locale } from "./i18n";
 import { adminPage, editPage, logPage, voidPage } from "./pages";
 import {
   PIPELINE,
@@ -40,6 +62,7 @@ import { queueRowsToCsv, toCsv } from "./csv";
 const app = new Hono<{ Bindings: Env }>();
 
 const PERSON_COOKIE = "gf_person";
+const LOCALE_COOKIE = "gf_locale";
 type AppContext = Context<{ Bindings: Env }>;
 
 function rememberPerson(c: AppContext, personId: string): void {
@@ -51,11 +74,11 @@ function rememberPerson(c: AppContext, personId: string): void {
   });
 }
 
-function flashFromQuery(url: URL): Flash | undefined {
+function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
   const minted = url.searchParams.get("minted");
-  if (minted) return { kind: "ok", text: "HBN minted." };
+  if (minted) return { kind: "ok", text: t(locale, "HBN minted.") };
   const ok = url.searchParams.get("ok");
-  if (ok) return { kind: "ok", text: "Saved." };
+  if (ok) return { kind: "ok", text: t(locale, "Saved.") };
   const err = url.searchParams.get("err");
   if (err) return { kind: "err", text: err };
   return undefined;
@@ -64,12 +87,14 @@ function flashFromQuery(url: URL): Flash | undefined {
 async function shell(c: AppContext) {
   const people = await listPeople(c.env.DB, true);
   const personId = getCookie(c, PERSON_COOKIE) ?? "";
+  const locale = asLocale(getCookie(c, LOCALE_COOKIE));
   const url = new URL(c.req.url);
   return {
     theme: c.env.THEME === "c10" ? "c10" : "grip",
     people,
     personId,
-    flash: flashFromQuery(url),
+    locale,
+    flash: flashFromQuery(url, locale),
     minted: url.searchParams.get("minted") ?? undefined,
   };
 }
@@ -89,17 +114,34 @@ function html(
     flash: s.flash,
     minted: s.minted,
     body,
+    locale: s.locale,
   });
   return c.html(page, { status: (status ?? 200) as ContentfulStatusCode });
 }
 
 app.get("/", async (c) => {
   const s = await shell(c);
-  const counts: Record<string, number> = {};
+  return html(c, s, "Home", homePage(PIPELINE, s.locale));
+});
+
+// Owner ruling 2026-08-28: Interco Logistics is orange barreled; a stub page only.
+app.get("/interco", async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Interco Logistics", intercoPage(s.locale));
+});
+
+app.get("/admin", async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Admin", adminHomePage());
+});
+
+app.get("/admin/queues", async (c) => {
+  const s = await shell(c);
+  const sections = [];
   for (const q of queues()) {
-    counts[q.key] = await countQueue(c.env.DB, q);
+    sections.push({ queue: q, rows: await listQueueRows(c.env.DB, q) });
   }
-  return html(c, s, "Home", homePage(PIPELINE, counts));
+  return html(c, s, "Data Queues", dataQueuesPage(sections, s.personId, s.locale));
 });
 
 app.post("/person", async (c) => {
@@ -109,18 +151,116 @@ app.post("/person", async (c) => {
   return c.redirect("/", 303);
 });
 
+// Owner ruling 2026-08-28: the EN/ES pill posts here and returns to the same page.
+app.post("/locale", async (c) => {
+  const form = await c.req.formData();
+  const locale = asLocale(form.get("locale"));
+  setCookie(c, LOCALE_COOKIE, locale, {
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+    sameSite: "Lax",
+  });
+  let back = "/";
+  const referer = c.req.header("referer");
+  if (referer) {
+    try {
+      const u = new URL(referer);
+      back = u.pathname + u.search;
+    } catch {
+      back = "/";
+    }
+  }
+  return c.redirect(back, 303);
+});
+
 app.get("/station/:key", async (c) => {
   const station = stationByKey(c.req.param("key"));
   if (!station) return c.notFound();
   const s = await shell(c);
+  const lotId = station.ledger ? c.req.query("lot") : undefined;
+  if (lotId) {
+    const lot = await getLot(c.env.DB, lotId);
+    if (!lot) return c.notFound();
+    const weights = await listLotWeights(c.env.DB, lotId);
+    const farmName = await farmDisplayName(c.env.DB, lot.farm_code ?? "");
+    const total = sumGrams(weights.map((w) => Number(w.weight_grams)));
+    return html(
+      c,
+      s,
+      station.title,
+      lotPage(station, lot, weights, s.personId, farmName, total, s.locale)
+    );
+  }
   const lookups = await lookupsForStation(c.env.DB, station);
   const queueOptions = await queueOptionsForStation(c.env.DB, station);
+  let pickId = "";
+  let ledgerCtx: StationLedgerCtx | undefined;
+  let paneRows: QueueRow[] | undefined;
+  if (station.leftPane) {
+    const paneQueue = queueByKey(station.leftPane.queue);
+    // The pane and its pick validation share the filtered rows; a hidden batch cannot be picked.
+    paneRows =
+      station.leftPane.paneFilter && paneQueue
+        ? await listPaneRows(c.env.DB, paneQueue, station.leftPane.paneFilter)
+        : queueOptions[station.leftPane.queue] ?? [];
+    const pick = c.req.query("pick") ?? "";
+    const picked = pick ? paneRows.find((row) => row.id === pick) : undefined;
+    if (picked) {
+      pickId = picked.id;
+      if (station.ledger) {
+        const farmCode = picked.values.farm_code ?? "";
+        ledgerCtx = {
+          farmName: await farmDisplayName(c.env.DB, farmCode),
+          moveToOptions: await listDrySpacesByKinds(c.env.DB, moveToKindsForFarm(farmCode), farmCode),
+          resumeLots: await listLotsByStatus(c.env.DB, picked.id, LOT_STATUS.weighing),
+        };
+      }
+    }
+  }
   return html(
     c,
     s,
     station.title,
-    stationPage(station, s.people, s.personId, lookups, queueOptions, queueMap())
+    stationPage(
+      station,
+      s.people,
+      s.personId,
+      lookups,
+      queueOptions,
+      queueMap(),
+      pickId,
+      ledgerCtx,
+      paneRows,
+      s.locale
+    )
   );
+});
+
+app.post("/station/:key/add_truck", async (c) => {
+  const station = stationByKey(c.req.param("key"));
+  if (!station || !station.ledger) return c.notFound();
+  const form = await c.req.formData();
+  rememberPerson(c, String(form.get("person_id") ?? ""));
+  const result = await addTruck(c.env.DB, station.key, form);
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/station/:key/lot/:lotId/weights", async (c) => {
+  const station = stationByKey(c.req.param("key"));
+  if (!station || !station.ledger) return c.notFound();
+  const form = await c.req.formData();
+  rememberPerson(c, String(form.get("person_id") ?? ""));
+  const result = await addLotWeight(c.env.DB, station.key, c.req.param("lotId"), form);
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/station/:key/lot/:lotId/finish", async (c) => {
+  const station = stationByKey(c.req.param("key"));
+  if (!station || !station.ledger) return c.notFound();
+  const form = await c.req.formData();
+  rememberPerson(c, String(form.get("person_id") ?? ""));
+  const result = await finishLot(c.env.DB, station.key, c.req.param("lotId"), form);
+  return c.redirect(result.redirect, 303);
 });
 
 app.post("/station/:key", async (c) => {
@@ -134,12 +274,10 @@ app.post("/station/:key", async (c) => {
   return c.redirect(result.redirect, 303);
 });
 
-app.get("/queue/:key", async (c) => {
+app.get("/queue/:key", (c) => {
   const queue = queueByKey(c.req.param("key"));
   if (!queue) return c.notFound();
-  const s = await shell(c);
-  const rows = await listQueueRows(c.env.DB, queue);
-  return html(c, s, queue.title, queuePage(queue, rows, s.personId));
+  return c.redirect("/admin/queues", 302);
 });
 
 app.post("/queue/:key/control", async (c) => {
@@ -184,6 +322,7 @@ app.get("/admin/lookups", async (c) => {
   const s = await shell(c);
   const tables = {
     people: await listAdminRows(c.env.DB, "people"),
+    farms: await listAdminRows(c.env.DB, "farms"),
     strains: await listAdminRows(c.env.DB, "strains"),
     dry_spaces: await listAdminRows(c.env.DB, "dry_spaces"),
     package_types: await listAdminRows(c.env.DB, "package_types"),
@@ -276,6 +415,7 @@ async function lookupsForStation(
   const names = new Set<LookupName>();
   for (const field of station.fields) {
     if (field.input === "lookup") names.add(field.lookup);
+    if (field.input === "move_to") names.add("dry_spaces");
     if (field.input === "package_rows") names.add("package_types");
   }
   const out: Record<string, Awaited<ReturnType<typeof listLookup>>> = {};
@@ -291,6 +431,7 @@ async function queueOptionsForStation(
   for (const field of station.fields) {
     if (field.input === "queue_pick" || field.input === "cryo_weights") keys.add(field.queue);
   }
+  if (station.leftPane) keys.add(station.leftPane.queue);
   const out: Record<string, Awaited<ReturnType<typeof listQueueRows>>> = {};
   for (const key of keys) {
     const q = queueByKey(key);

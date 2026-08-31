@@ -1,9 +1,11 @@
 import {
   applyTransition,
+  finishTransitionName,
   HARVEST_STATUS,
   initialWipStatus,
   isTestOutcome,
   LOT_STATUS,
+  nextTruckNumber,
   roundGrams,
   SYSTEM_REASON,
   type TransitionName,
@@ -12,10 +14,12 @@ import { HttpError, nowIso, parseGrams, requireReason, requireText, textOrNull }
 import { assertHbnAvailable, harvestYearFromEntryDate, HbnCollisionError, mintHbn, nextLotSerial } from "./mint";
 import {
   assertTable,
+  countLotWeights,
   getHarvestByHbn,
   getRow,
   insertLog,
   logsForInsert,
+  lotTotalRecomputeStmt,
   requireActor,
 } from "./db";
 import { EDITABLE_FIELDS } from "./pipeline";
@@ -169,11 +173,12 @@ export async function createHarvestBatch(db: D1Database, form: FormData): Promis
   throw new HttpError(409, `Could not allocate a lot serial for ${harvestYear}.`);
 }
 
+/** Start lot (owner ruling 2026-08-28): the header form creates the lot in status
+ * weighing with a zero total; weights then collect on the lot page. */
 export async function createWetWeight(db: D1Database, form: FormData): Promise<ActionOk> {
   const actor = await requireActor(db, personIdFrom(form));
   const harvestBatchId = requireText(form.get("harvest_batch_id"), "HBN");
-  const weight = parseGrams(form.get("weight_grams"), "Weight");
-  const drySpaceId = requireText(form.get("dry_space_id"), "Dry space");
+  const drySpaceId = requireText(form.get("dry_space_id"), "Move To");
   const notes = textOrNull(form.get("notes"));
   const batch = await db
     .prepare(
@@ -196,10 +201,10 @@ export async function createWetWeight(db: D1Database, form: FormData): Promise<A
   const record = {
     id,
     harvest_batch_id: harvestBatchId,
-    weight_grams: weight,
+    weight_grams: 0,
     dry_space_id: drySpaceId,
     notes,
-    status: LOT_STATUS.drying,
+    status: LOT_STATUS.weighing,
     created_at: ts,
     created_by: actor.id,
     updated_at: ts,
@@ -209,14 +214,140 @@ export async function createWetWeight(db: D1Database, form: FormData): Promise<A
     db
       .prepare(
         `INSERT INTO wet_weight_entries (
-          id, harvest_batch_id, weight_grams, dry_space_id, notes, status,
+          id, harvest_batch_id, weight_grams, wet_spear_weight_grams, dry_space_id, truck_number, notes, status,
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+        ) VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL)`
       )
-      .bind(id, harvestBatchId, weight, drySpaceId, notes, LOT_STATUS.drying, ts, actor.id, ts, actor.id),
+      .bind(id, harvestBatchId, 0, drySpaceId, notes, LOT_STATUS.weighing, ts, actor.id, ts, actor.id),
     ...logsForInsert(db, "wet_weight_entries", id, record, actor.id, SYSTEM_REASON.create, ts),
   ]);
-  return { redirect: "/station/wet_weight?ok=wet" };
+  return { redirect: `/station/wet_weight?lot=${encodeURIComponent(id)}` };
+}
+
+export function assertLotHasWeights(count: number): void {
+  if (count < 1) {
+    throw new HttpError(400, "Add at least one weight before finishing the lot.");
+  }
+}
+
+/** Add a weight to a weighing lot; the lot total recomputes in the same batch. */
+export async function addLotWeight(
+  db: D1Database,
+  stationKey: string,
+  lotId: string,
+  form: FormData
+): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const grams = parseGrams(form.get("weight_grams"), "Weight");
+  const lot = await db
+    .prepare(`SELECT id, status FROM wet_weight_entries WHERE id = ? AND deleted_at IS NULL`)
+    .bind(lotId)
+    .first<{ id: string; status: string }>();
+  if (!lot) throw new HttpError(404, "Unknown lot.");
+  if (lot.status !== LOT_STATUS.weighing) {
+    throw new HttpError(400, "That lot is not weighing. Weights land on weighing lots only.");
+  }
+  const id = crypto.randomUUID();
+  const ts = nowIso();
+  const record = {
+    id,
+    wet_weight_entry_id: lotId,
+    weight_grams: grams,
+    created_at: ts,
+    created_by: actor.id,
+    updated_at: ts,
+    updated_by: actor.id,
+  };
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO wet_weights (
+          id, wet_weight_entry_id, weight_grams,
+          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+      )
+      .bind(id, lotId, grams, ts, actor.id, ts, actor.id),
+    ...logsForInsert(db, "wet_weights", id, record, actor.id, SYSTEM_REASON.create, ts),
+    lotTotalRecomputeStmt(db, lotId, actor.id, ts),
+  ]);
+  return { redirect: `/station/${stationKey}?lot=${encodeURIComponent(lotId)}&ok=weight` };
+}
+
+/** Finish lot: trucks go in transit, everything else dries (owner ruling 2026-08-28). */
+export async function finishLot(
+  db: D1Database,
+  stationKey: string,
+  lotId: string,
+  form: FormData
+): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const lot = await db
+    .prepare(
+      `SELECT w.id, w.status, d.kind AS dry_space_kind
+       FROM wet_weight_entries w
+       LEFT JOIN dry_spaces d ON d.id = w.dry_space_id
+       WHERE w.id = ? AND w.deleted_at IS NULL`
+    )
+    .bind(lotId)
+    .first<{ id: string; status: string; dry_space_kind: string | null }>();
+  if (!lot) throw new HttpError(404, "Unknown lot.");
+  assertLotHasWeights(await countLotWeights(db, lotId));
+  const next = nextStatus(finishTransitionName(lot.dry_space_kind ?? ""), lot.status);
+  const ts = nowIso();
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE wet_weight_entries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+      )
+      .bind(next, ts, actor.id, lotId),
+    insertLog(db, {
+      record_table: "wet_weight_entries",
+      record_id: lotId,
+      field: "status",
+      old_value: lot.status,
+      new_value: next,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.finish_lot,
+      changed_at: ts,
+    }),
+  ]);
+  return { redirect: `/station/${stationKey}?ok=finished` };
+}
+
+/** Add a truck: the next numbered dry_spaces row with kind truck (owner ruling 2026-08-28). */
+export async function addTruck(
+  db: D1Database,
+  stationKey: string,
+  form: FormData
+): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const pick = textOrNull(form.get("pick"));
+  const named = await db
+    .prepare(`SELECT name FROM dry_spaces WHERE name LIKE 'Truck %'`)
+    .all<{ name: string }>();
+  const name = `Truck ${nextTruckNumber((named.results ?? []).map((row) => row.name))}`;
+  const id = crypto.randomUUID();
+  const ts = nowIso();
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO dry_spaces (
+          id, name, kind, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+      )
+      .bind(id, name, "truck", ts, actor.id, ts, actor.id),
+    ...logsForInsert(
+      db,
+      "dry_spaces",
+      id,
+      { id, name, kind: "truck", created_at: ts, created_by: actor.id },
+      actor.id,
+      SYSTEM_REASON.create,
+      ts
+    ),
+  ]);
+  const query = pick ? `?pick=${encodeURIComponent(pick)}&ok=truck` : "?ok=truck";
+  return { redirect: `/station/${stationKey}${query}` };
 }
 
 export async function createTrimPackages(db: D1Database, form: FormData): Promise<ActionOk> {
@@ -463,8 +594,14 @@ export const STATION_ACTIONS: Record<
   set_cryo_weight: setCryoWeight,
 };
 
-const GRAM_FIELDS = new Set(["weight_grams", "cryo_weight_grams"]);
+const GRAM_FIELDS = new Set(["weight_grams", "cryo_weight_grams", "wet_spear_weight_grams"]);
 const BOOL_FIELDS = new Set(["manicure", "is_bud", "is_active"]);
+
+function tablePk(table: string): string {
+  return table === "package_types" || table === "farms" || table === "grow_methods"
+    ? "code"
+    : "id";
+}
 
 export async function editRecord(
   db: D1Database,
@@ -477,7 +614,7 @@ export async function editRecord(
   assertTable(table);
   const fields = EDITABLE_FIELDS[table];
   if (!fields) throw new HttpError(400, "This table is not editable.");
-  const pk = table === "package_types" ? "code" : "id";
+  const pk = tablePk(table);
   const existing = await getRow(db, table, id);
   if (!existing || existing.deleted_at) throw new HttpError(404, "Record not found.");
 
@@ -518,12 +655,17 @@ export async function editRecord(
   if (sets.length === 0) throw new HttpError(400, "No fields changed.");
   sets.push("updated_at = ?", "updated_by = ?");
   values.push(ts, actor.id, id);
-  await db.batch([
+  const stmts: D1PreparedStatement[] = [
     db
       .prepare(`UPDATE ${table} SET ${sets.join(", ")} WHERE ${pk} = ? AND deleted_at IS NULL`)
       .bind(...values),
     ...logs,
-  ]);
+  ];
+  if (table === "wet_weights") {
+    // The parent lot's weight_grams is the live total (owner ruling 2026-08-28).
+    stmts.push(lotTotalRecomputeStmt(db, String(existing.wet_weight_entry_id), actor.id, ts));
+  }
+  await db.batch(stmts);
   return { redirect: `/record/${table}/${id}/edit?ok=saved` };
 }
 
@@ -546,12 +688,12 @@ export async function voidRecord(
   if (table === "record_change_log") {
     throw new HttpError(400, "The change log cannot be voided.");
   }
-  const pk = table === "package_types" ? "code" : "id";
+  const pk = tablePk(table);
   const existing = await getRow(db, table, id);
   if (!existing) throw new HttpError(404, "Record not found.");
   if (existing.deleted_at) throw new HttpError(400, "Record is already voided.");
   const ts = nowIso();
-  await db.batch([
+  const stmts: D1PreparedStatement[] = [
     db
       .prepare(
         `UPDATE ${table} SET deleted_at = ?, deleted_by = ?, updated_at = ?, updated_by = ? WHERE ${pk} = ?`
@@ -567,7 +709,12 @@ export async function voidRecord(
       reason,
       changed_at: ts,
     }),
-  ]);
+  ];
+  if (table === "wet_weights") {
+    // A voided weight leaves the total; recompute rides the same batch (owner ruling 2026-08-28).
+    stmts.push(lotTotalRecomputeStmt(db, String(existing.wet_weight_entry_id), actor.id, ts));
+  }
+  await db.batch(stmts);
   return { redirect: `/?ok=voided` };
 }
 
@@ -661,21 +808,23 @@ export async function addDrySpace(db: D1Database, form: FormData): Promise<Actio
   const actor = await requireActor(db, personIdFrom(form));
   const name = requireText(form.get("name"), "Name");
   const kind = requireText(form.get("kind"), "Kind");
+  // Blank means shared across farms (owner ruling 2026-08-28).
+  const farmCode = textOrNull(form.get("farm_code"));
   const id = crypto.randomUUID();
   const ts = nowIso();
   await db.batch([
     db
       .prepare(
         `INSERT INTO dry_spaces (
-          id, name, kind, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+          id, name, kind, farm_code, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
       )
-      .bind(id, name, kind, ts, actor.id, ts, actor.id),
+      .bind(id, name, kind, farmCode, ts, actor.id, ts, actor.id),
     ...logsForInsert(
       db,
       "dry_spaces",
       id,
-      { id, name, kind, created_at: ts, created_by: actor.id },
+      { id, name, kind, farm_code: farmCode, created_at: ts, created_by: actor.id },
       actor.id,
       SYSTEM_REASON.create,
       ts

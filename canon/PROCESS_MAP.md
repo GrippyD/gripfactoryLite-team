@@ -13,7 +13,7 @@
 |---|---|---|---|---|
 | B00 | (event) | Harvest Start | | |
 | B01 | Directors | Decide what zone to harvest | field map + morning discussion | **adopted (human)** |
-| B02 | Patrick | Enter "red" data on ops dash to get HBN | opsdash "Harvest Details" (25H + 26H in hand) | **spec'd (slice 1)** |
+| B02 | Patrick | Enter "red" data on ops dash to get HBN | opsdash "Harvest Details" (25H + 26H in hand) | **live in production; adoption pending floor use** |
 | B03 | Harvest Leads | Deploy labor crews to selected zones, begin cutting | TBD | queued |
 | B04 | (decision) | Hang or Silo? | TBD (rule + capacity) | queued |
 
@@ -21,7 +21,7 @@
 
 | Box | Owner | Action | Current tool | Status |
 |---|---|---|---|---|
-| B05 | Ashley/Patrick | Wet weights / manifest | TBD | queued |
+| B05 | Ashley/Patrick | Wet weights / manifest | gflite wet weight station (slices 2-3) | **in build via break-in** |
 | B06 | Rancho | Hang dry, buck, collect bucked weights | TBD | queued |
 | B07 | Patrick | Enter weights in METRC, create manifest | TBD | queued |
 | B08 | Ashley/Patrick | Receive METRC manifests, print harvest travelers (PNN) | opsdash traveler tabs (pointer) | queued |
@@ -31,7 +31,7 @@
 | Box | Owner | Action | Current tool | Status |
 |---|---|---|---|---|
 | B09 | Harvest Leads | Buck material, transport to weigh area | TBD | queued |
-| B10 | Plutarcho | Wet weights, give to Ashley | TBD | queued |
+| B10 | Plutarcho | Wet weights, give to Ashley | gflite wet weight station (slices 2-3) | **in build via break-in** |
 | B11 | Ashley/Patrick | Wet weights into METRC using HBN, package, from ops dash, print travelers | opsdash traveler tabs (pointer) | queued |
 | B12 | Luis | Load silos, attach package tag | TBD | queued |
 | B13 | Les/Keith/Austin/Matt | Silo management | opsdash hidden tabs: Silo Schedule, Sequence Schedule (pointer) | queued |
@@ -75,6 +75,7 @@
 - "In hand" and "pointer" mark where the current tool already sits; the box still gets its own talk-through when the walk reaches it. No designing ahead.
 - Crew names in this registry are internal working data and never ship in a package (canon G-9).
 - **Slice 1, the queue spine (2026-08-27):** thin simple forms laid across B02 (Acquire HBN), the wet weight boxes (B05/B10), trim packaging (B17/B19), cryo weights (B21/B23), and the testing queues (B16/B22/B25 exit controls). Each of those boxes still gets its deepening talk-through in map order. Prompt: `prompts/2026-08-27_slice1_queue_spine.md`.
+- **Wet-weight pair ruling (Dennis, 2026-08-27), for the B05/B10 deepening:** bucked wet weight required on every entry; wet spear weight optional ("spearing is only done in certain cases, it needs to be there"). Lands as migration 0004 in slice 2.
 
 ## Box record template
 
@@ -108,6 +109,10 @@ When a box opens, its talk-through produces a record appended below (or a per-bo
 **26H deltas vs 25H:** adds Terp and "Is Bio/FFZ?" columns plus Strain Key, LiveINV, Hold Tag, Trim Room Data, and Trim Query sheets; drops Irrigation Zone, Rows, Photo Archive, and the per-method trim weight blocks (trim moved out to the trim workbooks).
 **Ruling (Dennis, 2026-08-27):** zone and rows come back on the batch record in the replacement.
 
-**Rulings (Dennis, 2026-08-27):** date segment becomes **YYDDD Julian** (26244-ARL-GH-027-0-NA-26 shape); zone and rows ride the form. Spec'd into slice 1: `prompts/2026-08-27_slice1_queue_spine.md`, station 1.
+**Rulings (Dennis, 2026-08-27):** date segment becomes **YYDDD Julian**; zone and rows ride the form; trailing segment is **YY### = year + 3-digit year-wide lot serial** (the floor's primary identifier, the largest number on the traveler); numeric silos zero-pad to 2 digits. Full corrected mint: `26244-ARL-GH-027-0-05-26001` shape (canon ADR-6). Built in slice 1 (`prompts/2026-08-27_slice1_queue_spine.md`), corrected by slice 1.1 (`prompts/2026-08-27_slice1p1_mint_serial.md`).
 
-**Still open:** ABC column meaning; when Cuts and Plants land during the day; audit and report shape beyond the CSV export; trailing YY redundancy now that YYDDD carries the year.
+**Verified (Scribe, 2026-08-27):** slice 1 session report checked: sealed check intact, smoke walked acquire → wet → trim → cryo → release with queue counts asserted, reasonless edit rejected, no git remote, canon untouched. Slice 1.1 verified same day in code: lot_serial + harvest_year with UNIQUE(harvest_year, lot_serial), YY### token guarded, silo zero-pad, Blue Andeez 078 in seed and migration; smoke minted 26001 then 26002.
+
+**Box Contract standing:** worker performs (station form) ✓ · manager audits (edit-with-reason change log, /log view) ✓ · report or CSV out (/export) ✓. Adoption lands when the floor uses it and the riding flags get ruled.
+
+**Still open:** ABC column meaning; when Cuts and Plants land during the day; audit and report shape beyond the CSV export.

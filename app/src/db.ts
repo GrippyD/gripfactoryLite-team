@@ -108,24 +108,51 @@ export async function countQueue(db: D1Database, def: QueueDef): Promise<number>
   return Number(row?.n ?? 0);
 }
 
+/** Pane-only hide (owner ruling 2026-08-28): a finished lot (drying, in_transit, or trimmed,
+ * non-voided) removes its batch from the wet weight pane; a weighing lot keeps it visible for
+ * resume. Written against the b alias of the hbn_queue query in listHarvestQueueRows. */
+export const NO_FINISHED_LOT_SQL =
+  "AND NOT EXISTS (SELECT 1 FROM wet_weight_entries w WHERE w.harvest_batch_id = b.id AND w.deleted_at IS NULL AND w.status IN ('drying', 'in_transit', 'trimmed'))";
+
+/** Left pane rows only: listQueueRows plus the station's paneFilter. The Data Queues
+ * tables, /export CSVs, and the queue_pick select fallback keep listQueueRows unfiltered. */
+export async function listPaneRows(
+  db: D1Database,
+  def: QueueDef,
+  paneFilter?: "no_finished_lot"
+): Promise<QueueRow[]> {
+  if (paneFilter === "no_finished_lot" && def.entity === "harvest_batches") {
+    return listHarvestQueueRows(db, def, NO_FINISHED_LOT_SQL);
+  }
+  return listQueueRows(db, def);
+}
+
+async function listHarvestQueueRows(
+  db: D1Database,
+  def: QueueDef,
+  filterSql: string
+): Promise<QueueRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, s.name AS strain_name, b.created_at
+       FROM harvest_batches b
+       LEFT JOIN strains s ON s.id = b.strain_id
+       WHERE b.deleted_at IS NULL AND b.status = ? ${filterSql}
+       ORDER BY b.created_at DESC`
+    )
+    .bind(def.predicate.value)
+    .all<Record<string, unknown>>();
+  return toQueueRows(result.results ?? []);
+}
+
 export async function listQueueRows(db: D1Database, def: QueueDef): Promise<QueueRow[]> {
   if (def.entity === "harvest_batches") {
-    const result = await db
-      .prepare(
-        `SELECT b.id, b.hbn, b.entry_date, b.farm_code, s.name AS strain_name, b.created_at
-         FROM harvest_batches b
-         LEFT JOIN strains s ON s.id = b.strain_id
-         WHERE b.deleted_at IS NULL AND b.status = ?
-         ORDER BY b.created_at DESC`
-      )
-      .bind(def.predicate.value)
-      .all<Record<string, unknown>>();
-    return toQueueRows(result.results ?? []);
+    return listHarvestQueueRows(db, def, "");
   }
   if (def.entity === "wet_weight_entries") {
     const result = await db
       .prepare(
-        `SELECT w.id, b.hbn, w.weight_grams, d.name AS dry_space_name, w.notes, w.created_at
+        `SELECT w.id, b.hbn, w.weight_grams, w.wet_spear_weight_grams, d.name AS dry_space_name, w.truck_number, w.notes, w.created_at
          FROM wet_weight_entries w
          LEFT JOIN harvest_batches b ON b.id = w.harvest_batch_id
          LEFT JOIN dry_spaces d ON d.id = w.dry_space_id
@@ -160,6 +187,136 @@ function toQueueRows(rows: Record<string, unknown>[]): QueueRow[] {
     }
     return { id: String(row.id), values };
   });
+}
+
+export async function farmDisplayName(db: D1Database, code: string): Promise<string> {
+  if (!code) return "";
+  const row = await db
+    .prepare(`SELECT display_name FROM farms WHERE code = ? AND deleted_at IS NULL`)
+    .bind(code)
+    .first<{ display_name: string }>();
+  return row?.display_name ?? code;
+}
+
+export type DrySpaceOptionRow = LookupOption & { kind: string; farm_code: string | null };
+
+/** The Move To rule: the row's kind is allowed for the batch's farm AND the row is
+ * shared (farm_code NULL) or scoped to that farm (owner ruling 2026-08-28). */
+export function filterDrySpaces(
+  rows: readonly DrySpaceOptionRow[],
+  kinds: readonly string[],
+  farmCode: string
+): LookupOption[] {
+  const allowed = new Set(kinds);
+  return rows
+    .filter((row) => allowed.has(row.kind) && (row.farm_code == null || row.farm_code === farmCode))
+    .map((row) => ({ value: row.value, label: row.label }));
+}
+
+/** Dry spaces limited to the given kinds and farm, for the farm-filtered Move To select. */
+export async function listDrySpacesByKinds(
+  db: D1Database,
+  kinds: readonly string[],
+  farmCode: string
+): Promise<LookupOption[]> {
+  const result = await db
+    .prepare(
+      `SELECT id AS value, name AS label, kind, farm_code FROM dry_spaces WHERE deleted_at IS NULL ORDER BY name`
+    )
+    .all<DrySpaceOptionRow>();
+  return filterDrySpaces(result.results ?? [], kinds, farmCode);
+}
+
+export type LotSummary = { id: string; created_at: string; weight_grams: number };
+
+/** Lots for one harvest batch in one status, newest first (resume links on the picked page). */
+export async function listLotsByStatus(
+  db: D1Database,
+  harvestBatchId: string,
+  status: string
+): Promise<LotSummary[]> {
+  const result = await db
+    .prepare(
+      `SELECT id, created_at, weight_grams FROM wet_weight_entries
+       WHERE harvest_batch_id = ? AND status = ? AND deleted_at IS NULL
+       ORDER BY created_at DESC`
+    )
+    .bind(harvestBatchId, status)
+    .all<LotSummary>();
+  return result.results ?? [];
+}
+
+export type LotRow = {
+  id: string;
+  status: string;
+  notes: string | null;
+  weight_grams: number;
+  harvest_batch_id: string;
+  hbn: string | null;
+  farm_code: string | null;
+  dry_space_name: string | null;
+  dry_space_kind: string | null;
+  lead_name: string | null;
+  created_at: string;
+};
+
+export async function getLot(db: D1Database, id: string): Promise<LotRow | null> {
+  return db
+    .prepare(
+      `SELECT w.id, w.status, w.notes, w.weight_grams, w.harvest_batch_id, w.created_at,
+              b.hbn, b.farm_code, d.name AS dry_space_name, d.kind AS dry_space_kind,
+              p.display_name AS lead_name
+       FROM wet_weight_entries w
+       LEFT JOIN harvest_batches b ON b.id = w.harvest_batch_id
+       LEFT JOIN dry_spaces d ON d.id = w.dry_space_id
+       LEFT JOIN people p ON p.id = w.created_by
+       WHERE w.id = ? AND w.deleted_at IS NULL`
+    )
+    .bind(id)
+    .first<LotRow>();
+}
+
+export type LotWeightRow = { id: string; weight_grams: number; created_at: string };
+
+export async function listLotWeights(db: D1Database, lotId: string): Promise<LotWeightRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT id, weight_grams, created_at FROM wet_weights
+       WHERE wet_weight_entry_id = ? AND deleted_at IS NULL
+       ORDER BY created_at DESC`
+    )
+    .bind(lotId)
+    .all<LotWeightRow>();
+  return result.results ?? [];
+}
+
+export async function countLotWeights(db: D1Database, lotId: string): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM wet_weights WHERE wet_weight_entry_id = ? AND deleted_at IS NULL`
+    )
+    .bind(lotId)
+    .first<{ n: number }>();
+  return Number(row?.n ?? 0);
+}
+
+/** Owner ruling 2026-08-28: the lot's weight_grams is the live total of its non-voided
+ * wet_weights rows. Runs inside the same db.batch as the add, edit, or void it follows. */
+export function lotTotalRecomputeStmt(
+  db: D1Database,
+  lotId: string,
+  actorId: string,
+  ts: string
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE wet_weight_entries SET weight_grams = (
+         SELECT COALESCE(ROUND(SUM(weight_grams), 2), 0) FROM wet_weights
+         WHERE wet_weight_entry_id = ? AND deleted_at IS NULL
+       ), updated_at = ?, updated_by = ?
+       WHERE id = ? AND deleted_at IS NULL`
+    )
+    .bind(lotId, ts, actorId, lotId);
 }
 
 export async function getHarvestByHbn(
@@ -229,8 +386,16 @@ export async function listChangeLog(
 
 export async function listAdminRows(
   db: D1Database,
-  table: "people" | "strains" | "dry_spaces" | "package_types"
+  table: "people" | "farms" | "strains" | "dry_spaces" | "package_types"
 ): Promise<Record<string, unknown>[]> {
+  if (table === "farms") {
+    const result = await db
+      .prepare(
+        `SELECT code AS id, code, display_name, created_at FROM farms WHERE deleted_at IS NULL ORDER BY code`
+      )
+      .all<Record<string, unknown>>();
+    return result.results ?? [];
+  }
   if (table === "people") {
     const result = await db
       .prepare(
@@ -250,7 +415,7 @@ export async function listAdminRows(
   if (table === "dry_spaces") {
     const result = await db
       .prepare(
-        `SELECT id, name, kind, created_at FROM dry_spaces WHERE deleted_at IS NULL ORDER BY name`
+        `SELECT id, name, kind, farm_code, created_at FROM dry_spaces WHERE deleted_at IS NULL ORDER BY name`
       )
       .all<Record<string, unknown>>();
     return result.results ?? [];
@@ -272,6 +437,7 @@ const ALLOWED_TABLES = new Set([
   "people",
   "harvest_batches",
   "wet_weight_entries",
+  "wet_weights",
   "wip_packages",
   "record_change_log",
 ]);

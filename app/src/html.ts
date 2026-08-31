@@ -1,4 +1,5 @@
 import { TEST_OUTCOMES } from "./config";
+import { t, type Locale } from "./i18n";
 import type { FieldDef, PipelineEntry, QueueControlDef, QueueDef, StationDef } from "./pipeline";
 import { themeStylesheet } from "./theme";
 import type { LookupOption, PersonRow, QueueRow } from "./db";
@@ -21,8 +22,10 @@ export function layout(opts: {
   flash?: Flash;
   minted?: string;
   body: string;
+  locale?: Locale;
 }): string {
   const theme = opts.theme === "c10" ? "c10" : "grip";
+  const locale = opts.locale ?? "en";
   const personOptions = [
     `<option value="">Select person</option>`,
     ...opts.people.map(
@@ -42,27 +45,34 @@ export function layout(opts: {
          });
        </script>`
     : "";
+  // Owner ruling 2026-08-28: a two-state EN/ES pill next to the person form on
+  // every page; clicking a language posts /locale and returns to the same page.
+  const localePill = `<form class="locale-pill" method="post" action="/locale">
+      <button type="submit" name="locale" value="en" class="locale-opt${locale === "en" ? " active" : ""}" aria-pressed="${locale === "en"}">EN</button>
+      <button type="submit" name="locale" value="es" class="locale-opt${locale === "es" ? " active" : ""}" aria-pressed="${locale === "es"}">ES</button>
+    </form>`;
   return `<!DOCTYPE html>
-<html lang="en" data-theme="${theme}">
+<html lang="${locale}" data-theme="${theme}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${esc(opts.title)} · Gripfactory Lite</title>
+  <title>${esc(t(locale, opts.title))} · Gripfactory Lite</title>
   <style>${themeStylesheet()}</style>
 </head>
 <body>
   <header class="app-bar">
     <div class="brand">Gripfactory Lite</div>
     <nav>
-      <a href="/">Home</a>
-      <a href="/admin/lookups">Admin</a>
-      <a href="/log">Log</a>
+      <a href="/">${esc(t(locale, "Home"))}</a>
+      <a href="/admin">${esc(t(locale, "Admin"))}</a>
+      <a href="/log">${esc(t(locale, "Log"))}</a>
     </nav>
     <form class="person-form" method="post" action="/person">
-      <label class="muted" for="gf_person">Person</label>
+      <label class="muted" for="gf_person">${esc(t(locale, "Person"))}</label>
       <select id="gf_person" name="person_id" required>${personOptions}</select>
-      <button type="submit" class="secondary">Remember</button>
+      <button type="submit" class="secondary">${esc(t(locale, "Remember"))}</button>
     </form>
+    ${localePill}
   </header>
   <main>
     ${flash}
@@ -73,7 +83,12 @@ export function layout(opts: {
 </html>`;
 }
 
-export function personSelect(people: PersonRow[], personId: string, required = true): string {
+export function personSelect(
+  people: PersonRow[],
+  personId: string,
+  required = true,
+  label = "Person"
+): string {
   const opts = [
     `<option value="">Select person</option>`,
     ...people.map(
@@ -81,7 +96,7 @@ export function personSelect(people: PersonRow[], personId: string, required = t
         `<option value="${esc(p.id)}"${p.id === personId ? " selected" : ""}>${esc(p.display_name)}</option>`
     ),
   ].join("");
-  return `<label class="field">Person
+  return `<label class="field">${esc(label)}
     <select name="person_id"${required ? " required" : ""}>${opts}</select>
   </label>`;
 }
@@ -90,10 +105,11 @@ export function renderField(
   field: FieldDef,
   lookups: Record<string, LookupOption[]>,
   queueOptions: Record<string, QueueRow[]>,
-  queuesByKey: Record<string, QueueDef>
+  queuesByKey: Record<string, QueueDef>,
+  locale: Locale = "en"
 ): string {
   if (field.input === "checkbox") {
-    return `<label class="field"><span><input type="checkbox" name="${esc(field.name)}" value="1"> ${esc(field.label)}</span></label>`;
+    return `<label class="field"><span><input type="checkbox" name="${esc(field.name)}" value="1"> ${esc(t(locale, field.label))}</span></label>`;
   }
   if (field.input === "lookup") {
     const options = lookups[field.lookup] ?? [];
@@ -101,7 +117,7 @@ export function renderField(
       `<option value=""></option>`,
       ...options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`),
     ].join("");
-    return `<label class="field">${esc(field.label)}
+    return `<label class="field">${esc(t(locale, field.label))}
       <select name="${esc(field.name)}"${field.required ? " required" : ""}>${opts}</select>
     </label>`;
   }
@@ -110,20 +126,16 @@ export function renderField(
     const rows = queueOptions[field.queue] ?? [];
     const opts = [
       `<option value=""></option>`,
-      ...rows.map((row) => {
-        const label = (q?.optionFields ?? ["id"])
-          .map((f) => row.values[f])
-          .filter(Boolean)
-          .join(" / ");
-        return `<option value="${esc(row.id)}">${esc(label || row.id)}</option>`;
-      }),
+      ...rows.map(
+        (row) => `<option value="${esc(row.id)}">${esc(queueRowLabel(q, row))}</option>`
+      ),
     ].join("");
-    return `<label class="field">${esc(field.label)}
+    return `<label class="field">${esc(t(locale, field.label))}
       <select name="${esc(field.name)}"${field.required ? " required" : ""}>${opts}</select>
     </label>`;
   }
   if (field.input === "textarea") {
-    return `<label class="field">${esc(field.label)}
+    return `<label class="field">${esc(t(locale, field.label))}
       <textarea name="${esc(field.name)}"></textarea>
     </label>`;
   }
@@ -133,7 +145,7 @@ export function renderField(
       .map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`)
       .join("");
     return `<fieldset>
-      <legend>${esc(field.label)}</legend>
+      <legend>${esc(t(locale, field.label))}</legend>
       <table class="data pkg-table" id="pkg-table">
         <thead><tr><th>Package code</th><th>Type</th><th>Weight (g)</th></tr></thead>
         <tbody id="pkg-rows">
@@ -156,6 +168,18 @@ export function renderField(
       </script>
     </fieldset>`;
   }
+  if (field.input === "move_to") {
+    // Outside a ledger station's picked page this falls back to the plain dry_spaces list;
+    // the ledger page renders the farm-filtered select with the Add a truck control instead.
+    const options = lookups.dry_spaces ?? [];
+    const opts = [
+      `<option value=""></option>`,
+      ...options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`),
+    ].join("");
+    return `<label class="field">${esc(t(locale, field.label))}
+      <select name="${esc(field.name)}"${field.required ? " required" : ""}>${opts}</select>
+    </label>`;
+  }
   if (field.input === "cryo_weights") {
     const q = queuesByKey[field.queue];
     const rows = queueOptions[field.queue] ?? [];
@@ -175,7 +199,7 @@ export function renderField(
       })
       .join("");
     return `<fieldset>
-      <legend>${esc(field.label)}</legend>
+      <legend>${esc(t(locale, field.label))}</legend>
       <p class="muted">Enter a cryo weight for each package to move. Leave blank to skip.</p>
       <table class="data pkg-table">
         <thead><tr><th>Package</th><th>Cryo weight (g)</th></tr></thead>
@@ -185,30 +209,103 @@ export function renderField(
   }
   const type = field.input;
   const extra = type === "number" ? ` step="0.01" min="0"` : "";
-  return `<label class="field">${esc(field.label)}
+  return `<label class="field">${esc(t(locale, field.label))}
     <input type="${type}" name="${esc(field.name)}"${field.required ? " required" : ""}${extra}>
   </label>`;
 }
 
-export function homePage(pipeline: PipelineEntry[], counts: Record<string, number>): string {
+export function homePage(pipeline: PipelineEntry[], locale: Locale = "en"): string {
   const tiles = pipeline
-    .map((entry) => {
-      if (entry.kind === "queue") {
-        const n = counts[entry.key] ?? 0;
-        return `<a class="tile" href="/queue/${esc(entry.key)}" data-pipeline-key="${esc(entry.key)}" data-count="${n}">
-          <span class="tile-kind">Queue</span>
-          <span class="tile-title">${esc(entry.title)}</span>
-          <span class="tile-count">${n}</span>
-        </a>`;
-      }
-      return `<a class="tile" href="/station/${esc(entry.key)}" data-pipeline-key="${esc(entry.key)}">
-        <span class="tile-kind">Station</span>
-        <span class="tile-title">${esc(entry.title)}</span>
-      </a>`;
-    })
+    .filter((entry) => entry.surface === "home")
+    .map(
+      (entry) => `<a class="tile" href="/station/${esc(entry.key)}" data-pipeline-key="${esc(entry.key)}">
+        <span class="tile-kind">${esc(t(locale, "Station"))}</span>
+        <span class="tile-title">${esc(t(locale, entry.title))}</span>
+      </a>`
+    )
     .join("");
-  return `<h1>Harvest queue spine</h1>
-    <div class="tiles">${tiles}</div>`;
+  const adminTile = `<a class="tile" href="/admin" data-pipeline-key="admin">
+        <span class="tile-kind">${esc(t(locale, "Admin"))}</span>
+        <span class="tile-title">${esc(t(locale, "Admin"))}</span>
+      </a>`;
+  // Owner ruling 2026-08-28: Interco Logistics is orange barreled; a muted stub tile after Admin.
+  const intercoTile = `<a class="tile tile-stub" href="/interco" data-pipeline-key="interco">
+        <span class="tile-kind">${esc(t(locale, "Admin"))}</span>
+        <span class="tile-title">Interco Logistics</span>
+      </a>`;
+  return `<h1>${esc(t(locale, "Harvest queue spine"))}</h1>
+    <div class="tiles">${tiles}${adminTile}${intercoTile}</div>`;
+}
+
+/** The Interco Logistics stub (owner ruling 2026-08-28): orange barreled, no function yet. */
+export function intercoPage(locale: Locale = "en"): string {
+  return `<h1>Interco Logistics</h1>
+    <p class="muted">${esc(t(locale, "Orange barreled. Not built yet."))}</p>`;
+}
+
+export function adminHomePage(): string {
+  const buttons = [
+    { href: "/admin/queues", kind: "Admin", title: "Data Queues" },
+    { href: "/admin/lookups", kind: "Admin", title: "Lookups" },
+    { href: "/log", kind: "Admin", title: "Change log" },
+  ]
+    .map(
+      (b) => `<a class="tile" href="${b.href}">
+        <span class="tile-kind">${b.kind}</span>
+        <span class="tile-title">${b.title}</span>
+      </a>`
+    )
+    .join("");
+  return `<h1>Admin</h1>
+    <div class="tiles">${buttons}</div>`;
+}
+
+function queueRowLabel(queue: QueueDef | undefined, row: QueueRow): string {
+  const label = (queue?.optionFields ?? ["id"])
+    .map((f) => row.values[f])
+    .filter(Boolean)
+    .join(" / ");
+  return label || row.id;
+}
+
+function stationForm(
+  station: StationDef,
+  people: PersonRow[],
+  personId: string,
+  fields: string,
+  locale: Locale
+): string {
+  return `<form class="stack" method="post" action="/station/${esc(station.key)}">
+      ${personSelect(people, personId, true, t(locale, station.personLabel ?? "Person"))}
+      ${fields}
+      <button type="submit">${esc(t(locale, station.submitLabel ?? "Save"))}</button>
+    </form>`;
+}
+
+/** Context the ledger station's picked page needs beyond the queue rows. */
+export type StationLedgerCtx = {
+  farmName: string;
+  moveToOptions: LookupOption[];
+  resumeLots: Array<{ id: string; created_at: string; weight_grams: number }>;
+};
+
+const ADD_TRUCK_FORM_ID = "add-truck-form";
+
+function moveToField(
+  field: { name: string; label: string; required?: boolean },
+  options: LookupOption[],
+  locale: Locale
+): string {
+  const opts = [
+    `<option value=""></option>`,
+    ...options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`),
+  ].join("");
+  return `<label class="field">${esc(t(locale, field.label))}
+      <span class="move-to-row">
+        <select name="${esc(field.name)}"${field.required ? " required" : ""}>${opts}</select>
+        <button type="submit" class="secondary" form="${ADD_TRUCK_FORM_ID}">${esc(t(locale, "Add a truck"))}</button>
+      </span>
+    </label>`;
 }
 
 export function stationPage(
@@ -217,24 +314,169 @@ export function stationPage(
   personId: string,
   lookups: Record<string, LookupOption[]>,
   queueOptions: Record<string, QueueRow[]>,
-  queuesByKey: Record<string, QueueDef>
+  queuesByKey: Record<string, QueueDef>,
+  pickId?: string,
+  ledgerCtx?: StationLedgerCtx,
+  // Pane-only filtered rows (leftPane paneFilter); queueOptions stays the unfiltered queue.
+  paneRows?: QueueRow[],
+  locale: Locale = "en"
 ): string {
+  const heading = `<h1>${esc(t(locale, station.title))}</h1>`;
+  if (!station.leftPane) {
+    const fields = station.fields
+      .map((f) => renderField(f, lookups, queueOptions, queuesByKey, locale))
+      .join("\n");
+    return `${heading}
+    ${stationForm(station, people, personId, fields, locale)}`;
+  }
+  const pane = station.leftPane;
+  const queue = queuesByKey[pane.queue];
+  const rows = paneRows ?? queueOptions[pane.queue] ?? [];
+  const picked = pickId ? rows.find((row) => row.id === pickId) : undefined;
+  const paneItems = (list: QueueRow[]) =>
+    list
+      .map((row) => {
+        const cls = row.id === picked?.id ? "queue-pane-item selected" : "queue-pane-item";
+        return `<li><a class="${cls}" href="/station/${esc(station.key)}?pick=${esc(row.id)}">${esc(queueRowLabel(queue, row))}</a></li>`;
+      })
+      .join("");
+  let paneBody: string;
+  if (rows.length === 0) {
+    paneBody = `<p class="muted">${esc(t(locale, "No rows waiting."))}</p>`;
+  } else if (pane.groupBy) {
+    // Owner ruling 2026-08-28: groups collapse by default; the picked row's group stays open.
+    paneBody = groupRows(rows, pane.groupBy)
+      .map(([name, groupRows]) => {
+        const open = groupRows.some((row) => row.id === picked?.id) ? " open" : "";
+        return `<details class="pane-group"${open}><summary>${esc(name)} <span class="tile-count">${groupRows.length}</span></summary><ul>${paneItems(groupRows)}</ul></details>`;
+      })
+      .join("");
+  } else {
+    paneBody = `<ul>${paneItems(rows)}</ul>`;
+  }
+  const aside = `<aside class="queue-pane">
+      <h2>${esc(t(locale, queue?.title ?? pane.queue))} <span class="tile-count">${rows.length}</span></h2>
+      ${paneBody}
+    </aside>`;
+  if (!picked) {
+    return `${heading}
+    <div class="station-split">
+      ${aside}
+      <div class="working-pane"><p class="muted">${esc(t(locale, "Pick from the left to begin."))}</p></div>
+    </div>`;
+  }
+  const isLedger = Boolean(station.ledger && ledgerCtx);
   const fields = station.fields
-    .map((f) => renderField(f, lookups, queueOptions, queuesByKey))
+    .map((f) => {
+      if (f.name === pane.pickField) {
+        return `<input type="hidden" name="${esc(pane.pickField)}" value="${esc(picked.id)}">`;
+      }
+      if (f.input === "move_to" && isLedger) return moveToField(f, ledgerCtx!.moveToOptions, locale);
+      return renderField(f, lookups, queueOptions, queuesByKey, locale);
+    })
     .join("\n");
-  return `<h1>${esc(station.title)}</h1>
-    <form class="stack" method="post" action="/station/${esc(station.key)}">
-      ${personSelect(people, personId)}
-      ${fields}
-      <button type="submit">Save</button>
-    </form>`;
+  // Owner ruling 2026-08-28: the ledger header is the HBN, a plain spaced hyphen,
+  // then the farm's display name spelled out.
+  const pickHeading = isLedger
+    ? `${picked.values.hbn ?? picked.id} - ${ledgerCtx!.farmName}`
+    : queueRowLabel(queue, picked);
+  const resumeLots = isLedger ? ledgerCtx!.resumeLots : [];
+  const resume =
+    resumeLots.length > 0
+      ? `<div class="resume-lots">
+        <h3>${esc(t(locale, "Lots in progress"))}</h3>
+        <ul>${resumeLots
+          .map(
+            (lot) =>
+              `<li><a href="/station/${esc(station.key)}?lot=${esc(lot.id)}">${esc(lot.created_at)} (total ${esc(Number(lot.weight_grams).toFixed(2))} g)</a></li>`
+          )
+          .join("")}</ul>
+      </div>`
+      : "";
+  // The Add a truck button inside the station form submits this sibling form (form attribute);
+  // forms cannot nest.
+  const addTruckForm = isLedger
+    ? `<form id="${ADD_TRUCK_FORM_ID}" method="post" action="/station/${esc(station.key)}/add_truck">
+        <input type="hidden" name="person_id" value="${esc(personId)}">
+        <input type="hidden" name="pick" value="${esc(picked.id)}">
+      </form>`
+    : "";
+  return `${heading}
+    <div class="station-split">
+      ${aside}
+      <div class="working-pane">
+        <h2 class="working-pick">${esc(pickHeading)}</h2>
+        ${resume}
+        ${stationForm(station, people, personId, fields, locale)}
+        ${addTruckForm}
+      </div>
+    </div>`;
+}
+
+/** The lot page (owner ruling 2026-08-28): read-only header, the Weights pane,
+ * and the running total outside the pane at the bottom. */
+export function lotPage(
+  station: StationDef,
+  lot: {
+    id: string;
+    hbn: string | null;
+    notes: string | null;
+    dry_space_name: string | null;
+    lead_name: string | null;
+  },
+  weights: Array<{ id: string; weight_grams: number; created_at: string }>,
+  personId: string,
+  farmName: string,
+  total: number,
+  locale: Locale = "en"
+): string {
+  const rows = weights
+    .map(
+      (w) => `<tr>
+        <td>${esc(w.weight_grams)}</td>
+        <td>${esc(w.created_at)}</td>
+        <td class="row-actions">
+          <a class="btn secondary" href="/record/wet_weights/${esc(w.id)}/edit" title="Edit" aria-label="Edit weight">&#9998;</a>
+          <a class="btn secondary" href="/record/wet_weights/${esc(w.id)}/void" title="Void" aria-label="Void weight">&times;</a>
+        </td>
+      </tr>`
+    )
+    .join("");
+  const list =
+    weights.length > 0
+      ? `<table class="data"><thead><tr><th>Weight (g)</th><th>Added</th><th>${esc(t(locale, "Controls"))}</th></tr></thead><tbody>${rows}</tbody></table>`
+      : `<p class="muted">No weights yet.</p>`;
+  return `<h1>${esc(t(locale, station.title))}</h1>
+    <h2 class="working-pick">${esc(lot.hbn ?? "")} - ${esc(farmName)}</h2>
+    <dl class="lot-meta">
+      <dt>${esc(t(locale, "Move To"))}</dt><dd>${esc(lot.dry_space_name ?? "")}</dd>
+      <dt>${esc(t(locale, "Lead"))}</dt><dd>${esc(lot.lead_name ?? "")}</dd>
+      <dt>${esc(t(locale, "Notes"))}</dt><dd>${esc(lot.notes ?? "")}</dd>
+    </dl>
+    <section class="weights-pane">
+      <h3>${esc(t(locale, "Weights"))}</h3>
+      <div class="weights-controls">
+        <form method="post" action="/station/${esc(station.key)}/lot/${esc(lot.id)}/weights" class="row-actions">
+          <input type="hidden" name="person_id" value="${esc(personId)}">
+          <input type="number" name="weight_grams" step="0.01" min="0" placeholder="grams" required autofocus>
+          <button type="submit">${esc(t(locale, "Add a weight"))}</button>
+        </form>
+        <form method="post" action="/station/${esc(station.key)}/lot/${esc(lot.id)}/finish" class="row-actions">
+          <input type="hidden" name="person_id" value="${esc(personId)}">
+          <button type="submit" class="secondary">${esc(t(locale, "Finish lot"))}</button>
+        </form>
+      </div>
+      ${list}
+    </section>
+    <p class="lot-total">${esc(t(locale, "Total"))}: <strong>${esc(total.toFixed(2))}</strong> g</p>`;
 }
 
 function controlForm(
   queue: QueueDef,
   control: QueueControlDef,
   rowId: string,
-  personId: string
+  personId: string,
+  locale: Locale
 ): string {
   if (control.key === "release") {
     const outcomes = TEST_OUTCOMES.map((o) => `<option value="${o}">${o}</option>`).join("");
@@ -244,48 +486,59 @@ function controlForm(
       <input type="hidden" name="control" value="release">
       <select name="outcome" required>${outcomes}</select>
       <input type="text" name="note" placeholder="note (optional)">
-      <button type="submit">${esc(control.label)}</button>
+      <button type="submit">${esc(t(locale, control.label))}</button>
     </form>`;
   }
   return `<form method="post" action="/queue/${esc(queue.key)}/control">
     <input type="hidden" name="person_id" value="${esc(personId)}">
     <input type="hidden" name="id" value="${esc(rowId)}">
     <input type="hidden" name="control" value="${esc(control.key)}">
-    <button type="submit">${esc(control.label)}</button>
+    <button type="submit">${esc(t(locale, control.label))}</button>
   </form>`;
 }
 
-export function queuePage(
+export function queueSection(
   queue: QueueDef,
   rows: QueueRow[],
-  personId: string
+  personId: string,
+  locale: Locale = "en"
 ): string {
-  const exportLink = `<p><a href="/export/${esc(queue.key)}.csv">CSV export</a></p>`;
+  const heading = `<h2 data-pipeline-key="${esc(queue.key)}" data-count="${rows.length}">${esc(t(locale, queue.title))} <span class="tile-count">${rows.length}</span></h2>`;
+  const exportLink = `<p><a href="/export/${esc(queue.key)}.csv">${esc(t(locale, "CSV export"))}</a></p>`;
   if (rows.length === 0) {
-    return `<h1>${esc(queue.title)}</h1>${exportLink}<p class="muted">No rows.</p>`;
+    return `<section>${heading}${exportLink}<p class="muted">${esc(t(locale, "No rows."))}</p></section>`;
   }
   const groups = groupRows(rows, queue.groupBy);
   const sections = groups
     .map(([name, groupRows]) => {
-      const heading = queue.groupBy ? `<h2>${esc(name)}</h2>` : "";
-      const head = `<tr>${queue.columns.map((c) => `<th>${esc(c.label)}</th>`).join("")}<th>Controls</th></tr>`;
+      const groupHeading = queue.groupBy ? `<h3>${esc(name)}</h3>` : "";
+      const head = `<tr>${queue.columns.map((c) => `<th>${esc(c.label)}</th>`).join("")}<th>${esc(t(locale, "Controls"))}</th></tr>`;
       const body = groupRows
         .map((row) => {
           const cells = queue.columns
             .map((c) => `<td>${esc(row.values[c.field] ?? "")}</td>`)
             .join("");
           const controls = [
-            ...queue.rowControls.map((ctl) => controlForm(queue, ctl, row.id, personId)),
-            `<a class="btn secondary" href="/record/${esc(queue.entity)}/${esc(row.id)}/edit">Edit</a>`,
-            `<a class="btn secondary" href="/record/${esc(queue.entity)}/${esc(row.id)}/void">Void</a>`,
+            ...queue.rowControls.map((ctl) => controlForm(queue, ctl, row.id, personId, locale)),
+            `<a class="btn secondary" href="/record/${esc(queue.entity)}/${esc(row.id)}/edit">${esc(t(locale, "Edit"))}</a>`,
+            `<a class="btn secondary" href="/record/${esc(queue.entity)}/${esc(row.id)}/void">${esc(t(locale, "Void"))}</a>`,
           ].join(" ");
           return `<tr>${cells}<td class="row-actions">${controls}</td></tr>`;
         })
         .join("");
-      return `${heading}<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+      return `${groupHeading}<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
     })
     .join("");
-  return `<h1>${esc(queue.title)}</h1>${exportLink}${sections}`;
+  return `<section>${heading}${exportLink}${sections}</section>`;
+}
+
+export function dataQueuesPage(
+  sections: Array<{ queue: QueueDef; rows: QueueRow[] }>,
+  personId: string,
+  locale: Locale = "en"
+): string {
+  const body = sections.map((s) => queueSection(s.queue, s.rows, personId, locale)).join("\n");
+  return `<h1>Data Queues</h1>${body}`;
 }
 
 function groupRows(rows: QueueRow[], groupBy?: string): Array<[string, QueueRow[]]> {

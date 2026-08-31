@@ -23,7 +23,10 @@ export type FieldDef =
       required?: boolean;
     }
   | { name: string; label: string; input: "package_rows" }
-  | { name: string; label: string; input: "cryo_weights"; queue: string };
+  | { name: string; label: string; input: "cryo_weights"; queue: string }
+  /** Move To (owner ruling 2026-08-28): a dry_spaces select filtered to the picked
+   * batch's farm kinds (MOVE_TO_KINDS_BY_FARM), with an Add a truck control beside it. */
+  | { name: string; label: string; input: "move_to"; required?: boolean };
 
 export type StationTransition = {
   action:
@@ -33,13 +36,29 @@ export type StationTransition = {
     | "set_cryo_weight";
 };
 
+/** Where an entry renders: "home" tiles are the operator surface, "admin" lives under Admin, Data Queues. */
+export type Surface = "home" | "admin";
+
 export type StationDef = {
   key: string;
   kind: "station";
   title: string;
+  surface: Surface;
   entity: string;
   fields: FieldDef[];
   transition: StationTransition;
+  /** Person picker label override; default "Person" (owner ruling 2026-08-28: wet weight says Lead). */
+  personLabel?: string;
+  /** Submit button label override; default "Save". */
+  submitLabel?: string;
+  /** Feeding queue shown as the station's left pane; the picked row id arrives as a hidden pickField input.
+   * groupBy (a field on the queue rows' values) renders the pane as collapsible groups.
+   * paneFilter no_finished_lot (owner ruling 2026-08-28) hides open batches that already have a finished lot (drying, in_transit, or trimmed, non-voided); a weighing (unfinished) lot keeps the batch visible for resume. */
+  leftPane?: { queue: string; pickField: string; groupBy?: string; paneFilter?: "no_finished_lot" };
+  /** Weights ledger (owner ruling 2026-08-28): the station form is a header that starts a
+   * lot in status weighing; weights collect on /station/<key>?lot=<id> as rows in ledger.table
+   * and the lot's weight_grams stays the live total of the non-voided rows. */
+  ledger?: { table: "wet_weights"; parentField: "wet_weight_entry_id" };
 };
 
 export type QueueControlDef =
@@ -53,6 +72,7 @@ export type QueueDef = {
   key: string;
   kind: "queue";
   title: string;
+  surface: Surface;
   entity: "harvest_batches" | "wet_weight_entries" | "wip_packages";
   predicate: { field: "status"; value: string };
   columns: QueueColumnDef[];
@@ -68,6 +88,8 @@ export type EditFieldDef = {
   label: string;
   input: "text" | "date" | "time" | "textarea" | "number" | "checkbox" | "lookup";
   lookup?: LookupName;
+  /** Lookups only: render a leading blank option; saving blank stores NULL. */
+  optional?: boolean;
 };
 
 export const EDITABLE_FIELDS: Record<string, EditFieldDef[]> = {
@@ -85,11 +107,13 @@ export const EDITABLE_FIELDS: Record<string, EditFieldDef[]> = {
     { name: "status", label: "Status", input: "text" },
   ],
   wet_weight_entries: [
-    { name: "weight_grams", label: "Weight (g)", input: "number" },
-    { name: "dry_space_id", label: "Dry Space", input: "lookup", lookup: "dry_spaces" },
+    { name: "weight_grams", label: "Total wet weight (g)", input: "number" },
+    { name: "dry_space_id", label: "Move To", input: "lookup", lookup: "dry_spaces" },
+    { name: "truck_number", label: "Truck #", input: "text" },
     { name: "notes", label: "Notes", input: "textarea" },
     { name: "status", label: "Status", input: "text" },
   ],
+  wet_weights: [{ name: "weight_grams", label: "Weight (g)", input: "number" }],
   wip_packages: [
     { name: "package_code", label: "Package code", input: "text" },
     { name: "package_type_code", label: "Package type", input: "lookup", lookup: "package_types" },
@@ -102,6 +126,7 @@ export const EDITABLE_FIELDS: Record<string, EditFieldDef[]> = {
     { name: "display_name", label: "Name", input: "text" },
     { name: "is_active", label: "Active?", input: "checkbox" },
   ],
+  farms: [{ name: "display_name", label: "Display name", input: "text" }],
   strains: [
     { name: "name", label: "Name", input: "text" },
     { name: "abbr", label: "Abbr", input: "text" },
@@ -110,6 +135,8 @@ export const EDITABLE_FIELDS: Record<string, EditFieldDef[]> = {
   dry_spaces: [
     { name: "name", label: "Name", input: "text" },
     { name: "kind", label: "Kind", input: "text" },
+    // Blank means shared across farms (owner ruling 2026-08-28).
+    { name: "farm_code", label: "Farm", input: "lookup", lookup: "farms", optional: true },
   ],
   package_types: [
     { name: "display_name", label: "Display name", input: "text" },
@@ -125,14 +152,18 @@ export const TABLE_EXPORTS = [
 ] as const;
 
 /**
- * Pipeline order is data. Reorder this array to reorder the home page.
+ * Pipeline order is data. Reorder this array to reorder the pages.
  * Insert a new station by adding an entry and a matching action handler.
  * Do not edit existing entries to make room.
+ * surface: "home" renders as an operator tile on the home page;
+ * "admin" renders as an inline record table on Admin, Data Queues
+ * (owner ruling 2026-08-27: queues are listed records, never buttons).
  */
 export const PIPELINE: PipelineEntry[] = [
   {
     key: "acquire_hbn",
     kind: "station",
+    surface: "home",
     title: "Acquire HBN",
     entity: "harvest_batches",
     fields: [
@@ -158,6 +189,7 @@ export const PIPELINE: PipelineEntry[] = [
   {
     key: "hbn_queue",
     kind: "queue",
+    surface: "admin",
     title: "HBN Queue",
     entity: "harvest_batches",
     predicate: { field: "status", value: "open" },
@@ -174,8 +206,11 @@ export const PIPELINE: PipelineEntry[] = [
   {
     key: "wet_weight",
     kind: "station",
+    surface: "home",
     title: "Wet Weight Entry",
     entity: "wet_weight_entries",
+    personLabel: "Lead",
+    submitLabel: "Start lot",
     fields: [
       {
         name: "harvest_batch_id",
@@ -184,28 +219,31 @@ export const PIPELINE: PipelineEntry[] = [
         queue: "hbn_queue",
         required: true,
       },
-      { name: "weight_grams", label: "Weight (g)", input: "number", required: true },
-      {
-        name: "dry_space_id",
-        label: "Dry space",
-        input: "lookup",
-        lookup: "dry_spaces",
-        required: true,
-      },
-      { name: "notes", label: "Notes", input: "textarea" },
+      { name: "dry_space_id", label: "Move To", input: "move_to", required: true },
+      { name: "notes", label: "Notes", input: "text" },
     ],
     transition: { action: "create_wet_weight" },
+    leftPane: {
+      queue: "hbn_queue",
+      pickField: "harvest_batch_id",
+      groupBy: "farm_code",
+      paneFilter: "no_finished_lot",
+    },
+    ledger: { table: "wet_weights", parentField: "wet_weight_entry_id" },
   },
   {
     key: "dry_space_queue",
     kind: "queue",
+    surface: "admin",
     title: "Dry Space Queue",
     entity: "wet_weight_entries",
     predicate: { field: "status", value: "drying" },
     columns: [
       { field: "hbn", label: "HBN" },
-      { field: "weight_grams", label: "Weight (g)" },
+      { field: "weight_grams", label: "Bucked (g)" },
+      { field: "wet_spear_weight_grams", label: "Spear (g)" },
       { field: "dry_space_name", label: "Dry space" },
+      { field: "truck_number", label: "Truck" },
       { field: "notes", label: "Notes" },
       { field: "created_at", label: "Created" },
     ],
@@ -214,8 +252,27 @@ export const PIPELINE: PipelineEntry[] = [
     rowControls: [{ key: "mark_trimmed", label: "Mark trimmed" }],
   },
   {
+    key: "inbound_queue",
+    kind: "queue",
+    surface: "admin",
+    title: "Inbound Queue",
+    entity: "wet_weight_entries",
+    predicate: { field: "status", value: "in_transit" },
+    columns: [
+      { field: "hbn", label: "HBN" },
+      { field: "weight_grams", label: "Total (g)" },
+      { field: "dry_space_name", label: "Truck" },
+      { field: "notes", label: "Notes" },
+      { field: "created_at", label: "Created" },
+    ],
+    optionFields: ["hbn", "dry_space_name", "weight_grams"],
+    groupBy: "dry_space_name",
+    rowControls: [],
+  },
+  {
     key: "trim_packages",
     kind: "station",
+    surface: "home",
     title: "Trim Packages Entry",
     entity: "wip_packages",
     fields: [
@@ -233,6 +290,7 @@ export const PIPELINE: PipelineEntry[] = [
   {
     key: "cryo_queue",
     kind: "queue",
+    surface: "admin",
     title: "Cryo Queue",
     entity: "wip_packages",
     predicate: { field: "status", value: "cryo_queue" },
@@ -249,6 +307,7 @@ export const PIPELINE: PipelineEntry[] = [
   {
     key: "cryo_weight",
     kind: "station",
+    surface: "home",
     title: "Cryo Weight Entry",
     entity: "wip_packages",
     fields: [
@@ -264,6 +323,7 @@ export const PIPELINE: PipelineEntry[] = [
   {
     key: "testing_queue",
     kind: "queue",
+    surface: "admin",
     title: "Testing Queue",
     entity: "wip_packages",
     predicate: { field: "status", value: "testing_queue" },
@@ -290,4 +350,8 @@ export function queueByKey(key: string): QueueDef | undefined {
 
 export function queues(): QueueDef[] {
   return PIPELINE.filter((e): e is QueueDef => e.kind === "queue");
+}
+
+export function homeEntries(): PipelineEntry[] {
+  return PIPELINE.filter((e) => e.surface === "home");
 }

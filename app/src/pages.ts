@@ -8,12 +8,18 @@ export function adminPage(
   personId: string,
   tables: {
     people: Record<string, unknown>[];
+    farms: Record<string, unknown>[];
     strains: Record<string, unknown>[];
     dry_spaces: Record<string, unknown>[];
     package_types: Record<string, unknown>[];
   }
 ): string {
   const kindOpts = DRY_SPACE_KINDS.map((k) => `<option value="${k}">${k}</option>`).join("");
+  // Blank scopes the space to no farm, meaning shared (owner ruling 2026-08-28).
+  const farmOpts = [
+    `<option value="">(shared)</option>`,
+    ...tables.farms.map((f) => `<option value="${esc(f.code)}">${esc(f.code)}</option>`),
+  ].join("");
   return `<h1>Lookups</h1>
     <p class="muted">People are entered here and live only in this site's database. Never commit names.</p>
 
@@ -25,6 +31,10 @@ export function adminPage(
       <label class="field">Name <input type="text" name="display_name" required></label>
       <button type="submit">Add person</button>
     </form>
+
+    <h2>Farms</h2>
+    <p class="muted">Display names render on the wet weight header after the HBN. Edit to confirm or change them.</p>
+    ${adminTable("farms", ["code", "display_name"], tables.farms, false, personId)}
 
     <h2>Strains</h2>
     ${adminTable("strains", ["name", "abbr", "hbn_code"], tables.strains, false, personId)}
@@ -38,12 +48,13 @@ export function adminPage(
     </form>
 
     <h2>Dry spaces</h2>
-    ${adminTable("dry_spaces", ["name", "kind"], tables.dry_spaces, false, personId)}
+    ${adminTable("dry_spaces", ["name", "kind", "farm_code"], tables.dry_spaces, false, personId)}
     <form class="stack" method="post" action="/admin/lookups/dry_spaces">
       ${personSelect(people, personId)}
       <input type="hidden" name="action" value="add">
       <label class="field">Name <input type="text" name="name" required></label>
       <label class="field">Kind <select name="kind">${kindOpts}</select></label>
+      <label class="field">Farm <select name="farm_code">${farmOpts}</select></label>
       <button type="submit">Add dry space</button>
     </form>
 
@@ -148,12 +159,13 @@ function editInput(
   }
   if (field.input === "lookup" && field.lookup) {
     const options = lookups[field.lookup] ?? [];
-    const opts = options
-      .map((o) => {
+    const opts = [
+      field.optional ? `<option value=""></option>` : "",
+      ...options.map((o) => {
         const sel = String(current ?? "") === o.value ? " selected" : "";
         return `<option value="${esc(o.value)}"${sel}>${esc(o.label)}</option>`;
-      })
-      .join("");
+      }),
+    ].join("");
     return `<label class="field">${esc(field.label)}<select name="${esc(field.name)}">${opts}</select></label>`;
   }
   if (field.input === "textarea") {
