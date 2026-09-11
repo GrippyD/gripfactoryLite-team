@@ -43,8 +43,8 @@ html_handling = "none"
 
 [[env.grip.d1_databases]]
 binding = "DB"
-database_name = "gripfactory-lite-grip"
-database_id = "2a70ba1f-3cc0-4eea-b9dd-54c42afd1789"
+database_name = "gripfactory-lite-grip-20260911"
+database_id = "ba651a49-e157-4352-807e-9453aaba8fc3"
 migrations_dir = "migrations"
 
 [env.c10]
