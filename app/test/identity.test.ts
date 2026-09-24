@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   ACCESS_EMAIL_HEADER,
   DEV_FALLBACK_EMAIL,
+  PHONE_LOGIN_DOMAIN_DEFAULT,
+  PHONE_REFUSAL,
   displayNameFromEmail,
   normalizeEmail,
+  normalizePhone,
+  phoneFromIdentity,
   safeNextPath,
 } from "../src/identity";
 import { pinPage, stationPage, type StationLedgerCtx } from "../src/html";
@@ -30,6 +34,49 @@ describe("identity from the Access login email (owner ruling 2026-08-31)", () =>
   it("people rows carry an editable email in Lookups", () => {
     const names = EDITABLE_FIELDS.people.map((f) => f.name);
     expect(names).toContain("email");
+  });
+
+  // THE PHONE LOGIN (canon 0.30.127; owner: "make the cloudflare login keyed
+  // to a cell phone number instead of an email address").
+  it("stores a phone as +E.164, the US country code assumed on ten digits", () => {
+    expect(normalizePhone("(269) 555-0100")).toBe("+12695550100");
+    expect(normalizePhone("269.555.0100")).toBe("+12695550100");
+    expect(normalizePhone("+1 269 555 0100")).toBe("+12695550100");
+    expect(normalizePhone("12695550100")).toBe("+12695550100");
+    expect(normalizePhone("+44 20 7946 0958")).toBe("+442079460958");
+    expect(normalizePhone("12")).toBeNull();
+    expect(normalizePhone("")).toBeNull();
+    expect(normalizePhone(null)).toBeNull();
+    expect(normalizePhone("1234567890123456")).toBeNull();
+  });
+
+  it("reads the phone out of the identity provider's synthetic address, or a bare phone, and nothing out of an email", () => {
+    expect(PHONE_LOGIN_DOMAIN_DEFAULT).toBe("phone.gripcannabis.com");
+    expect(phoneFromIdentity("2695550100@phone.gripcannabis.com", PHONE_LOGIN_DOMAIN_DEFAULT)).toBe("+12695550100");
+    expect(phoneFromIdentity("12695550100@Phone.GripCannabis.com", PHONE_LOGIN_DOMAIN_DEFAULT)).toBe("+12695550100");
+    expect(phoneFromIdentity("+12695550100", PHONE_LOGIN_DOMAIN_DEFAULT)).toBe("+12695550100");
+    expect(phoneFromIdentity("2695550100", PHONE_LOGIN_DOMAIN_DEFAULT)).toBe("+12695550100");
+    expect(phoneFromIdentity("wallace@gripcannabis.com", PHONE_LOGIN_DOMAIN_DEFAULT)).toBeNull();
+    expect(phoneFromIdentity("2695550100@gripcannabis.com", PHONE_LOGIN_DOMAIN_DEFAULT)).toBeNull();
+    expect(phoneFromIdentity("notaphone@phone.gripcannabis.com", PHONE_LOGIN_DOMAIN_DEFAULT)).toBeNull();
+    expect(phoneFromIdentity("dev@local", PHONE_LOGIN_DOMAIN_DEFAULT)).toBeNull();
+    expect(phoneFromIdentity("2695550100@phone.example.com", "phone.example.com")).toBe("+12695550100");
+    expect(phoneFromIdentity("2695550100@phone.gripcannabis.com", "")).toBeNull();
+  });
+
+  it("people rows carry the login phone in Lookups, and the refusals speak", () => {
+    const phone = EDITABLE_FIELDS.people.find((f) => f.name === "phone");
+    expect(phone).toEqual({ name: "phone", label: "Phone (login)", input: "text" });
+    expect(PHONE_REFUSAL.shape).toBe("Phone must be ten digits (US) or a + country code and number.");
+    expect(PHONE_REFUSAL.taken).toBe("That phone is already on another person.");
+    expect(PHONE_REFUSAL.unmapped).toBe("This phone is not on the People list");
+  });
+
+  it("the lot's Team Lead is a reasoned text edit; the Supervisor is never a field (canon 0.30.67)", () => {
+    const fields = EDITABLE_FIELDS.wet_weight_entries;
+    expect(fields.find((f) => f.name === "team_lead")).toEqual({ name: "team_lead", label: "Team Lead", input: "text" });
+    expect(fields.find((f) => f.name === "lead_person_id")).toBeUndefined();
+    expect(fields.find((f) => /supervisor/i.test(f.name))).toBeUndefined();
   });
 });
 
@@ -84,7 +131,7 @@ describe("station forms after the identity ruling (owner ruling 2026-08-31)", ()
     expect(html).toContain("<form");
   });
 
-  it("the wet weight Lead picker posts lead_person_id preselected to the login person", () => {
+  it("the wet weight header shows the login as Supervisor and takes the Team Lead by hand (canon 0.30.67)", () => {
     const html = stationPage(
       stationByKey("wet_weight")!,
       people,
@@ -95,8 +142,15 @@ describe("station forms after the identity ruling (owner ruling 2026-08-31)", ()
       "hb1",
       ledgerCtx
     );
-    expect(html).toContain('<select name="lead_person_id" required>');
-    expect(html).toContain('<option value="p1" selected>Pat</option>');
+    // THE SUPERVISOR AND THE TEAM LEAD (owner, 2026-09-14, verbatim: "Minted
+    // HBNs are passing the Team Lead definition from the cloudflare login email
+    // to the wet weight screen.  Let's make all "Supervisors" the email, the
+    // team lead should be hand entered"): no picker preselected to the login.
+    expect(html).not.toContain('name="lead_person_id"');
+    expect(html).not.toContain('<option value="p1" selected>Pat</option>');
+    expect(html).toContain('<p class="muted supervisor-line" data-supervisor>Supervisor: Pat</p>');
+    expect(html).toContain('<input type="text" name="team_lead" required autocomplete="off" data-team-lead>');
+    expect(html).toContain("Team Lead is the harvest crew lead on this lot, typed by hand.");
     expect(html).not.toContain('name="person_id"');
   });
 });

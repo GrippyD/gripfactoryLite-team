@@ -1,0 +1,524 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>
+<title>Grip Harvest Menu</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --paper:#F3F5F1; --card:#FFFFFF; --ink:#1B231D; --ink-2:#4B554D; --ink-3:#7C8680;
+  --rule:#D8DED6; --rule-2:#E9EDE7;
+  --moss:#3B6B3F; --moss-soft:#E3ECE2; --moss-ink:#2C5230;
+  --silo:#4C6C8C; --silo-soft:#E2EAF1;
+  --hang:#9A6B2F; --hang-soft:#F3EADC;
+  --indoor:#6B4C8C; --indoor-soft:#ECE4F3;
+  --focus:#3B6B3F;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
+  --disp:"Archivo","IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#141915; --card:#1C231E; --ink:#EDF1EA; --ink-2:#B7C0B6; --ink-3:#7F8A80;
+    --rule:#2E3830; --rule-2:#25302A;
+    --moss:#7FB483; --moss-soft:#22352A; --moss-ink:#A7D3A9;
+    --silo:#8FB0CF; --silo-soft:#1F2C38;
+    --hang:#D2A263; --hang-soft:#3A2D1C;
+    --indoor:#B597D6; --indoor-soft:#2D2438;
+    --focus:#7FB483;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#141915; --card:#1C231E; --ink:#EDF1EA; --ink-2:#B7C0B6; --ink-3:#7F8A80;
+  --rule:#2E3830; --rule-2:#25302A;
+  --moss:#7FB483; --moss-soft:#22352A; --moss-ink:#A7D3A9;
+  --silo:#8FB0CF; --silo-soft:#1F2C38;
+  --hang:#D2A263; --hang-soft:#3A2D1C;
+  --indoor:#B597D6; --indoor-soft:#2D2438;
+  --focus:#7FB483;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+.wrap{max-width:1480px;margin:0 auto;padding-block:20px 48px;padding-inline:16px}
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px;padding-bottom:16px;border-bottom:2px solid var(--ink);margin-bottom:20px}
+.brand{display:flex;flex-direction:column;gap:2px}
+.eyebrow{font-family:var(--disp);font-stretch:112%;font-weight:600;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--moss)}
+h1{font-family:var(--disp);font-stretch:118%;font-weight:800;font-size:clamp(26px,3.4vw,38px);line-height:1;margin:0;letter-spacing:-.01em;text-wrap:balance}
+.sub{color:var(--ink-2);font-size:13px}
+.actions{display:flex;flex-wrap:wrap;gap:8px}
+.btn{border:1px solid var(--rule);background:var(--card);border-radius:6px;padding:8px 12px;cursor:pointer;font-weight:500;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{border-color:var(--ink-3)}
+.btn.primary{background:var(--moss);border-color:var(--moss);color:#fff}
+.btn.primary:hover{background:var(--moss-ink);border-color:var(--moss-ink)}
+:root[data-theme="dark"] .btn.primary,.dark-btn{color:#0f1a11}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .btn.primary{color:#0f1a11}}
+.btn.ghost{background:transparent}
+
+.layout{display:grid;grid-template-columns:320px minmax(0,1fr);gap:24px;align-items:start}
+@media (max-width:980px){.layout{grid-template-columns:1fr}}
+.rail{position:sticky;top:env(safe-area-inset-top,0px);display:flex;flex-direction:column;gap:14px;max-height:calc(100vh - 16px);overflow:auto;padding-right:2px}
+@media (max-width:980px){.rail{position:static;max-height:none}}
+.panel{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:14px}
+.panel h2{font-family:var(--disp);font-stretch:110%;font-weight:700;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);margin:0 0 10px}
+.panel h2 small{font:inherit;letter-spacing:0;text-transform:none;color:var(--ink-3);font-weight:400;margin-left:6px}
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.field:last-child{margin-bottom:0}
+.field label{font-size:12px;color:var(--ink-2)}
+.field input,.field select{border:1px solid var(--rule);background:var(--paper);border-radius:5px;padding:7px 9px;width:100%}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--rule);background:var(--paper);border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.matrix{width:100%;border-collapse:collapse}
+.matrix th,.matrix td{padding:5px 4px;text-align:left;font-size:12px}
+.matrix th{color:var(--ink-3);font-weight:500}
+.matrix input{width:100%;border:1px solid var(--rule);background:var(--paper);border-radius:5px;padding:6px 7px;text-align:right;font-family:var(--mono);font-size:12px}
+.matrix .rowlab{font-weight:600}
+.hint{font-size:12px;color:var(--ink-3);margin:8px 0 0;line-height:1.4}
+.spread-row td{padding:0 4px 10px}
+.spread-row .sp{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--ink-3)}
+.spread-row .sp input[type=range]{flex:1;margin:0;padding:0;border:0;background:transparent}
+.spread-row .sp .num{min-width:34px;text-align:right;color:var(--ink-2)}
+.spread-row .sp .lab{min-width:44px}
+input[type=range]{width:100%;accent-color:var(--moss)}
+.ladder{display:block;font-family:var(--mono);font-size:10px;color:var(--ink-3);margin-top:3px;line-height:1.35}
+.matrix input{min-width:0}
+.matrix td{vertical-align:top}
+.ladder b{color:var(--ink-2);font-weight:500}
+.sig{font-size:10.5px;color:var(--ink-3);font-family:var(--mono)}
+.sig.up{color:var(--moss)}.sig.dn{color:var(--hang)}
+.source .src-line{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:3px 0;border-bottom:1px solid var(--rule-2)}
+.source .src-line:last-of-type{border-bottom:0}
+.src-k{color:var(--ink-3)}
+.source a{color:var(--moss);font-weight:500;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.source a:hover{text-decoration:underline}
+.file-btn{margin-top:10px;width:100%;justify-content:center}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:8px;overflow:hidden;margin-bottom:20px}
+.stat{background:var(--card);padding:12px 14px;display:flex;flex-direction:column;gap:2px}
+.stat .k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-family:var(--disp);font-weight:600}
+.stat .v{font-family:var(--mono);font-size:20px;font-variant-numeric:tabular-nums}
+.stat .v small{font-size:12px;color:var(--ink-3);font-family:var(--sans);margin-left:4px}
+
+.section{margin-bottom:26px;break-inside:avoid-page}
+.sec-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 16px;padding:8px 0 6px;border-bottom:1.5px solid var(--ink);margin-bottom:2px}
+.sec-title{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-stretch:112%;font-weight:700;font-size:16px;letter-spacing:.02em;text-transform:uppercase}
+.swatch{width:12px;height:12px;border-radius:2px;display:inline-block}
+.sec-meta{font-size:12px;color:var(--ink-2)}
+.sec-meta b{font-family:var(--mono);font-weight:500;color:var(--ink)}
+.tbl-wrap{overflow-x:auto}
+table.menu{width:100%;border-collapse:collapse;min-width:720px}
+table.menu th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600;text-align:left;padding:8px 8px 6px;border-bottom:1px solid var(--rule);white-space:nowrap}
+table.menu td{padding:7px 8px;border-bottom:1px solid var(--rule-2);vertical-align:middle}
+table.menu tr:last-child td{border-bottom:0}
+table.menu th.r,table.menu td.r{text-align:right}
+th.sortable{cursor:pointer;user-select:none}
+th.sortable:hover{color:var(--ink)}
+th.sortable[data-dir]::after{content:" ↓";color:var(--moss)}
+th.sortable[data-dir="asc"]::after{content:" ↑"}
+.strain{font-weight:600;font-size:14px}
+.tag{display:inline-block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;padding:1px 6px;border-radius:3px;margin-left:6px;vertical-align:middle;font-weight:600}
+.tag.au{background:var(--hang-soft);color:var(--hang)}
+.tag.med{background:var(--silo-soft);color:var(--silo)}
+.tag.split{background:var(--moss-soft);color:var(--moss-ink)}
+.tag.new{background:var(--indoor-soft);color:var(--indoor)}
+.site{font-size:11.5px;color:var(--ink-3)}
+.thc{font-family:var(--mono);font-size:15px;font-weight:500}
+.thc.band-hi{color:var(--moss)}
+.thc.tbd{color:var(--ink-3);font-size:12px;font-family:var(--sans)}
+.bar{height:5px;background:var(--rule-2);border-radius:3px;overflow:hidden;width:110px;margin-top:3px}
+.bar i{display:block;height:100%;background:var(--sec);border-radius:3px}
+.price{font-family:var(--mono);font-size:15px;font-weight:500;white-space:nowrap}
+.price.override{color:var(--indoor)}
+.price small{font-family:var(--sans);font-size:11px;color:var(--ink-3);font-weight:400}
+.cell-in{width:74px;border:1px solid transparent;background:transparent;border-radius:4px;padding:3px 5px;text-align:right;font-family:var(--mono)}
+.cell-in:hover,.cell-in:focus{border-color:var(--rule);background:var(--paper)}
+.cell-in.wide{width:96px}
+.cell-in.text{text-align:left;width:160px;font-family:var(--sans)}
+.rm{border:0;background:transparent;color:var(--ink-3);cursor:pointer;padding:2px 6px;border-radius:4px}
+.rm:hover{color:#B23A3A;background:var(--rule-2)}
+.editcol{width:1%}
+.empty{padding:26px 8px;color:var(--ink-3);font-size:13px}
+.assump{font-size:12px;color:var(--ink-3);border-top:1px solid var(--rule);padding-top:10px;margin-top:20px;line-height:1.5}
+.assump b{color:var(--ink-2);font-weight:600}
+.edit-only{}
+body:not(.editing) .edit-only{display:none}
+body.editing .view-only{display:none}
+.footer-note{font-size:12px;color:var(--ink-3);margin-top:10px}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:8px 14px;border-radius:6px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.show{opacity:1}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+
+/* PDF / print: menu only, always light */
+@media print{
+  :root{--paper:#fff;--card:#fff;--ink:#111;--ink-2:#444;--ink-3:#666;--rule:#bbb;--rule-2:#ddd;--moss:#3B6B3F;--moss-soft:#eef3ee;--moss-ink:#2C5230;--silo:#4C6C8C;--silo-soft:#e8eef4;--hang:#9A6B2F;--hang-soft:#f4ede2;--indoor:#6B4C8C;--indoor-soft:#eee7f4}
+  @page{size:letter portrait;margin:.55in}
+  body{font-size:11.5px;background:#fff}
+  .wrap{max-width:none;padding:0}
+  .rail,.actions,.editcol,.edit-only,.bar,.sortable::after,.toast{display:none!important}
+  .layout{display:block}
+  header.top{margin-bottom:14px}
+  .summary{margin-bottom:14px;break-inside:avoid}
+  .stat .v{font-size:16px}
+  table.menu{min-width:0}
+  table.menu td,table.menu th{padding:5px 6px}
+  .section{margin-bottom:18px}
+  .strain{font-size:12px}
+  .thc,.price{font-size:12px}
+  .cell-in{border:0;background:transparent;padding:0;width:auto}
+  a{text-decoration:none;color:inherit}
+}
+</style>
+<div class="wrap">
+<header class="top">
+  <div class="brand">
+    <span class="eyebrow">Grip Cannabis · Fall 2026 Harvest</span>
+    <h1>Harvest Menu</h1>
+    <span class="sub" id="subline">Expected THC, expected volume and price by environment and dry method.</span>
+  </div>
+  <div class="actions">
+    <button class="btn" id="btnEdit" type="button">Edit menu</button>
+    <button class="btn ghost" id="btnReset" type="button" title="Discard local edits and reload from the source workbook">Reset to source</button>
+    <button class="btn primary" id="btnPdf" type="button">Export PDF</button>
+  </div>
+</header>
+
+<div class="layout">
+<aside class="rail">
+  <section class="panel source">
+    <h2>Source data</h2>
+    <div class="src-line"><span class="src-k">Workbook</span><a id="srcLink" href="#" target="_blank" rel="noopener">shmerblez.xlsx</a></div>
+    <div class="src-line"><span class="src-k">Sheet</span><span id="srcSheet" class="num"></span></div>
+    <div class="src-line"><span class="src-k">Data as of</span><span id="srcAsOf" class="num"></span></div>
+    <div class="src-line"><span class="src-k">Lots</span><span id="srcCount" class="num"></span></div>
+    <label class="btn file-btn" for="fileIn">Load newer workbook…<input id="fileIn" type="file" accept=".xlsx,.xlsm" hidden></label>
+    <p class="hint">Reads the PNN sheet layout (Farm · Environment · Row Labels · Count of Tag · Fdate · THC · Hang · Silo) straight from a downloaded copy of the workbook. Nothing is uploaded anywhere.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Show</h2>
+    <div class="field"><label for="q">Search strain</label><input id="q" type="search" placeholder="e.g. Gelato"></div>
+    <div class="field"><label>Site</label><div class="chips" id="fSite"></div></div>
+    <div class="field"><label>Environment</label><div class="chips" id="fEnv"></div></div>
+    <div class="field"><label>Dry method</label><div class="chips" id="fMeth"></div></div>
+    <div class="field"><label for="minThc">Minimum expected THC (%)</label><input id="minThc" type="number" min="0" max="40" step="0.5" placeholder="any"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Base price (mean) <small>$ / <span class="unitlab">lb</span></small></h2>
+    <table class="matrix">
+      <thead><tr><th></th><th>Hang dried</th><th>Silo dried</th></tr></thead>
+      <tbody id="priceMatrix"></tbody>
+    </table>
+    <p class="hint">Base = the standard (mean-potency) price for each environment × dry method. Under each: the −1σ · +1σ prices at that grow type's spread, plus the category's mean THC (μ) and σ. The spread slider under each grow type moves lots off base by their σ distance from the category mean — 0% puts every lot at base, 100% puts a +2σ lot at 2× base (floor 25%). Lots with no THC estimate stay at base. Starter prices are placeholders. A strain-level override (in Edit) beats the matrix.</p>
+  </section>
+
+  <section class="panel">
+    <h2>BTR <small>bud-to-trim, % of biomass sold as product</small></h2>
+    <table class="matrix">
+      <thead><tr><th></th><th>Hang dried</th><th>Silo dried</th></tr></thead>
+      <tbody id="btrMatrix"></tbody>
+    </table>
+    <p class="hint">Product = biomass × BTR. Prices and revenue apply to product weight, not biomass. 657k lb of biomass at 25% is 164k lb of product.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Volume assumptions</h2>
+    <div class="row2">
+      <div class="field"><label for="yieldPer">Biomass per plant</label><input id="yieldPer" type="number" step="0.5" min="0"></div>
+      <div class="field"><label for="unit">Unit</label><input id="unit" type="text" maxlength="6"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label for="volMode">Report volume as</label>
+        <select id="volMode"><option value="wet">Biomass as-is (plants × yield)</option><option value="dry">Apply dry-down first</option></select></div>
+      <div class="field"><label for="dryDown">Dry-down (%)</label><input id="dryDown" type="number" step="1" min="1" max="100"></div>
+    </div>
+    <p class="hint">Biomass = plants × yield per plant (the workbook uses 6). Optionally reduce it by a dry-down % before BTR is applied.</p>
+  </section>
+
+  <section class="panel edit-only">
+    <h2>Add a strain</h2>
+    <div class="field"><label for="nStrain">Strain</label><input id="nStrain" type="text"></div>
+    <div class="field"><label for="nSite">Site</label><input id="nSite" type="text" placeholder="PNN"></div>
+    <div class="row2">
+      <div class="field"><label for="nEnv">Environment</label><select id="nEnv"><option value="IN">Indoor</option><option value="GH">Greenhouse</option><option value="OD" selected>Outdoor</option></select></div>
+      <div class="field"><label for="nPlants">Plants</label><input id="nPlants" type="number" min="0"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label for="nThc">Expected THC (%)</label><input id="nThc" type="number" step="0.5"></div>
+      <div class="field"><label for="nHang">Hang dried (%)</label><input id="nHang" type="number" min="0" max="100" value="0"></div>
+    </div>
+    <div class="field"><label for="nDate">Harvest date</label><input id="nDate" type="date"></div>
+    <button class="btn" id="btnAdd" type="button">Add to menu</button>
+  </section>
+</aside>
+
+<main>
+  <div class="summary" id="summary"></div>
+  <div id="menu"></div>
+  <p class="assump" id="assump"></p>
+</main>
+</div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+/*DATA-START*/
+const SOURCE_META={url:"https://ocgcompanies-my.sharepoint.com/personal/wallace_gripcannabis_com/Documents/shmerblez.xlsx",file:"shmerblez.xlsx",sheet:"PNN",asOf:"2026-09-15 22:43 ET",method:"Microsoft 365 connector"};
+const SOURCE_ROWS=[{"id":1,"site":"PNN","env":"OD","strain":"Bold Coast Pine OG","plants":72,"date":"2026-09-15","thc":20.0,"hang":0,"order":1.0},{"id":2,"site":"PNN","env":"OD","strain":"Downeast Widow","plants":641,"date":"2026-09-15","thc":20.0,"hang":0,"order":1.0},{"id":3,"site":"PNN","env":"OD","strain":"Hawaiian Zombie OG","plants":72,"date":"2026-09-15","thc":20.0,"hang":0,"order":1.0},{"id":4,"site":"PNN","env":"OD","strain":"Pine State Funk OG","plants":429,"date":"2026-09-15","thc":20.0,"hang":0,"order":1.0},{"id":5,"site":"PNN","env":"OD","strain":"Sour Susie","plants":72,"date":"2026-09-15","thc":20.0,"hang":0,"order":1.0},{"id":6,"site":"PNN","env":"OD","strain":"Wild Mango Creamsicle","plants":72,"date":"2026-09-15","thc":20.0,"hang":0,"order":1.0},{"id":7,"site":"PNN","env":"OD","strain":"Apple Fritter","plants":4320,"date":"2026-10-12","thc":25.0,"hang":0,"order":7.0},{"id":8,"site":"PNN","env":"OD","strain":"Applescotti","plants":5930,"date":"2026-10-22","thc":22.0,"hang":0,"order":10.0},{"id":9,"site":"PNN","env":"OD","strain":"Bold Coast Berries","plants":644,"date":"2026-09-14","thc":21.0,"hang":0,"order":1.0},{"id":10,"site":"PNN","env":"OD","strain":"Casa Blanca","plants":1656,"date":"2026-10-28","thc":22.0,"hang":0,"order":10.0},{"id":11,"site":"PNN","env":"OD","strain":"Cereal Milk","plants":8351,"date":"2026-10-07","thc":23.0,"hang":0,"order":6.0},{"id":12,"site":"PNN","env":"OD","strain":"Chem 51","plants":1080,"date":"2026-10-05","thc":22.0,"hang":0,"order":4.0},{"id":13,"site":"PNN","env":"OD","strain":"Chrome Dome","plants":792,"date":"2026-10-10","thc":20.0,"hang":100,"order":5.0},{"id":14,"site":"PNN","env":"OD","strain":"Dosilato","plants":3528,"date":"2026-10-20","thc":24.0,"hang":0,"order":7.0},{"id":15,"site":"PNN","env":"OD","strain":"Double White Dawg","plants":1080,"date":"2026-10-17","thc":21.0,"hang":0,"order":8.0},{"id":16,"site":"PNN","env":"OD","strain":"Downeast Diesel","plants":774,"date":"2026-09-15","thc":20.0,"hang":0,"order":1.0},{"id":17,"site":"PNN","env":"OD","strain":"Gelato 41","plants":2016,"date":"2026-10-13","thc":25.0,"hang":0,"order":8.0},{"id":18,"site":"PNN","env":"OD","strain":"GG4","plants":2016,"date":"2026-10-10","thc":25.0,"hang":0,"order":6.0},{"id":19,"site":"PNN","env":"OD","strain":"Headband","plants":1938,"date":"2026-10-07","thc":25.0,"hang":0,"order":3.0},{"id":20,"site":"PNN","env":"OD","strain":"Island Time","plants":1224,"date":"2026-10-01","thc":25.0,"hang":0,"order":1.5},{"id":21,"site":"PNN","env":"OD","strain":"Jealousy","plants":3384,"date":"2026-10-07","thc":26.0,"hang":50,"order":6.0},{"id":22,"site":"PNN","env":"OD","strain":"Madison Square Gumbo","plants":864,"date":"2026-10-14","thc":23.0,"hang":100,"order":6.0},{"id":23,"site":"PNN","env":"OD","strain":"Mainely Mango","plants":756,"date":"2026-09-15","thc":20.0,"hang":0,"order":1.0},{"id":24,"site":"PNN","env":"OD","strain":"Papaya Cake","plants":3312,"date":"2026-10-21","thc":25.0,"hang":50,"order":9.0},{"id":25,"site":"PNN","env":"OD","strain":"Pinyatti","plants":580,"date":"2026-10-16","thc":27.0,"hang":100,"order":9.0},{"id":26,"site":"PNN","env":"OD","strain":"PMX","plants":1148,"date":"2026-09-25","thc":22.0,"hang":0,"order":1.5},{"id":27,"site":"PNN","env":"OD","strain":"Sour Sally","plants":567,"date":"2026-09-15","thc":20.0,"hang":0,"order":1.0},{"id":28,"site":"PNN","env":"OD","strain":"Super Boof","plants":2160,"date":"2026-10-07","thc":26.0,"hang":50,"order":3.0},{"id":29,"site":"PNN","env":"OD","strain":"Super Sour","plants":575,"date":"2026-10-12","thc":24.0,"hang":0,"order":9.0},{"id":30,"site":"PNN","env":"OD","strain":"Zuava","plants":1656,"date":"2026-10-22","thc":28.0,"hang":50,"order":7.0},{"id":31,"site":"ARL","env":"OD","strain":"BT","plants":11500,"date":"2026-09-21","thc":25.0,"hang":0,"order":null},{"id":32,"site":"PNS","env":"GH","strain":"Applescotti","plants":1039,"date":"2026-10-22","thc":22.0,"hang":100,"order":null},{"id":33,"site":"PNS","env":"OD","strain":"Augustus Gloop","plants":3245,"date":"2026-10-10","thc":23.0,"hang":0,"order":null},{"id":34,"site":"PNS","env":"OD","strain":"Bermuda Triangle","plants":9116,"date":"2026-09-21","thc":25.0,"hang":0,"order":null},{"id":35,"site":"PNS","env":"GH","strain":"Double White Dawg","plants":81,"date":"2026-10-17","thc":21.0,"hang":100,"order":null},{"id":36,"site":"PNS","env":"OD","strain":"Fruity Pebbles","plants":2752,"date":"2026-10-13","thc":22.0,"hang":0,"order":null},{"id":37,"site":"PNS","env":"OD","strain":"Gelonade","plants":3270,"date":"2026-09-25","thc":25.0,"hang":0,"order":null},{"id":38,"site":"PNS","env":"OD","strain":"Lemon Cherry Sherbet","plants":9964,"date":"2026-10-20","thc":26.0,"hang":0,"order":null},{"id":39,"site":"PNS","env":"OD","strain":"Nimbus Snack","plants":4978,"date":"2026-10-14","thc":24.0,"hang":0,"order":null},{"id":40,"site":"PNS","env":"GH","strain":"Double White Dawg","plants":960,"date":"2026-10-17","thc":21.0,"hang":100,"order":null},{"id":41,"site":"PNS","env":"GH","strain":"Sherbcake","plants":1040,"date":"2026-10-17","thc":22.0,"hang":100,"order":null}];
+/*DATA-END*/
+const ENVS={IN:{name:'Indoor',color:'var(--indoor)'},GH:{name:'Greenhouse',color:'var(--moss)'},OD:{name:'Outdoor',color:'var(--hang)'}};
+const METHS={hang:{name:'Hang dried',color:'var(--hang)'},silo:{name:'Silo dried',color:'var(--silo)'}};
+const ORDER=['IN|hang','IN|silo','GH|hang','GH|silo','OD|hang','OD|silo'];
+const LS='grip-harvest-menu-v5';
+const DEFAULTS={
+  prices:{'IN|hang':1200,'IN|silo':1000,'GH|hang':700,'GH|silo':550,'OD|hang':450,'OD|silo':325},
+  spreads:{IN:50,GH:50,OD:50},
+  vol:{yieldPer:6,unit:'lb',mode:'wet',dryDown:22},
+  btr:{'IN|hang':30,'IN|silo':25,'GH|hang':30,'GH|silo':25,'OD|hang':30,'OD|silo':25},
+  filters:{q:'',site:'all',env:'all',meth:'all',minThc:''},
+  sort:{key:'thc',dir:'desc'}
+};
+let LIVE_ROWS=null,LIVE_META=null;
+let S=load();
+function freshRows(){return (LIVE_ROWS||SOURCE_ROWS).map(r=>({...r,ov:{}}));}
+function meta(){return LIVE_META||SOURCE_META;}
+function load(){
+  const base={...structuredClone(DEFAULTS),rows:freshRows(),editing:false};
+  try{const raw=localStorage.getItem(LS);if(raw){const s=JSON.parse(raw);return {...base,...s,prices:{...base.prices,...(s.prices||{})},btr:{...base.btr,...(s.btr||{})},spreads:{...base.spreads,...(s.spreads||{})},vol:{...base.vol,...(s.vol||{})},filters:{...base.filters,...(s.filters||{})},rows:s.rows||base.rows};}}catch(e){}
+  return base;
+}
+function save(){try{localStorage.setItem(LS,JSON.stringify(S));}catch(e){}}
+const $=id=>document.getElementById(id);
+const fmtN=n=>Math.round(n).toLocaleString('en-US');
+const fmtD=n=>'$'+Math.round(n).toLocaleString('en-US');
+const fmtDate=d=>d?new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
+
+let STATS={};
+function computeStats(){
+  STATS={};
+  for(const key of ORDER){
+    const [env,meth]=key.split('|');const xs=[];
+    for(const r of S.rows){ if(r.thc==null||r.env!==env)continue; const pct=meth==='hang'?r.hang:100-r.hang; if(pct>0)xs.push(r.thc);}
+    const n=xs.length,mean=n?xs.reduce((a,b)=>a+b,0)/n:null;
+    const sd=n>1?Math.sqrt(xs.reduce((a,x)=>a+(x-mean)**2,0)/(n-1)):0;
+    STATS[key]={n,mean,sd};
+  }
+}
+function zOf(key,thc){const s=STATS[key];if(!s||thc==null||s.mean==null||!s.sd)return 0;return (thc-s.mean)/s.sd;}
+function mult(z,env){const sp=+(S.spreads[env]??50);return Math.min(2,Math.max(0.25,1+(sp/100)*z/2));}
+function basePrice(env,meth,thc){const key=env+'|'+meth;return (+S.prices[key]||0)*mult(zOf(key,thc),env);}
+function volFactor(){return S.vol.yieldPer*(S.vol.mode==='dry'?S.vol.dryDown/100:1);}
+function items(){
+  computeStats();
+  const out=[];
+  for(const r of S.rows){
+    for(const meth of ['hang','silo']){
+      const pct=meth==='hang'?r.hang:100-r.hang;
+      if(pct<=0)continue;
+      const key=r.env+'|'+meth;
+      const biomass=r.plants*pct/100*volFactor();
+      const vol=biomass*((+S.btr[key]||0)/100);
+      const ov=r.ov&&r.ov[meth];
+      const price=(ov!=null&&ov!=='')?+ov:basePrice(r.env,meth,r.thc);
+      out.push({row:r,meth,pct,biomass,vol,price,override:ov!=null&&ov!=='',key:r.env+'|'+meth,z:zOf(r.env+'|'+meth,r.thc)});
+    }
+  }
+  return out;
+}
+function visible(it){
+  const f=S.filters,r=it.row;
+  if(f.q&&!r.strain.toLowerCase().includes(f.q.toLowerCase()))return false;
+  if(f.site!=='all'&&r.site!==f.site)return false;
+  if(f.env!=='all'&&r.env!==f.env)return false;
+  if(f.meth!=='all'&&it.meth!==f.meth)return false;
+  if(f.minThc!==''&&!(r.thc!=null&&r.thc>=+f.minThc))return false;
+  return true;
+}
+function sorter(a,b){
+  const k=S.sort.key,d=S.sort.dir==='asc'?1:-1;
+  let va,vb;
+  if(k==='strain'){va=a.row.strain;vb=b.row.strain;return va.localeCompare(vb)*d;}
+  if(k==='thc'){va=a.row.thc??-1;vb=b.row.thc??-1;}
+  else if(k==='vol'){va=a.vol;vb=b.vol;}
+  else if(k==='price'){va=a.price;vb=b.price;}
+  else if(k==='date'){va=a.row.date||'9999';vb=b.row.date||'9999';return va<vb?-d:va>vb?d:0;}
+  return (va-vb)*d||a.row.strain.localeCompare(b.row.strain);
+}
+
+function chips(id,key,opts){
+  const el=$(id);el.innerHTML='';
+  for(const [v,label] of opts){
+    const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=label;
+    b.setAttribute('aria-pressed',String(S.filters[key]===v));
+    b.onclick=()=>{S.filters[key]=v;save();render();};
+    el.appendChild(b);
+  }
+}
+function renderRail(){
+  const sites=[...new Set(S.rows.map(r=>r.site))].sort();
+  chips('fSite','site',[['all','All'],...sites.map(s=>[s,s])]);
+  chips('fEnv','env',[['all','All'],['IN','Indoor'],['GH','Greenhouse'],['OD','Outdoor']]);
+  chips('fMeth','meth',[['all','All'],['hang','Hang'],['silo','Silo']]);
+  $('q').value=S.filters.q;$('minThc').value=S.filters.minThc;
+  const pm=$('priceMatrix');pm.innerHTML='';
+  for(const e of ['IN','GH','OD']){
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td class="rowlab">${ENVS[e].name}</td>`+['hang','silo'].map(m=>`<td><input type="number" step="5" min="0" id="p_${e}_${m}" data-k="${e}|${m}" value="${S.prices[e+'|'+m]}" aria-label="${ENVS[e].name} ${METHS[m].name} price"><span class="ladder" data-ladder="${e}|${m}"></span></td>`).join('');
+    pm.appendChild(tr);
+    const sr=document.createElement('tr');sr.className='spread-row';
+    sr.innerHTML=`<td></td><td colspan="2"><div class="sp"><span class="lab">Spread</span><input type="range" min="0" max="100" step="1" id="sp_${e}" data-env="${e}" value="${S.spreads[e]??50}" aria-label="${ENVS[e].name} potency spread"><span class="num" data-splab="${e}">${S.spreads[e]??50}%</span></div></td>`;
+    pm.appendChild(sr);
+  }
+  pm.querySelectorAll('input[type=number]').forEach(i=>i.oninput=()=>{S.prices[i.dataset.k]=+i.value||0;save();renderMenu();});
+  pm.querySelectorAll('input[type=range]').forEach(i=>i.oninput=()=>{S.spreads[i.dataset.env]=+i.value;document.querySelector(`[data-splab="${i.dataset.env}"]`).textContent=i.value+'%';save();renderMenu();});
+  const bm=$('btrMatrix');bm.innerHTML='';
+  for(const e of ['IN','GH','OD']){
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td class="rowlab">${ENVS[e].name}</td>`+['hang','silo'].map(m=>`<td><input type="number" step="1" min="0" max="100" id="b_${e}_${m}" data-k="${e}|${m}" value="${S.btr[e+'|'+m]}" aria-label="${ENVS[e].name} ${METHS[m].name} BTR percent"></td>`).join('');
+    bm.appendChild(tr);
+  }
+  bm.querySelectorAll('input').forEach(i=>i.oninput=()=>{S.btr[i.dataset.k]=Math.min(100,Math.max(0,+i.value||0));save();renderMenu();});
+  $('yieldPer').value=S.vol.yieldPer;$('unit').value=S.vol.unit;$('volMode').value=S.vol.mode;$('dryDown').value=S.vol.dryDown;
+  $('dryDown').disabled=S.vol.mode!=='dry';
+  document.querySelectorAll('.unitlab').forEach(u=>u.textContent=S.vol.unit);
+}
+function renderMenu(){
+  const all=items(),vis=all.filter(visible);
+  const u=S.vol.unit,edit=S.editing;
+  const tot=vis.reduce((a,i)=>(a.bio+=i.biomass,a.vol+=i.vol,a.val+=i.vol*i.price,a.plants+=i.row.plants*i.pct/100,a[i.meth]+=i.vol,a),{bio:0,vol:0,val:0,plants:0,hang:0,silo:0});
+  const strains=new Set(vis.map(i=>i.row.strain+'|'+i.row.site+'|'+i.row.env)).size;
+  const thcs=vis.filter(i=>i.row.thc!=null);const wthc=thcs.reduce((a,i)=>a+i.row.thc*i.vol,0)/(thcs.reduce((a,i)=>a+i.vol,0)||1);
+  $('summary').innerHTML=[
+    ['Strains on menu',fmtN(strains),''],
+    ['Biomass',fmtN(tot.bio),u+' · '+fmtN(tot.plants)+' plants'],
+    ['Expected product',fmtN(tot.vol),u+' · '+(tot.bio?Math.round(100*tot.vol/tot.bio):0)+'% BTR'],
+    ['Hang / Silo product',`${fmtN(tot.hang)} / ${fmtN(tot.silo)}`,u],
+    ['Vol-weighted THC',thcs.length?wthc.toFixed(1)+'%':'—',''],
+    ['Menu value at list',fmtD(tot.val),'']
+  ].map(([k,v,s])=>`<div class="stat"><span class="k">${k}</span><span class="v">${v}${s?`<small>${s}</small>`:''}</span></div>`).join('');
+
+  document.querySelectorAll('[data-ladder]').forEach(el=>{const k=el.dataset.ladder,s=STATS[k]||{},b=+S.prices[k]||0;
+    const env=k.split('|')[0];el.innerHTML=s.n>1&&s.sd?`<b>${fmtD(b*mult(-1,env))}</b>–<b>${fmtD(b*mult(1,env))}</b> ±1σ<br>μ ${s.mean.toFixed(1)}% σ ${s.sd.toFixed(1)}`:(s.n?`μ ${s.mean.toFixed(1)}%<br>${s.n} lot${s.n>1?'s':''}, no spread`:'no lots yet');});
+  const menu=$('menu');menu.innerHTML='';
+  const dirAttr=k=>S.sort.key===k?` data-dir="${S.sort.dir}"`:'';
+  for(const key of ORDER){
+    const [env,meth]=key.split('|');
+    const list=vis.filter(i=>i.key===key).sort(sorter);
+    if(!list.length&&!edit)continue;
+    if(!list.length&&(S.filters.env!=='all'&&S.filters.env!==env||S.filters.meth!=='all'&&S.filters.meth!==meth))continue;
+    const sv=list.reduce((a,i)=>a+i.vol,0),sb=list.reduce((a,i)=>a+i.biomass,0),sval=list.reduce((a,i)=>a+i.vol*i.price,0);
+    const sec=document.createElement('section');sec.className='section';sec.style.setProperty('--sec',METHS[meth].color);
+    sec.innerHTML=`<div class="sec-head"><div class="sec-title"><span class="swatch" style="background:${ENVS[env].color}"></span>${ENVS[env].name} · ${METHS[meth].name}</div>
+      <div class="sec-meta"><b>${list.length}</b> ${list.length===1?'lot':'lots'} · <b>${fmtN(sb)}</b> ${u} biomass → <b>${fmtN(sv)}</b> ${u} product @ <b>${S.btr[key]}%</b> BTR · base <b>${fmtD(S.prices[key])}</b>/${u}${STATS[key]&&STATS[key].n>1?` · THC μ <b>${STATS[key].mean.toFixed(1)}%</b> σ <b>${STATS[key].sd.toFixed(1)}</b> · spread <b>${S.spreads[env]??50}%</b>`:''} · <b>${fmtD(sval)}</b> at list</div></div>
+      <div class="tbl-wrap"><table class="menu"><thead><tr>
+        <th class="sortable" data-k="strain"${dirAttr('strain')}>Strain</th>
+        <th class="sortable r" data-k="thc"${dirAttr('thc')}>Expected THC</th>
+        <th class="r">Biomass</th>
+        <th class="sortable r" data-k="vol"${dirAttr('vol')}>Expected product</th>
+        <th class="r edit-only">Plants</th><th class="r edit-only">Hang %</th>
+        <th class="sortable r" data-k="date"${dirAttr('date')}>Harvest</th>
+        <th class="sortable r" data-k="price"${dirAttr('price')}>Price / ${u}</th>
+        <th class="r edit-only">Override</th><th class="editcol edit-only"></th>
+      </tr></thead><tbody>${list.length?list.map(rowHtml).join(''):`<tr><td colspan="10" class="empty">No lots in this category yet. Add one from the rail.</td></tr>`}</tbody></table></div>`;
+    menu.appendChild(sec);
+  }
+  if(!menu.children.length)menu.innerHTML='<p class="empty">Nothing matches the current filters.</p>';
+  menu.querySelectorAll('th.sortable').forEach(th=>th.onclick=()=>{const k=th.dataset.k;S.sort=S.sort.key===k?{key:k,dir:S.sort.dir==='asc'?'desc':'asc'}:{key:k,dir:k==='strain'||k==='date'?'asc':'desc'};save();renderMenu();});
+  menu.querySelectorAll('[data-edit]').forEach(inp=>inp.onchange=()=>{
+    const r=S.rows.find(x=>x.id==inp.dataset.id),f=inp.dataset.edit;
+    if(f==='plants')r.plants=Math.max(0,+inp.value||0);
+    else if(f==='thc')r.thc=inp.value===''?null:+inp.value;
+    else if(f==='hang')r.hang=Math.min(100,Math.max(0,+inp.value||0));
+    else if(f==='ov'){r.ov=r.ov||{};r.ov[inp.dataset.meth]=inp.value===''?null:+inp.value;}
+    else if(f==='date')r.date=inp.value||null;
+    save();renderMenu();
+  });
+  menu.querySelectorAll('.rm').forEach(b=>b.onclick=()=>{S.rows=S.rows.filter(x=>x.id!=b.dataset.id);save();render();toast('Removed');});
+  const maxVol=Math.max(1,...vis.map(i=>i.vol));
+  menu.querySelectorAll('.bar i').forEach(i=>i.style.width=(100*(+i.dataset.v)/maxVol).toFixed(1)+'%');
+  $('assump').innerHTML=`<b>How to read this.</b> Biomass = plants × ${S.vol.yieldPer} ${u}/plant${S.vol.mode==='dry'?` × ${S.vol.dryDown}% dry-down`:''}, split by the hang/silo share planned for each lot. Expected product = biomass × that category's BTR (${ORDER.map(k=>ENVS[k.split('|')[0]].name.slice(0,2).toUpperCase()+'·'+k.split('|')[1]+' '+S.btr[k]+'%').join(', ')}). Prices and menu value apply to product weight. Expected THC is the pre-harvest estimate from the harvest plan, not a COA. Price = category base × (1 + spread × z ÷ 2), where z is the lot's expected THC in standard deviations from that category's mean (unweighted across lots with an estimate) and spread is set per grow type (Indoor ${S.spreads.IN}%, Greenhouse ${S.spreads.GH}%, Outdoor ${S.spreads.OD}%), floor 25% of base, cap 2× base; lots without a THC estimate price at base, unless a strain-level override is set. Source: ${meta().file} (sheet ${meta().sheet}), data as of ${meta().asOf}. Generated ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}.`;
+  $('subline').textContent=`${vis.length} lots · ${fmtN(tot.bio)} ${u} biomass → ${fmtN(tot.vol)} ${u} product · ${fmtD(tot.val)} at list price`;
+}
+function rowHtml(it){
+  const r=it.row,u=S.vol.unit;
+  const tags=`${r.lic?`<span class="tag ${r.lic==='AU'?'au':'med'}">${r.lic}</span>`:''}${it.pct<100?`<span class="tag split">${it.pct}% ${it.meth}</span>`:''}${r.id>1000?'<span class="tag new">added</span>':''}`;
+  const sig=r.thc==null||!it.z?'':`<div class="sig ${it.z>0?'up':'dn'}">${it.z>0?'+':'−'}${Math.abs(it.z).toFixed(1)}σ</div>`;
+  const thc=r.thc==null?`<span class="thc tbd">TBD</span>`:`<span class="thc ${it.z>=1?'band-hi':''}">${r.thc.toFixed(0)}%</span>${sig}`;
+  const ov=(r.ov||{})[it.meth];
+  return `<tr>
+    <td><div class="strain">${esc(r.strain)}${tags}</div><div class="site">${esc(r.site)}${r.note?' · '+esc(r.note):''}</div></td>
+    <td class="r"><span class="view-only">${thc}</span><input class="cell-in edit-only" type="number" step="0.5" data-edit="thc" data-id="${r.id}" value="${r.thc??''}" placeholder="TBD" aria-label="Expected THC"></td>
+    <td class="r"><span class="num" style="color:var(--ink-2)">${fmtN(it.biomass)}</span> <span class="site">${u}</span></td>
+    <td class="r"><span class="num">${fmtN(it.vol)}</span> <span class="site">${u}</span><div class="bar" style="margin-left:auto"><i data-v="${it.vol}"></i></div></td>
+    <td class="r edit-only"><input class="cell-in" type="number" data-edit="plants" data-id="${r.id}" value="${r.plants}" aria-label="Plants"></td>
+    <td class="r edit-only"><input class="cell-in" type="number" min="0" max="100" data-edit="hang" data-id="${r.id}" value="${r.hang}" aria-label="Hang dried percent"></td>
+    <td class="r"><span class="view-only num">${fmtDate(r.date)}</span><input class="cell-in wide edit-only" type="date" data-edit="date" data-id="${r.id}" value="${r.date||''}" aria-label="Harvest date"></td>
+    <td class="r"><span class="price ${it.override?'override':''}">${fmtD(it.price)}${it.override?'<small> set</small>':''}</span>${!it.override&&it.z&&r.thc!=null&&Math.round((mult(it.z,r.env)-1)*100)!==0?`<div class="sig">${mult(it.z,r.env)>=1?'+':'−'}${Math.abs(Math.round((mult(it.z,r.env)-1)*100))}% vs base</div>`:''}</td>
+    <td class="r edit-only"><input class="cell-in" type="number" step="5" data-edit="ov" data-meth="${it.meth}" data-id="${r.id}" value="${ov??''}" placeholder="matrix" aria-label="Price override"></td>
+    <td class="editcol edit-only"><button class="rm" type="button" data-id="${r.id}" title="Remove strain">✕</button></td>
+  </tr>`;
+}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1600);}
+function renderSource(){const m=meta();$('srcLink').href=m.url;$('srcLink').textContent=m.file;$('srcSheet').textContent=m.sheet;$('srcAsOf').textContent=m.asOf;$('srcCount').textContent=(LIVE_ROWS||SOURCE_ROWS).length+' lots';}
+function parseWorkbook(wb){
+  const ws=wb.Sheets['PNN']||wb.Sheets[wb.SheetNames[0]];
+  const aoa=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null});
+  let hi=aoa.findIndex(r=>r&&r.some(c=>String(c||'').trim()==='Row Labels'));
+  if(hi<0)throw new Error('Could not find the header row (looking for "Row Labels").');
+  const H=aoa[hi].map(c=>String(c||'').trim().toLowerCase());
+  const col=(...names)=>{for(const n of names){const i=H.indexOf(n);if(i>=0)return i;}return -1;};
+  const cFarm=col('farm','au','site'),cEnv=col('environment','od/gh'),cStrain=col('row labels','strain'),cCnt=col('count of tag','plants','count'),cDate=col('fdate','date','harvest date'),cThc=col('thc'),cHang=col('hang'),cSilo=col('silo'),cOrder=col('harvest order (rough)','harvest order');
+  if(cStrain<0||cCnt<0)throw new Error('Sheet is missing the Row Labels or Count of Tag column.');
+  const pct=v=>{if(v==null||v==='')return null;if(typeof v==='string'){v=v.trim().replace('%','');if(v==='')return null;v=+v;return isNaN(v)?null:v;}return Math.round((v<=1?v*100:v)*100)/100;};
+  const out=[];let farm=null,id=0;
+  for(const r of aoa.slice(hi+1)){
+    if(!r)continue;const strain=r[cStrain];if(strain==null||String(strain).trim()==='')continue;
+    if(cFarm>=0&&r[cFarm])farm=String(r[cFarm]).trim();
+    const s=String(strain).trim();if(/^(row labels|grand total|early)$/i.test(s))continue;
+    const plants=+r[cCnt]||0;if(!plants)continue;
+    let h=cHang>=0?pct(r[cHang]):null,si=cSilo>=0?pct(r[cSilo]):null;
+    if(h==null&&si==null){h=0;si=100;}else if(h==null)h=100-si;
+    let d=null,dv=cDate>=0?r[cDate]:null;
+    if(dv instanceof Date)d=dv.toISOString().slice(0,10);
+    else if(typeof dv==='number'){const o=XLSX.SSF.parse_date_code(dv);if(o)d=`${o.y}-${String(o.m).padStart(2,'0')}-${String(o.d).padStart(2,'0')}`;}
+    else if(typeof dv==='string'&&dv.trim()){const t=Date.parse(dv.trim()+(/\d{4}/.test(dv)?'':' 2026'));if(!isNaN(t))d=new Date(t).toISOString().slice(0,10);}
+    const env=cEnv>=0&&String(r[cEnv]||'').trim().toUpperCase()==='GH'?'GH':(cEnv>=0&&String(r[cEnv]||'').trim().toUpperCase()==='IN'?'IN':'OD');
+    out.push({id:++id,site:farm||'—',env,strain:s,plants,date:d,thc:cThc>=0?pct(r[cThc]):null,hang:Math.round(Math.min(100,Math.max(0,h))),order:cOrder>=0&&r[cOrder]!=null?+r[cOrder]:null});
+  }
+  if(!out.length)throw new Error('No strain rows with a plant count were found.');
+  return {rows:out,sheet:ws===wb.Sheets['PNN']?'PNN':wb.SheetNames[0]};
+}
+$('fileIn').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  if(typeof XLSX==='undefined'){toast('Workbook reader did not load (offline?). Try again online.');return;}
+  try{const wb=XLSX.read(await f.arrayBuffer(),{type:'array',cellDates:true});const {rows,sheet}=parseWorkbook(wb);
+    LIVE_ROWS=rows;LIVE_META={...SOURCE_META,file:f.name,sheet,asOf:new Date(f.lastModified).toLocaleString('en-US',{dateStyle:'medium',timeStyle:'short'})+' (file)',method:'loaded in browser'};
+    S.rows=freshRows();save();render();toast(`Loaded ${rows.length} lots from ${f.name}`);
+  }catch(err){toast('Could not read workbook: '+err.message);}
+  e.target.value='';
+};
+(async()=>{try{const res=await fetch('data.json',{cache:'no-store'});if(!res.ok)return;const d=await res.json();if(!Array.isArray(d.rows)||!d.rows.length)return;LIVE_ROWS=d.rows;LIVE_META={...SOURCE_META,...(d.meta||{})};
+  if(!S.rowsFrom||S.rowsFrom!==(d.meta&&d.meta.asOf)){S.rows=freshRows();S.rowsFrom=d.meta&&d.meta.asOf;save();}render();}catch(e){}})();
+function render(){renderSource();document.body.classList.toggle('editing',S.editing);$('btnEdit').textContent=S.editing?'Done editing':'Edit menu';renderRail();renderMenu();}
+
+$('q').oninput=e=>{S.filters.q=e.target.value;save();renderMenu();};
+$('minThc').oninput=e=>{S.filters.minThc=e.target.value;save();renderMenu();};
+for(const [id,obj,k] of [['yieldPer','vol','yieldPer'],['dryDown','vol','dryDown']])
+  $(id).oninput=e=>{S[obj][k]=+e.target.value||0;save();renderMenu();};
+$('unit').oninput=e=>{S.vol.unit=e.target.value||'lb';save();document.querySelectorAll('.unitlab').forEach(u=>u.textContent=S.vol.unit);renderMenu();};
+$('volMode').onchange=e=>{S.vol.mode=e.target.value;$('dryDown').disabled=S.vol.mode!=='dry';save();renderMenu();};
+$('btnEdit').onclick=()=>{S.editing=!S.editing;save();render();};
+$('btnReset').onclick=()=>{S={...structuredClone(DEFAULTS),rows:freshRows(),editing:false};save();render();toast('Reloaded from source workbook');};
+$('btnPdf').onclick=()=>{const was=S.editing;S.editing=false;render();setTimeout(()=>{try{window.print();}catch(e){}toast('If no print dialog opened, open this page full-screen and press Ctrl/Cmd+P');S.editing=was;render();},80);};
+$('btnAdd').onclick=()=>{
+  const strain=$('nStrain').value.trim();if(!strain){toast('Enter a strain name');return;}
+  S.rows.push({id:1000+Date.now()%1e7,site:($('nSite').value.trim()||'—').toUpperCase(),env:$('nEnv').value,strain,plants:+$('nPlants').value||0,date:$('nDate').value||null,thc:$('nThc').value===''?null:+$('nThc').value,hang:Math.min(100,Math.max(0,+$('nHang').value||0)),note:null,ov:{}});
+  ['nStrain','nPlants','nThc','nDate'].forEach(i=>$(i).value='');$('nHang').value=0;
+  save();render();toast('Added '+strain);
+};
+render();
+</script>
+</body></html>

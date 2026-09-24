@@ -7,3 +7,27 @@ dist/
 .DS_Store
 Thumbs.db
 worker-configuration.d.ts
+
+# THE ROAD LANE (canon 0.30.51): the deploy watcher's request, result, heartbeat and logs
+DEPLOY/
+
+# THE BETA ROLL (canon 0.30.53): every table dumped by roll-beta.mjs and db-snapshot.mjs
+db_backups/
+
+# THE FREE TIER WALL (canon 0.30.54): exports parked for their drop; never vendored, never committed
+DROPS/
+
+# THE REFUSED FILES (canon 0.30.165) and the moved git index.lock: never committed, deleted by the owner's hands
+_to_delete/
+
+# THE RESEARCH DROPS (vendor documents and threads, canon 0.30.223): read on the disk, never pushed
+RESEARCH/
+
+# THE PERSIST DIRECTORIES (canon 0.30.224): miniflare databases from past build walks, local only, never committed
+*-persist/
+
+# THE DUMPS BESIDE REPORTS (canon 0.30.224): table dumps belong in db_backups/, never in the repo
+SESSION_REPORTS/db_dumps_*/
+
+# THE ROLL'S TOML BACKUPS (canon 0.30.53)
+app/wrangler.toml.bak-*

@@ -10,6 +10,8 @@ head_sampling_rate = 1
 
 [vars]
 THEME = "grip"
+# THE TESTING DESK part 3. Sandbox on this env. The two keys are secrets, never vars.
+METRC_API_BASE = "https://sandbox-api-mi.metrc.com"
 
 # Vendored SalesHelper node under public/ (owner ruling 2026-08-31). run_worker_first
 # keeps every request on the worker so the PIN gate applies; assets are reachable only
@@ -34,6 +36,22 @@ name = "gripfactory-lite-grip"
 
 [env.grip.vars]
 THEME = "grip"
+# THE SERVICE ACTOR (canon 0.30.140): Cloudflare Access fronts this environment,
+# so a request with no login email is a service token's and reads the machine
+# doors alone. The default env (wrangler dev, smoke) carries no such var.
+ACCESS_FRONTED = "1"
+# THE SHEET SYNC (canon 0.30.162): identifiers only. The owner fills these.
+# The client secret is a wrangler secret (MS_CLIENT_SECRET), never a var.
+# The default env and c10 carry neither of these, and neither carries a cron.
+MS_TENANT_ID = "TBD"
+MS_CLIENT_ID = "TBD"
+# Sandbox until the owner replaces this with the production base. Keys stay secrets.
+METRC_API_BASE = "https://sandbox-api-mi.metrc.com"
+
+# A quarter past every hour, UTC. The same cron reads the sheet and, when the
+# keys exist, the Metrc mirror. The cron is not a request.
+[env.grip.triggers]
+crons = ["15 * * * *"]
 
 [env.grip.assets]
 directory = "public"
@@ -43,8 +61,8 @@ html_handling = "none"
 
 [[env.grip.d1_databases]]
 binding = "DB"
-database_name = "gripfactory-lite-grip-20260911"
-database_id = "ba651a49-e157-4352-807e-9453aaba8fc3"
+database_name = "gripfactory-lite-grip-20260914"
+database_id = "29c59313-c09b-4b81-b0cc-610150c7803b"
 migrations_dir = "migrations"
 
 [env.c10]

@@ -1,0 +1,1 @@
+SUPERSEDED FILENAME. This slice was mistakenly dated 09-03; the real prompt is prompts/2026-09-04_interco_menu_walk_slice.md and the icon zip is prompts/2026-09-04_operations_icons.zip. Builders: read those. This file and the 2026-09-03_operations_icons.zip stray can be deleted.

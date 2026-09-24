@@ -12,5 +12,6 @@
     "isolatedModules": true,
     "types": []
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "worker-configuration.d.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "test/**/*.d.ts", "worker-configuration.d.ts"],
+  "exclude": ["src/vendor/qrcodegen.ts"]
 }

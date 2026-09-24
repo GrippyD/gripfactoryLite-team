@@ -1,31 +1,78 @@
-import { DRY_SPACE_KINDS } from "./config";
+import { CAPACITY_UOMS, DRY_SPACE_KINDS, DRY_SPACE_TYPE_LABELS, DRY_SPACE_TYPES, drySpaceTypeOf, FLOOR_SITE_ORDER, SITE_LICENSES } from "./config";
+import { etWallClock } from "./farmday";
+import { LOOKUP_LANDING, LOOKUP_VALUE_SECTIONS } from "./lookups";
 import { EDITABLE_FIELDS, type EditFieldDef } from "./pipeline";
-import { esc } from "./html";
+import { esc, licenseChromeScript, licensePicker } from "./html";
+import { licenseToneClass } from "./interco";
+import { t, type Locale } from "./i18n";
 import type { LookupOption } from "./db";
 
-export function adminPage(tables: {
-  people: Record<string, unknown>[];
-  farms: Record<string, unknown>[];
-  strains: Record<string, unknown>[];
-  dry_spaces: Record<string, unknown>[];
-  package_types: Record<string, unknown>[];
-}): string {
+/** THE DRY SPACE TYPE (canon 0.30.106; owner: "Admin lookups: Dry spaces: 1.
+ * Name 2. Capacity 3. Capacity UOM (ea, lb, g, sqft) 4. Freezer, Dry Room, or
+ * Silo?"): his four columns first, then the standing kind and farm; the type
+ * reads as his word (Silo, Dry Room, Freezer). */
+const DRY_SPACE_COLUMNS = ["name", "capacity", "capacity_uom", "space_type", "kind", "farm_code"];
+function drySpaceRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  return rows.map((row) => ({ ...row, space_type: DRY_SPACE_TYPE_LABELS[drySpaceTypeOf(String(row.space_type ?? ""))] }));
+}
+
+/** Canon 0.30.40: the seven site license lines a location may be scoped to. */
+const SITE_LICENSE_VALUES: readonly string[] = FLOOR_SITE_ORDER.flatMap((site) => [...SITE_LICENSES[site]]);
+
+export function lookupsLandingPage(locale: Locale = "en"): string {
+  const sections = LOOKUP_LANDING.map((section) => {
+    const buttons = section.buttons
+      .map(
+        (b) => `<a class="tile" href="${esc(b.href)}" data-lookup-key="${esc(b.key)}" title="${esc(t(locale, b.description))}">
+          <span class="tile-kind">${esc(t(locale, section.category))}</span>
+          <span class="tile-title">${esc(t(locale, b.title))}</span>
+        </a>`
+      )
+      .join("");
+    return `<h2>${esc(t(locale, section.category))}</h2>
+      <div class="tiles lookup-landing">${buttons}</div>`;
+  }).join("");
+  return `<h1 title="${esc(t(locale, "People are entered here and live only in this site's database. Never commit names."))}">${esc(t(locale, "Data Lookups"))}</h1>
+    ${sections}`;
+}
+
+export function adminPage(
+  tables: {
+    people: Record<string, unknown>[];
+    farms: Record<string, unknown>[];
+    strains: Record<string, unknown>[];
+    dry_spaces: Record<string, unknown>[];
+    package_types: Record<string, unknown>[];
+    app_config: Record<string, unknown>[];
+  },
+  locale: Locale = "en"
+): string {
   const kindOpts = DRY_SPACE_KINDS.map((k) => `<option value="${k}">${k}</option>`).join("");
+  const spaceTypeOpts = DRY_SPACE_TYPES.map((v) => `<option value="${v}">${esc(DRY_SPACE_TYPE_LABELS[v])}</option>`).join("");
+  const capacityUomOpts = [`<option value=""></option>`, ...CAPACITY_UOMS.map((u) => `<option value="${u}">${u}</option>`)].join("");
   // Blank scopes the space to no farm, meaning shared (owner ruling 2026-08-28).
   const farmOpts = [
     `<option value="">(shared)</option>`,
     ...tables.farms.map((f) => `<option value="${esc(f.code)}">${esc(f.code)}</option>`),
   ].join("");
-  return `<h1>Lookups</h1>
+  // Owner ruling 2026-09-01: "ratify 22 but place the home of the 22 in the
+  // lookups section of Admin." The App config section lists the standing keys
+  // (key, value, updated_at) with the reasoned Edit control only; adminTable's
+  // editOnly comment says why there is no Void and no Add.
+  const appConfigSection = `<h2>${esc(t(locale, "App config"))}</h2>
+    <p class="muted">${esc(t(locale, "Standing configuration values. Edit with a reason; keys cannot be added or voided."))}</p>
+    ${adminTable("app_config", ["key", "value", "updated_at"], tables.app_config, false, true)}`;
+  return `<h1>${esc(t(locale, "Lookups"))}</h1>
     <p class="muted">People are entered here and live only in this site's database. Never commit names.</p>
 
     <h2>People</h2>
-    <p class="muted">A person row auto-creates on first login; the email is the login identity. Edit to attach or fix an email.</p>
-    ${adminTable("people", ["display_name", "email", "is_active"], tables.people, true)}
+    <p class="muted">A person row auto-creates on first login; the email is the login identity. Edit to attach or fix an email. A phone login maps onto the person carrying the phone (ten US digits, or + country code and number); a phone no person carries is refused.</p>
+    ${adminTable("people", ["display_name", "email", "phone", "is_active"], tables.people, true)}
     <form class="stack" method="post" action="/admin/lookups/people">
       <input type="hidden" name="action" value="add">
       <label class="field">Name <input type="text" name="display_name" required></label>
       <label class="field">Email <input type="text" name="email"></label>
+      <label class="field">Phone (login) <input type="text" name="phone" inputmode="tel" autocomplete="off" placeholder="(269) 555-0100"></label>
       <button type="submit">Add person</button>
     </form>
 
@@ -44,10 +91,13 @@ export function adminPage(tables: {
     </form>
 
     <h2>Dry spaces</h2>
-    ${adminTable("dry_spaces", ["name", "kind", "farm_code"], tables.dry_spaces, false)}
+    ${adminTable("dry_spaces", DRY_SPACE_COLUMNS, drySpaceRows(tables.dry_spaces), false)}
     <form class="stack" method="post" action="/admin/lookups/dry_spaces">
       <input type="hidden" name="action" value="add">
       <label class="field">Name <input type="text" name="name" required></label>
+      <label class="field">Capacity <input type="number" name="capacity" step="0.01" min="0"></label>
+      <label class="field">Capacity UOM <select name="capacity_uom">${capacityUomOpts}</select></label>
+      <label class="field">Freezer, Dry Room, or Silo? <select name="space_type">${spaceTypeOpts}</select></label>
       <label class="field">Kind <select name="kind">${kindOpts}</select></label>
       <label class="field">Farm <select name="farm_code">${farmOpts}</select></label>
       <button type="submit">Add dry space</button>
@@ -61,21 +111,177 @@ export function adminPage(tables: {
       <label class="field">Display name <input type="text" name="display_name" required></label>
       <label class="field"><span><input type="checkbox" name="is_bud" value="1"> Is bud?</span></label>
       <button type="submit">Add package type</button>
+    </form>
+
+    ${appConfigSection}`;
+}
+
+export function lookupSectionPage(
+  section: string,
+  tables: {
+    people: Record<string, unknown>[];
+    farms: Record<string, unknown>[];
+    grow_methods: Record<string, unknown>[];
+    strains: Record<string, unknown>[];
+    dry_spaces: Record<string, unknown>[];
+    package_types: Record<string, unknown>[];
+    app_config: Record<string, unknown>[];
+  },
+  lookupRows: Record<string, unknown>[],
+  locale: Locale = "en"
+): string {
+  // THE BACK LINK (canon 0.30.109): the crumb under the app bar carries the way
+  // back to Data Lookups; the sections repeat no link of their own.
+  const back = "";
+  const kindOpts = DRY_SPACE_KINDS.map((k) => `<option value="${k}">${k}</option>`).join("");
+  const spaceTypeOpts = DRY_SPACE_TYPES.map((v) => `<option value="${v}">${esc(DRY_SPACE_TYPE_LABELS[v])}</option>`).join("");
+  const capacityUomOpts = [`<option value=""></option>`, ...CAPACITY_UOMS.map((u) => `<option value="${u}">${u}</option>`)].join("");
+  const farmOpts = [
+    `<option value="">(shared)</option>`,
+    ...tables.farms.map((f) => `<option value="${esc(f.code)}">${esc(f.code)}</option>`),
+  ].join("");
+  if (section === "people") {
+    // THE PHONE LOGIN (canon 0.30.127): the phone column and box; the person's phone is the mapping a phone login lands on.
+    return `${back}<h1 title="${esc(t(locale, "A person row auto-creates on first login; the email is the login identity. Edit to attach or fix an email. A phone login maps onto the person carrying the phone; a phone no person carries is refused."))}">${esc(t(locale, "People"))}</h1>
+    ${adminTable("people", ["display_name", "email", "phone", "is_active"], tables.people, true)}
+    <form class="stack" method="post" action="/admin/lookups/people">
+      <input type="hidden" name="action" value="add">
+      <label class="field">Name <input type="text" name="display_name" required></label>
+      <label class="field">Email <input type="text" name="email"></label>
+      <label class="field" title="${esc(t(locale, "Ten US digits, or + country code and number; stored as +E.164. A phone login maps onto this person."))}">${esc(t(locale, "Phone (login)"))} <input type="text" name="phone" inputmode="tel" autocomplete="off" placeholder="(269) 555-0100"></label>
+      <button type="submit">Add person</button>
     </form>`;
+  }
+  if (section === "farms") {
+    return `${back}<h1 title="${esc(t(locale, "Display names render on the wet weight header after the HBN. Edit to confirm or change them."))}">${esc(t(locale, "Farms"))}</h1>
+    ${adminTable("farms", ["code", "display_name"], tables.farms, false)}`;
+  }
+  if (section === "grow_methods") {
+    return `${back}<h1>${esc(t(locale, "Grow Methods"))}</h1>
+    ${adminTable("grow_methods", ["code", "display_name", "hbn_code"], tables.grow_methods, false)}
+    <form class="stack" method="post" action="/admin/lookups/grow_methods">
+      <input type="hidden" name="action" value="add">
+      <label class="field">Code <input type="text" name="code" required></label>
+      <label class="field">Display name <input type="text" name="display_name" required></label>
+      <label class="field">HBN code <input type="text" name="hbn_code" required></label>
+      <button type="submit">Add grow method</button>
+    </form>`;
+  }
+  if (section === "strains") {
+    return `${back}<h1>${esc(t(locale, "Strains"))}</h1>
+    ${adminTable("strains", ["name", "abbr", "hbn_code"], tables.strains, false)}
+    <form class="stack" method="post" action="/admin/lookups/strains">
+      <input type="hidden" name="action" value="add">
+      <label class="field">Name <input type="text" name="name" required></label>
+      <label class="field">Abbr <input type="text" name="abbr"></label>
+      <label class="field">HBN code <input type="text" name="hbn_code" required></label>
+      <button type="submit">Add strain</button>
+    </form>`;
+  }
+  if (section === "dry_spaces") {
+    return `${back}<h1>${esc(t(locale, "Dry Spaces"))}</h1>
+    ${adminTable("dry_spaces", DRY_SPACE_COLUMNS, drySpaceRows(tables.dry_spaces), false)}
+    <form class="stack" method="post" action="/admin/lookups/dry_spaces">
+      <input type="hidden" name="action" value="add">
+      <label class="field">Name <input type="text" name="name" required></label>
+      <label class="field">Capacity <input type="number" name="capacity" step="0.01" min="0"></label>
+      <label class="field">Capacity UOM <select name="capacity_uom">${capacityUomOpts}</select></label>
+      <label class="field">Freezer, Dry Room, or Silo? <select name="space_type">${spaceTypeOpts}</select></label>
+      <label class="field">Kind <select name="kind">${kindOpts}</select></label>
+      <label class="field">Farm <select name="farm_code">${farmOpts}</select></label>
+      <button type="submit">Add dry space</button>
+    </form>`;
+  }
+  if (section === "package_types") {
+    return `${back}<h1>${esc(t(locale, "Package Types"))}</h1>
+    ${adminTable("package_types", ["code", "display_name", "is_bud"], tables.package_types, false)}
+    <form class="stack" method="post" action="/admin/lookups/package_types">
+      <input type="hidden" name="action" value="add">
+      <label class="field">Code <input type="text" name="code" required></label>
+      <label class="field">Display name <input type="text" name="display_name" required></label>
+      <label class="field"><span><input type="checkbox" name="is_bud" value="1"> Is bud?</span></label>
+      <button type="submit">Add package type</button>
+    </form>`;
+  }
+  if (section === "app_config") {
+    return `${back}<h1 title="${esc(t(locale, "Standing configuration values. Edit with a reason; keys cannot be added or voided."))}">${esc(t(locale, "App config"))}</h1>
+    ${adminTable("app_config", ["key", "value", "updated_at"], tables.app_config, false, true)}`;
+  }
+  const valueSection = LOOKUP_VALUE_SECTIONS[section];
+  if (valueSection) {
+    const isLicense = valueSection.category === "license";
+    // Canon 0.30.40: inventory AND field locations carry a farm and an optional
+    // license scope (blank = every license at the farm).
+    const isLocation = valueSection.category === "inventory_location" || valueSection.category === "field_location";
+    // THE METRC MIRROR (canon 0.30.38): an internal field's Tone is what it
+    // applies to (plants, packages, or blank for both).
+    const isInternalField = valueSection.category === "internal_field";
+    // Owner ruling 2026-09-06 (canon 0.27.0): locations carry a farm assignment.
+    const columns = isLicense
+      ? ["value", "label", "tone", "farm_code", "sort_order"]
+      : isLocation
+        ? ["value", "label", "farm_code", "license_value", "sort_order"]
+        : isInternalField
+          ? ["value", "label", "tone", "sort_order"]
+          : ["value", "label", "sort_order"];
+    const toneField = isLicense
+      ? `<label class="field">${esc(t(locale, "Tone"))} <input type="text" name="tone" placeholder="blue yellow green"></label>`
+      : isInternalField
+        ? `<label class="field">${esc(t(locale, "Applies to"))} <input type="text" name="tone" placeholder="plants, packages, or blank for both" data-applies-to></label>`
+        : "";
+    const farmField = isLicense || isLocation
+      ? `<label class="field">${esc(t(locale, "Farm"))} <select name="farm_code">${farmOpts}</select></label>`
+      : "";
+    const licenseField = isLocation
+      ? `<label class="field">${esc(t(locale, "License (blank = every license at the farm)"))} <select name="license_value"><option value="">${esc(t(locale, "Every license at the farm"))}</option>${SITE_LICENSE_VALUES.map((lic) => `<option value="${esc(lic)}">${esc(lic)}</option>`).join("")}</select></label>`
+      : "";
+    // Hover help law (canon 0.26.0): the location convention rides the title.
+    const conventionTitle = isLocation
+      ? ` title="${esc(t(locale, "Barns are the inbox at every site. CSA is 832-side staging. CSB and unknown spots are processor under 694."))}"`
+      : "";
+    return `${back}<h1${conventionTitle}>${esc(t(locale, valueSection.title))}</h1>
+    ${adminTable("lookup_values", columns, lookupRows, false, false, isLicense)}
+    <form class="stack" method="post" action="/admin/lookups/${esc(section)}">
+      <input type="hidden" name="action" value="add">
+      <label class="field">Value <input type="text" name="value" required></label>
+      <label class="field">Label <input type="text" name="label" required></label>
+      ${toneField}
+      ${farmField}
+      ${licenseField}
+      <button type="submit">Add value</button>
+    </form>`;
+  }
+  return `${back}<h1>Lookups</h1><p class="muted">Unknown section.</p>`;
 }
 
 function adminTable(
   table: string,
   columns: string[],
   rows: Record<string, unknown>[],
-  isPeople: boolean
+  isPeople: boolean,
+  // Owner ruling 2026-09-01: App config carries the Edit control only. Standing
+  // config keys are code-known, so there is no Add; there is no Void because a
+  // voided admin_pin would unlock the site and a voided yield breaks the sheet.
+  editOnly = false,
+  toneLicenses = false
 ): string {
   if (rows.length === 0) return `<p class="muted">None yet.</p>`;
   const head = `<tr>${columns.map((c) => `<th>${esc(c)}</th>`).join("")}<th>Controls</th></tr>`;
   const body = rows
     .map((row) => {
       const id = String(row.id);
-      const cells = columns.map((c) => `<td>${esc(row[c] ?? "")}</td>`).join("");
+      const cells = columns
+        .map((c) => {
+          if (toneLicenses && (c === "label" || c === "value")) {
+            const cls = licenseToneClass(row.tone as string | null);
+            return `<td><span class="${cls}">${esc(row[c] ?? "")}</span></td>`;
+          }
+          return `<td>${esc(row[c] ?? "")}</td>`;
+        })
+        .join("");
+      const voidLink = editOnly
+        ? ""
+        : `<a class="btn secondary" href="/record/${esc(table)}/${esc(id)}/void">Void</a>`;
       const deactivate = isPeople
         ? `<form method="post" action="/admin/lookups/people" class="row-actions">
              <input type="hidden" name="action" value="deactivate">
@@ -86,7 +292,7 @@ function adminTable(
         : "";
       return `<tr>${cells}<td class="row-actions">
         <a class="btn secondary" href="/record/${esc(table)}/${esc(id)}/edit">Edit</a>
-        <a class="btn secondary" href="/record/${esc(table)}/${esc(id)}/void">Void</a>
+        ${voidLink}
         ${deactivate}
       </td></tr>`;
     })
@@ -94,11 +300,56 @@ function adminTable(
   return `<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
 
+/** Fork 6 (canon 0.30.1): the Admin-buried manual HBN fallback. Owner verbatim:
+ * "bury it in Admin somewhere for now.  I don't want that to be the default."
+ * Acquire stays the default; this hand-types the whole HBN when the system
+ * fails, under the same farm-assigned license law, reasoned into the log. */
+export function manualHbnPage(
+  lookups: {
+    farms: LookupOption[];
+    licenses: LookupOption[];
+    grow_methods: LookupOption[];
+    strains: LookupOption[];
+  },
+  locale: Locale = "en",
+  okHbn?: string
+): string {
+  const opts = (rows: LookupOption[]) =>
+    [`<option value=""></option>`, ...rows.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`)].join("");
+  const farmLicenses = lookups.licenses.filter((o) => o.farm_code);
+  const flash = okHbn
+    ? `<p class="banner ok">${esc(t(locale, "Minted"))}: ${esc(okHbn)}. ${esc(t(locale, "It sits in the HBN Queue like any other."))}</p>`
+    : "";
+  return `<h1>${esc(t(locale, "Manual HBN"))}</h1>
+    <p class="muted">${esc(
+      t(
+        locale,
+        "The fallback for when the system fails. Acquire is the default; this takes the whole HBN as typed, checks the serial ledger, and demands a reason."
+      )
+    )}</p>
+    ${flash}
+    <form class="stack" method="post" action="/admin/manual-hbn">
+      <label class="field">${esc(t(locale, "HBN"))} <input type="text" name="hbn" required placeholder="26244-ARL-GH-027-0-05-26001"></label>
+      <label class="field">${esc(t(locale, "METRC Harvest Tag"))} <input type="text" name="metrc_harvest_tag"></label>
+      <label class="field">${esc(t(locale, "Date"))} <input type="date" name="entry_date" required></label>
+      <label class="field">${esc(t(locale, "Farm"))} <select name="farm_code" required>${opts(lookups.farms)}</select></label>
+      <label class="field">${esc(t(locale, "License"))} ${licensePicker("license_value", farmLicenses, "", { required: true })}</label>
+      <label class="field">${esc(t(locale, "Grow Method"))} <select name="grow_method_code" required>${opts(lookups.grow_methods)}</select></label>
+      <label class="field">${esc(t(locale, "Strain"))} <select name="strain_id" required>${opts(lookups.strains)}</select></label>
+      <label class="field">${esc(t(locale, "Reason"))} <input type="text" name="reason" required placeholder="${esc(t(locale, "why the system failed"))}"></label>
+      <button type="submit">${esc(t(locale, "Mint manual HBN"))}</button>
+    </form>
+    ${licenseChromeScript()}`;
+}
+
 export function logPage(rows: Record<string, unknown>[]): string {
   const exportLink = `<p><a href="/export/record_change_log.csv">CSV export</a></p>`;
   if (rows.length === 0) return `<h1>Change log</h1>${exportLink}<p class="muted">No events yet.</p>`;
   const head =
     "<tr><th>When</th><th>Table</th><th>Record</th><th>Field</th><th>Old</th><th>New</th><th>Actor</th><th>Reason</th></tr>";
+  // Owner ruling 2026-08-31: comma grouping is display only and the change log
+  // is an audit surface; old/new values render exactly as stored, never through
+  // formatGrams, so a logged gram value reads byte for byte as it was written.
   const body = rows
     .map(
       (r) => `<tr>
@@ -128,12 +379,14 @@ export function editPage(
     return `<h1>Edit</h1><p class="muted">This table is not editable.</p>`;
   }
   const inputs = fields.map((f) => editInput(f, row, lookups)).join("\n");
+  const licenseScript = fields.some((f) => f.lookup === "license") ? licenseChromeScript() : "";
   return `<h1>Edit ${esc(table)}</h1>
     <form class="stack" method="post" action="/record/${esc(table)}/${esc(id)}/edit">
       ${inputs}
       <label class="field">Reason <input type="text" name="reason" required></label>
       <button type="submit">Save</button>
-    </form>`;
+    </form>
+    ${licenseScript}`;
 }
 
 function editInput(
@@ -148,6 +401,9 @@ function editInput(
   }
   if (field.input === "lookup" && field.lookup) {
     const options = lookups[field.lookup] ?? [];
+    if (field.lookup === "license") {
+      return `<label class="field">${esc(field.label)}${licensePicker(field.name, options, String(current ?? ""), { required: !field.optional })}</label>`;
+    }
     const opts = [
       field.optional ? `<option value=""></option>` : "",
       ...options.map((o) => {
@@ -160,6 +416,28 @@ function editInput(
   if (field.input === "textarea") {
     return `<label class="field">${esc(field.label)}<textarea name="${esc(field.name)}">${esc(current ?? "")}</textarea></label>`;
   }
+  // THE DRY SPACE TYPE (canon 0.30.106): a fixed list renders as a select; an
+  // optional one leads with a blank that clears.
+  if (field.options) {
+    const opts = [
+      field.optional ? `<option value=""></option>` : "",
+      ...field.options.map((o) => {
+        const sel = String(current ?? "") === o.value ? " selected" : "";
+        return `<option value="${esc(o.value)}"${sel}>${esc(o.label)}</option>`;
+      }),
+    ].join("");
+    return `<label class="field">${esc(field.label)}<select name="${esc(field.name)}">${opts}</select></label>`;
+  }
+  // THE ZONELESS ZERO (canon 0.30.104): a farm-time field shows the stored
+  // instant as the Eastern wall clock it was, and takes the same shape back.
+  if (field.farmTime) {
+    const shown = etWallClock(String(current ?? "")) || String(current ?? "");
+    return `<label class="field">${esc(field.label)}<input type="text" name="${esc(field.name)}" value="${esc(
+      shown
+    )}" placeholder="YYYY-MM-DD HH:MM" autocomplete="off" data-farm-time></label>`;
+  }
+  // Owner ruling 2026-08-31: comma grouping is display only; an input's value
+  // stays the raw stored number so it round-trips through parseGrams.
   const extra = field.input === "number" ? ` step="0.01"` : "";
   return `<label class="field">${esc(field.label)}<input type="${field.input}" name="${esc(field.name)}" value="${esc(current ?? "")}"${extra}></label>`;
 }

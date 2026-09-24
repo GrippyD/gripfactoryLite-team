@@ -116,3 +116,42 @@ When a box opens, its talk-through produces a record appended below (or a per-bo
 **Box Contract standing:** worker performs (station form) ✓ · manager audits (edit-with-reason change log, /log view) ✓ · report or CSV out (/export) ✓. Adoption lands when the floor uses it and the riding flags get ruled.
 
 **Still open:** ABC column meaning; when Cuts and Plants land during the day; audit and report shape beyond the CSV export.
+
+
+## THE TYPICAL HARVEST: the logistics spine (Dennis, 2026-09-07, VERBATIM)
+
+Intake with Patrick's punch list, 2026-09-07. His framing, verbatim: "We need to strike the menu and take a look at what actually happens in a typical harvest, then back in the exceptions.  Somewhere, we've gotten wires crossed.  I don't want to change the surfaces unless necessary, but I need to give you the sequence of events for most of the logistics process:"
+
+1. "Acquire HBN"
+2. "Wet weights are collected by TLs"
+3. "Wet weights + HBN + Plant Tags + Barn(at whatever license the plant tags are at) + New Package Tag ID = METRC Harvest CSV"
+4. "If the harvest was on a med license at any farm, the new package ID is put on a manifest to that farm's AU license, then virtually received in 'Barn'.  If it's on an AU license already, the new Package ID is created in 'Barn'."
+5. "If this is a harvest at ARL or PNS, the new package ID is added to a manifest to deliver to PNN/832 'Barn' - note: 832 is an AU license, so we make sure the equivalent transfer is done beforehand."
+6. "When the truck arrives, it's received into PNN/832/Barn in METRC."
+7. "Whether the lot came from North or was shipped there, the wet weight begins its life in 832 Barn.  It gets transferred to 832 Silo #n immediately upon receipt/harvest tag creation."
+
+Closing, verbatim: "Try not to conflate terms here.  This is what happens to the material in real life, but I'm also describing the METRC processes that need to occur at the same time.  Keep the same methodology on the working panes, but consider the flow of data in our process, and really stretch here."
+
+### The reconciliation (Scribe, 2026-09-07): step against app
+
+| Step | The METRC lane (his words) | The app today | Verdict |
+|---|---|---|---|
+| 1 | Acquire HBN | Acquire station mints the HBN on a farm-assigned license | MATCH |
+| 2 | TLs collect wet weights | Wet weight station: lots per HBN, weights per read, Lead, Move To, Spear or Bucked (0.29.1) | MATCH |
+| 3 | Harvest CSV: plants + weights + HBN + BARN at the plant-tag license + NEW PACKAGE TAG | Wet Weights CSV pends per batch with plant-tag fill; DryingLocation emits the PHYSICAL space (silo, hang room, Truck N); the package paper cuts at UNLOAD, the internal item mints at finish or receive | CROSSED (W1, W2) |
+| 4 | Med harvest: manifest to the farm's AU license, virtually received in Barn; AU harvest: package born in Barn | The Virtual Move surface exists but is not wired to the flow; the mint silently writes an AU license (the arrival conversion law) with no equivalent-transfer paperwork | CROSSED (W3) |
+| 5 | ARL and PNS: the package rides a manifest to PNN/832 Barn, equivalent transfer done beforehand | The wet truck lane moves the LOT physically with no manifest, because the item does not exist until receipt | CROSSED (W4) |
+| 6 | The truck is received into PNN/832/Barn in METRC | The one-button receive lands the internal item in the barn under the arrival license; the METRC receive side is manual (T3 templates owed) | HALF |
+| 7 | Life begins in 832 Barn; transferred to 832 Silo #n immediately | The barn inbox law plus the Move To edit carrying the item | MATCH internally; no METRC location-move artifact (W5) |
+
+### The crossed wires, named
+
+- **W1, package birth timing:** METRC births the harvest package at step 3; the app births its paper at unload and its internal item at finish or receive. Everything downstream inherits this lag.
+- **W2, the harvest CSV location:** we emit the physical drying space into DryingLocation; the spine says the harvest lives in BARN at the plant-tag license, and the silo is a LATER location move (step 7).
+- **W3, the silent med hop:** the arrival conversion law converts med to AU inside the mint with no manifest and no virtual receive; the spine demands the equivalent transfer as real paperwork at the origin farm, before anything ships.
+- **W4, the paperless truck:** the physical wet truck rides with no manifest; the spine puts the harvest package on a real manifest (origin AU to 832 Barn) so the arrival receive closes paper, not just moves material.
+- **W5, the silent silo move:** Barn to Silo #n is right internally but leaves no METRC location-move artifact.
+
+### The direction (surfaces kept, per his words; awaiting his forks)
+
+One structural move untangles all five wires: **the harvest package is born at Finish lot (step 3), as the internal item AND the pended METRC paper, in BARN at the plant-tag license.** Every later step becomes a MOVE of that one package, each leaving its paperwork: the med-to-AU equivalent transfer (manifest plus virtual receive, the existing Virtual Move lane wired in), the ARL/PNS-to-832 manifest (the wet lot's package rides the SAME four-window manifest floor as everything else), the arrival receive that closes the manifest (the one button stays), and the Barn-to-Silo location move (the Move To edit, now also pending its METRC artifact). The arrival conversion law retires in favor of explicit hops. The working panes keep their methodology; only the data flow beneath them straightens. Status: TALKING; the forks ride the 2026-09-07 reply for his rapid fire.

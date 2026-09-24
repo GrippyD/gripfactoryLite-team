@@ -1,1 +1,11 @@
-* text=auto
+# THE LINE ENDINGS (canon 0.30.224): the repo and every checkout keep LF, so the disk hashes byte for byte against the Scribe's mirror
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.zip binary
+*.sqlite binary
+*.xlsx binary
+*.xlsb binary
+*.xlsm binary
+*.docx binary
+*.pdf binary

@@ -1,0 +1,13 @@
+-- 0054: THE PENDING QUEUE CLEAR (canon 0.30.96). Owner ruling 2026-09-16,
+-- verbatim: "CAN WE REMOVE ALL THE DOCS that are parked on pending data
+-- uploads?". His pick (AskUserQuestion, 2026-09-16): cleared, NOT uploaded to
+-- METRC (an honest clear, never a false upload claim); and a reusable Clear-all
+-- button on the page.
+--
+-- The clear reuses the existing disposition path: a metrc_uploads row disposes
+-- a pending file from the queue exactly as an upload mark does. This column
+-- tells the two apart: cleared = 0 is a real METRC upload (the default, so
+-- every existing mark stays as it was), cleared = 1 is a Clear-all disposition
+-- that was never sent. A future "uploaded to METRC" report filters cleared = 0.
+-- Postgres-portable, append-only.
+ALTER TABLE metrc_uploads ADD COLUMN cleared INTEGER NOT NULL DEFAULT 0;

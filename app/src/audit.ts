@@ -1,10 +1,22 @@
+import { roundGrams } from "./config";
+
 export class HttpError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** A refusal with names in it: the dictionary line and what fills its {holes}. */
+  readonly words?: { key: string; vars: Record<string, string> };
+  constructor(status: number, message: string, words?: { key: string; vars: Record<string, string> }) {
     super(message);
     this.name = "HttpError";
     this.status = status;
+    this.words = words;
   }
+}
+
+/** A refusal whose English is its dictionary line with the holes filled. */
+export function refusal(status: number, words: { key: string; vars: Record<string, string> }): HttpError {
+  let message = words.key;
+  for (const [name, value] of Object.entries(words.vars)) message = message.split(`{${name}}`).join(value);
+  return new HttpError(status, message, words);
 }
 
 export function requireReason(raw: string | null | undefined): string {
@@ -46,6 +58,24 @@ export function parseGrams(raw: unknown, label: string): number {
   if (!Number.isFinite(n) || n < 0) {
     throw new HttpError(400, `${label} must be a number of grams, zero or greater.`);
   }
-  return Math.round(n * 100) / 100;
+  return roundGrams(n);
+}
+
+/** THE PLANT COUNT (canon 0.30.62): the number of plants in a lot as typed at
+ * Finish lot, at the Load Silo prompt or through the pencil. Blank is null (not
+ * given, the Skip); a value must be a whole number of one or more. Accepts a
+ * grouped "1,200" as the crew may type it. */
+export function parsePlantCount(raw: unknown, label = "Number of plants"): number | null {
+  const s = textOrNull(raw);
+  if (s == null) return null;
+  const cleaned = s.replace(/,/g, "");
+  if (!/^\d+$/.test(cleaned)) {
+    throw new HttpError(400, `${label} must be a whole number of plants, one or more.`);
+  }
+  const n = Number(cleaned);
+  if (!Number.isSafeInteger(n) || n < 1) {
+    throw new HttpError(400, `${label} must be a whole number of plants, one or more.`);
+  }
+  return n;
 }
 
