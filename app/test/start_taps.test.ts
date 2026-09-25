@@ -178,6 +178,20 @@ describe("THE FOUR START TAPS (canon 0.30.89): the Start lot repeat guard", () =
     expect(drying.tables.wet_weight_entries).toHaveLength(2);
   });
 
+  it("THE TRUCK RECORD (canon 0.30.226): Truck # is part of the header the repeat guard matches", async () => {
+    const same = makeDb([emptyLot({ truck_number: "3" })]);
+    const again = await createWetWeight(same as unknown as D1Database, fd({ ...header, truck_number: "3" }));
+    expect(again.redirect).toBe("/station/wet_weight?lot=lot-first&repeat=1");
+    expect(same.tables.wet_weight_entries).toHaveLength(1);
+    const other = makeDb([emptyLot({ truck_number: "3" })]);
+    await createWetWeight(other as unknown as D1Database, fd({ ...header, truck_number: "4" }));
+    expect(other.tables.wet_weight_entries).toHaveLength(2);
+    expect(other.tables.wet_weight_entries[1].truck_number).toBe("4");
+    const blank = makeDb([]);
+    await createWetWeight(blank as unknown as D1Database, fd(header));
+    expect(blank.tables.wet_weight_entries[0].truck_number).toBeNull();
+  });
+
   it("the header form locks its button on the first tap; the resume list renders local time", () => {
     const lock = lockOnSubmitScript();
     expect(lock).toContain('form[data-lock-on-submit]');

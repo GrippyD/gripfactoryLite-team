@@ -45,6 +45,7 @@ export type MetrcPaneData = {
     released?: number;
     releasedPassed?: number;
     releasedFailed?: number;
+    landed?: number;
   };
 };
 
@@ -120,7 +121,12 @@ function flash(data: MetrcPaneData, locale: Locale): string {
               .replace("{failed}", String(m.releasedFailed ?? 0))
           )}`
         : "";
-    return `<p class="banner ok" data-metrc-flash>${esc(t(locale, "Mounted"))}: ${esc(t(locale, m.kind === "plants" ? "plants" : "packages"))}, ${esc(String(m.added))} ${esc(t(locale, "added"))}, ${esc(String(m.updated))} ${esc(t(locale, "updated"))}, ${esc(String(m.gone))} ${esc(t(locale, "gone"))}.<span data-metrc-closed="${esc(String(closedItems))}" data-metrc-closed-packages="${esc(String(closedPackages))}">${closedNote}</span><span data-metrc-released="${esc(String(m.released ?? 0))}">${releasedNote}</span></p>`;
+    const landedN = Number(m.landed ?? 0);
+    const landedNote =
+      landedN > 0
+        ? ` ${esc(t(locale, "{n} fresh frozen packages landed at the Blast Freezer.").replace("{n}", String(landedN)))}`
+        : "";
+    return `<p class="banner ok" data-metrc-flash>${esc(t(locale, "Mounted"))}: ${esc(t(locale, m.kind === "plants" ? "plants" : "packages"))}, ${esc(String(m.added))} ${esc(t(locale, "added"))}, ${esc(String(m.updated))} ${esc(t(locale, "updated"))}, ${esc(String(m.gone))} ${esc(t(locale, "gone"))}.<span data-metrc-closed="${esc(String(closedItems))}" data-metrc-closed-packages="${esc(String(closedPackages))}">${closedNote}</span><span data-metrc-released="${esc(String(m.released ?? 0))}">${releasedNote}</span><span data-metrc-landed="${esc(String(landedN))}">${landedNote}</span></p>`;
   }
   if (data.ok === "field") {
     return `<p class="banner ok" data-metrc-flash>${esc(t(locale, "Field saved."))}</p>`;

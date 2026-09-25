@@ -57,6 +57,100 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Scheduled.": { en: "Scheduled.", es: "Programado." },
   "Unscheduled.": { en: "Unscheduled.", es: "Quitado de la programacion." },
   "Completed.": { en: "Completed.", es: "Completado." },
+  // THE DRYING SCHEDULE (canon 0.30.226): the three surfaces by space kind and the joint unload.
+  "Silos": { en: "Silos", es: "Silos" },
+  "Dry Rooms": { en: "Dry Rooms", es: "Cuartos de secado" },
+  "Freezers": { en: "Freezers", es: "Congeladores" },
+  "Dry Room": { en: "Dry Room", es: "Cuarto de secado" },
+  "Freezer": { en: "Freezer", es: "Congelador" },
+  "Working": { en: "Working", es: "En trabajo" },
+  "Load": { en: "Load", es: "Cargar" },
+  "Unload": { en: "Unload", es: "Descargar" },
+  "Unload together": { en: "Unload together", es: "Descargar juntos" },
+  "Planned": { en: "Planned", es: "Planeado" },
+  "planned here": { en: "planned here", es: "planeado aqui" },
+  "no planned space": { en: "no planned space", es: "sin espacio planeado" },
+  "Dry": { en: "Dry", es: "Seco" },
+  "Yield": { en: "Yield", es: "Rendimiento" },
+  "Line removed": { en: "Line removed", es: "Linea retirada" },
+  "Unloaded in the last seven days.": { en: "Unloaded in the last seven days.", es: "Descargado en los ultimos siete dias." },
+  "Total dry grams": { en: "Total dry grams", es: "Gramos secos totales" },
+  "If the dry total differs from the packages": {
+    en: "If the dry total differs from the packages",
+    es: "Si el total seco difiere de los paquetes",
+  },
+  "Each lot's share is the total dry grams times its wet grams over {g} g, the wet grams of every load here, in whole grams; the last lot takes the remainder.": {
+    en: "Each lot's share is the total dry grams times its wet grams over {g} g, the wet grams of every load here, in whole grams; the last lot takes the remainder.",
+    es: "La parte de cada lote es el total de gramos secos por sus gramos humedos entre {g} g, los gramos humedos de todas las cargas aqui, en gramos enteros; el ultimo lote toma el resto.",
+  },
+  "There is no space of this kind in Dry Spaces.": {
+    en: "There is no space of this kind in Dry Spaces.",
+    es: "No hay un espacio de este tipo en Espacios de secado.",
+  },
+  "Unloaded together: {n} lots.": { en: "Unloaded together: {n} lots.", es: "Descargados juntos: {n} lotes." },
+  "Unknown dry space.": { en: "Unknown dry space.", es: "Espacio de secado desconocido." },
+  "{space} is not on this surface.": { en: "{space} is not on this surface.", es: "{space} no esta en esta superficie." },
+  "A freezer's lines are removed one lot at a time on Unload Dry Space; nothing is weighed, so a freezer has no joint unload.": {
+    en: "A freezer's lines are removed one lot at a time on Unload Dry Space; nothing is weighed, so a freezer has no joint unload.",
+    es: "Las lineas de un congelador se retiran un lote a la vez en Descargar espacio de secado; no se pesa nada, asi que un congelador no tiene descarga conjunta.",
+  },
+  "Unload together needs two or more loaded lots; {space} holds {n}. Unload the lot on Unload Dry Space.": {
+    en: "Unload together needs two or more loaded lots; {space} holds {n}. Unload the lot on Unload Dry Space.",
+    es: "Descargar juntos necesita dos o mas lotes cargados; {space} tiene {n}. Descargue el lote en Descargar espacio de secado.",
+  },
+  "Lot {lot} no longer stands in {space} (its space changed after loading); unload it on Unload Dry Space.": {
+    en: "Lot {lot} no longer stands in {space} (its space changed after loading); unload it on Unload Dry Space.",
+    es: "El lote {lot} ya no esta en {space} (su espacio cambio despues de cargarlo); descarguelo en Descargar espacio de secado.",
+  },
+  "Lot {lot} changed on Unload Dry Space while the joint unload ran; no lot was unloaded. Open Unload together again.": {
+    en: "Lot {lot} changed on Unload Dry Space while the joint unload ran; no lot was unloaded. Open Unload together again.",
+    es: "El lote {lot} cambio en Descargar espacio de secado mientras corria la descarga conjunta; no se descargo ningun lote. Abra Descargar juntos otra vez.",
+  },
+  "{space} was already unloaded together; nothing was unloaded twice.": {
+    en: "{space} was already unloaded together; nothing was unloaded twice.",
+    es: "{space} ya se descargo en conjunto; nada se descargo dos veces.",
+  },
+  "The loads in {space} changed since the form opened. Open Unload together again.": {
+    en: "The loads in {space} changed since the form opened. Open Unload together again.",
+    es: "Las cargas en {space} cambiaron desde que se abrio el formulario. Abra Descargar juntos otra vez.",
+  },
+  "Total dry grams is required.": { en: "Total dry grams is required.", es: "Los gramos secos totales son obligatorios." },
+  "Total dry grams must be a number of grams, zero or greater.": {
+    en: "Total dry grams must be a number of grams, zero or greater.",
+    es: "Los gramos secos totales deben ser un numero de gramos, cero o mas.",
+  },
+  "Total dry grams must be more than zero.": {
+    en: "Total dry grams must be more than zero.",
+    es: "Los gramos secos totales deben ser mas de cero.",
+  },
+  "Pick Queue an adjustment CSV or Nothing, just finish.": {
+    en: "Pick Queue an adjustment CSV or Nothing, just finish.",
+    es: "Elija Poner en cola un CSV de ajuste o Nada, solo terminar.",
+  },
+  "The loads in {space} carry no wet grams to share the dry total by.": {
+    en: "The loads in {space} carry no wet grams to share the dry total by.",
+    es: "Las cargas en {space} no tienen gramos humedos para repartir el total seco.",
+  },
+  "That total is too small to share across these lots in whole grams.": {
+    en: "That total is too small to share across these lots in whole grams.",
+    es: "Ese total es demasiado pequeno para repartirlo entre estos lotes en gramos enteros.",
+  },
+  "Lot {lot} is not drying, so it cannot be unloaded.": {
+    en: "Lot {lot} is not drying, so it cannot be unloaded.",
+    es: "El lote {lot} no esta secando, asi que no se puede descargar.",
+  },
+  "Lot {lot} stands in a freezer; remove its line on Unload Dry Space.": {
+    en: "Lot {lot} stands in a freezer; remove its line on Unload Dry Space.",
+    es: "El lote {lot} esta en un congelador; retire su linea en Descargar espacio de secado.",
+  },
+  "Lot {lot} already has dry weights on Unload Dry Space. Finish it there, or void them, before unloading together.": {
+    en: "Lot {lot} already has dry weights on Unload Dry Space. Finish it there, or void them, before unloading together.",
+    es: "El lote {lot} ya tiene pesos secos en Descargar espacio de secado. Terminelo alli, o anulelos, antes de descargar juntos.",
+  },
+  "Pick what to do about the difference: Queue an adjustment CSV, or Nothing, just finish.": {
+    en: "Pick what to do about the difference: Queue an adjustment CSV, or Nothing, just finish.",
+    es: "Elija que hacer con la diferencia: Poner en cola un CSV de ajuste, o Nada, solo terminar.",
+  },
   "Nothing available to schedule on this HBN.": {
     en: "Nothing available to schedule on this HBN.",
     es: "Nada disponible para programar en este HBN.",
@@ -293,6 +387,28 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Cryo weight (g)": { en: "Cryo weight (g)", es: "Peso criogénico (g)" },
   // Owner ruling 2026-08-31: record-borne truck labels, Truck <n> per HBN.
   "Truck": { en: "Truck", es: "Camión" },
+  "Truck #": { en: "Truck #", es: "Camión #" },
+  "Optional. The next number for this farm's lots today is filled in. Overtype it, or blank it for a lot that goes straight to its space.": {
+    en: "Optional. The next number for this farm's lots today is filled in. Overtype it, or blank it for a lot that goes straight to its space.",
+    es: "Opcional. Se llena el siguiente numero de los lotes de esta granja hoy. Cambielo, o dejelo en blanco para un lote que va directo a su espacio.",
+  },
+  "HBNs on this lot": { en: "HBNs on this lot", es: "HBNs en este lote" },
+  totes: { en: "totes", es: "totes" },
+  "That HBN is not on this lot's list.": {
+    en: "That HBN is not on this lot's list.",
+    es: "Ese HBN no esta en la lista de este lote.",
+  },
+  "Only a weighing lot's totes can change HBN; this lot has finished.": {
+    en: "Only a weighing lot's totes can change HBN; this lot has finished.",
+    es: "Solo los totes de un lote en pesaje pueden cambiar de HBN; este lote ya termino.",
+  },
+  "Pick an HBN.": { en: "Pick an HBN.", es: "Elija un HBN." },
+  "Finished Truck {truck}: {parts}.": {
+    en: "Finished Truck {truck}: {parts}.",
+    es: "Termino el camión {truck}: {parts}.",
+  },
+  "Finished: {parts}.": { en: "Finished: {parts}.", es: "Termino: {parts}." },
+  "{serial} {n} totes {g} g": { en: "{serial} {n} totes {g} g", es: "{serial} {n} totes {g} g" },
   "Pick from the left to begin.": {
     en: "Pick from the left to begin.",
     es: "Elija de la izquierda para comenzar.",
@@ -803,16 +919,9 @@ export const DICT: Record<string, { en: string; es: string }> = {
     es: "Elija una ubicacion para ver lo que el libro tiene ahi.",
   },
   "No live ledger packages at this location.": { en: "No live ledger packages at this location.", es: "No hay paquetes vivos del libro en esta ubicacion." },
-  // THE FFZ INVENTORY LOCATION (canon 0.30.145).
-  "Blast Freezer and every cryo'd package": { en: "Blast Freezer and every cryo'd package", es: "Blast Freezer y cada paquete pasado por crio" },
-  "No live ledger packages in the FFZ inventory.": { en: "No live ledger packages in the FFZ inventory.", es: "No hay paquetes vivos del libro en el inventario FFZ." },
-  "FFZ inventory is what the FFZ cube reads out of the ledger: every live package at the Blast Freezer and every live package born of a cryo'd package, wherever it sits. Each row shows its own location.": {
-    en: "FFZ inventory is what the FFZ cube reads out of the ledger: every live package at the Blast Freezer and every live package born of a cryo'd package, wherever it sits. Each row shows its own location.",
-    es: "El inventario FFZ es lo que el cubo FFZ lee del libro: cada paquete vivo en el Blast Freezer y cada paquete vivo nacido de un paquete pasado por crio, donde sea que este. Cada fila muestra su propia ubicacion.",
-  },
-  "Voids every live ledger package in the FFZ inventory under your reason, wherever it sits. Lots, loads, cryo runs and METRC's own records are untouched; a note that can be acknowledged waits on Pending Data Uploads.": {
-    en: "Voids every live ledger package in the FFZ inventory under your reason, wherever it sits. Lots, loads, cryo runs and METRC's own records are untouched; a note that can be acknowledged waits on Pending Data Uploads.",
-    es: "Anula cada paquete vivo del libro en el inventario FFZ bajo tu razon, donde sea que este. Los lotes, las cargas, las corridas de crio y los registros propios de METRC quedan intactos; una nota que se puede reconocer espera en Cargas de Datos Pendientes.",
+  "{n} fresh frozen packages landed at the Blast Freezer.": {
+    en: "{n} fresh frozen packages landed at the Blast Freezer.",
+    es: "{n} paquetes congelados frescos aterrizaron en el Blast Freezer.",
   },
   "Live ledger packages": { en: "Live ledger packages", es: "Paquetes vivos del libro" },
   "why these change": { en: "why these change", es: "por que cambian" },
@@ -1054,7 +1163,6 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "Plants remaining are the live plants in the METRC mirror under each farm's licenses; harvested adds the plant counts typed on the farm's finished lots this season; the per-plant averages read the season's counted lots. Hours are typed here per farm per day; Weight/DLH divides yesterday's weighed wet grams by them. The sheet is the source of the cutting and bucking hours and replaces a typed number at the next hour.",
     es: "Las plantas restantes son las plantas vivas del espejo METRC bajo las licencias de cada granja; las cosechadas suman los conteos de plantas escritos en los lotes terminados de la granja esta temporada; los promedios por planta leen los lotes contados de la temporada. Las horas se escriben aqui por granja y por dia; Peso/hora divide los gramos humedos pesados ayer entre ellas. La hoja es la fuente de las horas de corte y deshoje y reemplaza un numero escrito en la hora siguiente.",
   },
-  "FFZ inventory": { en: "FFZ inventory", es: "Inventario FFZ" },
   // THE UNLOADING SILO (canon 0.30.77): the state word and the cap change line.
   "unloading": { en: "unloading", es: "descargando" },
   "Dry out": { en: "Dry out", es: "Seco fuera" },
@@ -1062,7 +1170,6 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "METRC": { en: "METRC", es: "METRC" },
   "in": { en: "in", es: "en" },
   "ledger": { en: "ledger", es: "libro" },
-  "FFZ": { en: "FFZ", es: "FFZ" },
   "full": { en: "full", es: "lleno" },
   // THE BLAST FREEZER(S) (canon 0.30.106; owner, 2026-09-16: "Change status
   // "Drying" to "Chilling Out""): the freezer's running word, its unload panel
@@ -2374,6 +2481,8 @@ export const DICT: Record<string, { en: string; es: string }> = {
   // THE PREPACK SCHEDULER BY PACKAGE, THE HBN INHERITED (canon 0.30.196).
   "Filter": { en: "Filter", es: "Filtrar" },
   "HBN or last six": { en: "HBN or last six", es: "HBN o ultimos seis" },
+  // THE PREPACK HEADINGS (canon 0.30.229). Method names stay the lookup's stored display names.
+  "Unknown": { en: "Unknown", es: "Desconocido" },
   "known": { en: "known", es: "conocido" },
   "new from METRC": { en: "new from METRC", es: "nuevo desde METRC" },
   "no harvest in METRC's lineage": { en: "no harvest in METRC's lineage", es: "sin cosecha en el linaje de METRC" },

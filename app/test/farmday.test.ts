@@ -15,7 +15,6 @@ import {
   parseFarmDayStartHour,
 } from "../src/farmday";
 import { defaultTodayScript, layout } from "../src/html";
-import { ffzVisual, LB_GRAMS } from "../src/silo";
 
 /** A D1 stand-in: app_config by key (the PIN and the start hour); every other read answers nothing. */
 function fakeDb(config: Record<string, string> = { admin_pin: "21319", farm_day_start_hour: "6" }) {
@@ -237,12 +236,12 @@ describe("THE CONSOLE DAY (canon 0.30.152; owner: \"on the dashboard, can we do 
   });
 
   it("the page carries the control and the hours forms carry the picked day home", () => {
-    const html = harvestConsolePage({ input: { ...baseInput, yesterday: "2026-09-15", dayPicked: true }, live: [], ffz: ffzVisual(0, 4800 * LB_GRAMS), nowIso: MORNING });
+    const html = harvestConsolePage({ input: { ...baseInput, yesterday: "2026-09-15", dayPicked: true }, live: [], nowIso: MORNING });
     expect(html).toContain("data-hc-day");
     expect(html).toContain('<input type="hidden" name="work_date" value="2026-09-15">');
     expect(html).toContain('<input type="hidden" name="day_picked" value="1">');
     expect(html.match(/<span class="hc-date muted">2026-09-15<\/span>/g)?.length ?? 0).toBeGreaterThan(0);
-    const dflt = harvestConsolePage({ input: baseInput, live: [], ffz: ffzVisual(0, 4800 * LB_GRAMS), nowIso: MORNING });
+    const dflt = harvestConsolePage({ input: baseInput, live: [], nowIso: MORNING });
     expect(dflt).toContain('<input type="hidden" name="day_picked" value="">');
   });
 

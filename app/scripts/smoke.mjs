@@ -167,8 +167,8 @@ function firstSelectValue(html, name) {
   return hit[1];
 }
 
-function loadPageStripHasFfz(page) {
-  return page.res.status === 200 && page.body.includes("data-silo-strip") && page.body.includes('data-ffz data-ffz-state=');
+function loadPageStripHasSpaces(page) {
+  return page.res.status === 200 && page.body.includes("data-silo-strip") && !page.body.includes("data-ffz");
 }
 
 function drySpaceIdByName(html, name) {
@@ -387,8 +387,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 74 migration(s)")) {
-      throw new Error(`from-zero apply must say 74 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 75 migration(s)")) {
+      throw new Error(`from-zero apply must say 75 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -1778,17 +1778,18 @@ async function run() {
     });
     if (finish.status !== 303) fail("finish lot", `status ${finish.status}`);
 
-    // Pane-only hide (owner ruling 2026-08-28): the finished batch leaves the wet weight
-    // pane; the HBN Queue table keeps it until Mark complete.
+    // THE TRUCK RECORD (canon 0.30.226): a batch finished today stays on the pane
+    // for its next truck. The HBN Queue table keeps it until Mark complete.
+    // The pane still never prints the HBN itself (canon 0.22.0).
     const otherHbn = pickedHbn === minted ? minted2 : minted;
     const wetAfterFinish = await text("/station/wet_weight");
     if (wetAfterFinish.res.status !== 200) {
       fail("GET wet weight after finish", `status ${wetAfterFinish.res.status}`);
     }
-    assert(!wetAfterFinish.body.includes(`?pick=${batchId}`), `pane must hide finished batch ${batchId}`);
+    assert(wetAfterFinish.body.includes(`?pick=${batchId}`), `pane keeps a batch finished today ${batchId}`);
     assert(!wetAfterFinish.body.includes(pickedHbn), "the pane never prints an HBN (canon 0.22.0)");
-    const otherPick = wetAfterFinish.body.match(/href="\/station\/wet_weight\?pick=([a-f0-9-]{36})"/);
-    assert(otherPick && otherPick[1] !== batchId, `pane must keep the open batch (${otherHbn})`);
+    const panePicks = [...wetAfterFinish.body.matchAll(/href="\/station\/wet_weight\?pick=([a-f0-9-]{36})"/g)].map((m) => m[1]);
+    assert(panePicks.includes(batchId) && panePicks.some((id) => id !== batchId), `pane must keep today's finished batch and the open batch (${otherHbn})`);
 
     counts = await homeCounts();
     assert(counts.hbn === 2, `hbn after wet expected 2 got ${counts.hbn}`);
@@ -1984,7 +1985,7 @@ async function run() {
       const stripEnd = page.indexOf("</section>", stripAt);
       const row = page.slice(stripAt, stripEnd);
       assert(stripAt >= 0 && row.includes('data-cure-pane="CSA"') && row.includes('data-cure-pane="CSB"'), `${label}: CSA and CSB must ride the strip's row`);
-      assert(row.indexOf("data-ffz") < row.indexOf('data-cure-pane="CSA"') && row.indexOf('data-cure-pane="CSA"') < row.indexOf('data-cure-pane="CSB"'), `${label}: the panes must follow the FFZ cube in order`);
+      assert(!row.includes("data-ffz") && row.lastIndexOf("data-silo=") < row.indexOf('data-cure-pane="CSA"') && row.indexOf('data-cure-pane="CSA"') < row.indexOf('data-cure-pane="CSB"'), `${label}: the panes must follow the last space tile`);
       assert(!page.slice(stripEnd).includes("data-cure-pane"), `${label}: no pane may stand outside the strip`);
       assert(!page.includes("cure-panes"), `${label}: the old wrapper must be gone`);
     }
@@ -2017,13 +2018,12 @@ async function run() {
     // lot lands in PNN's barn and ARL's room is no landing space.
     const extraPane = await text("/station/wet_weight");
     assert(
-      !extraPane.body.includes(`?pick=${batchId}`),
-      `the unloaded lot's batch must stay hidden from the wet pane (${batchId})`
+      extraPane.body.includes(`?pick=${batchId}`),
+      `a batch finished today stays on the wet pane after unload (${batchId})`
     );
-    const extraLink = extraPane.body.match(/href="\/station\/wet_weight\?pick=([^"]+)"/);
-    if (!extraLink) fail("extra drying", "missing the open batch");
-    const extraBatchId = extraLink[1];
-    assert(extraBatchId !== batchId, "the pane's open batch must be the second HBN, not the unloaded one");
+    const extraPicks = [...extraPane.body.matchAll(/href="\/station\/wet_weight\?pick=([^"]+)"/g)].map((m) => m[1]);
+    const extraBatchId = extraPicks.find((id) => id !== batchId);
+    if (!extraBatchId) fail("extra drying", "missing the other open batch");
     const arlRoomId = drySpaceIdByName(lookupsPage.body, "Arlington Dry Room");
     const silo2Id = drySpaceIdByName(lookupsPage.body, "Silo 2");
     const extraStart = await req("/station/wet_weight", {
@@ -2048,7 +2048,7 @@ async function run() {
     // and the other open batch offered; the weighing lot moves to the unloaded
     // batch with a reason, weights and all, and that batch comes back into the
     // pane for the weighing lot's resume; a finished lot refuses to move; the lot
-    // moves back and the unloaded batch hides again; the change log carries the
+    // moves back; a batch finished today stays on the pane; the change log carries the
     // reason.
     const lotEditPage = await text(`/record/wet_weight_entries/${extraLotId}/edit`);
     if (lotEditPage.res.status !== 200) fail("GET lot edit page", `status ${lotEditPage.res.status}`);
@@ -2084,8 +2084,8 @@ async function run() {
     if (moveBack.status !== 303) fail("lot HBN pencil back", `status ${moveBack.status}`);
     const paneAfterBack = await text("/station/wet_weight");
     assert(
-      !paneAfterBack.body.includes(`?pick=${batchId}`),
-      "with the weighing lot moved off, the unloaded batch hides again"
+      paneAfterBack.body.includes(`?pick=${batchId}`),
+      "a batch finished today stays after its weighing lot moves off"
     );
     const logAfterMove = await text("/log");
     assert(logAfterMove.body.includes("smoke: weighed into the wrong HBN"), "the change log must carry the HBN move's reason");
@@ -3561,7 +3561,7 @@ async function run() {
     const roomLiveJson = await roomLive.json();
     const roomEntry = (roomLiveJson.silos || []).find((x) => x.id === silo2Id);
     assert(roomEntry && roomEntry.shape === "cylinder" && roomEntry.state === "drying", "live.json must carry Silo 2 drying");
-    assert(roomLiveJson.ffz && typeof roomLiveJson.ffz.level === "number" && typeof roomLiveJson.ffz.label === "string", "live.json must carry the FFZ cube");
+    assert(!("ffz" in roomLiveJson), "live.json must not carry an FFZ cube");
     const invRoomCsv = await text("/reports/inventory_by_location?format=csv");
     // Canon 0.30.23: the CSV reads Site,Location,Origin farm,Product type,Total,UOM;
     // the origin farm stays the HBN's (ARL) while the material sits at PNN.
@@ -4667,16 +4667,16 @@ async function run() {
     // THE HARVEST CONSOLE (canon 0.30.73): the five cylinders first and the wire
     // box after them; THE BLAST FREEZER (canon 0.30.98) is the seventh gauge,
     // and THE DRY SPACE TYPE (canon 0.30.106) draws it as the freezer cube in
-    // the FFZ chrome, the FFZ cube itself riding the strip beside it.
+    // the FFZ chrome. The FFZ inventory cube left the strip (canon 0.30.225).
     assert((dryingMenu.body.match(/class="inv-gauge silo-gauge"/g) || []).length === 6, "the strip must show the five silos and the Arlington Dry Room in the silo chrome");
     assert((dryingMenu.body.match(/class="inv-gauge silo-gauge ffz-gauge freezer-gauge"/g) || []).length === 1, "the strip must show the Blast Freezer(s) in the freezer chrome");
     assert(dryingMenu.body.includes('<div class="inv-gauge-name">Blast Freezer(s)</div>'), "the Drying Operations strip must name the Blast Freezer(s)");
     assert(!dryingMenu.body.includes('<div class="inv-gauge-name">Blast Freezer</div>'), "the old tile word must be gone");
-    assert(dryingMenu.body.includes('data-ffz data-ffz-state='), "the FFZ inventory cube must ride the Drying Operations strip");
-    assert(dryingMenu.body.includes('<div class="inv-gauge-name">FFZ inventory</div>'), "the strip must name the FFZ inventory");
+    assert(!dryingMenu.body.includes("data-ffz"), "the FFZ inventory cube must leave the Drying Operations strip");
+    assert(!dryingMenu.body.includes('<div class="inv-gauge-name">FFZ inventory</div>'), "the strip must not name an FFZ inventory");
     assert(dryingMenu.body.lastIndexOf('data-silo-shape-kind="cylinder"') < dryingMenu.body.indexOf('data-silo-shape-kind="box"'), "the wire box must follow the five cylinders on the strip");
     assert(dryingMenu.body.indexOf('data-silo-shape-kind="box"') < dryingMenu.body.indexOf('data-silo-shape-kind="cube"'), "the freezer cube must follow the dry room box");
-    assert(loadPageStripHasFfz(await text("/station/load_silo")), "the FFZ inventory cube must ride the Load Silo strip too");
+    assert(loadPageStripHasSpaces(await text("/station/load_silo")), "the Load Silo strip must keep the spaces and leave the FFZ cube");
     const loadPage = await text("/station/load_silo");
     assert(loadPage.res.status === 200, `load silo page expected 200 got ${loadPage.res.status}`);
     assert(loadPage.body.includes("Finished wet lots"), "load silo page missing the finished lots pane");
@@ -5099,7 +5099,7 @@ async function run() {
     const toEnTrim = await req("/locale", { method: "POST", body: form({ locale: "en" }) });
     await toEnTrim.text();
     // The Drying section: the strip with the seven silos, the two rooms as wire
-    // box, and the FFZ cube (no clock) with its own 4,800 lb capacity.
+    // box, and the Blast Freezer(s) as the freezer cube. The FFZ inventory cube left (canon 0.30.225).
     const consoleDrying = consolePage.body.slice(consolePage.body.indexOf('data-hc-section="drying"'), consolePage.body.indexOf('data-hc-section="trimming"'));
     assert(consoleDrying.includes("data-silo-strip"), "the Drying section must carry the silo strip");
     // THE DRYING TOTALS (canon 0.30.183): three totals under the tiles, the estimate at the Admin percent (22 by default).
@@ -5114,24 +5114,18 @@ async function run() {
     // THE BLAST FREEZER (canon 0.30.98): a second wire box beside the Arlington Dry Room.
     assert((consoleDrying.match(/data-silo-shape-kind="box"/g) || []).length === 1, "the Arlington Dry Room as the wire box on the console");
     assert((consoleDrying.match(/data-silo-shape-kind="cube"/g) || []).length === 1, "the Blast Freezer(s) as the freezer cube on the console");
-    assert(consoleDrying.includes('data-ffz data-ffz-state="'), "the FFZ cube must ride the strip");
-    assert(consoleDrying.includes('<svg class="silo-shape silo-shape-cube"'), "the FFZ cube must draw as the cube");
-    assert(/data-ffz-pct>\d+% full</.test(consoleDrying), "the cube must read its fullness");
-    assert(consoleDrying.indexOf('data-silo-shape-kind="box"') < consoleDrying.indexOf("data-ffz"), "the cube stands after the silos");
-    // The FFZ cube reads "Any FFZ" (his pick): nothing frozen on this floor
-    // yet (the one cryo'd package was voided above), so it reads empty here;
-    // the Blast Freezer move below fills it.
+    assert(!consoleDrying.includes("data-ffz"), "the FFZ inventory cube must leave the console");
+    assert(consoleDrying.includes('<svg class="silo-shape silo-shape-cube"'), "the Blast Freezer(s) must draw as the cube");
+    assert(consoleDrying.indexOf('data-silo-shape-kind="box"') < consoleDrying.indexOf('data-silo-shape-kind="cube"'), "the freezer cube stands after the dry room");
     const ffzLive = await (await req("/silos/live.json")).json();
-    assert(ffzLive.ffz && ffzLive.ffz.grams === 0 && ffzLive.ffz.holding === false && ffzLive.ffz.label === "0% full", `the FFZ cube must read empty with nothing frozen, got ${JSON.stringify(ffzLive.ffz)}`);
-    assert(Math.abs(ffzLive.ffz.capacityGrams - 4800 * 448) < 0.01, "the FFZ capacity must be 4,800 lb by default");
-    assert(consoleDrying.includes('data-ffz data-ffz-state="empty"') && consoleDrying.includes("0% full"), "the empty cube must stand as the wire alone");
+    assert(!("ffz" in ffzLive), "live.json must not carry an FFZ cube");
     assert(consolePage.body.includes('fetch("/silos/live.json"'), "the console must repaint from live.json");
     // Spanish console, then back to English for the walk that follows.
     const toEsConsole = await req("/locale", { method: "POST", body: form({ locale: "es" }) });
     await toEsConsole.text();
     const consoleEs = await text("/harvest");
     assert(consoleEs.body.includes("<summary>Plantas</summary>") && consoleEs.body.includes("<summary>Secado</summary>"), "the console must speak Spanish");
-    assert(consoleEs.body.includes("Inventario FFZ") && /data-ffz-pct>\d+% lleno</.test(consoleEs.body), "the cube must speak Spanish");
+    assert(!consoleEs.body.includes("Inventario FFZ") && !consoleEs.body.includes("data-ffz"), "the Spanish console must not carry the FFZ cube");
     const toEnConsole = await req("/locale", { method: "POST", body: form({ locale: "en" }) });
     await toEnConsole.text();
     const loadLoc = doLoad.headers.get("location") || "";
@@ -5911,24 +5905,27 @@ async function run() {
     const fgCsv = await text("/export/inventory.csv");
     assert(fgCsv.body.includes("fg,WIP,580") && fgCsv.body.includes("fg,BUD,336"), "the inventory CSV must carry the METRC kinds in grams");
 
-    // THE FFZ CUBE READS THE MIRROR (canon 0.30.75; owner: "check FFZ, we have
-    // inventory but the FFZ cube is empty"): a fresh frozen package in the
-    // state's picture (Item name beginning FFZ, the kind in app_config
-    // ffz_item_kinds) fills the cube; the tile says METRC read it.
-    const ffzBefore = await (await req("/silos/live.json")).json();
-    assert(ffzBefore.ffz.mirrorGrams === 0 && ffzBefore.ffz.mirrorPackages === 0, `no FFZ in the mirror yet, got ${JSON.stringify(ffzBefore.ffz)}`);
+    // THE FFZ INVENTORY (canon 0.30.225): a fresh frozen package the ledger lacks
+    // lands at the Blast Freezer. The FG pane still reads the kind from the mirror.
     const FFZ_TAG = "1A4050300000000000000E11";
     const ffzCsv = `Tag,Source Harvest(s),Source Package(s),Original Source Package Label,Source Processing Job(s),Location,Sublocation,Item,Category,Item Strain,Quantity,Unit Of Measure,Production Batch Number,Source Production Batch,Lab Test Status,Finished Goods,Administrative Hold,Administrative Recall,Packaged Date,Received,Expiration Date,Lab Test Expiration\r\n${FFZ_TAG},46258-PNN-ID-062-0-NA-26007,,,,Blast Freezer,,FFZ - Donny Burger - PNN - O,Buds,Donny Burger,"1,500",g,,,NotSubmitted,False,False,False,9/12/2026 12:00:00 AM,,,\r\n`;
-    const ffzForm = new FormData();
-    ffzForm.append("file", new File([new TextEncoder().encode(ffzCsv)], "MetrcMichiganAUP000694PackagesActive_1.csv", { type: "text/csv" }));
-    const ffzMount = await req("/inventory/metrc/mount", { method: "POST", body: ffzForm });
-    assert(ffzMount.status === 303 && (ffzMount.headers.get("location") || "").includes("added=1"), `the FFZ package must mount, got ${ffzMount.status} ${ffzMount.headers.get("location")}`);
-    const ffzMirror = await (await req("/silos/live.json")).json();
-    assert(ffzMirror.ffz.mirrorGrams === 1500 && ffzMirror.ffz.mirrorPackages === 1, `the cube must read the mirror's FFZ package, got ${JSON.stringify(ffzMirror.ffz)}`);
-    assert(ffzMirror.ffz.grams === 1500 && ffzMirror.ffz.holding === true && ffzMirror.ffz.mirrorLb === "3.35", `the cube's grams must be the mirror's 1,500 g, got ${JSON.stringify(ffzMirror.ffz)}`);
-    const consoleMirror = await text("/harvest");
-    assert(consoleMirror.body.includes('data-ffz data-ffz-state="holding"'), "the console's cube must hold the mirror's FFZ");
-    assert(consoleMirror.body.includes('<div class="muted ffz-source" data-ffz-source>METRC <span data-ffz-mirror-lb>3.35</span> lb in <span data-ffz-mirror-packages>1</span> package · ledger <span data-ffz-ledger-lb>0.00</span> lb</div>'), "the tile must say METRC read the FFZ and the ledger holds none");
+    const ffzFile = () => {
+      const ffzForm = new FormData();
+      ffzForm.append("file", new File([new TextEncoder().encode(ffzCsv)], "MetrcMichiganAUP000694PackagesActive_1.csv", { type: "text/csv" }));
+      return ffzForm;
+    };
+    const ffzMount = await req("/inventory/metrc/mount", { method: "POST", body: ffzFile() });
+    const ffzLoc = ffzMount.headers.get("location") || "";
+    assert(ffzMount.status === 303 && ffzLoc.includes("added=1") && ffzLoc.includes("landed=1"), `the FFZ package must mount and land, got ${ffzMount.status} ${ffzLoc}`);
+    const ffzFlash = await text(ffzLoc);
+    assert(ffzFlash.body.includes("1 fresh frozen packages landed at the Blast Freezer."), "the flash must count the landed package");
+    const ffzLedger = await text("/admin/reconcile-location?location=Blast%20Freezer");
+    assert(ffzLedger.body.includes(`value="${FFZ_TAG}"`) && ffzLedger.body.includes('value="1500"'), "the Blast Freezer entry must list the landed package at 1500 g");
+    const ffzPickEarly = await text("/admin/reconcile-location");
+    assert(!ffzPickEarly.body.includes('value="FFZ inventory"'), "the picker must not offer FFZ inventory");
+    const ffzAgain = await req("/inventory/metrc/mount", { method: "POST", body: ffzFile() });
+    const ffzAgainLoc = ffzAgain.headers.get("location") || "";
+    assert(ffzAgain.status === 303 && ffzAgainLoc.includes("landed=0"), `a second mount of the same file must land nothing, got ${ffzAgain.status} ${ffzAgainLoc}`);
     const fgFfz = await text("/inventory");
     assert(fgFfz.body.includes('data-fg-type="FFZ" data-fg-uom="g"'), "the FG pane must carry the FFZ kind now");
 
@@ -5979,19 +5976,6 @@ async function run() {
     assert(groupPkg, "the move redirect must carry its group");
     const invMoved = await text("/inventory");
     assert(invMoved.body.includes("Blast Freezer"), "the ledger must show the package in the Blast Freezer");
-    // THE HARVEST CONSOLE (canon 0.30.73), the FFZ cube's "Any FFZ": the ledger
-    // grams now sitting in the Blast Freezer fill the cube (a blue fill that
-    // throbs slowly) and the console's fullness word follows.
-    const ffzAfterMove = await (await req("/silos/live.json")).json();
-    assert(ffzAfterMove.ffz && ffzAfterMove.ffz.grams > 1500 && ffzAfterMove.ffz.holding === true, `the FFZ cube must add the Blast Freezer grams to the mirror's, got ${JSON.stringify(ffzAfterMove.ffz)}`);
-    // The moved package's tag stands in the mirror as WIP, not FFZ, so the
-    // ledger's grams count once beside the mirror's 1,500 (no double count).
-    assert(ffzAfterMove.ffz.mirrorGrams === 1500 && ffzAfterMove.ffz.ledgerGrams > 0 && Math.abs(ffzAfterMove.ffz.grams - (1500 + ffzAfterMove.ffz.ledgerGrams)) < 0.005, `the cube's shares must add up, got ${JSON.stringify(ffzAfterMove.ffz)}`);
-    assert(/^\d+% full$/.test(ffzAfterMove.ffz.label) && ffzAfterMove.ffz.level > 0 && ffzAfterMove.ffz.level <= 1, "the cube must read its fullness against 4,800 lb");
-    const consoleFfz = await text("/harvest");
-    assert(consoleFfz.body.includes('data-ffz data-ffz-state="holding"'), "the console's cube must read holding");
-    assert(consoleFfz.body.includes("silo-fill ffz-fill ffz-throb"), "the holding cube must throb blue");
-    assert(consoleFfz.body.includes(`<strong data-silo-wet-g>${ffzAfterMove.ffz.wetG}</strong> g`), "the cube's grams must match live.json");
     const mirrorMoved = await text(`/inventory/metrc?tag=${TRUCK_TAG}`);
     assert(mirrorMoved.body.includes('data-metrc-field="location">Blast Freezer</dd>'), "the mirror row must take the new location");
     const uploadsMove = await text("/admin/uploads");
@@ -6106,7 +6090,6 @@ async function run() {
     const badAdd = await req("/admin/lookups/dry_spaces", { method: "POST", body: form({ action: "add", name: "Smoke Freezer", kind: "silo", farm_code: "PNN", space_type: "freezer", capacity: "500", capacity_uom: "" }) });
     assert(badAdd.status === 400 && (await badAdd.text()).includes("Capacity and its UOM go together."), "a capacity without its UOM must refuse in words");
 
-    const ffzBeforeBf = await (await req("/silos/live.json")).json();
     const acquireBf = await text("/station/acquire_hbn");
     const mkBf = await req("/station/acquire_hbn", {
       method: "POST",
@@ -6165,11 +6148,10 @@ async function run() {
     const bfEntry = liveBf.silos.find((x) => x.id === bfId);
     assert(bfEntry && bfEntry.state === "drying" && bfEntry.label === "Chilling Out" && bfEntry.pctLabel === "25% full" && bfEntry.spaceType === "freezer" && bfEntry.fillClass === "silo-fill ffz-fill ffz-throb" && bfEntry.shape === "cube", `live.json must carry the freezer chilling out, got ${JSON.stringify(bfEntry)}`);
     assert(Math.abs(bfEntry.level - 0.25) < 0.001, `the freezer's level must be a quarter of 800 lb, got ${bfEntry.level}`);
-    // The package sits at the METRC location Blast Freezer (his pick: the tile alone renamed), and the FFZ cube counts it.
+    // The package sits at the METRC location Blast Freezer.
     const invBf = await text("/reports/inventory_by_location?format=csv");
     assert(invBf.body.includes("PNN,Blast Freezer,PNN,WIP"), "the loaded package must sit at the METRC location Blast Freezer");
     assert(!invBf.body.includes("Blast Freezer(s)"), "the tile's word never reaches the inventory report");
-    assert(Math.abs(liveBf.ffz.ledgerGrams - ffzBeforeBf.ffz.ledgerGrams - 89600) < 0.01, `the FFZ cube must count the freezer's package in its ledger share, got ${liveBf.ffz.ledgerGrams} from ${ffzBeforeBf.ffz.ledgerGrams}`);
     const bfLoadCsv = await text(`/admin/uploads/location_change/${bfLoadId}.csv`);
     assert(bfLoadCsv.res.status === 200 && bfLoadCsv.body.includes(",Blast Freezer,"), "the load's location-change file must print the METRC location Blast Freezer");
     assert(!bfLoadCsv.body.includes("Blast Freezer(s)"), "the load's file never prints the tile's word");
@@ -6231,7 +6213,6 @@ async function run() {
     const liveBf2 = await (await req("/silos/live.json")).json();
     const bfEntry2 = liveBf2.silos.find((x) => x.id === bfId);
     assert(bfEntry2 && bfEntry2.state === "drying" && bfEntry2.pctLabel === "35% full", `live.json must carry the freezer at 35% with two lots, got ${JSON.stringify(bfEntry2)}`);
-    assert(Math.abs(liveBf2.ffz.ledgerGrams - liveBf.ffz.ledgerGrams - 35840) < 0.01, `the FFZ cube must count the second freezer package too, got ${liveBf2.ffz.ledgerGrams} from ${liveBf.ffz.ledgerGrams}`);
     // Unload Dry Space on a freezer lot: no dry weights, one control.
     const bfUnloadPage = await text(`/station/unload_dry_space?pick=${bfLot}`);
     assert(bfUnloadPage.res.status === 200, `freezer unload page expected 200 got ${bfUnloadPage.res.status}`);
@@ -6277,7 +6258,6 @@ async function run() {
     assert(invAfterFrozen.body.includes("PNN,Blast Freezer,PNN,WIP"), "the package must stay at the METRC location Blast Freezer after the line is removed");
     const liveAfterFrozen = await (await req("/silos/live.json")).json();
     // THE ROOM HOLDS MANY (canon 0.30.132): both freezer packages stay at Blast Freezer, so the cube reads the two-lot figure.
-    assert(Math.abs(liveAfterFrozen.ffz.ledgerGrams - liveBf2.ffz.ledgerGrams) < 0.01, "the FFZ cube must still count the frozen packages, never twice");
     const uploadsAfterBfUnload = await text("/admin/uploads");
     assert(pendingCountOf(uploadsAfterBfUnload) === pendingBeforeBfUnload, "the freezer unload must pend no file");
 
@@ -6520,7 +6500,6 @@ async function run() {
     // item with the mount's reason, the flash says so, the ledger page drops
     // the row, the cube's ledger side drops its grams, the log carries the
     // reason, and a re-drop closes nothing more.
-    const ffzLedger0 = await (await req("/silos/live.json")).json();
     const ledgerLive = await text("/inventory");
     assert(ledgerLive.body.includes(`<code>${TRUCK_TAG}</code>`), "the truck package's ledger item must stand while METRC lists it");
     const mcHead = "Tag,Source Harvest(s),Source Package(s),Original Source Package Label,Source Processing Job(s),Location,Sublocation,Item,Category,Item Strain,Quantity,Unit Of Measure,Production Batch Number,Source Production Batch,Lab Test Status,Finished Goods,Administrative Hold,Administrative Recall,Packaged Date,Received,Expiration Date,Lab Test Expiration";
@@ -6544,9 +6523,6 @@ async function run() {
     assert(mcFlash.body.includes("1 ledger item and 0 queue packages closed as gone in METRC."), "the flash must say the ledger item closed as gone in METRC");
     const ledgerGone = await text("/inventory");
     assert(!ledgerGone.body.includes(`<code>${TRUCK_TAG}</code>`), "the ledger item must leave the ledger once METRC marks its tag gone");
-    const ffzLedger1 = await (await req("/silos/live.json")).json();
-    assert(Math.abs(ffzLedger0.ffz.ledgerGrams - ffzLedger1.ffz.ledgerGrams - 500) < 0.005, `the cube's ledger side must drop the closed item's 500 g, got ${ffzLedger0.ffz.ledgerGrams} then ${ffzLedger1.ffz.ledgerGrams}`);
-    assert(Math.abs(ffzLedger1.ffz.mirrorGrams - ffzLedger0.ffz.mirrorGrams) < 0.005, `the mirror side must not move (the truck package was never an FFZ item), got ${ffzLedger0.ffz.mirrorGrams} then ${ffzLedger1.ffz.mirrorGrams}`);
     const goneLog = await text("/log");
     assert(goneLog.body.includes(`gone in METRC (mount ${mcGoneMount.replaceAll("-", "").slice(0, 8)})`), "the change log must carry the closing under the mount's reason");
     const mcAgain = await mcMount(mcKeep832, "MetrcMichiganAUGC000832PackagesActive_15.csv");
@@ -6687,27 +6663,14 @@ async function run() {
     const ackLog = await text("/log");
     assert(ackLog.body.includes("<td>reconcile note acknowledged</td>"), "the change log must carry the acknowledgement");
 
-    // THE FFZ INVENTORY LOCATION (canon 0.30.145; owner: "include FFZ inventory as
-    // one of the purge-able ledger locations"): the picker ends with FFZ inventory;
-    // it gathers every Blast Freezer package and every cryo-born package wherever
-    // it sits; a move into it is refused; its purge voids the set and empties the
-    // cube's ledger share; the note names FFZ inventory.
+    // THE FFZ INVENTORY (canon 0.30.225): the picker offers drying locations and
+    // freezers. Blast Freezer still lists the landed package. FFZ inventory is not a place.
     const ffzPick = await text("/admin/reconcile-location");
-    assert(ffzPick.body.includes("<option value=\"FFZ inventory\">FFZ inventory (Blast Freezer and every cryo'd package)</option>"), "the picker must end with FFZ inventory");
-    assert(ffzPick.body.lastIndexOf('value="FFZ inventory"') > ffzPick.body.lastIndexOf('value="Blast Freezer"'), "FFZ inventory must stand last on the picker");
+    assert(ffzPick.body.includes('value="Blast Freezer"') && !ffzPick.body.includes('value="FFZ inventory"'), "the picker must keep Blast Freezer and drop FFZ inventory");
     const bfPage = await text("/admin/reconcile-location?location=Blast%20Freezer");
-    const bfIds = [...bfPage.body.matchAll(/data-reconcile-item="([a-f0-9-]{36})"/g)].map((m) => m[1]);
-    const ffzPage = await text("/admin/reconcile-location?location=FFZ%20inventory");
-    assert(ffzPage.res.status === 200 && ffzPage.body.includes("data-ffz-inventory") && ffzPage.body.includes("<h2>FFZ inventory <span"), "FFZ inventory must render with its explanation");
-    const ffzIds = [...ffzPage.body.matchAll(/data-reconcile-item="([a-f0-9-]{36})"/g)].map((m) => m[1]);
-    const ffzCount = Number((ffzPage.body.match(/data-reconcile-count>(\d+)</) || [])[1]);
-    assert(ffzCount === ffzIds.length && ffzCount >= 1 && bfIds.length >= 1, `FFZ inventory must count its rows (${ffzCount}) with at least one frozen package (${bfIds.length})`);
-    assert(bfIds.every((id) => ffzIds.includes(id)), "FFZ inventory must gather every Blast Freezer package");
-    // At this tail every cryo-born package the smoke made already sits in the freezer or left the ledger,
-    // so the reading equals the freezer's set here; the unit tests pin the cryo-born gathering.
-    assert(ffzCount >= bfIds.length, `FFZ inventory can never read fewer than the freezer (${ffzCount} vs ${bfIds.length})`);
-    const ffzRows = ffzPage.body.split("<tbody>")[1].split("</tbody>")[0];
-    assert(!ffzRows.includes('value="FFZ inventory"'), "no row may offer FFZ inventory as a move target");
+    assert(bfPage.body.includes(`value="${FFZ_TAG}"`), "Blast Freezer must still list the landed fresh frozen package");
+    const namedFfz = await text("/admin/reconcile-location?location=FFZ%20inventory");
+    assert(namedFfz.res.status === 200 && !namedFfz.body.includes("<h2>FFZ inventory"), "a URL that still names FFZ inventory reads as no pick");
     const silo4RemainingId = (silo4Less.body.match(/data-reconcile-item="([a-f0-9-]{36})"/) || [])[1];
     assert(silo4RemainingId, "Silo 4 must still hold one package to try the move");
     const moveIntoFfz = await req("/admin/reconcile-location/edit", {
@@ -6715,24 +6678,6 @@ async function run() {
       body: form({ location: "Silo 4", note: "smoke: into the reading", [`location__${silo4RemainingId}`]: "FFZ inventory" }),
     });
     assert(moveIntoFfz.status === 400 && (await moveIntoFfz.text()).includes("A package can only move to a drying location."), `a move into FFZ inventory must refuse in words, got ${moveIntoFfz.status}`);
-    const ffzLiveBefore = await (await req("/silos/live.json")).json();
-    assert(ffzLiveBefore.ffz.ledgerGrams > 0, `the cube must read the frozen ledger before the purge, got ${JSON.stringify(ffzLiveBefore.ffz)}`);
-    const purgeFfz = await req("/admin/reconcile-location/purge", { method: "POST", body: form({ location: "FFZ inventory", reason: "smoke: empty the FFZ ledger", admin_pin: ADMIN_PIN }) });
-    assert(
-      purgeFfz.status === 303 && (purgeFfz.headers.get("location") || "") === `/admin/reconcile-location?location=FFZ%20inventory&ok=purged&n=${ffzCount}`,
-      `the FFZ purge expected 303 with its count got ${purgeFfz.status} ${purgeFfz.headers.get("location")}`
-    );
-    const ffzAfter = await text(`/admin/reconcile-location?location=FFZ%20inventory&ok=purged&n=${ffzCount}`);
-    assert(ffzAfter.body.includes('data-reconcile-flash="purged"') && ffzAfter.body.includes("data-reconcile-count>0<") && ffzAfter.body.includes("No live ledger packages in the FFZ inventory."), "the FFZ purge must leave the reading empty");
-    const bfAfter = await text("/admin/reconcile-location?location=Blast%20Freezer");
-    assert(bfAfter.body.includes("data-reconcile-count>0<"), "the Blast Freezer must read empty after the FFZ purge");
-    const ffzLiveAfter = await (await req("/silos/live.json")).json();
-    assert(ffzLiveAfter.ffz.ledgerGrams === 0, `the cube's ledger share must be empty after the purge, got ${JSON.stringify(ffzLiveAfter.ffz)}`);
-    assert(ffzLiveAfter.ffz.mirrorGrams === ffzLiveBefore.ffz.mirrorGrams, "the mirror's share is METRC's word and stands through a ledger purge");
-    const uploadsFfz = await text("/admin/uploads");
-    assert(/<td>\d+ packages? voided, [\d,.]+ g, at FFZ inventory<\/td>/.test(uploadsFfz.body), "the purge note must name FFZ inventory and count the grams");
-    const ffzLog = await text("/log");
-    assert(ffzLog.body.includes("<td>reconcile purge: smoke: empty the FFZ ledger</td>"), "the change log must carry the FFZ purge under the reason");
 
     // THE SHEET SYNC (canon 0.30.162). Owner: "can we setup a cron job or something to
     // regularly check the sheet?" The console says the sheet was never read; the Admin
@@ -6935,12 +6880,27 @@ async function run() {
     assert(!availPre.body.includes('name="hbn_id"') && !availPre.body.includes('<details class="pane-group"'), "the prepack page must list packages, never a whole HBN");
     assert(availPre.body.includes(`data-schedule-tag="${PP1}" data-schedule-hbn="${pickedHbn}">`), "a package row must carry its tag and its HBN");
     assert(availPre.body.includes('placeholder="HBN or last six"') && availPre.body.includes("data-schedule-filter"), "the filter box must sit on the prepack page");
+    assert(
+      availPre.body.includes('<details data-schedule-heading class="queue-fold" data-fold="grow:Greenhouse" open><summary><h3>Greenhouse <span class="tile-count" data-schedule-heading-count>') &&
+        availPre.body.includes('var storeKey = "gf_fold:" + location.pathname'),
+      "available prepack must head Greenhouse with a count and fold the way Data Queues folds"
+    );
+    const ghCount = (availPre.body.match(/data-fold="grow:Greenhouse" open><summary><h3>Greenhouse <span class="tile-count" data-schedule-heading-count>(\d+)<\/span>/) || [])[1];
+    const ghStart = availPre.body.indexOf('data-fold="grow:Greenhouse"');
+    const ghBlock = availPre.body.slice(ghStart, availPre.body.indexOf("</details>", ghStart));
+    const ghShown = (ghBlock.match(/<li class="schedule-item"[^>]*>/g) || []).filter((row) => !/\shidden>/.test(row)).length;
+    assert(ghCount && Number(ghCount) === ghShown && ghShown >= 2, "the Greenhouse heading must count the packages under it");
     const bySix = await text("/production/scheduling/prepack?q=000A01");
     assert(
       bySix.body.includes(`data-schedule-tag="${PP1}" data-schedule-hbn="${pickedHbn}">`) && bySix.body.includes(`data-schedule-tag="${PP2}" data-schedule-hbn="${pickedHbn}" hidden>`),
-      "?q= by last six must keep the one package and hide its sibling"
+      "?q= by last six must keep the one package and hide its sibling under its heading"
     );
     assert(bySix.body.includes('name="q" value="000A01"') && bySix.body.includes('data-schedule-count="available">1<'), "the filter must keep the typed value and count what it shows");
+    assert(
+      bySix.body.includes('data-schedule-heading class="queue-fold" data-fold="grow:Greenhouse" open') &&
+        bySix.body.includes('<h3>Greenhouse <span class="tile-count" data-schedule-heading-count>'),
+      "the filter must keep the Greenhouse heading while a package under it still shows"
+    );
     const byHbn = await text(`/production/scheduling/prepack?q=${encodeURIComponent(pickedHbn)}`);
     assert(
       byHbn.body.includes(`data-schedule-tag="${PP1}" data-schedule-hbn="${pickedHbn}">`) && byHbn.body.includes(`data-schedule-tag="${PP2}" data-schedule-hbn="${pickedHbn}">`),
@@ -7251,6 +7211,371 @@ async function run() {
       assert(trimBack.status === 400 && /is finished|outputs entered/.test(trimBody), `trim unfinish must refuse by name, got ${trimBack.status} ${trimBody.slice(0, 300)}`);
     }
     void unfinishBefore;
+
+    // THE TRUCK RECORD (canon 0.30.226): one truck, two HBNs, Finish lot splits
+    // it. Both lots read Truck 1 - <hbn> on Load Silo, both packages sit in the
+    // barn, and each loads into a different silo.
+    const truckPane = await text("/station/wet_weight");
+    const truckPicks = [...truckPane.body.matchAll(/href="\/station\/wet_weight\?pick=([a-f0-9-]{36})"/g)].map((m) => m[1]);
+    assert(truckPicks.length >= 2, `the wet pane must still offer two HBNs, saw ${truckPicks.length}`);
+    const truckHeaderId = truckPicks[0];
+    const truckOtherId = truckPicks[1];
+    const headerPick = await text(`/station/wet_weight?pick=${truckHeaderId}`);
+    const otherPickPage = await text(`/station/wet_weight?pick=${truckOtherId}`);
+    const headerHbn = (headerPick.body.match(/<p class="muted">(2\d{4}-[^<]+)<\/p>/) || [])[1];
+    const otherHbnFull = (otherPickPage.body.match(/<p class="muted">(2\d{4}-[^<]+)<\/p>/) || [])[1];
+    assert(headerHbn && otherHbnFull && headerHbn !== otherHbnFull, "the truck needs two different HBNs");
+    assert(headerPick.body.includes('name="truck_number"'), "the wet header must carry Truck #");
+    const spaces = await text("/admin/lookups/dry_spaces");
+    const truckSilo = drySpaceIdByName(spaces.body, "Silo 1");
+    const startTruck = await req("/station/wet_weight", {
+      method: "POST",
+      body: form({
+        team_lead: "Truck Lead",
+        harvest_batch_id: truckHeaderId,
+        actual_dryspc: truckSilo,
+        truck_number: "1",
+        material_form: "bucked",
+        notes: "truck record",
+      }),
+    });
+    assert(startTruck.status === 303, `start truck lot expected 303 got ${startTruck.status} ${await startTruck.text()}`);
+    const splitLotId = new URL(startTruck.headers.get("location") || "", base).searchParams.get("lot");
+    assert(splitLotId, "the truck lot redirect must name the lot");
+    const totePage = await text(`/station/wet_weight?lot=${splitLotId}`);
+    assert(totePage.body.includes('name="harvest_batch_id"'), "every tote form must carry an HBN select");
+    for (const grams of ["400", "100"]) {
+      const add = await req(`/station/wet_weight/lot/${splitLotId}/weights`, {
+        method: "POST",
+        body: form({ weight_grams: grams, harvest_batch_id: truckHeaderId }),
+      });
+      assert(add.status === 303, `header tote ${grams} expected 303 got ${add.status}`);
+    }
+    const otherTote = await req(`/station/wet_weight/lot/${splitLotId}/weights`, {
+      method: "POST",
+      body: form({ weight_grams: "80", harvest_batch_id: truckOtherId }),
+    });
+    assert(otherTote.status === 303, `the other HBN's tote expected 303 got ${otherTote.status} ${await otherTote.text()}`);
+    const mixed = await text(`/station/wet_weight?lot=${splitLotId}`);
+    assert(mixed.body.includes("HBNs on this lot"), "the lot panel must name both HBNs");
+    assert(mixed.body.includes(otherHbnFull.slice(-5)), "a tote of the other HBN must show its serial");
+    const finishTruck = await req(`/station/wet_weight/lot/${splitLotId}/finish`, {
+      method: "POST",
+      body: form({
+        [`plant_count[${truckHeaderId}]`]: "12",
+        [`plant_count[${truckOtherId}]`]: "3",
+      }),
+    });
+    assert(finishTruck.status === 303, `finish truck expected 303 got ${finishTruck.status} ${await finishTruck.text()}`);
+    const truckFinishLoc = finishTruck.headers.get("location") || "";
+    assert(truckFinishLoc.includes("ok=truck_split") && truckFinishLoc.includes("truck=1"), `the flash must name Truck 1, got ${truckFinishLoc}`);
+    const loadPane = await text("/station/load_silo");
+    assert(loadPane.body.includes(`Truck 1 - ${headerHbn}`), `Load Silo must label Truck 1 - ${headerHbn}`);
+    assert(loadPane.body.includes(`Truck 1 - ${otherHbnFull}`), `Load Silo must label Truck 1 - ${otherHbnFull}`);
+    // THE DRYING SCHEDULE (canon 0.30.226): the two split lots load from the
+    // Silos surface. Each rides Available under its own HBN with the label
+    // Load Silo reads; its >> opens Load Silo's picked form limited to silos
+    // (no room, no freezer) carrying the return to the surface; each lands in
+    // a different silo and the load returns to the surface.
+    const silosForTruck = await text("/production/scheduling/silos");
+    assert(silosForTruck.res.status === 200, `GET /production/scheduling/silos expected 200 got ${silosForTruck.res.status}`);
+    for (const pane of ["available", "working", "complete"]) {
+      assert(silosForTruck.body.includes(`data-schedule-pane="${pane}"`), `the Silos surface must carry the ${pane} pane`);
+    }
+    const truckAvail = schedPaneOf(silosForTruck.body, "available");
+    assert(truckAvail.includes(`Truck 1 - ${headerHbn}`), `the Silos surface's Available must label Truck 1 - ${headerHbn}`);
+    assert(truckAvail.includes(`Truck 1 - ${otherHbnFull}`), `the Silos surface's Available must label Truck 1 - ${otherHbnFull}`);
+    const truckRows = [...truckAvail.matchAll(/<li class="schedule-item" data-drying-lot="([a-f0-9-]{36})"[^>]*>([\s\S]*?)<\/li>/g)];
+    const splitIds = [];
+    const splitHrefs = [];
+    for (const hbn of [headerHbn, otherHbnFull]) {
+      assert(truckAvail.includes(`data-schedule-hbn="${hbn}"`), `the split lot of ${hbn} must ride Available under its own HBN`);
+      const row = truckRows.find((m) => m[2].includes(`>Truck 1 - ${hbn}</span>`));
+      assert(row, `the Silos surface must list the split lot of ${hbn} as an Available row`);
+      const href = (row[2].match(new RegExp(`href="(/station/load_silo\\?pick=${row[1]}&amp;kind=silo[^"]*)"`)) || [])[1];
+      assert(href, `the split lot of ${hbn} must carry a >> into Load Silo limited to silos, got\n${row[2].slice(0, 800)}`);
+      splitIds.push(row[1]);
+      splitHrefs.push(href.replace(/&amp;/g, "&"));
+    }
+    assert(splitIds.length === 2 && splitIds[0] !== splitIds[1], `both split lots must be loadable from the Silos surface, saw ${splitIds.join(", ")}`);
+    const splitSilos = [];
+    for (let i = 0; i < 2; i++) {
+      const picked = await text(splitHrefs[i]);
+      assert(picked.res.status === 200, `the >> of split lot ${i + 1} expected 200 got ${picked.res.status}`);
+      assert(picked.body.includes('data-space-kind="silo"'), `the >> of split lot ${i + 1} must limit the select to silos`);
+      assert(
+        picked.body.includes('<input type="hidden" name="next" value="/production/scheduling/silos">'),
+        `the >> of split lot ${i + 1} must carry the return to the Silos surface`
+      );
+      const select = (picked.body.match(/<select name="dry_space_id" required data-space-kind="silo">([\s\S]*?)<\/select>/) || [])[1];
+      assert(select, `the >> of split lot ${i + 1} must render the silo select`);
+      assert(!select.includes("Arlington Dry Room"), "a silo-limited select offers no Arlington Dry Room");
+      assert(!select.includes("Blast Freezer"), "a silo-limited select offers no Blast Freezer(s)");
+      const freeSilos = [...select.matchAll(/<option value="([^"]+)"([^>]*)>([^<]*)<\/option>/g)].filter((m) => !/\bdisabled\b/.test(m[2])).map((m) => m[1]);
+      if (i === 0) assert(freeSilos.length >= 2, `two empty silos must be offered, saw ${freeSilos.length}`);
+      const siloPick = freeSilos.find((id) => !splitSilos.includes(id));
+      assert(siloPick, `split lot ${i + 1} must find a free silo the other split lot does not hold`);
+      const loaded = await req("/station/load_silo/load", {
+        method: "POST",
+        body: form({ lot_id: splitIds[i], dry_space_id: siloPick, start_time: "", loaded_at_iso: "", next: "/production/scheduling/silos" }),
+      });
+      assert(loaded.status === 303, `loading split lot ${i + 1} expected 303 got ${loaded.status} ${await loaded.text()}`);
+      const loadedLoc = loaded.headers.get("location") || "";
+      assert(loadedLoc === "/production/scheduling/silos?ok=drying_loaded", `a load from the Silos surface must return there, got ${loadedLoc}`);
+      splitSilos.push(siloPick);
+    }
+    assert(splitSilos[0] !== splitSilos[1], "the two split lots must land in two different silos");
+
+    // THE DRYING SCHEDULE (canon 0.30.226; Patrick's "scheduling the silos and
+    // dry spaces the way we do the lines", his pick "Three surfaces by space
+    // kind"): Silos, Dry Rooms and Freezers, each the station-triple under the
+    // silo strip. The Silos Working pane holds the two split loads, each under
+    // its own silo with its clock and Start and Pause returning to the surface;
+    // a one-load silo offers no Unload together. Drying Operations links the
+    // three; a drying surface is a view, never a line. THE JOINT UNLOAD, DRY PRO
+    // RATA: two lots load into the Arlington Dry Room from the Dry Rooms
+    // surface, the room offers Unload together, one total dry is shared by wet
+    // grams in whole grams, both lots land on Complete, and the log names it.
+    {
+      const surfacePath = (stage) => `/production/scheduling/${stage}`;
+      const sectionOf = (pane, attr, id) => {
+        const at = pane.indexOf(`${attr}="${id}"`);
+        if (at === -1) return "";
+        const end = pane.indexOf("</section>", at);
+        return pane.slice(at, end === -1 ? pane.length : end);
+      };
+      const rowOf = (pane, lotId) => {
+        const at = pane.indexOf(`data-drying-lot="${lotId}"`);
+        if (at === -1) return "";
+        const end = pane.indexOf("</li>", at);
+        return pane.slice(at, end === -1 ? pane.length : end);
+      };
+      const surfaces = {};
+      for (const [stage, title] of [
+        ["silos", "Silos"],
+        ["dry_rooms", "Dry Rooms"],
+        ["freezers", "Freezers"],
+      ]) {
+        const page = await text(surfacePath(stage));
+        assert(page.res.status === 200, `GET ${surfacePath(stage)} expected 200 got ${page.res.status}`);
+        assert(page.body.includes(`<h1>${title}</h1>`), `the ${title} surface must carry its heading`);
+        assert(page.body.includes(`data-drying-surface="${stage}"`), `the ${title} surface must name itself on the station-triple`);
+        for (const pane of ["available", "working", "complete"]) {
+          assert(page.body.includes(`data-schedule-pane="${pane}"`), `the ${title} surface must carry the ${pane} pane`);
+        }
+        assert(page.body.includes("data-silo-strip"), `the silo strip must ride above the ${title} surface`);
+        assert(page.body.indexOf("data-silo-strip") < page.body.indexOf(`data-drying-surface="${stage}"`), `the strip rides above the ${title} panes`);
+        surfaces[stage] = page;
+      }
+
+      // The Silos Working pane: each split load under its own silo.
+      const silosWorking = schedPaneOf(surfaces.silos.body, "working");
+      const splitLoads = [];
+      for (let i = 0; i < 2; i++) {
+        const section = sectionOf(silosWorking, "data-drying-space", splitSilos[i]);
+        assert(section, `the Silos Working pane must carry split lot ${i + 1}'s silo as a section`);
+        assert(section.includes(`data-drying-lot="${splitIds[i]}"`), `split lot ${i + 1} must ride under the silo it loaded into`);
+        assert(!section.includes(`data-drying-lot="${splitIds[1 - i]}"`), `split lot ${i + 1}'s silo must hold that lot alone`);
+        const loadId = (section.match(new RegExp(`data-drying-load="([a-f0-9-]{36})" data-drying-lot="${splitIds[i]}"`)) || [])[1];
+        assert(loadId, `split lot ${i + 1}'s Working row must name its load`);
+        assert(section.includes("data-clock"), `split lot ${i + 1}'s Working row must carry the clock`);
+        assert(section.includes(`action="/station/load_silo/${loadId}/start"`), `split lot ${i + 1}'s Working row must carry Start`);
+        assert(section.includes(`action="/station/load_silo/${loadId}/pause"`), `split lot ${i + 1}'s Working row must carry Pause`);
+        assert(
+          (section.match(/<input type="hidden" name="next" value="\/production\/scheduling\/silos">/g) || []).length >= 2,
+          `Start and Pause on split lot ${i + 1}'s row must each return to the Silos surface`
+        );
+        assert(section.includes(`href="/station/unload_dry_space?pick=${splitIds[i]}"`), `split lot ${i + 1}'s > must open Unload Dry Space on the lot`);
+        assert(!section.includes("data-unload-together-link"), `a one-load silo offers no Unload together (split lot ${i + 1})`);
+        splitLoads.push(loadId);
+      }
+      assert(Number((surfaces.silos.body.match(/data-schedule-count="working">(\d+)</) || [])[1]) >= 2, "the Silos Working count must hold both split loads");
+      // Pause and Resume from the surface return to it.
+      const clockStateOf = (body, loadId) => {
+        const row = rowOf(schedPaneOf(body, "working"), splitIds[splitLoads.indexOf(loadId)]);
+        return (row.match(/data-clock data-state="([a-z_]+)"/) || [])[1];
+      };
+      assert(clockStateOf(surfaces.silos.body, splitLoads[0]) === "running", `a load from the surface starts running, got ${clockStateOf(surfaces.silos.body, splitLoads[0])}`);
+      const pauseSplit = await req(`/station/load_silo/${splitLoads[0]}/pause`, { method: "POST", body: form({ next: surfacePath("silos") }) });
+      assert(pauseSplit.status === 303, `Pause from the Silos surface expected 303 got ${pauseSplit.status} ${await pauseSplit.text()}`);
+      assert((pauseSplit.headers.get("location") || "") === surfacePath("silos"), `Pause must return to the Silos surface, got ${pauseSplit.headers.get("location")}`);
+      const pausedPage = await text(surfacePath("silos"));
+      assert(clockStateOf(pausedPage.body, splitLoads[0]) === "paused", `the paused load must read paused on the surface, got ${clockStateOf(pausedPage.body, splitLoads[0])}`);
+      assert(rowOf(schedPaneOf(pausedPage.body, "working"), splitIds[0]).includes(">Resume</button>"), "a paused load's Pause reads Resume");
+      const resumeSplit = await req(`/station/load_silo/${splitLoads[0]}/pause`, { method: "POST", body: form({ next: surfacePath("silos") }) });
+      assert(resumeSplit.status === 303, `Resume from the Silos surface expected 303 got ${resumeSplit.status} ${await resumeSplit.text()}`);
+      assert((resumeSplit.headers.get("location") || "") === surfacePath("silos"), `Resume must return to the Silos surface, got ${resumeSplit.headers.get("location")}`);
+      const resumedPage = await text(surfacePath("silos"));
+      assert(clockStateOf(resumedPage.body, splitLoads[0]) === "running", `the resumed load must read running again, got ${clockStateOf(resumedPage.body, splitLoads[0])}`);
+
+      // Drying Operations links the three surfaces; a drying surface is no line.
+      const opsDrying = await text("/ops/drying_ops");
+      assert(opsDrying.res.status === 200, `GET /ops/drying_ops expected 200 got ${opsDrying.res.status}`);
+      for (const [key, stage] of [
+        ["schedule_silos", "silos"],
+        ["schedule_dry_rooms", "dry_rooms"],
+        ["schedule_freezers", "freezers"],
+      ]) {
+        assert(
+          opsDrying.body.includes(`href="${surfacePath(stage)}" data-pipeline-key="${key}"`),
+          `Drying Operations must carry the ${key} tile linking ${surfacePath(stage)}`
+        );
+      }
+      const nope = await req("/production/scheduling/nope");
+      assert(nope.status === 404, `an unknown scheduling stage expected 404 got ${nope.status}`);
+      const siloSchedule = await req("/production/scheduling/silos/schedule", { method: "POST", body: form({ hbn_id: splitIds[0] }) });
+      assert(siloSchedule.status === 404, `a drying surface is not a line: POST schedule expected 404 got ${siloSchedule.status}`);
+
+      // THE JOINT UNLOAD: two lots into the Arlington Dry Room from the Dry Rooms surface.
+      const roomId = arlRoomId;
+      const roomsBefore = await text(surfacePath("dry_rooms"));
+      assert(!sectionOf(schedPaneOf(roomsBefore.body, "working"), "data-drying-space", roomId), "the Arlington Dry Room holds no open load before the joint walk");
+      const mintRoomLot = async (grams, note) => {
+        const acquire = await text("/station/acquire_hbn");
+        const mk = await req("/station/acquire_hbn", {
+          method: "POST",
+          body: form({ entry_date: "2026-09-18", farm_code: "PNN", grow_method_code: "GH", strain_id: optionValue(acquire.body, "Fruity Pebbles") }),
+        });
+        assert(mk.status === 303, `joint walk HBN acquire expected 303 got ${mk.status} ${await mk.text()}`);
+        const hbn = new URL(mk.headers.get("location") || "", base).searchParams.get("minted");
+        assert(hbn && hbn.includes("-PNN-"), `the joint walk HBN must be minted at PNN, got ${hbn}`);
+        const wetPane = await text("/station/wet_weight");
+        let batchId = null;
+        for (const m of wetPane.body.matchAll(/\?pick=([a-f0-9-]{36})">\d+\. PNN \//g)) {
+          const page = await text(`/station/wet_weight?pick=${m[1]}`);
+          if (page.body.includes(`<p class="muted">${hbn}</p>`)) {
+            batchId = m[1];
+            break;
+          }
+        }
+        assert(batchId, `the wet pane must list the joint walk HBN ${hbn} among the PNN rows`);
+        const start = await req("/station/wet_weight", {
+          method: "POST",
+          body: form({ team_lead: "Smoke Lead", harvest_batch_id: batchId, actual_dryspc: roomId, notes: note }),
+        });
+        assert(start.status === 303, `joint walk lot start expected 303 got ${start.status} ${await start.text()}`);
+        const lot = new URL(start.headers.get("location") || "", base).searchParams.get("lot");
+        assert(lot, "no lot id for the joint walk lot");
+        const weigh = await req(`/station/wet_weight/lot/${lot}/weights`, { method: "POST", body: form({ weight_grams: grams }) });
+        assert(weigh.status === 303, `joint walk lot weight expected 303 got ${weigh.status}`);
+        const fin = await req(`/station/wet_weight/lot/${lot}/finish`, { method: "POST", body: form({ plant_count: "7" }) });
+        assert(fin.status === 303, `joint walk lot finish expected 303 got ${fin.status} ${await fin.text()}`);
+        return lot;
+      };
+      // The 0.22.0 ARL lot (1,500 g, live package) still waits; else a lot is minted in its place.
+      const waitingRow220 = rowOf(schedPaneOf(roomsBefore.body, "available"), lotId220);
+      const firstRoomLot = waitingRow220 && !waitingRow220.includes("data-no-package") ? lotId220 : await mintRoomLot("1500", "0.30.226 joint unload first lot");
+      const secondRoomLot = await mintRoomLot("900", "0.30.226 joint unload second lot");
+      const roomLots = [firstRoomLot, secondRoomLot];
+      const roomsAvail = await text(surfacePath("dry_rooms"));
+      const roomsAvailPane = schedPaneOf(roomsAvail.body, "available");
+      const secondRow = rowOf(roomsAvailPane, secondRoomLot);
+      assert(secondRow, "the minted lot must wait on the Dry Rooms surface's Available");
+      assert(secondRow.includes("data-planned-here"), "a lot weighed into the room reads planned here on the Dry Rooms surface");
+      assert(secondRow.includes(`data-planned-space="${roomId}"`), "the minted lot's planned space must be the room");
+      for (let i = 0; i < roomLots.length; i++) {
+        const lot = roomLots[i];
+        const pane = schedPaneOf((await text(surfacePath("dry_rooms"))).body, "available");
+        const row = rowOf(pane, lot);
+        assert(row, `room lot ${i + 1} must wait on the Dry Rooms surface's Available`);
+        const href = (row.match(new RegExp(`href="(/station/load_silo\\?pick=${lot}&amp;kind=dry_room[^"]*)"`)) || [])[1];
+        assert(href, `room lot ${i + 1} must carry a >> into Load Silo limited to dry rooms, got\n${row.slice(0, 800)}`);
+        if (lot === secondRoomLot) assert(href.includes(`&amp;space=${roomId}`), "the >> of a lot planned for the room must carry the room");
+        const picked = await text(href.replace(/&amp;/g, "&"));
+        assert(picked.res.status === 200, `the >> of room lot ${i + 1} expected 200 got ${picked.res.status}`);
+        assert(
+          picked.body.includes('<input type="hidden" name="next" value="/production/scheduling/dry_rooms">'),
+          `the >> of room lot ${i + 1} must carry the return to the Dry Rooms surface`
+        );
+        const select = (picked.body.match(/<select name="dry_space_id" required data-space-kind="dry_room">([\s\S]*?)<\/select>/) || [])[1];
+        assert(select, `the >> of room lot ${i + 1} must render the select limited to dry rooms`);
+        assert(select.includes(`<option value="${roomId}"`), `the dry room select must offer the Arlington Dry Room (room lot ${i + 1})`);
+        assert(!/>Silo \d/.test(select) && !select.includes("Blast Freezer"), `the dry room select offers no silo and no freezer (room lot ${i + 1})`);
+        if (lot === secondRoomLot) assert(new RegExp(`<option value="${roomId}" selected`).test(select), "the room preselects for the lot planned there");
+        const loaded = await req("/station/load_silo/load", {
+          method: "POST",
+          body: form({ lot_id: lot, dry_space_id: roomId, start_time: "", loaded_at_iso: "", next: surfacePath("dry_rooms") }),
+        });
+        assert(loaded.status === 303, `loading room lot ${i + 1} expected 303 got ${loaded.status} ${await loaded.text()}`);
+        const loadedLoc = loaded.headers.get("location") || "";
+        assert(loadedLoc === "/production/scheduling/dry_rooms?ok=drying_loaded", `a load from the Dry Rooms surface must return there, got ${loadedLoc}`);
+      }
+      const roomsLoaded = await text("/production/scheduling/dry_rooms?ok=drying_loaded");
+      assert(roomsLoaded.body.includes("Loaded. The location change pends at the export home."), "the Dry Rooms surface must flash the load");
+      const roomSection = sectionOf(schedPaneOf(roomsLoaded.body, "working"), "data-drying-space", roomId);
+      assert(roomSection, "the Arlington Dry Room must ride the Dry Rooms Working pane");
+      const roomLoadIds = [...roomSection.matchAll(/data-drying-load="([a-f0-9-]{36})"/g)].map((m) => m[1]);
+      assert(roomLoadIds.length === 2, `the room must hold two open loads, saw ${roomLoadIds.length}`);
+      for (const lot of roomLots) assert(roomSection.includes(`data-drying-lot="${lot}"`), `the room's Working section must carry lot ${lot}`);
+      assert(roomSection.includes(`data-unload-together-link="${roomId}"`), "a room holding two loads must offer Unload together");
+      assert(roomSection.includes(`href="/production/scheduling/dry_rooms?together=${roomId}"`), "Unload together must open the joint form on the surface");
+      // A silo holds one lot by law: a joint unload on a one-load silo refuses.
+      const oneSilo = await req(`/production/scheduling/silos/unload_together/${splitSilos[0]}`, {
+        method: "POST",
+        body: form({ load_ids: splitLoads[0], total_dry_grams: "100", operator_name: "Smoke Operator", gate_choice: "nothing" }),
+      });
+      assert(oneSilo.status === 400, `a joint unload on a one-load silo expected 400 got ${oneSilo.status} ${await oneSilo.text()}`);
+      // The joint form.
+      const togetherPage = await text(`/production/scheduling/dry_rooms?together=${roomId}`);
+      assert(togetherPage.res.status === 200, `the joint form expected 200 got ${togetherPage.res.status}`);
+      const jointForm = (togetherPage.body.match(new RegExp(`<form [^>]*data-unload-together="${roomId}"[^>]*>([\\s\\S]*?)</form>`)) || [])[0];
+      assert(jointForm, "the joint form must render on the room's Working section");
+      assert(/^<form [^>]*data-lock-on-submit/.test(jointForm), "the joint form must lock on the first tap (THE FOUR START TAPS)");
+      assert(jointForm.includes(`action="/production/scheduling/dry_rooms/unload_together/${roomId}"`), "the joint form must post to the room's joint unload");
+      assert(jointForm.includes('name="total_dry_grams"') && jointForm.includes('name="gate_choice"') && jointForm.includes('name="operator_name"'), "the joint form asks the total dry, the operator and the gate's choice once");
+      const loadIds = (jointForm.match(/<input type="hidden" name="load_ids" value="([^"]+)">/) || [])[1];
+      assert(loadIds, "the joint form must carry the load ids");
+      assert([...loadIds.split(",")].sort().join(",") === [...roomLoadIds].sort().join(","), `the joint form's load ids must be the room's open loads, got ${loadIds}`);
+      const wetOf = {};
+      for (const m of jointForm.matchAll(/data-share-lot="([a-f0-9-]{36})" data-wet="([0-9.]+)"/g)) wetOf[m[1]] = Number(m[2]);
+      assert(roomLots.every((lot) => wetOf[lot] > 0), `the joint form must list each lot's wet grams, got ${JSON.stringify(wetOf)}`);
+      const groupWet = roomLots.reduce((sum, lot) => sum + wetOf[lot], 0);
+      const totalDry = 602;
+      assert(totalDry < groupWet, `the typed total must fall well below the combined wet grams ${groupWet}`);
+      const joint = await req(`/production/scheduling/dry_rooms/unload_together/${roomId}`, {
+        method: "POST",
+        body: form({ load_ids: loadIds, total_dry_grams: String(totalDry), operator_name: "Smoke Operator", gate_choice: "nothing" }),
+      });
+      assert(joint.status === 303, `the joint unload expected 303 got ${joint.status} ${await joint.text()}`);
+      const jointLoc = joint.headers.get("location") || "";
+      assert(jointLoc === "/production/scheduling/dry_rooms?ok=unloaded_together&n=2", `the joint unload must return to the Dry Rooms surface, got ${jointLoc}`);
+      const roomsAfter = await text(jointLoc);
+      assert(roomsAfter.res.status === 200, `the Dry Rooms surface after the joint unload expected 200 got ${roomsAfter.res.status}`);
+      assert(roomsAfter.body.includes("Unloaded together: 2 lots."), "the Dry Rooms surface must flash the joint unload");
+      const roomsComplete = schedPaneOf(roomsAfter.body, "complete");
+      let drySum = 0;
+      for (const lot of roomLots) {
+        const row = rowOf(roomsComplete, lot);
+        assert(row, `lot ${lot} must land on the Dry Rooms Complete pane`);
+        const dry = Number((row.match(/data-dry-grams="([0-9.]+)"/) || [])[1]);
+        assert(dry > 0, `lot ${lot}'s Complete row must carry its dry grams, got\n${row.slice(0, 600)}`);
+        const exact = (totalDry * wetOf[lot]) / groupWet;
+        assert(Math.abs(dry - exact) <= 1, `lot ${lot}'s dry share ${dry} must sit within 1 g of its pro rata ${exact.toFixed(2)}`);
+        assert(Number.isInteger(dry), `lot ${lot}'s dry share must be whole grams, got ${dry}`);
+        assert(row.includes("data-unload-day="), `lot ${lot}'s Complete row must carry the unload's day`);
+        drySum += dry;
+      }
+      assert(drySum === totalDry, `the dry shares must sum to the typed total ${totalDry}, got ${drySum}`);
+      const roomsWorkingAfter = schedPaneOf(roomsAfter.body, "working");
+      assert(!sectionOf(roomsWorkingAfter, "data-drying-space", roomId), "the emptied room leaves the Dry Rooms Working pane");
+      for (const id of roomLoadIds) assert(!roomsWorkingAfter.includes(`data-drying-load="${id}"`), `the ended load ${id} leaves Working`);
+      for (const lot of roomLots) {
+        const gone = await req(`/station/unload_dry_space?pick=${lot}`);
+        assert(gone.status === 302, `a lot unloaded together no longer dries: its unload pick expected 302 got ${gone.status}`);
+      }
+      const jointLog = await text("/log");
+      assert(jointLog.body.includes("joint unload: Arlington Dry Room"), "the change log must carry the joint unload's reason naming the room");
+      const jointAgain = await req(`/production/scheduling/dry_rooms/unload_together/${roomId}`, {
+        method: "POST",
+        body: form({ load_ids: loadIds, total_dry_grams: String(totalDry), operator_name: "Smoke Operator", gate_choice: "nothing" }),
+      });
+      const againBody = await jointAgain.text();
+      assert(jointAgain.status === 409, `the same joint unload again expected 409 got ${jointAgain.status} ${againBody}`);
+      assert(
+        againBody.includes("Arlington Dry Room was already unloaded together; nothing was unloaded twice."),
+        "a repeated joint unload must say the room was already unloaded together"
+      );
+    }
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

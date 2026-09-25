@@ -2,16 +2,10 @@ import { describe, expect, it } from "vitest";
 import { SYSTEM_REASON } from "../src/config";
 import type { LocalInventoryListRow } from "../src/db";
 import {
-  FFZ_INVENTORY_LOCATION,
-  FFZ_LOCATION_KIND,
   RECONCILE_REFUSAL,
   acknowledgeReconcileNote,
   editFieldName,
-  ffzInventoryLocation,
-  isFfzInventory,
   listDryingLocations,
-  listReconcileItems,
-  listReconcileLocations,
   purgeLocation,
   reconcileLocationPage,
   reconcileNotesSection,
@@ -19,7 +13,6 @@ import {
   type DryingLocation,
   type ReconcileNoteRow,
 } from "../src/ledgerloc";
-import { FFZ_LEDGER_CLAUSE } from "../src/db";
 
 // As the query orders them: silos, then dry rooms, then freezers, by name within each.
 const SPACES = [
@@ -266,103 +259,5 @@ describe("THE RECONCILE LEDGER LOCATION (canon 0.30.135; owner: [Reconcile Ledge
     expect(section).toContain(">Acknowledge</button>");
     expect(reconcileNotesSection([])).toBe("");
     expect(reconcileNotesSection([row], "es")).toContain(">Reconocer</button>");
-  });
-});
-
-// THE FFZ INVENTORY LOCATION (canon 0.30.145; owner, 2026-09-20, verbatim: "include FFZ inventory as one of the purge-able ledger locations").
-describe("THE FFZ INVENTORY LOCATION (canon 0.30.145)", () => {
-  it("ends the picker with FFZ inventory, a reading and not a place, and reads the ledger's frozen set for it", async () => {
-    expect(FFZ_INVENTORY_LOCATION).toBe("FFZ inventory");
-    expect(isFfzInventory("FFZ inventory")).toBe(true);
-    expect(isFfzInventory(" FFZ inventory ")).toBe(true);
-    expect(isFfzInventory("Blast Freezer")).toBe(false);
-    expect(isFfzInventory(null)).toBe(false);
-    expect(ffzInventoryLocation()).toEqual({
-      value: "FFZ inventory",
-      label: "FFZ inventory (Blast Freezer and every cryo'd package)",
-      kind: FFZ_LOCATION_KIND,
-      space_type: null,
-      farm_code: null,
-    });
-    expect(ffzInventoryLocation("es").label).toBe("FFZ inventory (Blast Freezer y cada paquete pasado por crio)");
-    const db = fakeDb({});
-    const picker = await listReconcileLocations(db as unknown as D1Database);
-    expect(picker.map((l) => l.value)).toEqual(["Silo 1", "Silo 4", "Arlington Dry Room", "Hang in Place", "Blast Freezer", "FFZ inventory"]);
-    // The drying locations alone stay as they were: the move targets never include the reading.
-    expect((await listDryingLocations(db as unknown as D1Database)).map((l) => l.value)).not.toContain("FFZ inventory");
-    expect(FFZ_LEDGER_CLAUSE).toBe(
-      "(i.location = ? OR EXISTS (SELECT 1 FROM wip_packages fp WHERE fp.id = i.wip_package_id AND fp.deleted_at IS NULL AND fp.cryo_weight_grams IS NOT NULL))"
-    );
-    const frozen = item({ id: "bf-1", package_code: "26030", location: "Blast Freezer", qty: 500 });
-    const cryoBorn = item({ id: "cryo-1", package_code: "26011-BUD-1", location: "Cryo Room", qty: 100 });
-    const elsewhere = item({ id: "silo-1", package_code: "26016", location: "Silo 4", qty: 1132 });
-    const ledger = fakeDb({ items: [frozen, cryoBorn, elsewhere], cryoIds: ["cryo-1"] });
-    const set = await listReconcileItems(ledger as unknown as D1Database, "FFZ inventory");
-    expect(set.map((i) => i.id)).toEqual(["bf-1", "cryo-1"]);
-    const silo = await listReconcileItems(ledger as unknown as D1Database, "Silo 4");
-    expect(silo.map((i) => i.id)).toEqual(["silo-1"]);
-  });
-
-  it("purges the whole frozen set under the reason and the PIN, wherever each package sits, and names FFZ inventory on the note", async () => {
-    const frozen = item({ id: "bf-1", package_code: "26030", location: "Blast Freezer", qty: 500 });
-    const cryoBorn = item({ id: "cryo-1", package_code: "26011-BUD-1", location: "Cryo Room", qty: 100.25 });
-    const elsewhere = item({ id: "silo-1", package_code: "26016", location: "Silo 4", qty: 1132 });
-    const db = fakeDb({ items: [frozen, cryoBorn, elsewhere], cryoIds: ["cryo-1"] });
-    const out = await purgeLocation(db as unknown as D1Database, formOf({ location: "FFZ inventory", reason: "METRC reads zero; the ledger was full", admin_pin: "21319" }));
-    expect(out.redirect).toBe("/admin/reconcile-location?location=FFZ%20inventory&ok=purged&n=2");
-    const voids = db.batched.filter((b) => b.sql.includes("UPDATE local_inventory_items SET deleted_at"));
-    expect(voids.map((v) => v.args[5])).toEqual(["bf-1", "cryo-1"]);
-    const note = db.batched.find((b) => b.sql.includes("INSERT INTO reconcile_notes"));
-    expect(note!.args[1]).toBe("purge");
-    expect(note!.args[3]).toBe("FFZ inventory");
-    expect(note!.args[5]).toBe("2 packages voided, 600 g, at FFZ inventory");
-    // Nothing frozen: the purge refuses in words and writes nothing.
-    const empty = fakeDb({ items: [elsewhere] });
-    await expect(purgeLocation(empty as unknown as D1Database, formOf({ location: "FFZ inventory", reason: "x", admin_pin: "21319" }))).rejects.toThrow(RECONCILE_REFUSAL.nothing);
-    expect(empty.batched).toHaveLength(0);
-  });
-
-  it("edits the frozen set's packages like any location's but never moves a package to FFZ inventory", async () => {
-    const frozen = item({ id: "bf-1", package_code: "26030", location: "Blast Freezer", qty: 500 });
-    const db = fakeDb({ items: [frozen] });
-    const out = await saveLocationEdits(db as unknown as D1Database, formOf({ location: "FFZ inventory", note: "recount", [editFieldName("qty", "bf-1")]: "480" }));
-    expect(out.redirect).toBe("/admin/reconcile-location?location=FFZ%20inventory&ok=edited&n=1");
-    const note = db.batched.find((b) => b.sql.includes("INSERT INTO reconcile_notes"));
-    expect(note!.args[5]).toBe("1 field on 1 package edited at FFZ inventory");
-    const moveOut = fakeDb({ items: [frozen] });
-    const moved = await saveLocationEdits(moveOut as unknown as D1Database, formOf({ location: "FFZ inventory", note: "to the room", [editFieldName("location", "bf-1")]: "Arlington Dry Room" }));
-    expect(moved.redirect).toBe("/admin/reconcile-location?location=FFZ%20inventory&ok=edited&n=1");
-    const bad = fakeDb({ items: [item()] });
-    await expect(
-      saveLocationEdits(bad as unknown as D1Database, formOf({ location: "Silo 4", note: "into the reading", [editFieldName("location", "item-1")]: "FFZ inventory" }))
-    ).rejects.toThrow(RECONCILE_REFUSAL.moved);
-    expect(bad.batched).toHaveLength(0);
-  });
-
-  it("renders the FFZ inventory pick with its explanation, each row's own location, and no FFZ inventory among the move targets", () => {
-    const locations: DryingLocation[] = [...LOCATIONS, ffzInventoryLocation()];
-    const page = reconcileLocationPage({
-      farms: [{ value: "PNN", label: "Penn North" }],
-      locations,
-      picked: "FFZ inventory",
-      items: [item({ id: "bf-1", package_code: "26030", location: "Blast Freezer", qty: 500 }), item({ id: "cryo-1", package_code: "26011-BUD-1", location: "Cryo Room", qty: 100 })],
-      openNotes: 0,
-    });
-    expect(page).toContain('<option value="FFZ inventory" selected>FFZ inventory (Blast Freezer and every cryo\'d package)</option>');
-    expect(page).toContain("data-ffz-inventory");
-    expect(page).toContain("FFZ inventory is what the FFZ cube reads out of the ledger");
-    expect(page).toContain('data-reconcile-count>2</span>');
-    expect(page).toContain('<h2>FFZ inventory <span');
-    expect(page).toContain(`<select name="${editFieldName("location", "bf-1")}">`);
-    expect(page).toContain('<option value="Blast Freezer" selected>Blast Freezer(s) (Blast Freezer)</option>');
-    // Cryo Room is no drying location: the row keeps it as its own first option, and FFZ inventory is no option at all.
-    expect(page).toContain('<option value="Cryo Room" selected>Cryo Room</option>');
-    const rowSelects = page.split("<tbody>")[1].split("</tbody>")[0];
-    expect(rowSelects).not.toContain('value="FFZ inventory"');
-    expect(page).toContain("Voids every live ledger package in the FFZ inventory under your reason, wherever it sits.");
-    const empty = reconcileLocationPage({ farms: [], locations, picked: "FFZ inventory", items: [], openNotes: 0 });
-    expect(empty).toContain("No live ledger packages in the FFZ inventory.");
-    const es = reconcileLocationPage({ farms: [], locations, picked: "FFZ inventory", items: [], openNotes: 0, locale: "es" });
-    expect(es).toContain("No hay paquetes vivos del libro en el inventario FFZ.");
   });
 });

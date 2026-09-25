@@ -236,6 +236,11 @@ export const SYSTEM_REASON = {
   schedule_demote: "schedule demote",
   // THE UNFINISH (canon 0.30.220): the PIN-gated step back from Complete.
   schedule_unfinish: "schedule unfinish",
+  // THE TRUCK RECORD (canon 0.30.226): a tote moved onto the lot minted for its HBN at Finish lot.
+  truck_split: "truck split",
+  // THE JOINT UNLOAD (canon 0.30.226): one total dry shared pro rata by wet
+  // grams over a space's open loads; the reason carries the space and the lots.
+  joint_unload: "joint unload",
   // THE CRYO RUN (canon 0.30.110): an output container born from a run; the
   // run's inputs consumed at Finish run; the run finished.
   cryo_output: "cryo output entered",
@@ -286,6 +291,8 @@ export const SYSTEM_REASON = {
   // or a queue package closed because METRC marks its tag gone; the mount id
   // rides behind it.
   gone_in_metrc: "gone in METRC",
+  // THE FFZ INVENTORY (canon 0.30.225): a fresh frozen package the ledger lacked, landed at the Blast Freezer.
+  ffz_from_mirror: "fresh frozen from the mirror",
   internal_field_set: "internal field set",
   // Canon 0.30.40: the Change Location setup.
   location_changed: "location changed",
@@ -408,10 +415,6 @@ export const CONFIG_KEYS = {
   // L-4), pounds, seeded 15000 by migration 0048; the fill inside every silo
   // wireframe scales against it.
   silo_capacity_wet_lbs: "silo_capacity_wet_lbs",
-  // THE HARVEST CONSOLE (canon 0.30.73). Owner, 2026-09-15, verbatim: "add our
-  // FFZ inventory in a blue wire cube, capacity in there is 4800 lbs". A value
-  // in data (canon L-4), pounds, seeded 4800 by migration 0049.
-  ffz_capacity_lbs: "ffz_capacity_lbs",
   // THE FFZ CUBE READS THE MIRROR (canon 0.30.75). Owner, 2026-09-15: "check
   // FFZ, we have inventory but the FFZ cube is empty" (his FG Inventory in
   // METRC pane read FFZ 129,259.00 g). The METRC item kinds (the Item name's
@@ -1196,13 +1199,50 @@ export const DEFAULT_LAB_TEST_BATCH = "Raw Plant Material";
 export const SAMPLE_FLOOR_GRAMS = 14;
 export const IN_TESTING_LOCATION = "In Testing";
 export const TESTING_TRANSFER_TYPE = "Testing Transfer (to SCF)";
-export const SCHEDULE_STAGES = { trim: "trim", cryo: "cryo", prepack: "prepack" } as const;
+export const SCHEDULE_STAGES = {
+  trim: "trim",
+  cryo: "cryo",
+  prepack: "prepack",
+  // THE DRYING SCHEDULE (canon 0.30.226; Patrick's "scheduling the silos and
+  // dry spaces the way we do the lines", his pick "Three surfaces by space
+  // kind"): views over the lots, the loads and the spaces, no schedule rows.
+  silos: "silos",
+  dry_rooms: "dry_rooms",
+  freezers: "freezers",
+} as const;
 export type ScheduleStage = (typeof SCHEDULE_STAGES)[keyof typeof SCHEDULE_STAGES];
+export type DryingStage = typeof SCHEDULE_STAGES.silos | typeof SCHEDULE_STAGES.dry_rooms | typeof SCHEDULE_STAGES.freezers;
+/** The line stages, the ones that write production_schedules rows. */
+export type LineStage = Exclude<ScheduleStage, DryingStage>;
 export const SCHEDULE_STAGE_TITLES: Record<ScheduleStage, string> = {
   trim: "Trimming",
   cryo: "Pasteurization",
   prepack: "Prepack",
+  silos: "Silos",
+  dry_rooms: "Dry Rooms",
+  freezers: "Freezers",
 };
+/** THE DRYING SCHEDULE (canon 0.30.226): each surface is one space type. */
+export const DRYING_STAGE_SPACE_TYPE: Record<DryingStage, DrySpaceType> = {
+  silos: "silo",
+  dry_rooms: "dry_room",
+  freezers: "freezer",
+};
+export const DRYING_STAGES: readonly DryingStage[] = [SCHEDULE_STAGES.silos, SCHEDULE_STAGES.dry_rooms, SCHEDULE_STAGES.freezers];
+export function dryingStageOfType(type: DrySpaceType): DryingStage {
+  return DRYING_STAGES.find((stage) => DRYING_STAGE_SPACE_TYPE[stage] === type) ?? SCHEDULE_STAGES.silos;
+}
+export function dryingStagePath(stage: DryingStage): string {
+  return `${PRODUCTION_SCHEDULING_PATH}/${stage}`;
+}
+/** Where Load Silo, Start and Pause return when a drying surface opened them:
+ * one of the three surface paths exactly, anything else is no return. */
+export function dryingReturnPath(raw: unknown): string | null {
+  const typed = String(raw ?? "").trim();
+  return DRYING_STAGES.map(dryingStagePath).find((path) => path === typed) ?? null;
+}
+/** The Complete pane's window: today and the six farm days before it. */
+export const DRYING_COMPLETE_DAYS = 7;
 export const SCHEDULE_STATUS = { scheduled: "scheduled", complete: "complete" } as const;
 
 /** THE HARVEST CONSOLE (canon 0.30.73): the Admin button's page, PIN-gated like

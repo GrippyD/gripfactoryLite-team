@@ -425,6 +425,7 @@ describe("wet weight header form (owner ruling 2026-08-28)", () => {
     expect(names).toContain("weight_grams");
     expect(EDITABLE_FIELDS.wet_weights).toEqual([
       { name: "weight_grams", label: "Weight (g)", input: "number" },
+      { name: "harvest_batch_id", label: "HBN", input: "lookup", lookup: "harvest_batches" },
     ]);
   });
 
@@ -721,9 +722,11 @@ describe("left pane farm groups (owner ruling 2026-08-28)", () => {
 });
 
 describe("truck number after the ledger ruling (owner ruling 2026-08-28)", () => {
-  it("left the station form; trucks are dry_spaces rows now", () => {
+  it("Truck # is free text on the header; Move To is still not a truck (canon 0.30.226)", () => {
     const fields = stationByKey("wet_weight")!.fields;
-    expect(fields.find((f) => f.name === "truck_number")).toBeUndefined();
+    const truck = fields.find((f) => f.name === "truck_number");
+    expect(truck?.input).toBe("text");
+    expect(fields.find((f) => f.name === "actual_dryspc")?.input).toBe("move_to");
   });
 
   it("the column stays on the edit page and the Dry Space Queue for older rows", () => {
@@ -1006,10 +1009,9 @@ describe("lot weights page (owner ruling 2026-08-28)", () => {
   it("labels a record-borne truck lot Truck <n>, never the bare sentinel name (owner ruling 2026-08-31)", () => {
     const truckLot = { ...lot, dry_space_name: "Truck", truck_number: "1" };
     const html = lotPage(stationByKey("wet_weight")!, truckLot, [], "Arlington", 0);
-    expect(html).toContain("<dd>Truck 1</dd>");
-    expect(html).not.toContain("<dd>Truck</dd>");
+    expect(html).toContain("<dd data-truck-number>Truck 1 - 26240-ARL-GH-027-0-NA-26001</dd>");
     const es = lotPage(stationByKey("wet_weight")!, truckLot, [], "Arlington", 0, "es");
-    expect(es).toContain("<dd>Camión 1</dd>");
+    expect(es).toContain("<dd data-truck-number>Camión 1 - 26240-ARL-GH-027-0-NA-26001</dd>");
   });
 });
 

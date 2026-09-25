@@ -33,7 +33,7 @@ import { CONFIG_KEYS, parseBtrTypeCodes, parseCryoTypeCategories, parseNameList,
 import { etClockMinutes } from "../src/farmday";
 import { HttpError } from "../src/audit";
 import { isReportKey, REPORT_CARDS, REPORT_KEYS } from "../src/reports";
-import { ffzVisual, LB_GRAMS, siloVisual, type SiloLive } from "../src/silo";
+import { LB_GRAMS, siloVisual, type SiloLive } from "../src/silo";
 import { loadHarvestConsole } from "../src/console";
 import { countQueue, listHarvestsByYear, listLookup, listPaneRows, listQueueRows, listRecallableBatches } from "../src/db";
 import { createWetWeight, recallHarvestBatch } from "../src/actions";
@@ -146,7 +146,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
   });
 
   it("renders the collapsible sections: Plants, Drying and Trimming open, the two stubs closed (Trimming built by canon 0.30.88)", () => {
-    const html = harvestConsolePage({ input, live, ffz: ffzVisual(500 * LB_GRAMS, 4800 * LB_GRAMS), nowIso: "2026-09-15T12:00:00.000Z" });
+    const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" });
     expect(html).toContain("<h1>Harvest Console</h1>");
     expect(html).toContain('<details class="hc-section" data-hc-section="plants" open>');
     expect(html).toContain("<summary>Plants</summary>");
@@ -169,7 +169,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
 
   it("THE DRYING TOTALS (canon 0.30.183): the three totals ride under the dry space tiles in the Drying section", () => {
     const totals = { loadedGrams: 15421282, loadedLots: 2, estimateGrams: 3392682, dryYieldPct: 22, cureGrams: 1280080, cureLots: 1, queuedGrams: 0, queuedLots: 0 };
-    const html = harvestConsolePage({ input, live, ffz: ffzVisual(0, 4800 * LB_GRAMS), nowIso: "2026-09-15T12:00:00.000Z", dryingTotals: totals });
+    const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z", dryingTotals: totals });
     const drying = html.slice(html.indexOf('data-hc-section="drying"'), html.indexOf('data-hc-section="trimming"'));
     expect(drying).toContain("data-silo-strip");
     expect(drying.indexOf("data-silo-strip")).toBeLessThan(drying.indexOf("data-hc-drying-totals"));
@@ -179,13 +179,13 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(drying).toContain("Total in Cure Spaces");
     expect(drying).toContain("Total Dry Queued");
     expect(drying).toContain("<strong>0.00</strong> lb · <strong>0</strong> g");
-    const es = harvestConsolePage({ input, live, ffz: ffzVisual(0, 4800 * LB_GRAMS), nowIso: "2026-09-15T12:00:00.000Z", dryingTotals: totals, locale: "es" });
+    const es = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z", dryingTotals: totals, locale: "es" });
     expect(es).toContain("Total en espacios de secado");
     expect(es).toContain("seco est. 7,572.95 lb al 22%");
   });
 
   it("draws the four small boxes, PNN ARL PNS and Total, shaded by their % complete", () => {
-    const html = harvestConsolePage({ input, live, ffz: ffzVisual(0, 4800 * LB_GRAMS), nowIso: "2026-09-15T12:00:00.000Z" });
+    const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" });
     expect(html.match(/<div class="hc-farm( hc-total)?" data-hc-farm=/g)).toHaveLength(4);
     expect(html).toContain('<div class="hc-farm" data-hc-farm="PNN" data-hc-pct="40">');
     expect(html).toContain('<div class="hc-farm" data-hc-farm="ARL" data-hc-pct="0">');
@@ -212,7 +212,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
   });
 
   it("the open numbox: one hours form per farm for yesterday, saving on change; Total shows the sum", () => {
-    const html = harvestConsolePage({ input, live, ffz: ffzVisual(0, 4800 * LB_GRAMS), nowIso: "2026-09-15T12:00:00.000Z", ok: "hours" });
+    const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z", ok: "hours" });
     expect(html.match(/<form method="post" action="\/harvest\/hours" class="hc-hours"/g)).toHaveLength(3);
     expect(html).toContain('data-hc-hours="PNN"');
     expect(html).toContain('<input type="hidden" name="farm" value="ARL">');
@@ -231,43 +231,37 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     // and one on each card's sheet-hours line (canon 0.30.154).
     expect(html.match(/<span class="hc-date muted">2026-09-14<\/span>/g)).toHaveLength(12);
     expect(html).toContain('<p class="banner ok" data-hc-flash>Hours saved.</p>');
-    expect(harvestConsolePage({ input, live, ffz: ffzVisual(0, 1), nowIso: "2026-09-15T12:00:00.000Z" })).not.toContain("data-hc-flash");
+    expect(harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" })).not.toContain("data-hc-flash");
   });
 
-  it("the Drying section is the silo strip with the Arlington Dry Room as the wire box and the FFZ cube beside the silos", () => {
-    const html = harvestConsolePage({ input, live, ffz: ffzVisual(500 * LB_GRAMS, 4800 * LB_GRAMS), nowIso: "2026-09-15T12:00:00.000Z" });
+  it("the Drying section is the silo strip with the Arlington Dry Room as the wire box", () => {
+    const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" });
     const drying = html.slice(html.indexOf('data-hc-section="drying"'), html.indexOf('data-hc-section="trimming"'));
     expect(drying).toContain('<section class="silo-strip" data-silo-strip>');
     expect(drying).toContain('data-silo="s1" data-silo-state="empty" data-silo-shape-kind="cylinder"');
     expect(drying).toContain('data-silo="s6" data-silo-state="filling" data-silo-shape-kind="box"');
     expect(drying).toContain('<div class="inv-gauge-name">Arlington Dry Room</div>');
     expect(drying).toContain('class="silo-shape silo-shape-box"');
-    // The cube rides the same row, after the silos, with its own capacity (500 of 4,800 lb: 10%).
-    expect(drying.indexOf('data-silo="s6"')).toBeLessThan(drying.indexOf("data-ffz"));
-    expect(drying).toContain('data-ffz data-ffz-state="holding"');
-    expect(drying).toContain('<div class="silo-state ffz-state" data-ffz-pct>10% full</div>');
-    expect(drying).toContain("FFZ <strong data-silo-wet-lb>500.00</strong> lb");
-    expect(drying).toContain("silo-fill ffz-fill ffz-throb");
-    // The live repaint and the clock script ride along; the cube carries no clock.
+    expect(drying).not.toContain("data-ffz");
     expect(drying).toContain('fetch("/silos/live.json"');
-    expect(drying).toContain("paintFfz");
+    expect(drying).not.toContain("paintFfz");
   });
 
-  it("THE PANES RIDE THE STRIP (owner, 2026-09-22): CSA and CSB stand in the drying row after the FFZ cube, inside the strip's tile row", () => {
+  it("THE PANES RIDE THE STRIP (owner, 2026-09-22): CSA and CSB stand in the drying row after the last space tile", () => {
     const cureTiles =
       '<div class="inv-gauge cure-pane" data-cure-pane="CSA"><div class="inv-gauge-name">CSA</div></div>' +
       '<div class="inv-gauge cure-pane" data-cure-pane="CSB"><div class="inv-gauge-name">CSB</div></div>';
-    const html = harvestConsolePage({ input, live, ffz: ffzVisual(0, 4800 * LB_GRAMS), nowIso: "2026-09-15T12:00:00.000Z", cureTiles });
+    const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z", cureTiles });
     const drying = html.slice(html.indexOf('data-hc-section="drying"'), html.indexOf('data-hc-section="trimming"'));
     const row = drying.slice(drying.indexOf('<div class="inv-gauges">'), drying.indexOf("</section>"));
     expect(row).toContain('data-cure-pane="CSA"');
     expect(row).toContain('data-cure-pane="CSB"');
-    expect(row.indexOf("data-ffz")).toBeLessThan(row.indexOf('data-cure-pane="CSA"'));
+    expect(row.indexOf('data-silo="s6"')).toBeLessThan(row.indexOf('data-cure-pane="CSA"'));
     expect(row.indexOf('data-cure-pane="CSA"')).toBeLessThan(row.indexOf('data-cure-pane="CSB"'));
     // Nothing of the panes stands outside the strip.
     expect(drying.slice(drying.indexOf("</section>"))).not.toContain("data-cure-pane");
     // Without the tiles the strip renders as before.
-    expect(harvestConsolePage({ input, live, ffz: ffzVisual(0, 4800 * LB_GRAMS), nowIso: "2026-09-15T12:00:00.000Z" })).not.toContain("data-cure-pane");
+    expect(harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" })).not.toContain("data-cure-pane");
   });
 
   it("parses the typed hours: blank clears, commas drop, negatives and words refuse", () => {
@@ -281,7 +275,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
   });
 
   it("speaks Spanish on the sections and the lines", () => {
-    const es = harvestConsolePage({ input, live, ffz: ffzVisual(0, 1), nowIso: "2026-09-15T12:00:00.000Z", locale: "es" });
+    const es = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z", locale: "es" });
     expect(es).toContain("<summary>Plantas</summary>");
     expect(es).toContain("<summary>Secado</summary>");
     expect(es).toContain("<summary>Recorte</summary>");
@@ -289,7 +283,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(es).toContain("<summary>Pruebas</summary>");
     expect(es).toContain("<dt>Plantas restantes/Plantas totales</dt>");
     expect(es).toContain("Horas de corte y deshoje de ayer");
-    expect(es).toContain("Inventario FFZ");
+    expect(es).not.toContain("Inventario FFZ");
   });
 });
 
@@ -758,10 +752,10 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
   });
 
   it("the console page carries the built section open and flashes trim hours saved, and input lbs saved", () => {
-    const html = harvestConsolePage({ input: withTrim, live: [], ffz: ffzVisual(0, 4800 * LB_GRAMS), nowIso: "2026-09-15T12:00:00.000Z", ok: "trim_hours" });
+    const html = harvestConsolePage({ input: withTrim, live: [], nowIso: "2026-09-15T12:00:00.000Z", ok: "trim_hours" });
     expect(html).toContain('data-hc-section="trimming" open');
     expect(html).toContain("data-hc-flash>Hours saved.</p>");
-    const lbsSaved = harvestConsolePage({ input: withTrim, live: [], ffz: ffzVisual(0, 4800 * LB_GRAMS), nowIso: "2026-09-15T12:00:00.000Z", ok: "trim_input" });
+    const lbsSaved = harvestConsolePage({ input: withTrim, live: [], nowIso: "2026-09-15T12:00:00.000Z", ok: "trim_input" });
     expect(lbsSaved).toContain("data-hc-flash>Input lbs saved.</p>");
     expect(html.indexOf('data-hc-section="drying"')).toBeLessThan(html.indexOf('data-hc-section="trimming"'));
     expect(html.indexOf('data-hc-section="trimming"')).toBeLessThan(html.indexOf('data-hc-section="pasteurization"'));
@@ -804,7 +798,7 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
       jobs: 1,
       hours: null as number | null,
     };
-    const html = harvestConsolePage({ input, live, ffz: ffzVisual(0, 4800 * LB_GRAMS), nowIso: "2026-09-22T16:00:00.000Z", prepack });
+    const html = harvestConsolePage({ input, live, nowIso: "2026-09-22T16:00:00.000Z", prepack });
     const section = html.slice(html.indexOf('data-hc-section="prepack"'));
     expect(html.indexOf('data-hc-section="testing"')).toBeLessThan(html.indexOf('data-hc-section="prepack"'));
     expect(section).toContain('data-prepack-unit="3.5"');
@@ -814,13 +808,12 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(section).toContain('action="/harvest/prepack-hours"');
     expect(section).toContain("type the hours");
     expect(section).toContain("The sheet does not replace this box.");
-    const es = harvestConsolePage({ input, live, ffz: ffzVisual(0, 4800 * LB_GRAMS), nowIso: "2026-09-22T16:00:00.000Z", locale: "es", prepack });
+    const es = harvestConsolePage({ input, live, nowIso: "2026-09-22T16:00:00.000Z", locale: "es", prepack });
     expect(es).toContain("escriba las horas");
     expect(es).toContain("Preempacado");
     const withHours = harvestConsolePage({
       input,
       live,
-      ffz: ffzVisual(0, 4800 * LB_GRAMS),
       nowIso: "2026-09-22T16:00:00.000Z",
       prepack: { ...prepack, hours: 2 },
     });

@@ -31,9 +31,9 @@
  */
 
 import { HttpError, nowIso, textOrNull } from "./audit";
-import { applyTransition, CONFIG_KEYS, isKnownSiteLicense, isPrepackWpr, metrcQuantity, parseCryoTypeCategories, parseMetrcReleaseStates, roundGrams, SYSTEM_REASON, WIP_STATUS } from "./config";
+import { applyTransition, CONFIG_KEYS, isKnownSiteLicense, isPrepackWpr, ITEM_KIND_FG, LOC_BLAST_FREEZER, metrcQuantity, parseCryoTypeCategories, parseFfzItemKinds, parseMetrcReleaseStates, roundGrams, siteOfLicense, SYSTEM_REASON, WIP_STATUS } from "./config";
 import { parseCsv } from "./csv";
-import { getConfigValue, insertLog, logsForInsert, requireActor } from "./db";
+import { ffzKindBinds, ffzKindClause, getConfigValue, insertLog, logsForInsert, requireActor } from "./db";
 import type { ActionOk } from "./actions";
 import type { MirrorPackage } from "./manifest";
 
@@ -1026,6 +1026,8 @@ export type MountRound = {
   released: number;
   released_passed: number;
   released_failed: number;
+  /** THE FFZ INVENTORY (canon 0.30.225): fresh frozen packages landed at the Blast Freezer. */
+  landed: number;
   redirect: string;
 };
 
@@ -1158,6 +1160,84 @@ export async function closeLedgerForGoneTags(
   return { items: (items.results ?? []).length, packages: (packages.results ?? []).length };
 }
 
+/** THE FFZ INVENTORY (canon 0.30.225). After a packages mount lands whole, every
+ * active fresh-frozen package the ledger does not already bear (live or closed)
+ * lands as one finished-goods item at the Blast Freezer. A second mount of the
+ * same file lands nothing. */
+export async function landFfzFromMirror(db: D1Database, actorId: string, mountId: string, ts: string): Promise<number> {
+  const kinds = parseFfzItemKinds(await getConfigValue(db, CONFIG_KEYS.ffz_item_kinds));
+  const kindList = kinds.length > 0 ? kinds : ["FFZ"];
+  const where = kindList.map(() => ffzKindClause("m")).join(" OR ");
+  const rows = await db
+    .prepare(
+      `SELECT m.tag, m.quantity, m.uom, m.license_value, m.item_strain
+       FROM metrc_packages m
+       WHERE m.gone_at IS NULL
+         AND LOWER(TRIM(COALESCE(m.uom, ''))) IN ('g', 'grams', 'gram')
+         AND m.quantity IS NOT NULL
+         AND (${where})
+         AND NOT EXISTS (
+           SELECT 1 FROM local_inventory_items i
+           WHERE UPPER(TRIM(COALESCE(i.metrc_tag, ''))) = UPPER(TRIM(m.tag))
+         )`
+    )
+    .bind(...ffzKindBinds(kindList))
+    .all<{ tag: string; quantity: number | null; uom: string | null; license_value: string; item_strain: string | null }>();
+  const eight = mountId.replaceAll("-", "").slice(0, 8);
+  const reason = `${SYSTEM_REASON.ffz_from_mirror} (mount ${eight})`;
+  const stmts: D1PreparedStatement[] = [];
+  let landed = 0;
+  for (const row of rows.results ?? []) {
+    const qty = roundGrams(Number(row.quantity));
+    if (!Number.isFinite(qty)) continue;
+    const tag = String(row.tag ?? "").trim().toUpperCase();
+    if (!tag) continue;
+    const strainName = String(row.item_strain ?? "").trim();
+    let strainId: string | null = null;
+    if (strainName) {
+      const strains = await db
+        .prepare(`SELECT id FROM strains WHERE deleted_at IS NULL AND UPPER(TRIM(name)) = UPPER(TRIM(?))`)
+        .bind(strainName)
+        .all<{ id: string }>();
+      const found = strains.results ?? [];
+      if (found.length === 1) strainId = found[0].id;
+    }
+    const id = crypto.randomUUID();
+    const farm = siteOfLicense(row.license_value) ?? "PNN";
+    const record = {
+      id,
+      item_kind: ITEM_KIND_FG,
+      package_code: tag,
+      metrc_tag: tag,
+      strain_id: strainId,
+      qty,
+      uom: "g",
+      farm_code: farm,
+      license_value: row.license_value,
+      location: LOC_BLAST_FREEZER,
+      created_at: ts,
+      created_by: actorId,
+      updated_at: ts,
+      updated_by: actorId,
+    };
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO local_inventory_items (
+            id, item_kind, package_code, metrc_tag, harvest_batch_id, wet_weight_entry_id, wip_package_id,
+            strain_id, qty, uom, farm_code, license_value, location,
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
+          ) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, 'g', ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`
+        )
+        .bind(id, ITEM_KIND_FG, tag, tag, strainId, qty, farm, row.license_value, LOC_BLAST_FREEZER, ts, actorId, ts, actorId),
+      ...logsForInsert(db, "local_inventory_items", id, record, actorId, reason, ts)
+    );
+    landed += 1;
+  }
+  if (stmts.length > 0) await runChunked(db, stmts);
+  return landed;
+}
+
 export type MirrorRelease = { total: number; passed: number; failed: number };
 
 /** THE MIRROR RELEASES THE QUEUE (canon 0.30.193). A Testing Queue package
@@ -1238,7 +1318,8 @@ function mountedRedirect(
   updated: number,
   gone: number,
   closed: { items: number; packages: number } = { items: 0, packages: 0 },
-  released: MirrorRelease = { total: 0, passed: 0, failed: 0 }
+  released: MirrorRelease = { total: 0, passed: 0, failed: 0 },
+  landed = 0
 ): string {
   const q = new URLSearchParams({
     pane: "metrc",
@@ -1253,6 +1334,7 @@ function mountedRedirect(
     released: String(released.total),
     released_passed: String(released.passed),
     released_failed: String(released.failed),
+    landed: String(landed),
   });
   return `/inventory/metrc?${q.toString()}`;
 }
@@ -1456,6 +1538,7 @@ export async function mountMetrcRound(db: D1Database, form: FormData): Promise<M
   const counts = await writeMountWindow(db, head, scan, phase, mountId, before, lead, done, next, ts);
   // THE MIRROR CLOSES THE LEDGER (canon 0.30.128): once a packages mount has landed whole.
   const closed = done && scan.kind === "packages" ? await closeLedgerForGoneTags(db, head.actor.id, mountId, ts) : { items: 0, packages: 0 };
+  const landed = done && scan.kind === "packages" ? await landFfzFromMirror(db, head.actor.id, mountId, ts) : 0;
   const released = done && scan.kind === "packages" ? await releaseTestedFromMirror(db, head.actor.id, mountId, ts) : { total: 0, passed: 0, failed: 0 };
   return {
     ok: true,
@@ -1475,7 +1558,8 @@ export async function mountMetrcRound(db: D1Database, form: FormData): Promise<M
     released: released.total,
     released_passed: released.passed,
     released_failed: released.failed,
-    redirect: mountedRedirect(mountId, scan.kind, counts.added, counts.updated, counts.gone, closed, released),
+    landed,
+    redirect: mountedRedirect(mountId, scan.kind, counts.added, counts.updated, counts.gone, closed, released, landed),
   };
 }
 
@@ -1494,8 +1578,9 @@ export async function mountMetrcExport(db: D1Database, form: FormData): Promise<
   const counts = await writeMountWindow(db, head, scan, phase, mountId, { added: 0, updated: 0, unchanged: 0 }, lead, true, scan.total, ts);
   // THE MIRROR CLOSES THE LEDGER (canon 0.30.128): the packages mount has landed whole.
   const closed = scan.kind === "packages" ? await closeLedgerForGoneTags(db, head.actor.id, mountId, ts) : { items: 0, packages: 0 };
+  const landed = scan.kind === "packages" ? await landFfzFromMirror(db, head.actor.id, mountId, ts) : 0;
   const released = scan.kind === "packages" ? await releaseTestedFromMirror(db, head.actor.id, mountId, ts) : { total: 0, passed: 0, failed: 0 };
-  return { redirect: mountedRedirect(mountId, scan.kind, counts.added, counts.updated, counts.gone, closed, released) };
+  return { redirect: mountedRedirect(mountId, scan.kind, counts.added, counts.updated, counts.gone, closed, released, landed) };
 }
 
 /* ------------------------------------------------------------ readers */

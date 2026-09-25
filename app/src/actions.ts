@@ -2,6 +2,7 @@ import {
   applyTransition,
   demoteStep,
   finishTransitionName,
+  formatGrams,
   GRAM_FIELDS,
   HARVEST_BORN,
   HARVEST_STATUS,
@@ -51,6 +52,10 @@ import {
   drawsFromParentLot,
   WIP_STATUS,
   isMetrcTag,
+  DRYING_STAGE_SPACE_TYPE,
+  dryingReturnPath,
+  dryingStagePath,
+  type DryingStage,
   type MetrcUploadKind,
   type ScheduleStage,
   type TransitionName,
@@ -86,6 +91,7 @@ import {
 import { MANIFEST_PATH, MANIFEST_REFUSAL, manifestCsvPath, parseFinishForm, headerFromMovement } from "./manifest";
 import { listMetrcAdoptions, listMetrcPackagesByTags } from "./metrc";
 import {
+  jointUnloadShares,
   lotPackageCode,
   planFinishMint,
   planUnloadFinish,
@@ -93,8 +99,9 @@ import {
   virtualMoveLanding,
   buckedPackageCode,
   type MintPlan,
+  type UnloadFinishPlan,
 } from "./ledger";
-import { isReconcileChoice, reconcileGate } from "./reconcile";
+import { isReconcileChoice, reconcileGate, type ReconcileGate } from "./reconcile";
 import { packageAdjustmentsCsv, packagesFromHarvestsCsv, parseCsv } from "./csv";
 import { packageSplitCsv, splitFilename } from "./marketplace";
 import { recallPrefillFromBatch, recallRedirectPath, type RecallableBatch } from "./inventory";
@@ -136,6 +143,8 @@ import {
   getSiloLoad,
   insertLog,
   listBatchTruckNumbers,
+  listOpenFarmHbns,
+  listOpenSiloLoadsInSpace,
   listLookupValues,
   listManifestedTags,
   personIdByPhone,
@@ -167,6 +176,7 @@ import { applyInTestingBytes, lotByHbn } from "./intesting";
 import { landSheetWorkbook } from "./sheetsync";
 import { EDITABLE_FIELDS, ledgerByTable, queues, type LedgerDef, type StationDef } from "./pipeline";
 import { SCHEDULE_REFUSAL } from "./scheduling";
+import { oneLoadPerLot } from "./drying";
 import { normalizePhone, PHONE_REFUSAL } from "./identity";
 
 export type ActionOk = { redirect: string };
@@ -423,7 +433,9 @@ export async function createWetWeight(db: D1Database, form: FormData): Promise<A
   if (moveTo === TRUCK_DRY_SPACE_ID || truckNumberFromPick(moveTo)) {
     throw new HttpError(400, "Trucks left the Move To list; every lot lands in PNN's barn. Pick a silo or a room.");
   }
-  const truckNumber: string | null = null;
+  // THE TRUCK RECORD (canon 0.30.226): Truck # is free text on the header.
+  // Blank is a lot that goes straight to its space. Move To stays a silo or a room.
+  const truckNumber = textOrNull(form.get("truck_number"));
   const drySpaceId = moveTo;
   const space = await db
     .prepare(`SELECT id, kind FROM dry_spaces WHERE id = ? AND deleted_at IS NULL`)
@@ -648,9 +660,9 @@ export async function addLotWeight(
   const actor = await requireActor(db, personIdFrom(form));
   const grams = parseGrams(form.get("weight_grams"), "Weight");
   const lot = await db
-    .prepare(`SELECT id, status FROM wet_weight_entries WHERE id = ? AND deleted_at IS NULL`)
+    .prepare(`SELECT id, status, harvest_batch_id FROM wet_weight_entries WHERE id = ? AND deleted_at IS NULL`)
     .bind(lotId)
-    .first<{ id: string; status: string }>();
+    .first<{ id: string; status: string; harvest_batch_id: string }>();
   if (!lot) throw new HttpError(404, "Unknown lot.");
   if (lot.status !== ledger.lotStatus) {
     throw new HttpError(
@@ -665,10 +677,24 @@ export async function addLotWeight(
     const session = await ensureUnloadSession(db, lotId, actor.id, ts, form);
     sessionId = session.id;
   }
+  let toteHbn: string | null = null;
+  if (ledger.table === "wet_weights") {
+    const farm = await db
+      .prepare(`SELECT farm_code FROM harvest_batches WHERE id = ?`)
+      .bind(lot.harvest_batch_id)
+      .first<{ farm_code: string }>();
+    const options = await listOpenFarmHbns(db, farm?.farm_code ?? "", lot.harvest_batch_id);
+    const chosen = textOrNull(form.get("harvest_batch_id")) ?? lot.harvest_batch_id;
+    if (!options.some((row) => row.id === chosen)) {
+      throw new HttpError(400, "That HBN is not on this lot's list.");
+    }
+    toteHbn = chosen;
+  }
   const record = {
     id,
     [ledger.parentField]: lotId,
     weight_grams: grams,
+    ...(toteHbn ? { harvest_batch_id: toteHbn } : {}),
     ...(sessionId ? { session_id: sessionId } : {}),
     created_at: ts,
     created_by: actor.id,
@@ -681,13 +707,13 @@ export async function addLotWeight(
           id, ${ledger.parentField}, weight_grams, session_id,
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
-      : `INSERT INTO ${ledger.table} (
-          id, ${ledger.parentField}, weight_grams,
+      : `INSERT INTO wet_weights (
+          id, wet_weight_entry_id, weight_grams, harvest_batch_id,
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`;
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`;
   const insert = sessionId
     ? db.prepare(insertSql).bind(id, lotId, grams, sessionId, ts, actor.id, ts, actor.id)
-    : db.prepare(insertSql).bind(id, lotId, grams, ts, actor.id, ts, actor.id);
+    : db.prepare(insertSql).bind(id, lotId, grams, toteHbn, ts, actor.id, ts, actor.id);
   await db.batch([
     insert,
     ...logsForInsert(db, ledger.table, id, record, actor.id, SYSTEM_REASON.create, ts),
@@ -699,6 +725,201 @@ export async function addLotWeight(
   const rapid = String(form.get("rapid_add") ?? "") === "1";
   const extra = rapid ? "&rapid=1" : "";
   return { redirect: `/station/${station.key}?${lotParam}=${encodeURIComponent(lotId)}&ok=weight${extra}` };
+}
+
+type FinishLotRow = {
+  id: string;
+  status: string;
+  weight_grams: number;
+  harvest_batch_id: string;
+  material_form: string | null;
+  truck_number: string | null;
+  dry_space_kind: string | null;
+  dry_space_name: string | null;
+  farm_code: string | null;
+  strain_id: string | null;
+  hbn: string | null;
+  metrc_harvest_tag: string | null;
+  license_value: string | null;
+};
+
+/** THE TRUCK RECORD (canon 0.30.226): when a lot's totes name more than one HBN,
+ * Finish lot keeps the header's totes and mints one lot per other HBN, then
+ * finishes each with its own package. One HBN returns null and the caller
+ * finishes as before. */
+async function splitTruckIfNeeded(
+  db: D1Database,
+  station: StationDef,
+  lot: FinishLotRow,
+  actorId: string,
+  form: FormData
+): Promise<ActionOk | null> {
+  const totes = await db
+    .prepare(
+      `SELECT id, weight_grams, harvest_batch_id FROM wet_weights
+       WHERE wet_weight_entry_id = ? AND deleted_at IS NULL`
+    )
+    .bind(lot.id)
+    .all<{ id: string; weight_grams: number; harvest_batch_id: string | null }>();
+  const groups = new Map<string, { ids: string[]; grams: number }>();
+  for (const tote of totes.results ?? []) {
+    const hbnId = tote.harvest_batch_id || lot.harvest_batch_id;
+    const cur = groups.get(hbnId) ?? { ids: [], grams: 0 };
+    cur.ids.push(tote.id);
+    cur.grams = roundGrams(cur.grams + Number(tote.weight_grams));
+    groups.set(hbnId, cur);
+  }
+  if (groups.size < 2) return null;
+  const header = await db
+    .prepare(
+      `SELECT actual_dryspc, actual_start_time, truck_number, material_form, lead_person_id, team_lead, notes, effective_date
+       FROM wet_weight_entries WHERE id = ?`
+    )
+    .bind(lot.id)
+    .first<{
+      actual_dryspc: string;
+      actual_start_time: string | null;
+      truck_number: string | null;
+      material_form: string | null;
+      lead_person_id: string | null;
+      team_lead: string | null;
+      notes: string | null;
+      effective_date: string | null;
+    }>();
+  if (!header) throw new HttpError(404, "Unknown lot.");
+  const order = [lot.harvest_batch_id, ...[...groups.keys()].filter((id) => id !== lot.harvest_batch_id)];
+  const batches = await db
+    .prepare(
+      `SELECT id, hbn, strain_id, metrc_harvest_tag, license_value, farm_code FROM harvest_batches WHERE id IN (${order.map(() => "?").join(", ")})`
+    )
+    .bind(...order)
+    .all<{ id: string; hbn: string; strain_id: string | null; metrc_harvest_tag: string | null; license_value: string | null; farm_code: string | null }>();
+  const byId = new Map((batches.results ?? []).map((row) => [row.id, row]));
+  const next = nextStatus(finishTransitionName(lot.dry_space_kind ?? ""), lot.status);
+  const ts = nowIso();
+  const stmts: D1PreparedStatement[] = [];
+  const parts: string[] = [];
+  for (const hbnId of order) {
+    const group = groups.get(hbnId);
+    const batch = byId.get(hbnId);
+    if (!group || !batch) throw new HttpError(400, "That HBN is not on this lot's list.");
+    const isHeader = hbnId === lot.harvest_batch_id;
+    const rowId = isHeader ? lot.id : crypto.randomUUID();
+    const plantRaw = form.get(`plant_count[${hbnId}]`) ?? (isHeader ? form.get("plant_count") : null);
+    const skipped = String(form.get("plant_prompt") ?? "") === "skip" && form.get(`plant_count[${hbnId}]`) == null;
+    const plantCount = skipped ? null : parsePlantCount(plantRaw);
+    const tagRaw = textOrNull(form.get(`metrc_tag[${hbnId}]`)) ?? (isHeader ? textOrNull(form.get("metrc_tag")) : null);
+    const typedTag = normalizeMetrcTag(tagRaw);
+    if (!isHeader) {
+      stmts.push(
+        db
+          .prepare(
+            `INSERT INTO wet_weight_entries (
+              id, harvest_batch_id, weight_grams, wet_spear_weight_grams, actual_dryspc, actual_start_time, truck_number, material_form, lead_person_id, team_lead, notes, status, effective_date, plant_count,
+              created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+            ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+          )
+          .bind(
+            rowId,
+            hbnId,
+            group.grams,
+            header.actual_dryspc,
+            header.actual_start_time,
+            header.truck_number,
+            header.material_form ?? "spear",
+            header.lead_person_id,
+            header.team_lead,
+            header.notes,
+            next,
+            header.effective_date,
+            plantCount,
+            ts,
+            actorId,
+            ts,
+            actorId
+          )
+      );
+      for (const toteId of group.ids) {
+        stmts.push(
+          db.prepare(`UPDATE wet_weights SET wet_weight_entry_id = ?, updated_at = ?, updated_by = ? WHERE id = ?`).bind(rowId, ts, actorId, toteId),
+          insertLog(db, {
+            record_table: "wet_weights",
+            record_id: toteId,
+            field: "wet_weight_entry_id",
+            old_value: lot.id,
+            new_value: rowId,
+            actor_person_id: actorId,
+            reason: SYSTEM_REASON.truck_split,
+            changed_at: ts,
+          })
+        );
+      }
+    }
+    stmts.push(
+      db
+        .prepare(
+          `UPDATE wet_weight_entries SET status = ?, weight_grams = ?, plant_count = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+        )
+        .bind(next, group.grams, plantCount, ts, actorId, rowId),
+      insertLog(db, {
+        record_table: "wet_weight_entries",
+        record_id: rowId,
+        field: "status",
+        old_value: isHeader ? lot.status : null,
+        new_value: next,
+        actor_person_id: actorId,
+        reason: SYSTEM_REASON.finish_lot,
+        changed_at: ts,
+      })
+    );
+    const plan = planFinishMint(
+      {
+        wetWeightEntryId: rowId,
+        harvestBatchId: hbnId,
+        strainId: batch.strain_id,
+        farmCode: batch.farm_code ?? lot.farm_code ?? "",
+        spaceKind: lot.dry_space_kind ?? "",
+        spaceName: lot.dry_space_name ?? "",
+        wetTotal: group.grams,
+        hbn: batch.hbn,
+        metrcHarvestTag: batch.metrc_harvest_tag,
+        licenseValue: batch.license_value,
+        materialForm: header.material_form,
+        metrcTag: typedTag,
+        truckNumber: header.truck_number,
+      },
+      null
+    );
+    if (plan.action === "insert") plan.id = crypto.randomUUID();
+    stmts.push(...inventoryMintStmts(db, plan, actorId, ts));
+    if (plan.action === "insert" && plan.id) {
+      const spaceKind = lot.dry_space_kind ?? "";
+      if (spaceKind !== "silo" && spaceKind !== "truck" && plan.location !== (lot.dry_space_name ?? "")) {
+        stmts.push(
+          db
+            .prepare(`UPDATE local_inventory_items SET location = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
+            .bind(lot.dry_space_name ?? "", ts, actorId, plan.id),
+          insertLog(db, {
+            record_table: "local_inventory_items",
+            record_id: plan.id,
+            field: "location",
+            old_value: plan.location,
+            new_value: lot.dry_space_name ?? "",
+            actor_person_id: actorId,
+            reason: SYSTEM_REASON.finish_lot,
+            changed_at: ts,
+          })
+        );
+      }
+    }
+    const serial = shortLotId(batch.hbn, null);
+    parts.push(`${serial}|${group.ids.length}|${formatGrams(group.grams)}`);
+  }
+  await db.batch(stmts);
+  const truck = String(header.truck_number ?? "").trim();
+  return {
+    redirect: `/station/${station.key}?ok=truck_split&truck=${encodeURIComponent(truck)}&parts=${encodeURIComponent(parts.join(";"))}`,
+  };
 }
 
 /** Finish the lot from its ledger. Wet routes by the destination kind: trucks go
@@ -745,6 +966,8 @@ export async function finishLot(
   if (!lot) throw new HttpError(404, "Unknown lot.");
   const count = await countLotWeights(db, ledger, lotId);
   assertLotHasWeights(count);
+  const split = await splitTruckIfNeeded(db, station, lot, actor.id, form);
+  if (split) return split;
   const next = nextStatus(
     ledger.finishTransition ?? finishTransitionName(lot.dry_space_kind ?? ""),
     lot.status
@@ -813,6 +1036,7 @@ export async function finishLot(
       licenseValue: lot.license_value,
       materialForm: lot.material_form,
       metrcTag: typedTag,
+      truckNumber: lot.truck_number,
     },
     existingItem
   );
@@ -3357,6 +3581,27 @@ export async function editRecord(
       // or more.
       if (!form.has(field.name)) continue;
       next = parsePlantCount(form.get(field.name), field.label);
+    } else if (table === "wet_weights" && field.name === "harvest_batch_id") {
+      if (!form.has(field.name)) continue;
+      const raw = textOrNull(form.get(field.name));
+      if (raw == null) throw new HttpError(400, "Pick an HBN.");
+      const parent = await db
+        .prepare(
+          `SELECT w.status, w.harvest_batch_id, b.farm_code
+           FROM wet_weights t
+           JOIN wet_weight_entries w ON w.id = t.wet_weight_entry_id
+           JOIN harvest_batches b ON b.id = w.harvest_batch_id
+           WHERE t.id = ? AND t.deleted_at IS NULL`
+        )
+        .bind(id)
+        .first<{ status: string; harvest_batch_id: string; farm_code: string }>();
+      if (!parent) throw new HttpError(404, "Record not found.");
+      if (parent.status !== LOT_STATUS.weighing) {
+        throw new HttpError(400, "Only a weighing lot's totes can change HBN; this lot has finished.");
+      }
+      const options = await listOpenFarmHbns(db, parent.farm_code, parent.harvest_batch_id);
+      if (!options.some((row) => row.id === raw)) throw new HttpError(400, "That HBN is not on this lot's list.");
+      next = raw;
     } else if (table === "wet_weight_entries" && field.name === "harvest_batch_id") {
       // THE HBN THAT CAME BACK (canon 0.30.84; his pick "HBN pencil on the lot"):
       // absent means unchanged (older forms); a present value must name an open
@@ -3477,6 +3722,35 @@ export async function editRecord(
       .bind(...values),
     ...logs,
   ];
+  if (table === "wet_weight_entries" && sets.some((x) => x.startsWith("harvest_batch_id"))) {
+    const nextHbn = textOrNull(form.get("harvest_batch_id"));
+    const oldHbn = existing.harvest_batch_id == null ? null : String(existing.harvest_batch_id);
+    if (nextHbn && oldHbn && nextHbn !== oldHbn) {
+      const totes = await db
+        .prepare(
+          `SELECT id, harvest_batch_id FROM wet_weights
+           WHERE wet_weight_entry_id = ? AND deleted_at IS NULL
+             AND (harvest_batch_id IS NULL OR harvest_batch_id = ?)`
+        )
+        .bind(id, oldHbn)
+        .all<{ id: string; harvest_batch_id: string | null }>();
+      for (const tote of totes.results ?? []) {
+        stmts.push(
+          db.prepare(`UPDATE wet_weights SET harvest_batch_id = ?, updated_at = ?, updated_by = ? WHERE id = ?`).bind(nextHbn, ts, actor.id, tote.id),
+          insertLog(db, {
+            record_table: "wet_weights",
+            record_id: tote.id,
+            field: "harvest_batch_id",
+            old_value: tote.harvest_batch_id,
+            new_value: nextHbn,
+            actor_person_id: actor.id,
+            reason,
+            changed_at: ts,
+          })
+        );
+      }
+    }
+  }
   const ledger = ledgerByTable(table);
   if (ledger) {
     // The parent lot's total column is the live total of its non-voided ledger
@@ -4340,14 +4614,29 @@ export async function updateUnloadSession(
   return { redirect: `/station/unload_dry_space?pick=${encodeURIComponent(lotId)}` };
 }
 
-export async function finishUnload(
-  db: D1Database,
-  station: { key: string; ledger?: { table: string; lotStatus: string } },
-  lotId: string,
-  form: FormData
-): Promise<ActionOk> {
-  const actor = await requireActor(db, personIdFrom(form));
-  const lot = await db
+/** The lot as the unload finish reads it: its totals, the space it dried in
+ * (actual_dryspc, which Load Silo sets) and the batch's farm, strain, HBN and
+ * license. */
+type UnloadLotRow = {
+  id: string;
+  status: string;
+  weight_grams: number;
+  dry_weight_grams: number | null;
+  harvest_batch_id: string;
+  material_form: string | null;
+  dry_space_kind: string | null;
+  dry_space_name: string | null;
+  dry_space_farm: string | null;
+  dry_space_type: string | null;
+  farm_code: string | null;
+  strain_id: string | null;
+  hbn: string | null;
+  metrc_harvest_tag: string | null;
+  license_value: string | null;
+};
+
+async function readUnloadLot(db: D1Database, lotId: string): Promise<UnloadLotRow | null> {
+  return db
     .prepare(
       `SELECT w.id, w.status, w.weight_grams, w.dry_weight_grams, w.harvest_batch_id, w.material_form,
               d.kind AS dry_space_kind, d.name AS dry_space_name, d.farm_code AS dry_space_farm, d.space_type AS dry_space_type,
@@ -4358,88 +4647,31 @@ export async function finishUnload(
        WHERE w.id = ? AND w.deleted_at IS NULL`
     )
     .bind(lotId)
-    .first<{
-      id: string;
-      status: string;
-      weight_grams: number;
-      dry_weight_grams: number | null;
-      harvest_batch_id: string;
-      material_form: string | null;
-      dry_space_kind: string | null;
-      dry_space_name: string | null;
-      dry_space_farm: string | null;
-      dry_space_type: string | null;
-      farm_code: string | null;
-      strain_id: string | null;
-      hbn: string | null;
-      metrc_harvest_tag: string | null;
-      license_value: string | null;
-    }>();
-  if (!lot) throw new HttpError(404, "Unknown lot.");
-  // THE BLAST FREEZER(S) (canon 0.30.106; owner, 2026-09-16, verbatim: "Unload
-  // Dry Space/Blast Freezer just removes the line, since the packages are
-  // already denoted as "FFZ" in METRC, the inventory lines are identical and
-  // moving the BF inventory to the FFZ inventory would just duplicate it"; his
-  // pick: the lot closes as frozen, out of every queue). A freezer's unload
-  // takes no dry weight, moves nothing and pends no file: the open loads end
-  // (the line leaves the tile), the lot goes drying to frozen, and its package
-  // stays where it is in the ledger, FFZ inventory the cube already counts.
-  if (drySpaceTypeOf(lot.dry_space_type) === "freezer") {
-    const ts = nowIso();
-    const session = await ensureUnloadSession(db, lotId, actor.id, ts, form);
-    const next = nextStatus("lot_frozen", lot.status);
-    await db.batch([
-      db
-        .prepare(
-          `UPDATE silo_loads SET ended_at = ?, updated_at = ?, updated_by = ?
-           WHERE wet_weight_entry_id = ? AND ended_at IS NULL AND deleted_at IS NULL`
-        )
-        .bind(ts, ts, actor.id, lotId),
-      db
-        .prepare(`UPDATE wet_weight_entries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
-        .bind(next, ts, actor.id, lotId),
-      insertLog(db, {
-        record_table: "wet_weight_entries",
-        record_id: lotId,
-        field: "status",
-        old_value: lot.status,
-        new_value: next,
-        actor_person_id: actor.id,
-        reason: SYSTEM_REASON.freezer_unload,
-        changed_at: ts,
-      }),
-      // The session the page opened is voided, never finished: a finished
-      // session pends the package file, and the freezer pends nothing.
-      db
-        .prepare(
-          `UPDATE unload_sessions SET deleted_at = ?, deleted_by = ?, updated_at = ?, updated_by = ?
-           WHERE id = ? AND deleted_at IS NULL`
-        )
-        .bind(ts, actor.id, ts, actor.id, session.id),
-      insertLog(db, {
-        record_table: "unload_sessions",
-        record_id: session.id,
-        field: "deleted_at",
-        old_value: null,
-        new_value: ts,
-        actor_person_id: actor.id,
-        reason: SYSTEM_REASON.freezer_unload,
-        changed_at: ts,
-      }),
-    ]);
-    return { redirect: `/station/${station.key}?ok=frozen` };
-  }
-  const count = await countLotWeights(db, {
-    table: "dry_weights",
-    parentField: "wet_weight_entry_id",
-    totalField: "dry_weight_grams",
-    lotStatus: "drying",
-  }, lotId);
-  assertLotHasDryWeights(count);
-  const ts = nowIso();
-  const session = await ensureUnloadSession(db, lotId, actor.id, ts, form);
-  const parent = await getInventoryItemForLot(db, lotId);
-  const dryTotal = Number(lot.dry_weight_grams ?? 0);
+    .first<UnloadLotRow>();
+}
+
+type UnloadParent = Awaited<ReturnType<typeof getInventoryItemForLot>>;
+
+type UnloadFinishResolved = {
+  spaceKind: string;
+  homeBarn: string;
+  weighMode: "bucked" | "spear";
+  buckedOnSite: "yes" | "no" | null;
+  truckNumber: string | null;
+  plan: UnloadFinishPlan;
+  gate: ReconcileGate;
+};
+
+/** One lot's unload finish read from its dry total: the home barn, the weigh
+ * mode, the on-site answer and truck, the plan and the reconcile gate, with
+ * the refusals the finish has always raised. THE JOINT UNLOAD (canon
+ * 0.30.226) reads each lot's share through this same function. */
+function resolveUnloadFinish(
+  lot: UnloadLotRow,
+  parent: UnloadParent,
+  answers: { buckedOnSite: unknown; truckNumber: unknown },
+  dryTotal: number
+): UnloadFinishResolved {
   const spaceKind = lot.dry_space_kind ?? "";
   // THE HARVEST CONSOLE (canon 0.30.73): the unloaded material returns to the
   // barn of the site the dry space stands at (PNN's BARN for the five silos
@@ -4455,7 +4687,7 @@ export async function finishUnload(
   // the batch farm (materialAtNorth). At North the question dies: the site IS
   // the answer, yes implied, and the movement no-path never opens there.
   const atNorth = materialAtNorth(parent?.location ?? null, lot.farm_code);
-  const buckedOnSiteRaw = textOrNull(form.get("bucked_on_site"));
+  const buckedOnSiteRaw = textOrNull(answers.buckedOnSite);
   const buckedOnSite =
     weighMode === "spear"
       ? atNorth
@@ -4470,7 +4702,7 @@ export async function finishUnload(
     throw new HttpError(400, "Will these be bucked on site?");
   }
   const truckNumber =
-    buckedOnSite === "no" ? requireText(form.get("truck_number"), "Truck #") : textOrNull(form.get("truck_number"));
+    buckedOnSite === "no" ? requireText(answers.truckNumber, "Truck #") : textOrNull(answers.truckNumber);
   const plan = planUnloadFinish({
     spaceKind,
     weighMode,
@@ -4484,30 +4716,33 @@ export async function finishUnload(
   }
   const parentQty = Number(parent?.qty ?? 0);
   const gate = reconcileGate({ recorded: dryTotal, parentQty, mode: plan.mode });
-  const gateChoice = textOrNull(form.get("gate_choice"));
-  if (gate.kind !== "exact") {
-    if (gateChoice === "back") {
-      return { redirect: `/station/${station.key}?pick=${encodeURIComponent(lotId)}` };
-    }
-    if (!isReconcileChoice(gateChoice)) {
-      await db
-        .prepare(
-          `UPDATE unload_sessions SET bucked_on_site = ?, truck_number = ?,
-                  weigh_mode = ?, updated_at = ?, updated_by = ?
-           WHERE id = ? AND deleted_at IS NULL`
-        )
-        .bind(
-          buckedOnSite === "yes" ? 1 : buckedOnSite === "no" ? 0 : null,
-          truckNumber,
-          spaceKind === "silo" ? "bucked" : weighMode,
-          ts,
-          actor.id,
-          session.id
-        )
-        .run();
-      return { redirect: `/station/${station.key}?pick=${encodeURIComponent(lotId)}&gate=1` };
-    }
+  return { spaceKind, homeBarn, weighMode, buckedOnSite, truckNumber, plan, gate };
+}
+
+/** One lot's unload finish statements (moved whole out of finishUnload for
+ * the joint unload, canon 0.30.226): the open loads end, the lot goes drying
+ * to unloaded, the session finishes with its reconcile choice, and the
+ * package takes the plan. `reason` names the finish on the status and
+ * reconcile rows; the package rows keep their own reasons (the adjustment
+ * file reads inv_unload_adjust by name). */
+function unloadFinishStmts(
+  db: D1Database,
+  input: {
+    lot: UnloadLotRow;
+    parent: UnloadParent;
+    sessionId: string;
+    resolved: UnloadFinishResolved;
+    gateChoice: string | null;
+    actorId: string;
+    ts: string;
+    reason: string;
   }
+): D1PreparedStatement[] {
+  const { lot, parent, gateChoice, ts } = input;
+  const { spaceKind, homeBarn, weighMode, buckedOnSite, truckNumber, plan, gate } = input.resolved;
+  const lotId = lot.id;
+  const actor = { id: input.actorId };
+  const session = { id: input.sessionId };
   const next = nextStatus("lot_unloaded", lot.status);
   const stmts: D1PreparedStatement[] = [
     // Canon 0.30.6: the unload finish ends the lot's open silo loads, so the
@@ -4530,7 +4765,7 @@ export async function finishUnload(
       old_value: lot.status,
       new_value: next,
       actor_person_id: actor.id,
-      reason: SYSTEM_REASON.finish_unload,
+      reason: input.reason,
       changed_at: ts,
     }),
     db
@@ -4555,7 +4790,7 @@ export async function finishUnload(
       old_value: null,
       new_value: gate.kind === "exact" ? "exact" : gateChoice,
       actor_person_id: actor.id,
-      reason: SYSTEM_REASON.finish_unload,
+      reason: input.reason,
       changed_at: ts,
     }),
   ];
@@ -4685,13 +4920,345 @@ export async function finishUnload(
       );
     }
   }
-  await db.batch(stmts);
+  return stmts;
+}
+
+export async function finishUnload(
+  db: D1Database,
+  station: { key: string; ledger?: { table: string; lotStatus: string } },
+  lotId: string,
+  form: FormData
+): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const lot = await readUnloadLot(db, lotId);
+  if (!lot) throw new HttpError(404, "Unknown lot.");
+  // THE BLAST FREEZER(S) (canon 0.30.106; owner, 2026-09-16, verbatim: "Unload
+  // Dry Space/Blast Freezer just removes the line, since the packages are
+  // already denoted as "FFZ" in METRC, the inventory lines are identical and
+  // moving the BF inventory to the FFZ inventory would just duplicate it"; his
+  // pick: the lot closes as frozen, out of every queue). A freezer's unload
+  // takes no dry weight, moves nothing and pends no file: the open loads end
+  // (the line leaves the tile), the lot goes drying to frozen, and its package
+  // stays where it is in the ledger, FFZ inventory the cube already counts.
+  if (drySpaceTypeOf(lot.dry_space_type) === "freezer") {
+    const ts = nowIso();
+    const session = await ensureUnloadSession(db, lotId, actor.id, ts, form);
+    const next = nextStatus("lot_frozen", lot.status);
+    await db.batch([
+      db
+        .prepare(
+          `UPDATE silo_loads SET ended_at = ?, updated_at = ?, updated_by = ?
+           WHERE wet_weight_entry_id = ? AND ended_at IS NULL AND deleted_at IS NULL`
+        )
+        .bind(ts, ts, actor.id, lotId),
+      db
+        .prepare(`UPDATE wet_weight_entries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
+        .bind(next, ts, actor.id, lotId),
+      insertLog(db, {
+        record_table: "wet_weight_entries",
+        record_id: lotId,
+        field: "status",
+        old_value: lot.status,
+        new_value: next,
+        actor_person_id: actor.id,
+        reason: SYSTEM_REASON.freezer_unload,
+        changed_at: ts,
+      }),
+      // The session the page opened is voided, never finished: a finished
+      // session pends the package file, and the freezer pends nothing.
+      db
+        .prepare(
+          `UPDATE unload_sessions SET deleted_at = ?, deleted_by = ?, updated_at = ?, updated_by = ?
+           WHERE id = ? AND deleted_at IS NULL`
+        )
+        .bind(ts, actor.id, ts, actor.id, session.id),
+      insertLog(db, {
+        record_table: "unload_sessions",
+        record_id: session.id,
+        field: "deleted_at",
+        old_value: null,
+        new_value: ts,
+        actor_person_id: actor.id,
+        reason: SYSTEM_REASON.freezer_unload,
+        changed_at: ts,
+      }),
+    ]);
+    return { redirect: `/station/${station.key}?ok=frozen` };
+  }
+  const count = await countLotWeights(db, {
+    table: "dry_weights",
+    parentField: "wet_weight_entry_id",
+    totalField: "dry_weight_grams",
+    lotStatus: "drying",
+  }, lotId);
+  assertLotHasDryWeights(count);
+  const ts = nowIso();
+  const session = await ensureUnloadSession(db, lotId, actor.id, ts, form);
+  const parent = await getInventoryItemForLot(db, lotId);
+  const dryTotal = Number(lot.dry_weight_grams ?? 0);
+  const resolved = resolveUnloadFinish(
+    lot,
+    parent,
+    { buckedOnSite: form.get("bucked_on_site"), truckNumber: form.get("truck_number") },
+    dryTotal
+  );
+  const { spaceKind, weighMode, buckedOnSite, truckNumber, gate } = resolved;
+  const gateChoice = textOrNull(form.get("gate_choice"));
+  if (gate.kind !== "exact") {
+    if (gateChoice === "back") {
+      return { redirect: `/station/${station.key}?pick=${encodeURIComponent(lotId)}` };
+    }
+    if (!isReconcileChoice(gateChoice)) {
+      await db
+        .prepare(
+          `UPDATE unload_sessions SET bucked_on_site = ?, truck_number = ?,
+                  weigh_mode = ?, updated_at = ?, updated_by = ?
+           WHERE id = ? AND deleted_at IS NULL`
+        )
+        .bind(
+          buckedOnSite === "yes" ? 1 : buckedOnSite === "no" ? 0 : null,
+          truckNumber,
+          spaceKind === "silo" ? "bucked" : weighMode,
+          ts,
+          actor.id,
+          session.id
+        )
+        .run();
+      return { redirect: `/station/${station.key}?pick=${encodeURIComponent(lotId)}&gate=1` };
+    }
+  }
+  await db.batch(
+    unloadFinishStmts(db, {
+      lot,
+      parent,
+      sessionId: session.id,
+      resolved,
+      gateChoice,
+      actorId: actor.id,
+      ts,
+      reason: SYSTEM_REASON.finish_unload,
+    })
+  );
   // Canon 0.30.1 fork 8: a queued adjustment lands at the export home where
   // its file pends; every other finish returns to the station.
   if (gateChoice === "queue_adjust") {
     return { redirect: "/admin/uploads?ok=adjust_queued" };
   }
   return { redirect: `/station/${station.key}?ok=unloaded` };
+}
+
+/** True when a joint unload's share rows already stand under these load ids
+ * (each share row takes its load's id as its key). */
+async function jointUnloadAlreadyWritten(db: D1Database, loadIds: readonly string[]): Promise<boolean> {
+  if (loadIds.length === 0 || loadIds.length > 50) return false;
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS n FROM dry_weights WHERE id IN (${loadIds.map(() => "?").join(", ")})`)
+    .bind(...loadIds)
+    .first<{ n: number }>();
+  return Number(row?.n ?? 0) > 0;
+}
+
+/** The dry ledger the joint unload writes and recomputes, as finishUnload counts it. */
+const DRY_UNLOAD_LEDGER: LedgerDef = {
+  table: "dry_weights",
+  parentField: "wet_weight_entry_id",
+  totalField: "dry_weight_grams",
+  lotStatus: LOT_STATUS.drying,
+};
+
+/** THE JOINT UNLOAD, DRY PRO RATA (canon 0.30.226; his pick "Every entry, dry
+ * pro rata"): a space whose open loads hold two or more lots, unloaded as a
+ * whole from the drying schedule's Working pane. One total dry and the
+ * unload's questions once (the operator, the effective day, the gate's
+ * choice); each lot's share (jointUnloadShares: pro rata by wet grams in whole
+ * grams, the remainder on the last lot loaded) becomes that lot's single
+ * dry_weights row, then each lot's unload finish runs as finishUnload runs it
+ * (the same plan, the same choice, the same file pends), all in one batch.
+ * Every row the joint unload names takes one reason naming the space and its
+ * lots; the package rows keep the reasons the adjustment file reads. A
+ * freezer's line is removed with nothing weighed, so a freezer has no joint
+ * unload. A queued adjustment lands at the export home, as finishUnload's
+ * does (canon 0.30.1 fork 8). */
+export async function unloadTogether(db: D1Database, stage: DryingStage, spaceId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const space = await db
+    .prepare(`SELECT id, name, kind, space_type FROM dry_spaces WHERE id = ? AND deleted_at IS NULL`)
+    .bind(spaceId)
+    .first<{ id: string; name: string; kind: string; space_type: string | null }>();
+  if (!space || space.kind !== "silo") throw new HttpError(404, "Unknown dry space.");
+  const type = drySpaceTypeOf(space.space_type);
+  if (type !== DRYING_STAGE_SPACE_TYPE[stage]) {
+    throw refusal(400, { key: "{space} is not on this surface.", vars: { space: space.name } });
+  }
+  if (type === "freezer") {
+    throw new HttpError(
+      400,
+      "A freezer's lines are removed one lot at a time on Unload Dry Space; nothing is weighed, so a freezer has no joint unload."
+    );
+  }
+  const loads = await listOpenSiloLoadsInSpace(db, space.id);
+  const posted = String(form.get("load_ids") ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .sort();
+  if (await jointUnloadAlreadyWritten(db, posted)) {
+    throw refusal(409, { key: "{space} was already unloaded together; nothing was unloaded twice.", vars: { space: space.name } });
+  }
+  // One share per lot: a lot holding two open loads here counts once, and its
+  // finish ends every one of them.
+  const lots = oneLoadPerLot(loads);
+  if (lots.length < 2) {
+    throw refusal(400, {
+      key: "Unload together needs two or more loaded lots; {space} holds {n}. Unload the lot on Unload Dry Space.",
+      vars: { space: space.name, n: String(lots.length) },
+    });
+  }
+  // The group the form showed must be the group now.
+  const current = loads.map((load) => load.id).sort();
+  if (posted.join(",") !== current.join(",")) {
+    throw refusal(409, {
+      key: "The loads in {space} changed since the form opened. Open Unload together again.",
+      vars: { space: space.name },
+    });
+  }
+  const total = parseGrams(form.get("total_dry_grams"), "Total dry grams");
+  if (total <= 0) throw new HttpError(400, "Total dry grams must be more than zero.");
+  const typedChoice = textOrNull(form.get("gate_choice"));
+  if (typedChoice && typedChoice !== "queue_adjust" && typedChoice !== "nothing") {
+    throw new HttpError(400, "Pick Queue an adjustment CSV or Nothing, just finish.");
+  }
+  const ts = nowIso();
+  // A day other than today and its Admin PIN refuse before anything is written.
+  await resolveEffectiveDate(db, form, ts);
+  const shares = jointUnloadShares(
+    total,
+    lots.map((load) => Number(load.weight_grams ?? 0))
+  );
+  if (shares.length !== lots.length) {
+    throw refusal(400, { key: "The loads in {space} carry no wet grams to share the dry total by.", vars: { space: space.name } });
+  }
+  if (shares.some((share) => share < 0)) {
+    throw new HttpError(400, "That total is too small to share across these lots in whole grams.");
+  }
+  const parts: Array<{
+    loadId: string;
+    lot: UnloadLotRow;
+    parent: UnloadParent;
+    resolved: UnloadFinishResolved;
+    share: number;
+    short: string;
+  }> = [];
+  for (let i = 0; i < lots.length; i++) {
+    const lot = await readUnloadLot(db, lots[i].wet_weight_entry_id);
+    if (!lot) throw new HttpError(404, "Unknown lot.");
+    const short = shortLotId(lot.hbn ?? "", lot.metrc_harvest_tag);
+    if (lot.status !== LOT_STATUS.drying) {
+      throw refusal(409, { key: "Lot {lot} is not drying, so it cannot be unloaded.", vars: { lot: short } });
+    }
+    // The finish reads the lot's own space (its Move To, which Load Silo set);
+    // a lot moved by the pencil after loading unloads on Unload Dry Space.
+    const home = await db
+      .prepare(`SELECT actual_dryspc FROM wet_weight_entries WHERE id = ? AND deleted_at IS NULL`)
+      .bind(lot.id)
+      .first<{ actual_dryspc: string | null }>();
+    if (home?.actual_dryspc !== space.id) {
+      throw refusal(400, {
+        key: "Lot {lot} no longer stands in {space} (its space changed after loading); unload it on Unload Dry Space.",
+        vars: { lot: short, space: space.name },
+      });
+    }
+    if (drySpaceTypeOf(lot.dry_space_type) === "freezer") {
+      throw refusal(400, { key: "Lot {lot} stands in a freezer; remove its line on Unload Dry Space.", vars: { lot: short } });
+    }
+    if ((await countLotWeights(db, DRY_UNLOAD_LEDGER, lot.id)) > 0) {
+      throw refusal(400, {
+        key: "Lot {lot} already has dry weights on Unload Dry Space. Finish it there, or void them, before unloading together.",
+        vars: { lot: short },
+      });
+    }
+    const parent = await getInventoryItemForLot(db, lot.id);
+    const resolved = resolveUnloadFinish(
+      lot,
+      parent,
+      { buckedOnSite: form.get("bucked_on_site"), truckNumber: form.get("truck_number") },
+      shares[i]
+    );
+    if (resolved.gate.kind !== "exact" && !typedChoice) {
+      throw new HttpError(400, "Pick what to do about the difference: Queue an adjustment CSV, or Nothing, just finish.");
+    }
+    parts.push({ loadId: lots[i].id, lot, parent, resolved, share: shares[i], short });
+  }
+  const reason = `${SYSTEM_REASON.joint_unload}: ${space.name} (${parts.map((part) => part.short).join(", ")})`;
+  const stmts: D1PreparedStatement[] = [];
+  for (const part of parts) {
+    const session = await ensureUnloadSession(db, part.lot.id, actor.id, ts, form);
+    // The share's row takes its load's id: a repeated post of the same group
+    // (a double tap) collides on the key and its whole batch rolls back.
+    const id = part.loadId;
+    const record = {
+      id,
+      wet_weight_entry_id: part.lot.id,
+      weight_grams: part.share,
+      session_id: session.id,
+      created_at: ts,
+      created_by: actor.id,
+      updated_at: ts,
+      updated_by: actor.id,
+    };
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO dry_weights (
+            id, wet_weight_entry_id, weight_grams, session_id,
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+          ) VALUES (?, (
+            SELECT w.id FROM wet_weight_entries w
+            WHERE w.id = ? AND w.status = ? AND w.deleted_at IS NULL
+              AND NOT EXISTS (SELECT 1 FROM dry_weights d WHERE d.wet_weight_entry_id = w.id AND d.deleted_at IS NULL)
+          ), ?, ?, ?, ?, ?, ?, NULL, NULL)`
+        )
+        .bind(id, part.lot.id, LOT_STATUS.drying, part.share, session.id, ts, actor.id, ts, actor.id),
+      ...logsForInsert(db, "dry_weights", id, record, actor.id, reason, ts),
+      lotTotalRecomputeStmt(db, DRY_UNLOAD_LEDGER, part.lot.id, actor.id, ts),
+      ...unloadFinishStmts(db, {
+        lot: part.lot,
+        parent: part.parent,
+        sessionId: session.id,
+        resolved: part.resolved,
+        gateChoice: part.resolved.gate.kind === "exact" ? null : typedChoice,
+        actorId: actor.id,
+        ts,
+        reason,
+      })
+    );
+  }
+  try {
+    await db.batch(stmts);
+  } catch (err) {
+    // The batch rolled back whole. A share row already under its key is the
+    // same group unloaded by another post; a lot weighed or finished on Unload
+    // Dry Space meanwhile refuses in words; anything else is a real error.
+    if (await jointUnloadAlreadyWritten(db, parts.map((part) => part.loadId))) {
+      throw refusal(409, { key: "{space} was already unloaded together; nothing was unloaded twice.", vars: { space: space.name } });
+    }
+    for (const part of parts) {
+      const now = await readUnloadLot(db, part.lot.id);
+      if (!now || now.status !== LOT_STATUS.drying || (await countLotWeights(db, DRY_UNLOAD_LEDGER, part.lot.id)) > 0) {
+        throw refusal(409, {
+          key: "Lot {lot} changed on Unload Dry Space while the joint unload ran; no lot was unloaded. Open Unload together again.",
+          vars: { lot: part.short },
+        });
+      }
+    }
+    throw err;
+  }
+  // Canon 0.30.1 fork 8: a queued adjustment lands at the export home where
+  // its files pend; every other joint unload returns to the surface.
+  if (typedChoice === "queue_adjust" && parts.some((part) => part.resolved.gate.kind !== "exact")) {
+    return { redirect: "/admin/uploads?ok=adjust_queued" };
+  }
+  return { redirect: `${dryingStagePath(stage)}?ok=unloaded_together&n=${parts.length}` };
 }
 
 export async function addGrowMethod(db: D1Database, form: FormData): Promise<ActionOk> {
@@ -6857,6 +7424,9 @@ export async function loadSilo(db: D1Database, form: FormData): Promise<ActionOk
     );
   }
   await db.batch(stmts);
+  // THE DRYING SCHEDULE (canon 0.30.226): a load opened by a drying surface's >> returns there.
+  const back = dryingReturnPath(form.get("next"));
+  if (back) return { redirect: `${back}?ok=drying_loaded` };
   return { redirect: `/station/load_silo?load=${encodeURIComponent(id)}&ok=loaded` };
 }
 
@@ -6886,7 +7456,8 @@ export async function startSiloLoad(db: D1Database, loadId: string, form: FormDa
       }),
     ]);
   }
-  return { redirect: `/station/load_silo?load=${encodeURIComponent(loadId)}` };
+  // THE DRYING SCHEDULE (canon 0.30.226): Start on a drying surface's Working pane returns there.
+  return { redirect: dryingReturnPath(form.get("next")) ?? `/station/load_silo?load=${encodeURIComponent(loadId)}` };
 }
 
 /** Pause toggles: a running clock pauses (paused_at set); a paused clock
@@ -6934,7 +7505,8 @@ export async function pauseSiloLoad(db: D1Database, loadId: string, form: FormDa
       }),
     ]);
   }
-  return { redirect: `/station/load_silo?load=${encodeURIComponent(loadId)}` };
+  // THE DRYING SCHEDULE (canon 0.30.226): Pause and Resume on a drying surface's Working pane return there.
+  return { redirect: dryingReturnPath(form.get("next")) ?? `/station/load_silo?load=${encodeURIComponent(loadId)}` };
 }
 
 /** The location-change file for one load (canon 0.30.6): the package label,

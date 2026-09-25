@@ -95,6 +95,7 @@ describe("THE HBN THAT CAME BACK (canon 0.30.84): the HBN pencil on the lot", ()
   it("the lot record carries HBN as a reasoned lookup over harvest batches, first in the list", () => {
     const fields = EDITABLE_FIELDS.wet_weight_entries;
     expect(fields[0]).toEqual({ name: "harvest_batch_id", label: "HBN", input: "lookup", lookup: "harvest_batches" });
+    expect(EDITABLE_FIELDS.wet_weights.map((f) => f.name)).toContain("harvest_batch_id");
   });
 
   it("moves a weighing lot to an open HBN with a reason and logs the change", async () => {

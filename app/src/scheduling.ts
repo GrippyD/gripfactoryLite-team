@@ -5,18 +5,30 @@
  * HTML out) so the tests pin it without a database.
  */
 import {
+  DRYING_COMPLETE_DAYS,
+  DRYING_STAGE_SPACE_TYPE,
+  DRYING_STAGES,
+  dryingStagePath,
+  formatGrams,
+  LOT_STATUS,
   PREPACK_STATION_PATH,
   PRODUCTION_SCHEDULING_PATH,
   SCHEDULE_STAGE_TITLES,
   SCHEDULE_STAGES,
+  type DrySpaceType,
+  type DryingStage,
+  type LineStage,
   type ScheduleStage,
 } from "./config";
-import type { ScheduleHbnGroup, ScheduleItemRow } from "./db";
+import type { BarnWetLotRow, DryingCompleteRow, ScheduleHbnGroup, ScheduleItemRow, SiloLoadRow, SiloRow } from "./db";
+import { barnLotLabel, clockMarkup, loadLotLabel, shareOrder, siloClockState, unloadTogetherForm } from "./drying";
 import type { MetrcAdoptPane } from "./metrc";
 import { lastSix, packageIdentityMarkup } from "./prepack";
 import { effectiveDateField } from "./effective";
-import { localTimeScript } from "./html";
+import { FARM_DAY_START_HOUR_DEFAULT, dayBefore, farmDay, farmDayBounds } from "./farmday";
+import { QUEUE_FOLD_SCRIPT, localTimeScript, queueFold } from "./html";
 import { t, type Locale } from "./i18n";
+import { spaceTypeOf } from "./silo";
 import { esc } from "./ui";
 
 export const SCHEDULE_REFUSAL = {
@@ -30,9 +42,16 @@ export const SCHEDULE_REFUSAL = {
   prepackByPackage: "Prepack schedules one package at a time, with the >> on its row.",
 } as const;
 
-export function parseScheduleStage(raw: string | undefined): ScheduleStage | null {
+/** The line stages only. THE DRYING SCHEDULE (canon 0.30.226): the three
+ * drying surfaces are views, not lines, so the schedule, unschedule, complete
+ * and unfinish routes never answer them; parseDryingStage does. */
+export function parseScheduleStage(raw: string | undefined): LineStage | null {
   if (raw === SCHEDULE_STAGES.trim || raw === SCHEDULE_STAGES.cryo || raw === SCHEDULE_STAGES.prepack) return raw;
   return null;
+}
+
+export function parseDryingStage(raw: string | undefined): DryingStage | null {
+  return DRYING_STAGES.find((stage) => stage === raw) ?? null;
 }
 
 /** Status word on the working pane. Trimming reads "In queue"; Pasteurization
@@ -217,6 +236,16 @@ const FILTER_SCRIPT = `<script>
           if (hit(q, row.getAttribute("data-schedule-hbn"), row.getAttribute("data-schedule-tag"))) { row.removeAttribute("hidden"); shown += 1; }
           else row.setAttribute("hidden", "");
         });
+        list.querySelectorAll("[data-schedule-heading]").forEach(function (heading) {
+          var n = 0;
+          heading.querySelectorAll("[data-schedule-tag]").forEach(function (row) {
+            if (!row.hasAttribute("hidden")) n += 1;
+          });
+          var badge = heading.querySelector("[data-schedule-heading-count]");
+          if (badge) badge.textContent = String(n);
+          if (n === 0) heading.setAttribute("hidden", "");
+          else heading.removeAttribute("hidden");
+        });
         var empty = list.querySelector("[data-schedule-empty]");
         if (empty) { if (shown === 0) empty.removeAttribute("hidden"); else empty.setAttribute("hidden", ""); }
         var count = document.querySelector('[data-schedule-count="' + list.getAttribute("data-schedule-list") + '"]');
@@ -287,6 +316,69 @@ function adoptSection(adopt: MetrcAdoptPane, locale: Locale, q: string, formId: 
 
 export type PrepackPanes = { available: ScheduleItemRow[]; working: ScheduleItemRow[]; complete: ScheduleItemRow[] };
 
+/** THE PREPACK HEADINGS (canon 0.30.229). Seed display names, in the owner's order.
+ * A stored name that is not one of these sorts after them. A blank name is Unknown. */
+const GROW_METHOD_ORDER = ["Indoor", "Outdoor", "Greenhouse"];
+
+function growMethodLabel(item: ScheduleItemRow): string | null {
+  const name = String(item.grow_method ?? "").trim();
+  return name || null;
+}
+
+function growHeadingRank(name: string | null): string {
+  if (!name) return "2";
+  const fixed = GROW_METHOD_ORDER.indexOf(name);
+  if (fixed >= 0) return `0${String(fixed).padStart(2, "0")}`;
+  return `1${name.toLowerCase()}`;
+}
+
+function availableByMethod(
+  rows: ScheduleItemRow[],
+  locale: Locale,
+  query: string,
+  controls: (item: ScheduleItemRow) => string
+): { html: string; shown: number } {
+  const groups = new Map<string, { name: string | null; rows: ScheduleItemRow[] }>();
+  for (const item of rows) {
+    const name = growMethodLabel(item);
+    const key = name ?? "";
+    const group = groups.get(key);
+    if (group) group.rows.push(item);
+    else groups.set(key, { name, rows: [item] });
+  }
+  const ordered = [...groups.values()].sort((a, b) => growHeadingRank(a.name).localeCompare(growHeadingRank(b.name)));
+  let shown = 0;
+  const blocks = ordered
+    .map((group) => {
+      let visible = 0;
+      const items = group.rows
+        .map((item) => {
+          const hit = scheduleFilterHit(query, item.hbn, item.tag);
+          if (hit) visible += 1;
+          return `<li class="schedule-item" data-schedule-id="${esc(item.id)}" data-schedule-tag="${esc(item.tag ?? "")}" data-schedule-hbn="${esc(item.hbn)}"${hit ? "" : " hidden"}>
+          ${packageIdentityMarkup({ tag: item.tag ?? item.identity, strain: item.strain_name, grams: Number(item.grams ?? 0), hbn: item.hbn, location: item.location }, locale)}
+          ${controls(item)}
+        </li>`;
+        })
+        .join("");
+      shown += visible;
+      const label = group.name ?? t(locale, "Unknown");
+      const heading = `<h3>${esc(label)} <span class="tile-count" data-schedule-heading-count>${visible}</span></h3>`;
+      const foldKey = group.name ? `grow:${group.name}` : "grow:unknown";
+      const fold = queueFold(foldKey, heading, `<ul>${items}</ul>`);
+      const hidden = visible === 0 ? " hidden" : "";
+      return fold.replace("<details ", `<details data-schedule-heading${hidden} `);
+    })
+    .join("");
+  return {
+    html: `<div data-schedule-list="available">
+          ${blocks}
+          ${emptyToggle(locale, shown > 0)}
+        </div>`,
+    shown,
+  };
+}
+
 /** THE SCHEDULER BY PACKAGE (canon 0.30.196; owner: "the scheduler should only
  * really be scheduling by the package ID (or the last six digits of it).  Use
  * the ">>"/"<<" system we've precedented throughout the app."): packages, not
@@ -322,11 +414,8 @@ export function prepackSchedulingPage(panes: PrepackPanes, adopt: MetrcAdoptPane
       shown,
     };
   };
-  const available = pane(
-    "available",
-    panes.available,
-    (item) =>
-      `<button type="submit" form="${esc(formId)}" name="wip_package_id" value="${esc(item.id)}" class="shuttle-btn" title="${esc(scheduleTitle)}" aria-label="${esc(scheduleTitle)}">&gt;&gt;</button>`
+  const available = availableByMethod(panes.available, locale, query, (item) =>
+    `<button type="submit" form="${esc(formId)}" name="wip_package_id" value="${esc(item.id)}" class="shuttle-btn" title="${esc(scheduleTitle)}" aria-label="${esc(scheduleTitle)}">&gt;&gt;</button>`
   );
   const working = pane(
     "working",
@@ -367,6 +456,7 @@ export function prepackSchedulingPage(panes: PrepackPanes, adopt: MetrcAdoptPane
       </aside>
     </div>
     ${FILTER_SCRIPT}
+    ${QUEUE_FOLD_SCRIPT}
     ${localTimeScript()}`;
 }
 
@@ -423,4 +513,252 @@ export function schedulingPage(
       </aside>
     </div>
     ${localTimeScript()}`;
+}
+
+/* ------------------------------------------------ THE DRYING SCHEDULE (canon 0.30.226) */
+
+/** The space a waiting lot is planned for, the rule Load Silo's preselect
+ * reads: the lot's own space when Move To named a loadable space, else the
+ * HBN's planned silo. */
+export function plannedSpaceIdOf(lot: BarnWetLotRow): string | null {
+  return lot.planned_space_kind === "silo" ? (lot.actual_dryspc ?? null) : (lot.planned_silo_id ?? null);
+}
+
+/** The >> on an Available lot: Load Silo's picked form, the select limited to
+ * this surface's space type, the planned space preselected when it is of that
+ * type. Any lot may go to any space of any kind (his "Shares to any space"). */
+export function dryingLoadHref(lot: BarnWetLotRow, type: DrySpaceType, spaces: readonly SiloRow[]): string {
+  const planned = plannedSpaceIdOf(lot);
+  const plannedHere = planned != null && spaces.some((space) => space.id === planned && spaceTypeOf(space) === type);
+  const params = new URLSearchParams({ pick: lot.id, kind: type });
+  if (plannedHere && planned) params.set("space", planned);
+  return `/station/load_silo?${params.toString()}`;
+}
+
+/** THE JOINT UNLOAD (canon 0.30.226): a space carries Unload together when
+ * its open loads hold two or more lots. A freezer's unload removes the line
+ * with nothing weighed, so it has no joint form. */
+export function canUnloadTogether(space: SiloRow, loadedLots: number): boolean {
+  return loadedLots >= 2 && spaceTypeOf(space) !== "freezer";
+}
+
+/** Yield, dry over wet, one decimal (round half up). Null without both. */
+export function dryingYieldPct(wetGrams: number | null | undefined, dryGrams: number | null | undefined): string | null {
+  const wet = Number(wetGrams ?? 0);
+  const dry = Number(dryGrams ?? 0);
+  if (!(wet > 0) || !(dry > 0)) return null;
+  return `${(Math.round((dry / wet) * 1000) / 10).toFixed(1)}%`;
+}
+
+/** The Complete window's first instant: the start of the farm day six days
+ * before today, so the pane covers today and the six farm days before it. */
+export function dryingCompleteSince(nowIso: string, startHour: number = FARM_DAY_START_HOUR_DEFAULT): string {
+  let day = farmDay(nowIso, startHour);
+  for (let i = 1; i < DRYING_COMPLETE_DAYS; i++) day = dayBefore(day);
+  return farmDayBounds(day, startHour).startIso;
+}
+
+/** The unload's instant: the later of the finished session and the ended load. */
+export function unloadInstantOf(row: DryingCompleteRow): string | null {
+  const finished = row.finished_at ?? null;
+  const ended = row.ended_at ?? null;
+  if (finished && ended) return finished >= ended ? finished : ended;
+  return finished ?? ended;
+}
+
+/** The unload's day: the finished session's effective day (the day the crew
+ * set, the Admin PIN for any other), else the farm day of the instant. */
+export function unloadDayOf(row: DryingCompleteRow, startHour: number = FARM_DAY_START_HOUR_DEFAULT): string {
+  const instant = unloadInstantOf(row);
+  if (row.finished_at && instant === row.finished_at && row.effective_date) return row.effective_date;
+  return instant ? farmDay(instant, startHour) : "";
+}
+
+export type DryingSurfaceInput = {
+  stage: DryingStage;
+  /** Every lot Load Silo lists (listBarnWetLots: drying, no open load). */
+  lots: BarnWetLotRow[];
+  /** Every loadable space with its open loads, the rows the tiles read (loadSiloVisuals). */
+  live: ReadonlyArray<{ silo: SiloRow; loads: SiloLoadRow[] }>;
+  /** Lots unloaded inside the window (listDryingComplete). */
+  complete: DryingCompleteRow[];
+  nowIso: string;
+  farmDayStart?: number;
+  /** The space whose joint form is open (?together=). */
+  together?: string | null;
+  locale?: Locale;
+};
+
+function dryingEmpty(locale: Locale): string {
+  return `<p class="muted">${esc(t(locale, "- EMPTY -"))}</p>`;
+}
+
+function availableDryingRow(lot: BarnWetLotRow, type: DrySpaceType, spaces: readonly SiloRow[], locale: Locale): string {
+  const planned = plannedSpaceIdOf(lot);
+  const plannedSpace = planned ? spaces.find((space) => space.id === planned) ?? null : null;
+  const plannedHere = plannedSpace != null && spaceTypeOf(plannedSpace) === type;
+  const plannedName = plannedSpace?.name ?? (planned ? lot.planned_space_name : null);
+  const plannedLine = plannedHere
+    ? `<span class="schedule-planned" data-planned-here><strong>${esc(t(locale, "planned here"))}</strong>: ${esc(plannedName ?? "")}</span>`
+    : plannedName
+      ? `<span class="muted schedule-planned">${esc(t(locale, "Planned"))}: ${esc(plannedName)}</span>`
+      : `<span class="muted schedule-planned">${esc(t(locale, "no planned space"))}</span>`;
+  const wet = Number(lot.weight_grams ?? 0);
+  const title = t(locale, "Load");
+  const noPackage = lot.item_id ? "" : ` <span class="muted" data-no-package>(${esc(t(locale, "no live package"))})</span>`;
+  return `<li class="schedule-item" data-drying-lot="${esc(lot.id)}" data-planned-space="${esc(planned ?? "")}">
+          <span class="schedule-identity">${esc(barnLotLabel(lot))}</span>
+          <span class="muted" data-wet-grams="${esc(String(wet))}">${esc(t(locale, "Wet"))} ${esc(formatGrams(wet))} g</span>
+          ${plannedLine}${noPackage}
+          <a class="shuttle-btn" href="${esc(dryingLoadHref(lot, type, spaces))}" title="${esc(title)}" aria-label="${esc(title)}">&gt;&gt;</a>
+        </li>`;
+}
+
+function workingDryingRow(load: SiloLoadRow, path: string, nowIso: string, locale: Locale): string {
+  const state = siloClockState(load);
+  const pauseLabel = state === "paused" ? t(locale, "Resume") : t(locale, "Pause");
+  const next = `<input type="hidden" name="next" value="${esc(path)}">`;
+  const wet = Number(load.weight_grams ?? 0);
+  const unload = t(locale, "Unload");
+  return `<li class="schedule-item" data-drying-load="${esc(load.id)}" data-drying-lot="${esc(load.wet_weight_entry_id)}">
+          <span class="schedule-identity">${esc(loadLotLabel(load))}</span>
+          <span class="muted" data-wet-grams="${esc(String(wet))}">${esc(t(locale, "Wet"))} ${esc(formatGrams(wet))} g</span>
+          <span class="schedule-clock">${clockMarkup(load, nowIso, locale)}</span>
+          <form method="post" action="/station/load_silo/${esc(load.id)}/start" class="shuttle-form">
+            ${next}
+            <button type="submit"${state !== "not_started" ? " disabled" : ""} title="${esc(t(locale, "The clock started at the loaded time."))}">${esc(t(locale, "Start"))}</button>
+          </form>
+          <form method="post" action="/station/load_silo/${esc(load.id)}/pause" class="shuttle-form">
+            ${next}
+            <button type="submit" class="secondary"${state === "not_started" ? " disabled" : ""}>${esc(pauseLabel)}</button>
+          </form>
+          <a class="shuttle-btn" href="/station/unload_dry_space?pick=${esc(encodeURIComponent(load.wet_weight_entry_id))}" title="${esc(unload)}" aria-label="${esc(unload)}">&gt;</a>
+        </li>`;
+}
+
+function completeDryingRow(row: DryingCompleteRow, startHour: number, locale: Locale): string {
+  const label = barnLotLabel({
+    metrc_harvest_tag: row.metrc_harvest_tag,
+    package_code: row.package_code,
+    farm_code: row.farm_code,
+    strain_label: row.strain_label,
+    hbn: row.hbn,
+    truck_number: row.truck_number,
+  });
+  const day = unloadDayOf(row, startHour);
+  const dry = row.dry_weight_grams == null ? null : Number(row.dry_weight_grams);
+  const pct = dryingYieldPct(row.weight_grams, dry);
+  const weighed =
+    row.status === LOT_STATUS.frozen
+      ? `<span class="muted" data-line-removed>${esc(t(locale, "Line removed"))}</span>`
+      : `<span class="muted">${esc(t(locale, "Dry"))} ${esc(formatGrams(dry ?? 0))} g</span>${
+          pct ? ` <span class="muted" data-yield>${esc(t(locale, "Yield"))} ${esc(pct)}</span>` : ""
+        }`;
+  return `<li class="schedule-item" data-drying-lot="${esc(row.lot_id)}"${dry == null ? "" : ` data-dry-grams="${esc(String(dry))}"`}>
+          <span class="schedule-identity">${esc(label)}</span>
+          ${weighed}
+          <span class="muted" data-unload-day="${esc(day)}">${esc(day)}</span>
+        </li>`;
+}
+
+/** THE DRYING SCHEDULE (canon 0.30.226; his pick "Three surfaces by space
+ * kind"): Silos, Dry Rooms and Freezers, each the station-triple of the lines.
+ * AVAILABLE: every lot Load Silo lists, grouped by HBN, with its label (the
+ * truck when it rode one), its wet grams and its planned space, "planned
+ * here" when that space is of this kind, and >> into Load Silo's picked form
+ * limited to this kind. WORKING: the open loads of this kind's spaces under
+ * each space, with the clock as the tiles read it, Start and Pause as Load
+ * Silo's (returning here), and > into Unload Dry Space on the lot; a space
+ * holding two or more loads carries Unload together. COMPLETE: this kind's
+ * lots unloaded in the last seven days, with the dry grams, the yield and the
+ * unload's day. Pure: the route prepends the silo strip, whose script keeps
+ * the clocks ticking. */
+export function dryingSchedulingPage(input: DryingSurfaceInput): string {
+  const locale = input.locale ?? "en";
+  const stage = input.stage;
+  const type = DRYING_STAGE_SPACE_TYPE[stage];
+  const path = dryingStagePath(stage);
+  const startHour = input.farmDayStart ?? FARM_DAY_START_HOUR_DEFAULT;
+  const spaces = input.live.map((entry) => entry.silo);
+
+  const byHbn = new Map<string, BarnWetLotRow[]>();
+  for (const lot of input.lots) {
+    const key = lot.hbn ?? "";
+    const group = byHbn.get(key);
+    if (group) group.push(lot);
+    else byHbn.set(key, [lot]);
+  }
+  const available = [...byHbn.entries()]
+    .map(
+      ([hbn, lots]) => `<section class="schedule-group" data-schedule-hbn="${esc(hbn)}">
+        <h3 class="schedule-hbn-label">${esc(hbn)} <span class="tile-count">${lots.length}</span></h3>
+        <ul>${lots.map((lot) => availableDryingRow(lot, type, spaces, locale)).join("")}</ul>
+      </section>`
+    )
+    .join("");
+
+  const holding = input.live.filter((entry) => spaceTypeOf(entry.silo) === type && entry.loads.length > 0);
+  const workingCount = holding.reduce((n, entry) => n + entry.loads.length, 0);
+  const working = holding
+    .map((entry) => {
+      const loads = [...entry.loads].sort(shareOrder);
+      const joint = canUnloadTogether(entry.silo, new Set(loads.map((load) => load.wet_weight_entry_id)).size);
+      const link = joint
+        ? `<a class="btn secondary" href="${esc(`${path}?together=${encodeURIComponent(entry.silo.id)}`)}" data-unload-together-link="${esc(entry.silo.id)}">${esc(
+            t(locale, "Unload together")
+          )}</a>`
+        : "";
+      const form =
+        joint && input.together === entry.silo.id
+          ? unloadTogetherForm({ stage, space: entry.silo, loads, nowIso: input.nowIso, farmDayStart: startHour, locale })
+          : "";
+      return `<section class="schedule-group" data-drying-space="${esc(entry.silo.id)}">
+        <div class="schedule-hbn-summary">
+          <h3 class="schedule-hbn-label">${esc(entry.silo.name)} <span class="tile-count">${loads.length}</span></h3>
+          ${link}
+        </div>
+        ${form}
+        <ul>${loads.map((load) => workingDryingRow(load, path, input.nowIso, locale)).join("")}</ul>
+      </section>`;
+    })
+    .join("");
+
+  const done = input.complete
+    .filter((row) => spaceTypeOf({ space_type: row.space_type, shape: row.shape }) === type)
+    .map((row) => ({ row, instant: unloadInstantOf(row) ?? "" }))
+    .sort((a, b) => (a.instant === b.instant ? 0 : a.instant > b.instant ? -1 : 1));
+  const seenLots = new Set<string>();
+  const bySpace = new Map<string, { name: string; rows: DryingCompleteRow[] }>();
+  for (const { row } of done) {
+    if (seenLots.has(row.lot_id)) continue;
+    seenLots.add(row.lot_id);
+    const group = bySpace.get(row.space_id);
+    if (group) group.rows.push(row);
+    else bySpace.set(row.space_id, { name: row.space_name ?? "", rows: [row] });
+  }
+  const complete = [...bySpace.entries()]
+    .map(
+      ([spaceId, group]) => `<section class="schedule-group" data-drying-space="${esc(spaceId)}">
+        <h3 class="schedule-hbn-label">${esc(group.name)} <span class="tile-count">${group.rows.length}</span></h3>
+        <ul>${group.rows.map((row) => completeDryingRow(row, startHour, locale)).join("")}</ul>
+      </section>`
+    )
+    .join("");
+
+  return `<h1>${esc(t(locale, SCHEDULE_STAGE_TITLES[stage]))}</h1>
+    <div class="station-triple" data-drying-surface="${esc(stage)}">
+      <aside class="queue-pane" data-schedule-pane="available">
+        <h2>${esc(t(locale, "Available"))} <span class="tile-count" data-schedule-count="available">${input.lots.length}</span></h2>
+        ${available || dryingEmpty(locale)}
+      </aside>
+      <section class="queue-pane" data-schedule-pane="working">
+        <h2>${esc(t(locale, "Working"))} <span class="tile-count" data-schedule-count="working">${workingCount}</span></h2>
+        ${working || dryingEmpty(locale)}
+      </section>
+      <aside class="queue-pane" data-schedule-pane="complete">
+        <h2>${esc(t(locale, "Complete"))} <span class="tile-count" data-schedule-count="complete">${seenLots.size}</span></h2>
+        <p class="muted">${esc(t(locale, "Unloaded in the last seven days."))}</p>
+        ${complete || dryingEmpty(locale)}
+      </aside>
+    </div>`;
 }

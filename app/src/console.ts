@@ -172,7 +172,7 @@ import { siloStrip } from "./drying";
 import { dryingTotalsMarkup, type DryingTotals } from "./silo";
 import { dayBefore, etClockMinutes, etDate, etDayBounds, FARM_TIME_ZONE, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHour } from "./farmday";
 import { t, type Locale } from "./i18n";
-import { ffzTile, type FfzVisual, type SiloLive } from "./silo";
+import { type SiloLive } from "./silo";
 import { latestSheetSync, sheetSyncLineText, type SheetSyncView } from "./sheetsync";
 import { farmFromHbn } from "./intesting";
 import { esc } from "./ui";
@@ -674,7 +674,6 @@ export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"):
 export type HarvestConsolePageInput = {
   input: HarvestConsoleInput;
   live: SiloLive[];
-  ffz: FfzVisual;
   nowIso: string;
   locale?: Locale;
   ok?: string;
@@ -1409,7 +1408,7 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
     </details>
     <details class="hc-section" data-hc-section="drying" open>
       <summary>${esc(t(locale, "Drying"))}</summary>
-      ${siloStrip(page.live, page.nowIso, locale, ffzTile(page.ffz, locale) + (page.cureTiles ?? ""))}
+      ${siloStrip(page.live, page.nowIso, locale, page.cureTiles ?? "")}
       ${page.dryingTotals ? dryingTotalsMarkup(page.dryingTotals, locale) : ""}
     </details>
     ${trimmingSection(page.input, locale)}

@@ -221,7 +221,10 @@ export const EDITABLE_FIELDS: Record<string, EditFieldDef[]> = {
     { name: "team_lead", label: "Team Lead", input: "text" },
     { name: "status", label: "Status", input: "text" },
   ],
-  wet_weights: [{ name: "weight_grams", label: "Weight (g)", input: "number" }],
+  wet_weights: [
+    { name: "weight_grams", label: "Weight (g)", input: "number" },
+    { name: "harvest_batch_id", label: "HBN", input: "lookup", lookup: "harvest_batches" },
+  ],
   // Owner ruling 2026-08-31: dry weights carry the same reasoned pencil as wet.
   dry_weights: [{ name: "weight_grams", label: "Weight (g)", input: "number" }],
   // Canon 0.30.6: the Load Silo pencil; the clock's zero and the notes.
@@ -625,6 +628,15 @@ export const PIPELINE: PipelineEntry[] = [
         help: {
           en: "What this lot is at weigh-in. Spear is the common case and stays one tap. Drives the truck receive mint and the unload questions.",
           es: "Lo que es este lote al pesar. Lanza es el caso comun y queda en un toque. Define el acunado al recibir el camion y las preguntas al descargar.",
+        },
+      },
+      {
+        name: "truck_number",
+        label: "Truck #",
+        input: "text",
+        help: {
+          en: "Optional. The next number for this farm's lots today is filled in. Overtype it, or blank it for a lot that goes straight to its space.",
+          es: "Opcional. Se llena el siguiente numero de los lotes de esta granja hoy. Cambielo, o dejelo en blanco para un lote que va directo a su espacio.",
         },
       },
       {
@@ -1060,6 +1072,12 @@ export const OPS_GROUPS: OpsGroup[] = [
         title: "Virtual move to processor",
         href: "/virtual-move",
       },
+      // THE DRYING SCHEDULE (canon 0.30.226; his pick "Three surfaces by space
+      // kind"): the schedule surfaces live under Production Scheduling's path;
+      // Load Silo and Unload Dry Space stay the acts' forms.
+      { key: "schedule_silos", title: "Silos", href: "/production/scheduling/silos" },
+      { key: "schedule_dry_rooms", title: "Dry Rooms", href: "/production/scheduling/dry_rooms" },
+      { key: "schedule_freezers", title: "Freezers", href: "/production/scheduling/freezers" },
     ],
   },
   {

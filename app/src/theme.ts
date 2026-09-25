@@ -164,7 +164,7 @@ body.device-phone .back-crumb .back-link { min-height: 2.4rem; display: inline-f
 /* THE SCHEDULER BY PACKAGE (canon 0.30.196): the filter hides a row with the
    hidden attribute, which the row's own display would otherwise defeat; the
    HBN rides muted under the last six and breaks at a hyphen. */
-.schedule-item[hidden], [data-schedule-empty][hidden] { display: none; }
+.schedule-item[hidden], [data-schedule-empty][hidden], [data-schedule-heading][hidden] { display: none; }
 .schedule-filter { margin: 0 0 0.9rem; max-width: 26rem; }
 .schedule-hbn-muted, .schedule-inherit { font-size: 0.85em; overflow-wrap: anywhere; }
 /* THE PACKAGE READS IN FOUR LINES (canon 0.30.199): the whole tag, the strain

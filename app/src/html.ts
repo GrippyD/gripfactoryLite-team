@@ -2798,10 +2798,12 @@ export type StationLedgerCtx = {
   truckOptions?: string[];
   /** The next number staged by Add a truck (?truck=<n>), rendered preselected. */
   stagedTruck?: string;
-  resumeLots: Array<{ id: string; created_at: string; weight_grams: number; truck_number?: string | null; dry_space_name?: string | null; team_lead?: string | null }>;
+  resumeLots: Array<{ id: string; created_at: string; weight_grams: number; truck_number?: string | null; dry_space_name?: string | null; team_lead?: string | null; hbn?: string | null }>;
   /** Owner ruling 2026-09-01 (alpha): with lots in progress the header form
    * collapses behind Start another lot; ?new=1 (or a staged truck) opens it. */
   newFormOpen?: boolean;
+  /** THE TRUCK RECORD (canon 0.30.226): the next Truck # for this farm's lots today. */
+  suggestedTruck?: string;
 };
 
 const ADD_TRUCK_FORM_ID = "add-truck-form";
@@ -2956,7 +2958,8 @@ export function stationPage(
         return `<input type="hidden" name="${esc(pane.pickField)}" value="${esc(picked.id)}">`;
       }
       if (f.input === "move_to" && isLedger) return moveToField(f, ledgerCtx!, locale);
-      return renderField(f, lookups, queueOptions, queuesByKey, locale, picked);
+      const values = ledgerCtx?.suggestedTruck ? { truck_number: ledgerCtx.suggestedTruck } : undefined;
+      return renderField(f, lookups, queueOptions, queuesByKey, locale, picked, values);
     })
     .join("\n");
   // Owner ruling 2026-08-28: the ledger header is the HBN, a plain spaced hyphen,
@@ -2993,7 +2996,9 @@ export function stationPage(
         <h3>${esc(t(locale, "Lots in progress"))}</h3>
         <ul>${resumeLots
           .map((lot) => {
-            const moveTo = lot.truck_number ? `${t(locale, "Truck")} ${lot.truck_number}` : lot.dry_space_name ?? "";
+            const moveTo = lot.truck_number
+              ? `${t(locale, "Truck")} ${lot.truck_number}${lot.hbn ? ` - ${lot.hbn}` : ""}`
+              : lot.dry_space_name ?? "";
             const who = [moveTo, lot.team_lead ?? ""].filter(Boolean).map((x) => ` · ${esc(x)}`).join("");
             return `<li><a href="/station/${esc(station.key)}?lot=${esc(lot.id)}"><time datetime="${esc(lot.created_at)}" data-local>${esc(lot.created_at)}</time>${who} (total ${esc(formatGrams(lot.weight_grams))} g)</a></li>`;
           })
@@ -3053,7 +3058,7 @@ export function stationPage(
 function weightsSection(
   station: StationDef,
   lotId: string,
-  weights: Array<{ id: string; weight_grams: number; created_at: string }>,
+  weights: Array<{ id: string; weight_grams: number; created_at: string; harvest_batch_id?: string | null; hbn?: string | null }>,
   total: number,
   labels: { pane: string; finish: string; total: string },
   locale: Locale,
@@ -3072,6 +3077,9 @@ function weightsSection(
      * first asks how many plants the lot holds, with Skip; the answer or the
      * skip rides the same finish post (plant_count, plant_prompt). */
     plantPrompt?: boolean;
+    hbnSelect?: string;
+    headerHbnId?: string;
+    finishBlocks?: string;
   } = {}
 ): string {
   const table = station.ledger?.table ?? "wet_weights";
@@ -3080,7 +3088,11 @@ function weightsSection(
   const rows = weights
     .map(
       (w, i) => `<tr${numbered ? ` data-weight-seq="${count - i}"` : ""}>
-        ${numbered ? `<td class="weight-seq">${count - i}</td>` : ""}<td>${esc(formatGrams(w.weight_grams))}</td>
+        ${numbered ? `<td class="weight-seq">${count - i}</td>` : ""}<td>${esc(formatGrams(w.weight_grams))}${
+          w.hbn && w.harvest_batch_id && w.harvest_batch_id !== opts.headerHbnId
+            ? ` <span class="muted" title="${esc(w.hbn)}">${esc(shortLotId(w.hbn, null))}</span>`
+            : ""
+        }</td>
         <td>${esc(w.created_at)}</td>
         <td class="row-actions">
           <a class="btn secondary" href="/record/${esc(table)}/${esc(w.id)}/edit" title="Edit" aria-label="Edit weight">&#9998;</a>
@@ -3158,7 +3170,10 @@ function weightsSection(
           ${finishExtra}
           <button type="submit" class="secondary" data-plant-prompt-open>${esc(t(locale, labels.finish))}</button>
           <div class="plant-prompt" data-plant-prompt hidden>
-            <label class="field">${esc(t(locale, "How many plants in this lot?"))} <input type="text" name="plant_count" inputmode="numeric" pattern="[0-9,]*" placeholder="${esc(t(locale, "plants"))}" data-plant-count-input></label>
+            ${
+              opts.finishBlocks ??
+              `<label class="field">${esc(t(locale, "How many plants in this lot?"))} <input type="text" name="plant_count" inputmode="numeric" pattern="[0-9,]*" placeholder="${esc(t(locale, "plants"))}" data-plant-count-input></label>`
+            }
             <div class="row-actions">
               <button type="submit" name="plant_prompt" value="count">${esc(t(locale, labels.finish))}</button>
               <button type="submit" name="plant_prompt" value="skip" class="secondary" data-plant-skip>${esc(t(locale, "Skip"))}</button>
@@ -3175,6 +3190,7 @@ function weightsSection(
       ${standingBanner}
       <div class="weights-controls">
         <form method="post" action="/station/${esc(station.key)}/lot/${esc(lotId)}/weights" class="row-actions"${addAttrs}>
+          ${opts.hbnSelect ?? ""}
           <input type="number" name="weight_grams" step="0.01" min="0" placeholder="grams" required autofocus${focusAttr}>
           <button type="submit">${esc(t(locale, "Add a weight"))}</button>
           ${rapidBtn}
@@ -3236,16 +3252,55 @@ export function wetLotPanel(
     supervisor_name?: string | null;
     plant_count?: number | null;
   },
-  weights: Array<{ id: string; weight_grams: number; created_at: string }>,
+  weights: Array<{ id: string; weight_grams: number; created_at: string; harvest_batch_id?: string | null; hbn?: string | null }>,
   farmName: string,
   total: number,
-  locale: Locale = "en"
+  locale: Locale = "en",
+  hbnOptions: Array<{ id: string; hbn: string; label: string }> = []
 ): string {
   // Owner ruling 2026-08-31: a record-borne truck lot labels its destination
   // Truck <n> from its own truck_number, never from the bare sentinel row's name.
-  const moveTo = lot.truck_number
-    ? `${t(locale, "Truck")} ${lot.truck_number}`
-    : lot.dry_space_name ?? "";
+  const moveTo = lot.dry_space_name ?? "";
+  const truckLine = lot.truck_number
+    ? `<dt>${esc(t(locale, "Truck #"))}</dt><dd data-truck-number>${esc(
+        lot.hbn ? `${t(locale, "Truck")} ${lot.truck_number} - ${lot.hbn}` : `${t(locale, "Truck")} ${lot.truck_number}`
+      )}</dd>`
+    : "";
+  const headerId = lot.harvest_batch_id ?? "";
+  const newest = weights[0];
+  const selectedId = newest?.harvest_batch_id || headerId;
+  const hbnSelect =
+    hbnOptions.length > 0
+      ? `<label class="field">${esc(t(locale, "HBN"))}<select name="harvest_batch_id" data-tote-hbn>${hbnOptions
+          .map((row) => `<option value="${esc(row.id)}"${row.id === selectedId ? " selected" : ""}>${esc(row.label)} (${esc(row.hbn)})</option>`)
+          .join("")}</select></label>`
+      : "";
+  const groups = new Map<string, { hbn: string; n: number; grams: number }>();
+  for (const w of weights) {
+    const id = w.harvest_batch_id || headerId;
+    const hbn = w.hbn || lot.hbn || id;
+    const cur = groups.get(id) ?? { hbn, n: 0, grams: 0 };
+    cur.n += 1;
+    cur.grams += Number(w.weight_grams);
+    groups.set(id, cur);
+  }
+  const hbnMeta =
+    groups.size > 1
+      ? `<dt>${esc(t(locale, "HBNs on this lot"))}</dt><dd data-lot-hbns>${[...groups.values()]
+          .map((g) => `${esc(shortLotId(g.hbn, null))} ${g.n} ${esc(t(locale, "totes"))} ${esc(formatGrams(g.grams))} g`)
+          .join(" · ")}</dd>`
+      : "";
+  const finishBlocks =
+    groups.size > 1
+      ? [...groups.entries()]
+          .map(([id, g]) => {
+            const serial = shortLotId(g.hbn, null);
+            return `<p data-finish-hbn="${esc(id)}"><strong>${esc(serial)}</strong></p>
+            <label class="field">${esc(t(locale, "How many plants in this lot?"))} <input type="text" name="plant_count[${esc(id)}]" inputmode="numeric" pattern="[0-9,]*" placeholder="${esc(t(locale, "plants"))}" data-plant-count-input></label>
+            ${metrcTagInput(locale, `metrc_tag[${id}]`)}`;
+          })
+          .join("")
+      : "";
   // Owner report 2026-09-01 (duplicate-lot guard): from an in-progress lot, the
   // one deliberate path back to a blank Start-lot header is this link. It carries
   // new=1 so the pick route's single-lot redirect does not bounce it straight
@@ -3257,6 +3312,8 @@ export function wetLotPanel(
     <p class="muted">${esc(lot.hbn ?? "")}</p>
     <dl class="lot-meta">
       <dt>${esc(t(locale, "Move To"))}</dt><dd>${esc(moveTo)}</dd>
+      ${truckLine}
+      ${hbnMeta}
       <dt>${esc(t(locale, "Material"))}</dt><dd>${esc(t(locale, lot.material_form === "bucked" ? "Bucked" : "Spear"))}</dd>
       <dt>${esc(t(locale, "Supervisor"))}</dt><dd data-supervisor>${esc(lot.supervisor_name ?? "")}</dd>
       <dt>${esc(t(locale, "Team Lead"))}</dt><dd data-team-lead>${esc(lot.lead_name ?? "")}</dd>
@@ -3264,7 +3321,13 @@ export function wetLotPanel(
       <dt>${esc(t(locale, "Running total"))}</dt><dd class="lot-running-total" data-lot-running-total><strong>${esc(formatGrams(total))}</strong> g · <strong>${esc(formatLbs(total))}</strong> lb</dd>
       ${lot.plant_count != null ? `<dt>${esc(t(locale, "Plants"))}</dt><dd data-plant-count>${esc(String(lot.plant_count))}</dd>` : ""}
     </dl>
-    ${weightsSection(station, lot.id, weights, total, { pane: "Weights", finish: "Finish lot", total: "Total" }, locale, metrcTagInput(locale), { numbered: true, plantPrompt: true })}
+    ${weightsSection(station, lot.id, weights, total, { pane: "Weights", finish: "Finish lot", total: "Total" }, locale, finishBlocks ? "" : metrcTagInput(locale), {
+      numbered: true,
+      plantPrompt: true,
+      hbnSelect,
+      headerHbnId: headerId,
+      finishBlocks: finishBlocks || undefined,
+    })}
     ${startAnother}`;
 }
 
@@ -3517,7 +3580,7 @@ function controlForm(
   </form>`;
 }
 
-const QUEUE_FOLD_SCRIPT = `<script>
+export const QUEUE_FOLD_SCRIPT = `<script>
 (function () {
   var storeKey = "gf_fold:" + location.pathname;
   var folded = [];
@@ -3568,7 +3631,7 @@ const QUEUE_FOLD_SCRIPT = `<script>
 })();
 </script>`;
 
-function queueFold(key: string, summary: string, body: string): string {
+export function queueFold(key: string, summary: string, body: string): string {
   return `<details class="queue-fold" data-fold="${esc(key)}" open><summary>${summary}</summary>${body}</details>`;
 }
 

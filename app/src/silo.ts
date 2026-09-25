@@ -36,10 +36,9 @@
  * perfect." His pick: "Make it a real silo now". So a silo carries a shape
  * (data, migration 0049): the cylinder, or the box, a cuboid in oblique
  * projection drawn in the same 200 by 150 frame with the same body height
- * (42 to 134), the same fill law and the same live repaint; and the FFZ cube
- * stands beside the silos on the console with its own capacity
- * (app_config ffz_capacity_lbs, 4800), a blue fill that throbs slowly toward
- * white while it holds anything, and no clock.
+ * (42 to 134), the same fill law and the same live repaint. The FFZ inventory
+ * cube left under THE FFZ INVENTORY (canon 0.30.225); the freezer space tile
+ * still draws the cube shape.
  */
 
 import {
@@ -47,7 +46,6 @@ import {
   drySpaceTypeOf,
   formatGrams,
   LOC_BLAST_FREEZER,
-  parseFfzItemKinds,
   GRAMS_PER_LB,
   projectedDryYieldPct,
   shortLotId,
@@ -56,7 +54,6 @@ import {
 import { formatLbs } from "./compliance";
 import {
   getConfigValue,
-  listFfzGrams,
   listOpenSiloLoads,
   listSiloLotGrams,
   listSilos,
@@ -68,7 +65,6 @@ import { t, type Locale } from "./i18n";
 import { esc } from "./ui";
 
 export const SILO_CAPACITY_WET_LBS_DEFAULT = 15000;
-export const FFZ_CAPACITY_LBS_DEFAULT = 4800;
 /** Re-export of GRAMS_PER_LB (canon 0.30.164): 448 grams to the pound. */
 export const LB_GRAMS = GRAMS_PER_LB;
 export const SILO_LIVE_PATH = "/silos/live.json";
@@ -79,12 +75,6 @@ export { LOC_BLAST_FREEZER };
 export function siloCapacityGrams(raw: string | null | undefined): number {
   const lbs = Number(String(raw ?? "").replace(/,/g, "").trim());
   return (Number.isFinite(lbs) && lbs > 0 ? lbs : SILO_CAPACITY_WET_LBS_DEFAULT) * LB_GRAMS;
-}
-
-/** The FFZ cube's capacity in grams from its app_config value (pounds); the owner's 4,800 when blank or unreadable. */
-export function ffzCapacityGrams(raw: string | null | undefined): number {
-  const lbs = Number(String(raw ?? "").replace(/,/g, "").trim());
-  return (Number.isFinite(lbs) && lbs > 0 ? lbs : FFZ_CAPACITY_LBS_DEFAULT) * LB_GRAMS;
 }
 
 /** A silo's drawn shape (dry_spaces.shape, migration 0049): the cylinder, the
@@ -455,135 +445,12 @@ export function siloLiveEntry(id: string, name: string, v: SiloVisual, locale: L
   };
 }
 
-/* ------------------------------------------------------------- the FFZ cube */
-
-/** The fresh frozen cube (canon 0.30.73): grams against its capacity, no clock.
- * THE FFZ CUBE READS THE MIRROR (canon 0.30.75): the grams are the METRC
- * mirror's FFZ packages plus the ledger's frozen material the mirror does not
- * claim; the two shares ride along so the tile can say where it read. */
-export type FfzVisual = {
-  grams: number;
-  /** 0..1 of the capacity, the fill's height inside the cube. */
-  level: number;
-  /** The whole percent for the word under the cube ("42% full"). */
-  pct: number;
-  /** True while it holds anything: the blue fill throbs slowly toward white. */
-  holding: boolean;
-  /** The METRC mirror's share of the grams (active FFZ-kind packages). */
-  mirrorGrams: number;
-  /** The local ledger's share (frozen material the mirror does not count). */
-  ledgerGrams: number;
-  /** How many mirror packages stand behind mirrorGrams. */
-  mirrorPackages: number;
-};
-
-export function ffzVisual(grams: number, capacityGrams: number, shares?: { mirrorGrams: number; ledgerGrams: number; mirrorPackages: number }): FfzVisual {
-  const g = Number.isFinite(grams) && grams > 0 ? grams : 0;
-  const level = clamp01(capacityGrams > 0 ? g / capacityGrams : 0);
-  return {
-    grams: g,
-    level,
-    pct: Math.round(level * 100),
-    holding: g > 0,
-    mirrorGrams: shares?.mirrorGrams ?? 0,
-    ledgerGrams: shares?.ledgerGrams ?? g,
-    mirrorPackages: shares?.mirrorPackages ?? 0,
-  };
-}
-
-export function ffzFillClass(v: Pick<FfzVisual, "holding">): string {
-  return v.holding ? "silo-fill ffz-fill ffz-throb" : "silo-fill";
-}
-
-export function ffzCubeSvg(v: FfzVisual, locale: Locale = "en"): string {
-  return boxSvg({
-    geometry: CUBE_GEOMETRY,
-    level: v.level,
-    fillClass: ffzFillClass(v),
-    shapeClass: "silo-shape-cube",
-    state: v.holding ? "holding" : "empty",
-    ariaLabel: `${t(locale, "FFZ inventory")}, ${v.pct}%`,
-  });
-}
-
-/** "42% full", the word under the cube (his "fullness"). */
-export function ffzFullLabel(v: FfzVisual, locale: Locale = "en"): string {
-  return `${v.pct}% ${t(locale, "full")}`;
-}
-
-/** "METRC 285.00 lb in 3 packages · ledger 0.00 lb", the source line under the cube (canon 0.30.75). */
-export function ffzSourceLine(v: FfzVisual, locale: Locale = "en"): string {
-  return `<div class="muted ffz-source" data-ffz-source>${esc(t(locale, "METRC"))} <span data-ffz-mirror-lb>${esc(formatLbs(v.mirrorGrams))}</span> lb ${esc(
-    t(locale, "in")
-  )} <span data-ffz-mirror-packages>${esc(String(v.mirrorPackages))}</span> ${esc(t(locale, v.mirrorPackages === 1 ? "package" : "packages"))} · ${esc(
-    t(locale, "ledger")
-  )} <span data-ffz-ledger-lb>${esc(formatLbs(v.ledgerGrams))}</span> lb</div>`;
-}
-
-/** The FFZ tile beside the silos: the name, the cube, the fullness, where the grams were read, the frozen weight at the bottom. */
-export function ffzTile(v: FfzVisual, locale: Locale = "en"): string {
-  return `<div class="inv-gauge silo-gauge ffz-gauge" data-ffz data-ffz-state="${v.holding ? "holding" : "empty"}">
-          <div class="inv-gauge-name">${esc(t(locale, "FFZ inventory"))}</div>
-          ${ffzCubeSvg(v, locale)}
-          <div class="silo-state ffz-state" data-ffz-pct>${esc(ffzFullLabel(v, locale))}</div>
-          ${ffzSourceLine(v, locale)}
-          <div class="silo-wet" data-silo-wet>${esc(t(locale, "FFZ"))} <strong data-silo-wet-lb>${esc(formatLbs(v.grams))}</strong> lb · <strong data-silo-wet-g>${esc(
-            formatGrams(v.grams)
-          )}</strong> g</div>
-        </div>`;
-}
-
-export type FfzLiveEntry = {
-  grams: number;
-  level: number;
-  pct: number;
-  holding: boolean;
-  label: string;
-  wetLb: string;
-  wetG: string;
-  mirrorGrams: number;
-  mirrorLb: string;
-  mirrorPackages: number;
-  ledgerGrams: number;
-  ledgerLb: string;
-};
-
-export function ffzLiveEntry(v: FfzVisual, locale: Locale = "en"): FfzLiveEntry {
-  return {
-    grams: v.grams,
-    level: v.level,
-    pct: v.pct,
-    holding: v.holding,
-    label: ffzFullLabel(v, locale),
-    wetLb: formatLbs(v.grams),
-    wetG: formatGrams(v.grams),
-    mirrorGrams: v.mirrorGrams,
-    mirrorLb: formatLbs(v.mirrorGrams),
-    mirrorPackages: v.mirrorPackages,
-    ledgerGrams: v.ledgerGrams,
-    ledgerLb: formatLbs(v.ledgerGrams),
-  };
-}
-
-/** The cube's inputs, read once per request: "Any FFZ" (his pick), THE FFZ
- * CUBE READS THE MIRROR (canon 0.30.75): the METRC mirror's active packages
- * of the fresh frozen kinds (app_config ffz_item_kinds) plus the ledger's
- * frozen material the mirror does not claim (listFfzGrams), against
- * app_config ffz_capacity_lbs. */
-export async function loadFfzVisual(db: D1Database): Promise<{ visual: FfzVisual; capacityGrams: number; kinds: string[] }> {
-  const [capRaw, kindsRaw] = await Promise.all([getConfigValue(db, CONFIG_KEYS.ffz_capacity_lbs), getConfigValue(db, CONFIG_KEYS.ffz_item_kinds)]);
-  const kinds = parseFfzItemKinds(kindsRaw);
-  const read = await listFfzGrams(db, kinds);
-  const capacityGrams = ffzCapacityGrams(capRaw);
-  return { visual: ffzVisual(read.grams, capacityGrams, read), capacityGrams, kinds };
-}
-
 /** Keeps every silo tile live: refetches the visuals and repaints the fill, the
  * state word and the wet weight without a page load. Runs only where tiles are. */
 export function siloLiveScript(): string {
   return `<script>
 (function () {
-  if (!document.querySelector("[data-silo]") && !document.querySelector("[data-ffz]")) return;
+  if (!document.querySelector("[data-silo]")) return;
   var BODY_TOP = ${SILO_GEOMETRY.bodyTop}, BODY_BOTTOM = ${SILO_GEOMETRY.bodyBottom};
   function paintFill(tile, level, cls) {
     var h = Math.round((BODY_BOTTOM - BODY_TOP) * Math.min(1, Math.max(0, level)) * 100) / 100;
@@ -636,24 +503,6 @@ export function siloLiveScript(): string {
       paintWet(tile, entry.wetLb, entry.wetG);
     });
   }
-  function paintFfz(ffz) {
-    document.querySelectorAll("[data-ffz]").forEach(function (tile) {
-      var state = ffz.holding ? "holding" : "empty";
-      tile.setAttribute("data-ffz-state", state);
-      var shape = tile.querySelector("[data-silo-shape]");
-      if (shape) shape.setAttribute("data-silo-state", state);
-      paintFill(tile, ffz.level, ffz.holding ? "silo-fill ffz-fill ffz-throb" : "silo-fill");
-      var pct = tile.querySelector("[data-ffz-pct]");
-      if (pct) pct.textContent = ffz.label;
-      var mLb = tile.querySelector("[data-ffz-mirror-lb]");
-      var mN = tile.querySelector("[data-ffz-mirror-packages]");
-      var lLb = tile.querySelector("[data-ffz-ledger-lb]");
-      if (mLb && ffz.mirrorLb != null) mLb.textContent = ffz.mirrorLb;
-      if (mN && ffz.mirrorPackages != null) mN.textContent = String(ffz.mirrorPackages);
-      if (lLb && ffz.ledgerLb != null) lLb.textContent = ffz.ledgerLb;
-      paintWet(tile, ffz.wetLb, ffz.wetG);
-    });
-  }
   function refresh() {
     if (document.visibilityState === "hidden") return;
     fetch(${JSON.stringify(SILO_LIVE_PATH)}, { cache: "no-store", credentials: "same-origin" })
@@ -661,7 +510,6 @@ export function siloLiveScript(): string {
       .then(function (data) {
         if (!data) return;
         if (Array.isArray(data.silos)) data.silos.forEach(paint);
-        if (data.ffz) paintFfz(data.ffz);
       })
       .catch(function () {});
   }

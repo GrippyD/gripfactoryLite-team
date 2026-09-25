@@ -12,11 +12,6 @@ import {
   boxSkewDegrees,
   boxTopPoints,
   CUBE_GEOMETRY,
-  ffzCapacityGrams,
-  ffzLiveEntry,
-  ffzTile,
-  ffzVisual,
-  FFZ_CAPACITY_LBS_DEFAULT,
   LB_GRAMS,
   siloCapacityGrams,
   siloClockOf,
@@ -217,98 +212,13 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the wire box and the FFZ cube", (
     expect(siloLiveEntry("room", "Arlington Dry Room", siloVisual(base), "en", "box").shape).toBe("box");
   });
 
-  it("the FFZ cube: its own capacity (4,800 lb), a blue fill that throbs slowly while it holds anything, the fullness word, no clock", () => {
-    expect(FFZ_CAPACITY_LBS_DEFAULT).toBe(4800);
-    expect(ffzCapacityGrams(null)).toBeCloseTo(4800 * LB_GRAMS, 6);
-    expect(ffzCapacityGrams("4,800")).toBeCloseTo(4800 * LB_GRAMS, 6);
-    expect(ffzCapacityGrams("6000")).toBeCloseTo(6000 * LB_GRAMS, 6);
-    expect(ffzCapacityGrams("nope")).toBeCloseTo(4800 * LB_GRAMS, 6);
-    const cap = ffzCapacityGrams(null);
-    const held = ffzVisual(1000 * LB_GRAMS, cap);
-    expect(held.holding).toBe(true);
-    expect(held.pct).toBe(21);
-    expect(held.level).toBeCloseTo(1000 / 4800, 6);
-    const tile = ffzTile(held);
-    expect(tile).toContain('<div class="inv-gauge silo-gauge ffz-gauge" data-ffz data-ffz-state="holding">');
-    expect(tile).toContain('<div class="inv-gauge-name">FFZ inventory</div>');
-    expect(tile).toContain('<svg class="silo-shape silo-shape-cube" data-silo-shape data-silo-state="holding" viewBox="0 0 200 150"');
-    expect(tile).toContain('<rect class="silo-fill ffz-fill ffz-throb" data-silo-fill x="46" y="114.83" width="92" height="19.17"/>');
-    expect(tile).toContain('data-box="46 138 32 18" points="46,114.83 138,114.83 170,96.83 78,96.83"');
-    expect(tile).toContain('<div class="silo-state ffz-state" data-ffz-pct>21% full</div>');
-    expect(tile).toContain('FFZ <strong data-silo-wet-lb>1,000.00</strong> lb · <strong data-silo-wet-g>448,000</strong> g');
-    expect(tile).not.toContain("data-clock");
-    expect(tile).not.toContain("silo-fill-green");
-    expect(tile).not.toContain("silo-fill-red");
-    // Empty: the wire alone, no throb, "0% full".
-    const empty = ffzTile(ffzVisual(0, cap));
-    expect(empty).toContain('data-ffz data-ffz-state="empty"');
-    expect(empty).toContain('<rect class="silo-fill" data-silo-fill x="46" y="134" width="92" height="0"/>');
-    expect(empty).not.toContain("ffz-throb");
-    expect(empty).toContain("0% full");
-    // Over capacity clamps at 100%.
-    expect(ffzVisual(2 * cap, cap).level).toBe(1);
-    expect(ffzVisual(2 * cap, cap).pct).toBe(100);
-    // Spanish under the cube.
-    expect(ffzTile(held, "es")).toContain("21% lleno");
-    expect(ffzTile(held, "es")).toContain("Inventario FFZ");
-    // The live entry carries what the repaint needs, the two shares included.
-    expect(ffzLiveEntry(held)).toEqual({
-      grams: held.grams,
-      level: held.level,
-      pct: 21,
-      holding: true,
-      label: "21% full",
-      wetLb: "1,000.00",
-      wetG: "448,000",
-      mirrorGrams: 0,
-      mirrorLb: "0.00",
-      mirrorPackages: 0,
-      ledgerGrams: held.grams,
-      ledgerLb: "1,000.00",
-    });
-  });
-
-  it("THE FFZ CUBE READS THE MIRROR (canon 0.30.75): the grams are the mirror's FFZ packages plus the ledger's unclaimed frozen material, and the tile says where it read", () => {
-    const cap = ffzCapacityGrams(null);
-    const mirror = 129259;
-    const ledger = 2000;
-    const v = ffzVisual(mirror + ledger, cap, { mirrorGrams: mirror, ledgerGrams: ledger, mirrorPackages: 3 });
-    expect(v.grams).toBe(131259);
-    expect(v.mirrorGrams).toBe(129259);
-    expect(v.ledgerGrams).toBe(2000);
-    expect(v.mirrorPackages).toBe(3);
-    expect(v.pct).toBe(6);
-    const tile = ffzTile(v);
-    expect(tile).toContain('<div class="muted ffz-source" data-ffz-source>METRC <span data-ffz-mirror-lb>288.52</span> lb in <span data-ffz-mirror-packages>3</span> packages · ledger <span data-ffz-ledger-lb>4.46</span> lb</div>');
-    expect(tile).toContain("FFZ <strong data-silo-wet-lb>292.99</strong> lb · <strong data-silo-wet-g>131,259</strong> g");
-    expect(tile.indexOf("data-ffz-pct")).toBeLessThan(tile.indexOf("data-ffz-source"));
-    expect(tile.indexOf("data-ffz-source")).toBeLessThan(tile.indexOf("data-silo-wet>"));
-    const one = ffzTile(ffzVisual(500, cap, { mirrorGrams: 500, ledgerGrams: 0, mirrorPackages: 1 }));
-    expect(one).toContain("in <span data-ffz-mirror-packages>1</span> package ·");
-    expect(ffzTile(v, "es")).toContain("METRC <span data-ffz-mirror-lb>288.52</span> lb en <span data-ffz-mirror-packages>3</span> paquetes · libro");
-    // Without shares (a bare render), everything reads as the ledger's.
-    expect(ffzVisual(1000, cap).ledgerGrams).toBe(1000);
-    expect(ffzVisual(1000, cap).mirrorGrams).toBe(0);
-    const live = ffzLiveEntry(v);
-    expect(live.mirrorLb).toBe("288.52");
-    expect(live.ledgerLb).toBe("4.46");
-    expect(live.mirrorPackages).toBe(3);
-    // The live script repaints the source line too.
-    const script = siloLiveScript();
-    expect(script).toContain("[data-ffz-mirror-lb]");
-    expect(script).toContain("[data-ffz-mirror-packages]");
-    expect(script).toContain("[data-ffz-ledger-lb]");
-  });
-
-  it("the live script repaints the side and top faces and the FFZ cube along with the front fill", () => {
+  it("the live script repaints the side and top faces along with the front fill", () => {
     const script = siloLiveScript();
     expect(script).toContain('[data-silo-fill-side]');
     expect(script).toContain('[data-silo-fill-top]');
     expect(script).toContain('getAttribute("data-box")');
-    expect(script).toContain('document.querySelectorAll("[data-ffz]")');
-    expect(script).toContain("if (data.ffz) paintFfz(data.ffz)");
-    expect(script).toContain('"silo-fill ffz-fill ffz-throb"');
-    expect(script).toContain('[data-ffz-pct]');
+    expect(script).not.toContain("paintFfz");
+    expect(script).not.toContain("data.ffz");
   });
 });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { drawsFromParentLot, NON_TRIM_SOURCE_SQL, parseMetrcReleaseStates } from "../src/config";
 import { harvestTokens, inheritedHarvest, type MetrcAdoptRow } from "../src/metrc";
-import { SCHEDULE_STAGES } from "../src/config";
+import { SCHEDULE_STAGE_TITLES, SCHEDULE_STAGES } from "../src/config";
 import type { ScheduleHbnGroup, ScheduleItemRow } from "../src/db";
 import {
   parseScheduleStage,
@@ -13,7 +13,8 @@ import {
   schedulingPage,
 } from "../src/scheduling";
 import { backLinkFor } from "../src/nav";
-import { stationByKey } from "../src/pipeline";
+import { opsGroupPage } from "../src/html";
+import { opsGroupByKey, stationByKey } from "../src/pipeline";
 
 const NOW = "2026-09-16T19:00:00.000Z";
 
@@ -95,6 +96,40 @@ describe("schedulingLanding (canon 0.30.97)", () => {
     expect(es).toContain("Programacion de produccion");
     expect(es).toContain("Recorte");
     expect(es).toContain("Pasteurizacion");
+  });
+});
+
+describe("THE DRYING SCHEDULE's landing tiles (canon 0.30.226)", () => {
+  it("the Drying Operations landing gains Silos, Dry Rooms and Freezers after its stations; Load Silo stays first", () => {
+    const drying = opsGroupByKey("drying_ops");
+    if (!drying) throw new Error("drying_ops missing");
+    expect(drying.members[0]).toMatchObject({ key: "load_silo", href: "/station/load_silo" });
+    expect(drying.members.slice(-3)).toEqual([
+      { key: "schedule_silos", title: "Silos", href: "/production/scheduling/silos" },
+      { key: "schedule_dry_rooms", title: "Dry Rooms", href: "/production/scheduling/dry_rooms" },
+      { key: "schedule_freezers", title: "Freezers", href: "/production/scheduling/freezers" },
+    ]);
+    const html = opsGroupPage(drying, "en");
+    expect(html).toContain('<a class="tile" href="/production/scheduling/silos" data-pipeline-key="schedule_silos">');
+    expect(html).toContain('<a class="tile" href="/production/scheduling/dry_rooms" data-pipeline-key="schedule_dry_rooms">');
+    expect(html).toContain('<a class="tile" href="/production/scheduling/freezers" data-pipeline-key="schedule_freezers">');
+    expect(html.indexOf('data-pipeline-key="unload_dry_space"')).toBeLessThan(html.indexOf('data-pipeline-key="schedule_silos"'));
+    const es = opsGroupPage(drying, "es");
+    expect(es).toContain("Cuartos de secado");
+    expect(es).toContain("Congeladores");
+    // The crumb of each surface goes back to Drying Operations, the query aside.
+    for (const stage of ["silos", "dry_rooms", "freezers"] as const) {
+      expect(SCHEDULE_STAGES[stage]).toBe(stage);
+      expect(backLinkFor(`/production/scheduling/${stage}`)).toEqual({ href: "/ops/drying_ops", label: "Drying Operations" });
+    }
+    expect(backLinkFor("/production/scheduling/dry_rooms?together=x")).toEqual({ href: "/ops/drying_ops", label: "Drying Operations" });
+    expect(SCHEDULE_STAGE_TITLES.silos).toBe("Silos");
+    expect(SCHEDULE_STAGE_TITLES.dry_rooms).toBe("Dry Rooms");
+    expect(SCHEDULE_STAGE_TITLES.freezers).toBe("Freezers");
+    // The Production Scheduling landing keeps its three lines.
+    const lines = schedulingLanding("en");
+    expect(lines).not.toContain("/production/scheduling/silos");
+    expect((lines.match(/class="tile"/g) || []).length).toBe(3);
   });
 });
 

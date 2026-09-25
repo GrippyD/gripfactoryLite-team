@@ -22,14 +22,7 @@
  * location) with one note, and saves each changed field as its own change-log
  * line under that note. Neither cuts a METRC file; each writes a reconcile
  * note (migration 0063) that stands on Pending Data Uploads until acknowledged.
- *
- * THE FFZ INVENTORY LOCATION (canon 0.30.145). Owner, 2026-09-20, verbatim:
- * "include FFZ inventory as one of the purge-able ledger locations". The
- * picker's last entry is FFZ inventory: not a METRC location but the ledger's
- * fresh frozen set as the FFZ cube reads it, every live package at the Blast
- * Freezer and every live package born of a cryo'd package wherever it sits.
- * Purge and Edit work on it as on a drying location; a package can never be
- * moved to it, since it is a reading, not a place.
+ * The FFZ inventory picker entry left under THE FFZ INVENTORY (canon 0.30.225).
  */
 
 import { HttpError, nowIso, parseGrams, requireText, textOrNull } from "./audit";
@@ -68,15 +61,6 @@ export const RECONCILE_REFUSAL = {
   moved: "A package can only move to a drying location.",
 } as const;
 
-/** THE FFZ INVENTORY LOCATION (canon 0.30.145): the picker's word for the
- * ledger's fresh frozen set; a reading, not a METRC location. */
-export const FFZ_INVENTORY_LOCATION = "FFZ inventory";
-export const FFZ_LOCATION_KIND = "ffz";
-
-export function isFfzInventory(value: string | null | undefined): boolean {
-  return String(value ?? "").trim() === FFZ_INVENTORY_LOCATION;
-}
-
 function personIdFrom(form: FormData): string | null {
   return textOrNull(form.get("person_id"));
 }
@@ -111,26 +95,15 @@ export async function listDryingLocations(db: D1Database): Promise<DryingLocatio
   return out;
 }
 
-/** The FFZ inventory entry, last on the picker (canon 0.30.145). */
-export function ffzInventoryLocation(locale: Locale = "en"): DryingLocation {
-  return {
-    value: FFZ_INVENTORY_LOCATION,
-    label: `${FFZ_INVENTORY_LOCATION} (${t(locale, "Blast Freezer and every cryo'd package")})`,
-    kind: FFZ_LOCATION_KIND,
-    space_type: null,
-    farm_code: null,
-  };
-}
-
-/** What the picker offers: the drying locations and freezers, then FFZ inventory. */
+/** What the picker offers: the drying locations and freezers. */
 export async function listReconcileLocations(db: D1Database, locale: Locale = "en"): Promise<DryingLocation[]> {
-  return [...(await listDryingLocations(db)), ffzInventoryLocation(locale)];
+  void locale;
+  return listDryingLocations(db);
 }
 
-/** The live ledger packages a picked location holds: FFZ inventory gathers the
- * ledger's fresh frozen set (canon 0.30.145); any other value is a METRC location. */
+/** The live ledger packages a picked location holds. */
 export async function listReconcileItems(db: D1Database, location: string): Promise<LocalInventoryListRow[]> {
-  return isFfzInventory(location) ? listLocalInventory(db, { ffz: true }) : listLocalInventory(db, { location });
+  return listLocalInventory(db, { location });
 }
 
 export type ReconcileNoteRow = {
@@ -171,7 +144,7 @@ function locationOf(form: FormData): string {
   return value;
 }
 
-/** A location the picker offers: a drying location, a freezer, or FFZ inventory. */
+/** A location the picker offers: a drying location or a freezer. */
 async function requireReconcileLocation(db: D1Database, value: string): Promise<DryingLocation> {
   const hit = (await listReconcileLocations(db)).find((l) => l.value === value);
   if (!hit) throw new HttpError(400, RECONCILE_REFUSAL.location);
@@ -284,7 +257,7 @@ export async function saveLocationEdits(db: D1Database, form: FormData): Promise
   await requireReconcileLocation(db, location);
   const note = textOrNull(form.get("note"));
   if (!note) throw new HttpError(400, RECONCILE_REFUSAL.note);
-  // A package moves only to a drying location or freezer, never to FFZ inventory (a reading, not a place).
+  // A package moves only to a drying location or freezer.
   const locations = await listDryingLocations(db);
   const items = await listReconcileItems(db, location);
   const changes: Change[] = [];
@@ -451,19 +424,11 @@ export function reconcileLocationPage(input: ReconcilePageInput): string {
       : "";
   let body = "";
   if (input.picked) {
-    const ffz = isFfzInventory(input.picked);
     const total = input.items.reduce((s, i) => s + Number(i.qty ?? 0), 0);
-    // THE FFZ INVENTORY LOCATION (canon 0.30.145): the picked entry is a reading of several places, and the page says so.
-    const ffzLine = ffz
-      ? `<p class="muted" data-ffz-inventory>${esc(
-          t(locale, "FFZ inventory is what the FFZ cube reads out of the ledger: every live package at the Blast Freezer and every live package born of a cryo'd package, wherever it sits. Each row shows its own location.")
-        )}</p>`
-      : "";
     const count = `<h2>${esc(input.picked)} <span class="tile-count" data-reconcile-count>${esc(String(input.items.length))}</span></h2>
-      ${ffzLine}
       <p class="muted">${esc(
         input.items.length === 0
-          ? t(locale, ffz ? "No live ledger packages in the FFZ inventory." : "No live ledger packages at this location.")
+          ? t(locale, "No live ledger packages at this location.")
           : `${t(locale, "Live ledger packages")}: ${input.items.length} · ${formatGrams(Math.round(total * 100) / 100)} g`
       )}</p>`;
     if (input.items.length === 0) {
@@ -471,8 +436,7 @@ export function reconcileLocationPage(input: ReconcilePageInput): string {
     } else {
       const kindOptions = (current: string) =>
         ITEM_KIND_ORDER.map((k) => `<option value="${k}"${k === current ? " selected" : ""}>${k}</option>`).join("");
-      // A package moves only to a drying location or freezer; FFZ inventory is a reading, never a target.
-      const moveTargets = input.locations.filter((l) => l.kind !== FFZ_LOCATION_KIND);
+      const moveTargets = input.locations;
       const locOptions = (current: string) => {
         const known = moveTargets.some((l) => l.value === current);
         return [
@@ -512,12 +476,7 @@ export function reconcileLocationPage(input: ReconcilePageInput): string {
         <form class="stack" method="post" action="${LEDGER_LOCATION_PURGE_PATH}" data-reconcile-purge-form>
           <input type="hidden" name="location" value="${esc(input.picked)}">
           <p class="muted">${esc(
-            t(
-              locale,
-              ffz
-                ? "Voids every live ledger package in the FFZ inventory under your reason, wherever it sits. Lots, loads, cryo runs and METRC's own records are untouched; a note that can be acknowledged waits on Pending Data Uploads."
-                : "Voids every live ledger package at this location under your reason. Lots, loads and METRC's own records are untouched; a note that can be acknowledged waits on Pending Data Uploads."
-            )
+            t(locale, "Voids every live ledger package at this location under your reason. Lots, loads and METRC's own records are untouched; a note that can be acknowledged waits on Pending Data Uploads.")
           )}</p>
           <label class="field">${esc(t(locale, "Reason"))} <input type="text" name="reason" required></label>
           <label class="field">${esc(t(locale, "Admin PIN"))} <input type="password" name="admin_pin" inputmode="numeric" autocomplete="off" required></label>

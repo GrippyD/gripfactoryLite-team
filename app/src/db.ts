@@ -1,9 +1,9 @@
-import { HttpError } from "./audit";
+import { HttpError, nowIso } from "./audit";
+import { FARM_DAY_START_HOUR_DEFAULT, farmDay, parseFarmDayStartHour } from "./farmday";
 import {
   CONFIG_KEYS,
   ITEM_KIND_WET,
   ITEM_KIND_WET_TOTAL,
-  LOC_BLAST_FREEZER,
   LOC_IN_TRANSIT,
   LOT_STATUS,
   SITE_OF_LOCATION,
@@ -17,7 +17,6 @@ import {
   parseCryoTypeCategories,
   parseExtractionCodes,
   projectedDryYieldPct,
-  metrcQuantity,
   roundGrams,
   SCHEDULE_STAGES,
   SCHEDULE_STATUS,
@@ -216,8 +215,12 @@ export async function countQueue(db: D1Database, def: QueueDef): Promise<number>
  * the batch hides when it has a finished lot and no weighing lot; a weighing lot keeps
  * it visible so the crew can resume (or move) that lot. Written against the b alias of
  * the hbn_queue query in listHarvestQueueRows. */
+/** THE TRUCK RECORD (canon 0.30.226): a batch hides only when it has no weighing
+ * lot and every finished lot finished before the farm's today (effective_date,
+ * else the day of updated_at). An HBN finished today stays for its next truck.
+ * The bound value is that today. */
 export const NO_FINISHED_LOT_SQL =
-  "AND (NOT EXISTS (SELECT 1 FROM wet_weight_entries w WHERE w.harvest_batch_id = b.id AND w.deleted_at IS NULL AND w.status <> 'weighing') OR EXISTS (SELECT 1 FROM wet_weight_entries w2 WHERE w2.harvest_batch_id = b.id AND w2.deleted_at IS NULL AND w2.status = 'weighing'))";
+  "AND (EXISTS (SELECT 1 FROM wet_weight_entries w2 WHERE w2.harvest_batch_id = b.id AND w2.deleted_at IS NULL AND w2.status = 'weighing') OR NOT EXISTS (SELECT 1 FROM wet_weight_entries w WHERE w.harvest_batch_id = b.id AND w.deleted_at IS NULL AND w.status <> 'weighing') OR EXISTS (SELECT 1 FROM wet_weight_entries w3 WHERE w3.harvest_batch_id = b.id AND w3.deleted_at IS NULL AND w3.status <> 'weighing' AND COALESCE(NULLIF(w3.effective_date, ''), substr(w3.updated_at, 1, 10)) >= ?))";
 
 /** PRODUCTION SCHEDULING (canon 0.30.97): Trim Packages Entry lists only
  * unloaded lots with a non-deleted trim schedule row in status scheduled. */
@@ -238,7 +241,8 @@ export async function listPaneRows(
   paneFilter?: "no_finished_lot" | "trim_scheduled" | "cryo_scheduled"
 ): Promise<QueueRow[]> {
   if (paneFilter === "no_finished_lot" && def.entity === "harvest_batches") {
-    return listHarvestQueueRows(db, def, NO_FINISHED_LOT_SQL);
+    const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour)) || FARM_DAY_START_HOUR_DEFAULT;
+    return listHarvestQueueRows(db, def, NO_FINISHED_LOT_SQL, [farmDay(nowIso(), startHour)]);
   }
   if (paneFilter === "trim_scheduled" && def.entity === "wet_weight_entries") {
     return listLotQueueRows(db, def, TRIM_SCHEDULED_SQL);
@@ -252,7 +256,8 @@ export async function listPaneRows(
 async function listHarvestQueueRows(
   db: D1Database,
   def: QueueDef,
-  filterSql: string
+  filterSql: string,
+  extraBinds: unknown[] = []
 ): Promise<QueueRow[]> {
   const result = await db
     .prepare(
@@ -262,7 +267,7 @@ async function listHarvestQueueRows(
        WHERE b.deleted_at IS NULL AND b.status = ? AND ${farmHarvestSql("b")} ${filterSql}
        ORDER BY b.created_at DESC`
     )
-    .bind(def.predicate.value)
+    .bind(def.predicate.value, ...extraBinds)
     .all<Record<string, unknown>>();
   return toQueueRows(result.results ?? []);
 }
@@ -378,6 +383,8 @@ export type ScheduleItemRow = {
   /** THE PACKAGE READS IN FOUR LINES (canon 0.30.199): a prepack row's live grams and its ledger location. */
   grams?: number;
   location?: string | null;
+  /** THE PREPACK HEADINGS (canon 0.30.229): the HBN's grow method display name, or null when the batch has none. */
+  grow_method?: string | null;
 };
 
 /** THE HBN ON THE SCHEDULING PANES (canon 0.30.102; owner, 2026-09-16,
@@ -565,6 +572,7 @@ type PrepackFeed = {
   metrc_tag: string | null;
   qty: number;
   location: string | null;
+  grow_method: string | null;
 };
 
 /** THE PACKAGE CARRIES ITS HBN (canon 0.30.196): the feed reads the HBN from
@@ -573,11 +581,13 @@ type PrepackFeed = {
 const PREPACK_PARENT_SQL = `
   SELECT p.id AS package_id, p.package_type_code, p.package_code,
          b.id AS harvest_batch_id, b.hbn, b.farm_code, b.entry_date,
-         COALESCE(b.market_strain, st.name, '') AS strain_name, li.metrc_tag, li.qty, li.location
+         COALESCE(b.market_strain, st.name, '') AS strain_name, li.metrc_tag, li.qty, li.location,
+         gm.display_name AS grow_method
   FROM wip_packages p
   JOIN harvest_batches b ON b.id = p.harvest_batch_id AND b.deleted_at IS NULL
   LEFT JOIN wet_weight_entries w ON w.id = p.wet_weight_entry_id AND w.deleted_at IS NULL
   LEFT JOIN strains st ON st.id = b.strain_id
+  LEFT JOIN grow_methods gm ON gm.code = b.grow_method_code AND gm.deleted_at IS NULL
   JOIN local_inventory_items li ON li.id = (
     SELECT i.id FROM local_inventory_items i
     WHERE i.wip_package_id = p.id AND i.deleted_at IS NULL AND i.qty > 0
@@ -623,6 +633,7 @@ function prepackAvailableRow(row: PrepackFeed): ScheduleItemRow {
     tag: metrcFacingTag({ metrc_tag: row.metrc_tag, package_code: row.package_code }),
     grams: Number(row.qty),
     location: row.location,
+    grow_method: row.grow_method,
   };
 }
 
@@ -1150,6 +1161,53 @@ export async function listBatchTruckNumbers(
   return (result.results ?? []).map((row) => String(row.truck_number));
 }
 
+/** THE TRUCK RECORD (canon 0.30.226): the next Truck # is one past the numbers
+ * already on this farm's lots of the same farm day (effective_date, else the
+ * created day). */
+export async function listFarmDayTruckNumbers(db: D1Database, farmCode: string, day: string): Promise<string[]> {
+  const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour)) || FARM_DAY_START_HOUR_DEFAULT;
+  const result = await db
+    .prepare(
+      `SELECT w.truck_number, w.effective_date, w.created_at
+       FROM wet_weight_entries w
+       JOIN harvest_batches b ON b.id = w.harvest_batch_id
+       WHERE b.farm_code = ? AND w.deleted_at IS NULL AND w.truck_number IS NOT NULL AND TRIM(w.truck_number) <> ''`
+    )
+    .bind(farmCode)
+    .all<{ truck_number: string; effective_date: string | null; created_at: string }>();
+  const numbers: string[] = [];
+  for (const row of result.results ?? []) {
+    const when = (row.effective_date ?? "").trim() || farmDay(row.created_at, startHour);
+    if (when === day) numbers.push(String(row.truck_number));
+  }
+  return numbers;
+}
+
+export type OpenHbnOption = { id: string; hbn: string; label: string };
+
+/** Minted open HBNs of one farm, header first, then newest by entry date. */
+export async function listOpenFarmHbns(db: D1Database, farmCode: string, headerId: string): Promise<OpenHbnOption[]> {
+  const result = await db
+    .prepare(
+      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, COALESCE(s.name, '') AS strain_name
+       FROM harvest_batches b
+       LEFT JOIN strains s ON s.id = b.strain_id
+       WHERE b.deleted_at IS NULL AND b.status = 'open' AND b.farm_code = ? AND ${farmHarvestSql("b")}
+       ORDER BY b.entry_date DESC, b.created_at DESC`
+    )
+    .bind(farmCode)
+    .all<{ id: string; hbn: string; entry_date: string; farm_code: string; strain_name: string }>();
+  const rows = result.results ?? [];
+  const header = rows.find((row) => row.id === headerId);
+  const rest = rows.filter((row) => row.id !== headerId);
+  const ordered = header ? [header, ...rest] : rest;
+  return ordered.map((row) => ({
+    id: row.id,
+    hbn: row.hbn,
+    label: [row.farm_code, row.strain_name, row.entry_date].filter(Boolean).join(" / "),
+  }));
+}
+
 export type LotSummary = {
   id: string;
   created_at: string;
@@ -1158,6 +1216,7 @@ export type LotSummary = {
   truck_number?: string | null;
   dry_space_name?: string | null;
   team_lead?: string | null;
+  hbn?: string | null;
 };
 
 /** Lots for one harvest batch in one status, newest first (resume links on the picked page). */
@@ -1168,9 +1227,10 @@ export async function listLotsByStatus(
 ): Promise<LotSummary[]> {
   const result = await db
     .prepare(
-      `SELECT w.id, w.created_at, w.weight_grams, w.truck_number, d.name AS dry_space_name, w.team_lead
+      `SELECT w.id, w.created_at, w.weight_grams, w.truck_number, d.name AS dry_space_name, w.team_lead, b.hbn
        FROM wet_weight_entries w
        LEFT JOIN dry_spaces d ON d.id = w.actual_dryspc
+       JOIN harvest_batches b ON b.id = w.harvest_batch_id
        WHERE w.harvest_batch_id = ? AND w.status = ? AND w.deleted_at IS NULL
        ORDER BY w.created_at DESC`
     )
@@ -1232,21 +1292,30 @@ export async function getLot(db: D1Database, id: string): Promise<LotRow | null>
     .first<LotRow>();
 }
 
-export type LotWeightRow = { id: string; weight_grams: number; created_at: string };
+export type LotWeightRow = {
+  id: string;
+  weight_grams: number;
+  created_at: string;
+  harvest_batch_id?: string | null;
+  hbn?: string | null;
+};
 
 export async function listLotWeights(
   db: D1Database,
   ledger: LedgerDef,
   lotId: string
 ): Promise<LotWeightRow[]> {
-  const result = await db
-    .prepare(
-      `SELECT id, weight_grams, created_at FROM ${ledger.table}
-       WHERE ${ledger.parentField} = ? AND deleted_at IS NULL
-       ORDER BY created_at DESC`
-    )
-    .bind(lotId)
-    .all<LotWeightRow>();
+  const sql =
+    ledger.table === "wet_weights"
+      ? `SELECT w.id, w.weight_grams, w.created_at, w.harvest_batch_id, b.hbn
+         FROM wet_weights w
+         LEFT JOIN harvest_batches b ON b.id = w.harvest_batch_id
+         WHERE w.wet_weight_entry_id = ? AND w.deleted_at IS NULL
+         ORDER BY w.created_at DESC`
+      : `SELECT id, weight_grams, created_at FROM ${ledger.table}
+         WHERE ${ledger.parentField} = ? AND deleted_at IS NULL
+         ORDER BY created_at DESC`;
+  const result = await db.prepare(sql).bind(lotId).all<LotWeightRow>();
   return result.results ?? [];
 }
 
@@ -1888,16 +1957,9 @@ export type LocalInventoryListRow = {
   hbn?: string | null;
 };
 
-/** THE FFZ INVENTORY LOCATION (canon 0.30.145): the ledger's fresh frozen set
- * as the FFZ cube reads it (listFfzGrams' ledger share, the mirror aside):
- * every live item at the Blast Freezer, and every live item born of a cryo'd
- * package wherever it sits. */
-export const FFZ_LEDGER_CLAUSE =
-  "(i.location = ? OR EXISTS (SELECT 1 FROM wip_packages fp WHERE fp.id = i.wip_package_id AND fp.deleted_at IS NULL AND fp.cryo_weight_grams IS NOT NULL))";
-
 export async function listLocalInventory(
   db: D1Database,
-  filters: { item_kind?: string; farm?: string; location?: string; strain?: string; ffz?: boolean } = {}
+  filters: { item_kind?: string; farm?: string; location?: string; strain?: string } = {}
 ): Promise<LocalInventoryListRow[]> {
   const clauses = ["i.deleted_at IS NULL"];
   const binds: unknown[] = [];
@@ -1912,10 +1974,6 @@ export async function listLocalInventory(
   if (filters.location) {
     clauses.push("i.location = ?");
     binds.push(filters.location);
-  }
-  if (filters.ffz) {
-    clauses.push(FFZ_LEDGER_CLAUSE);
-    binds.push(LOC_BLAST_FREEZER);
   }
   if (filters.strain) {
     clauses.push("i.strain_id = ?");
@@ -3630,6 +3688,7 @@ export type BarnWetLotRow = {
   hbn: string | null;
   metrc_harvest_tag: string | null;
   farm_code: string | null;
+  truck_number?: string | null;
   strain_label: string | null;
   entry_date: string | null;
   weight_grams: number;
@@ -3663,7 +3722,7 @@ export type BarnWetLotRow = {
  * can move it from where it is. The 0.30.73 gate (the package live in BARN, ARL
  * BARN or PNS BARN) is repealed; the label still rides last-6-of-tag / origin
  * farm / market strain (strain name when no market strain). */
-const BARN_WET_LOT_SELECT = `SELECT w.id, w.status, li.location AS barn_location, b.hbn, b.metrc_harvest_tag, b.farm_code,
+const BARN_WET_LOT_SELECT = `SELECT w.id, w.status, li.location AS barn_location, b.hbn, b.metrc_harvest_tag, b.farm_code, w.truck_number,
               COALESCE(b.market_strain, s.name) AS strain_label, b.entry_date,
               w.weight_grams, w.material_form, w.actual_dryspc,
               d.name AS planned_space_name, d.kind AS planned_space_kind,
@@ -3751,11 +3810,14 @@ export type SiloLoadRow = {
   paused_seconds: number;
   ended_at: string | null;
   notes: string | null;
+  /** THE DRYING SCHEDULE (canon 0.30.226): the lot's Truck #, so a Working row reads the label Load Silo reads. */
+  truck_number?: string | null;
 };
 
 const SILO_LOAD_SELECT = `SELECT l.id, l.dry_space_id, d.name AS silo_name, l.wet_weight_entry_id,
               b.hbn, b.metrc_harvest_tag, COALESCE(b.market_strain, s.name) AS strain_label, b.farm_code,
-              w.weight_grams, w.dry_weight_grams, l.loaded_at, l.started_at, l.paused_at, l.paused_seconds, l.ended_at, l.notes
+              w.weight_grams, w.dry_weight_grams, l.loaded_at, l.started_at, l.paused_at, l.paused_seconds, l.ended_at, l.notes,
+              w.truck_number
        FROM silo_loads l
        LEFT JOIN dry_spaces d ON d.id = l.dry_space_id
        LEFT JOIN wet_weight_entries w ON w.id = l.wet_weight_entry_id
@@ -3830,88 +3892,15 @@ export async function listSiloLotGrams(db: D1Database): Promise<SiloLotGramsRow[
   return (result.results ?? []).filter((r) => r.dry_space_id != null);
 }
 
-/** THE FFZ CUBE READS THE MIRROR (canon 0.30.75). Owner, 2026-09-15: "check
- * FFZ, we have inventory but the FFZ cube is empty": his FG Inventory in METRC
- * pane read FFZ 129,259.00 g while the cube read only the local ledger. "Any
- * FFZ" (his 0.30.73 pick) now reads, each package once:
- *   1. the METRC mirror's active packages whose item kind (the Item name's
- *      first segment, canon 0.30.43) is one of the fresh frozen kinds
- *      (app_config ffz_item_kinds, FFZ by default), in grams;
- *   2. the local ledger's frozen material the mirror does not already count:
- *      items at the Blast Freezer or born of a cryo'd package, unless their
- *      METRC tag is one of those mirror packages;
- *   3. the cryo weight of a cryo'd package still in the Testing Queue that never
- *      had a ledger item (the packages from before the ledger followed the trim);
- *      a package whose ledger item was voided or purged is not one of them, so a
- *      purge of the FFZ inventory (canon 0.30.145) empties the cube's ledger share.
- * THE MIRROR CLOSES THE LEDGER (canon 0.30.128): a tag the mirror marks gone
- * counts nowhere, ledger or queue, since METRC says that package left.
- * Returns the grams and the mirror's share, so the tile can say where it read. */
-export type FfzGrams = { grams: number; mirrorGrams: number; ledgerGrams: number; mirrorPackages: number };
-
-/** The mirror predicate for one item kind: the whole Item name, or its first " - " segment. */
-function ffzKindClause(alias: string): string {
+/** The mirror predicate for one fresh frozen kind (canon 0.30.75): the whole Item name, or its first " - " segment. The cube that read it left under canon 0.30.225; landing still uses this. */
+export function ffzKindClause(alias: string): string {
   return `(UPPER(TRIM(COALESCE(${alias}.item, ''))) = ? OR UPPER(COALESCE(${alias}.item, '')) LIKE ?)`;
 }
 
-function ffzKindBinds(kinds: readonly string[]): string[] {
+export function ffzKindBinds(kinds: readonly string[]): string[] {
   const out: string[] = [];
   for (const kind of kinds) out.push(kind.toUpperCase(), `${kind.toUpperCase()} - %`);
   return out;
-}
-
-export async function listFfzGrams(db: D1Database, kinds: readonly string[] = ["FFZ"]): Promise<FfzGrams> {
-  const kindList = kinds.length > 0 ? kinds : ["FFZ"];
-  const mirrorWhere = kindList.map(() => ffzKindClause("m")).join(" OR ");
-  const [mirror, ledger, orphan] = await Promise.all([
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(m.quantity), 0) AS grams, COUNT(*) AS packages
-         FROM metrc_packages m
-         WHERE m.gone_at IS NULL
-           AND LOWER(TRIM(COALESCE(m.uom, ''))) IN ('g', 'grams', 'gram')
-           AND (${mirrorWhere})`
-      )
-      .bind(...ffzKindBinds(kindList))
-      .first<{ grams: number | null; packages: number | null }>(),
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(i.qty), 0) AS grams
-         FROM local_inventory_items i
-         LEFT JOIN wip_packages p ON p.id = i.wip_package_id AND p.deleted_at IS NULL
-         WHERE i.deleted_at IS NULL AND i.uom = 'g'
-           AND (i.location = ? OR p.cryo_weight_grams IS NOT NULL)
-           AND NOT EXISTS (
-             SELECT 1 FROM metrc_packages m
-             WHERE m.gone_at IS NULL AND m.tag = UPPER(TRIM(COALESCE(i.metrc_tag, '')))
-               AND (${mirrorWhere})
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM metrc_packages mg
-             WHERE mg.gone_at IS NOT NULL AND mg.tag = UPPER(TRIM(COALESCE(i.metrc_tag, '')))
-           )`
-      )
-      .bind(LOC_BLAST_FREEZER, ...ffzKindBinds(kindList))
-      .first<{ grams: number | null }>(),
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(p.cryo_weight_grams), 0) AS grams
-         FROM wip_packages p
-         WHERE p.deleted_at IS NULL AND p.cryo_weight_grams IS NOT NULL AND p.status = ?
-           AND NOT EXISTS (
-             SELECT 1 FROM local_inventory_items i WHERE i.wip_package_id = p.id
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM metrc_packages mg
-             WHERE mg.gone_at IS NOT NULL AND mg.tag = UPPER(TRIM(COALESCE(p.package_code, '')))
-           )`
-      )
-      .bind(WIP_STATUS.testing_queue)
-      .first<{ grams: number | null }>(),
-  ]);
-  const mirrorGrams = metrcQuantity(Number(mirror?.grams ?? 0));
-  const ledgerGrams = metrcQuantity(Number(ledger?.grams ?? 0) + Number(orphan?.grams ?? 0));
-  return { grams: metrcQuantity(mirrorGrams + ledgerGrams), mirrorGrams, ledgerGrams, mirrorPackages: Number(mirror?.packages ?? 0) };
 }
 
 export async function getSiloLoad(db: D1Database, id: string): Promise<SiloLoadRow | null> {
@@ -3941,6 +3930,84 @@ export async function getOpenSiloLoadForLot(db: D1Database, lotId: string): Prom
        ORDER BY l.loaded_at DESC LIMIT 1`)
     .bind(lotId)
     .first<SiloLoadRow>();
+}
+
+/** THE JOINT UNLOAD (canon 0.30.226): every open load in one space, first
+ * loaded first (the last one takes the share's remainder); a voided lot's
+ * load is no load (canon 0.30.116). */
+export async function listOpenSiloLoadsInSpace(db: D1Database, spaceId: string): Promise<SiloLoadRow[]> {
+  const result = await db
+    .prepare(`${SILO_LOAD_SELECT}
+       WHERE l.dry_space_id = ? AND l.deleted_at IS NULL AND l.ended_at IS NULL AND w.deleted_at IS NULL
+       ORDER BY l.loaded_at ASC, l.id ASC`)
+    .bind(spaceId)
+    .all<SiloLoadRow>();
+  return result.results ?? [];
+}
+
+/** THE DRYING SCHEDULE'S COMPLETE PANE (canon 0.30.226): a lot unloaded from a
+ * space (the space it dried in, its actual_dryspc, which Load Silo sets) at or
+ * after `sinceIso`. The unload is a finished unload session (the normal
+ * finish) or an ended load (the freezer's line removed ends the load and voids
+ * the session); a lot that has moved on to trim still counts, a lot demoted
+ * back to drying does not. */
+export type DryingCompleteRow = {
+  lot_id: string;
+  status: string;
+  truck_number: string | null;
+  weight_grams: number | null;
+  dry_weight_grams: number | null;
+  space_id: string;
+  space_name: string | null;
+  space_type: string | null;
+  shape: string | null;
+  hbn: string | null;
+  metrc_harvest_tag: string | null;
+  farm_code: string | null;
+  strain_label: string | null;
+  package_code: string | null;
+  /** The latest finished unload session's finish instant and its effective day. */
+  finished_at: string | null;
+  effective_date: string | null;
+  /** The latest ended load's end instant. */
+  ended_at: string | null;
+};
+
+export async function listDryingComplete(db: D1Database, sinceIso: string): Promise<DryingCompleteRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT w.id AS lot_id, w.status, w.truck_number, w.weight_grams, w.dry_weight_grams,
+              d.id AS space_id, d.name AS space_name, d.space_type, d.shape,
+              b.hbn, b.metrc_harvest_tag, b.farm_code, COALESCE(b.market_strain, s.name) AS strain_label,
+              li.package_code,
+              (SELECT u.finished_at FROM unload_sessions u
+                WHERE u.wet_weight_entry_id = w.id AND u.deleted_at IS NULL AND u.finished_at IS NOT NULL
+                ORDER BY u.finished_at DESC LIMIT 1) AS finished_at,
+              (SELECT u.effective_date FROM unload_sessions u
+                WHERE u.wet_weight_entry_id = w.id AND u.deleted_at IS NULL AND u.finished_at IS NOT NULL
+                ORDER BY u.finished_at DESC LIMIT 1) AS effective_date,
+              (SELECT l.ended_at FROM silo_loads l
+                WHERE l.wet_weight_entry_id = w.id AND l.deleted_at IS NULL AND l.ended_at IS NOT NULL
+                ORDER BY l.ended_at DESC LIMIT 1) AS ended_at
+       FROM wet_weight_entries w
+       JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
+       JOIN dry_spaces d ON d.id = w.actual_dryspc AND d.kind = 'silo'
+       LEFT JOIN strains s ON s.id = b.strain_id
+       LEFT JOIN local_inventory_items li ON li.id = (
+         SELECT i.id FROM local_inventory_items i
+         WHERE i.wet_weight_entry_id = w.id AND i.deleted_at IS NULL
+         ORDER BY i.created_at ASC, i.id ASC LIMIT 1)
+       WHERE w.deleted_at IS NULL AND w.status IN (?, ?, ?)
+         AND (
+           EXISTS (SELECT 1 FROM unload_sessions u
+                   WHERE u.wet_weight_entry_id = w.id AND u.deleted_at IS NULL AND u.finished_at >= ?)
+           OR EXISTS (SELECT 1 FROM silo_loads l
+                   WHERE l.wet_weight_entry_id = w.id AND l.deleted_at IS NULL AND l.ended_at >= ?)
+         )`
+    )
+    .bind(LOT_STATUS.unloaded, LOT_STATUS.trimmed, LOT_STATUS.frozen, sinceIso, sinceIso)
+    .all<DryingCompleteRow>();
+  return result.results ?? [];
 }
 
 export type PendingLocationChangeRow = {

@@ -16,13 +16,22 @@
  * script keeps them ticking between renders.
  */
 
-import { formatGrams, shortLotId, spaceHoldsOneLot } from "./config";
+import {
+  DRY_SPACE_TYPE_LABELS,
+  dryingStageOfType,
+  dryingStagePath,
+  formatGrams,
+  shortLotId,
+  spaceHoldsOneLot,
+  type DrySpaceType,
+  type DryingStage,
+} from "./config";
 import type { BarnWetLotRow, SiloLoadRow, SiloRow } from "./db";
 import { effectiveDateField } from "./effective";
 import { FARM_DAY_START_HOUR_DEFAULT } from "./farmday";
-import { esc, time24MaskScript } from "./html";
-import { t, type Locale } from "./i18n";
-import { lotStrainLine, siloLiveScript, siloTile, siloWaitingLines, spaceShapeOf, type SiloLive } from "./silo";
+import { esc, lockOnSubmitScript, time24MaskScript } from "./html";
+import { t, tFill, type Locale } from "./i18n";
+import { lotStrainLine, siloLiveScript, siloTile, siloWaitingLines, spaceShapeOf, spaceTypeOf, type SiloLive } from "./silo";
 
 export type ClockState = "not_started" | "running" | "paused";
 
@@ -85,13 +94,17 @@ export function barnLotLabel(lot: {
   farm_code: string | null;
   strain_label: string | null;
   hbn?: string | null;
+  truck_number?: string | null;
 }): string {
   const tag = (lot.metrc_harvest_tag ?? lot.package_code ?? (lot.hbn ? shortLotId(lot.hbn, null) : "")).trim();
   const last6 = tag.length > 6 ? tag.slice(-6) : tag;
-  return [last6 || "?", lot.farm_code ?? "?", lot.strain_label ?? ""].join(" / ");
+  const base = [last6 || "?", lot.farm_code ?? "?", lot.strain_label ?? ""].join(" / ");
+  const truck = String(lot.truck_number ?? "").trim();
+  return truck && lot.hbn ? `Truck ${truck} - ${lot.hbn}` : base;
 }
 
-function clockMarkup(load: SiloLoadRow, nowIso: string, locale: Locale): string {
+/** The load's clock as the tiles read it (exported for the drying schedule's Working pane, canon 0.30.226). */
+export function clockMarkup(load: SiloLoadRow, nowIso: string, locale: Locale): string {
   const state = siloClockState(load);
   const seconds = siloClockSeconds(load, nowIso);
   const label =
@@ -254,6 +267,12 @@ export function loadSiloPage(input: {
   farmDayStart?: number;
   locale?: Locale;
   ok?: string;
+  /** THE DRYING SCHEDULE (canon 0.30.226): the >> of a drying surface opens
+   * the picked form with the select limited to that surface's space type, the
+   * planned space preselected when it is of that type, and a return to the
+   * surface once loaded. Absent, the form is today's. */
+  kind?: DrySpaceType | null;
+  space?: string | null;
 }): string {
   const locale = input.locale ?? "en";
   const rows =
@@ -317,8 +336,10 @@ export function loadSiloPage(input: {
     // strip (the five silos, the Arlington Dry Room, the Blast Freezer(s)),
     // whatever the HBN's farm and wherever the package sits; the 0.30.73 site
     // narrowing (the silos at the barn the package waited in) is repealed.
-    const siteSilos = input.silos;
+    const kind = input.kind ?? null;
+    const siteSilos = kind ? input.silos.filter((s) => spaceTypeOf(s) === kind) : input.silos;
     const freeSilos = siteSilos.filter((s) => !occupantOf(s));
+    const preselect = kind && input.space && freeSilos.some((s) => s.id === input.space) ? input.space : null;
     const siloOptions = siteSilos
       .map((s) => {
         const occupant = occupantOf(s);
@@ -330,11 +351,16 @@ export function loadSiloPage(input: {
         const holding = spaceHoldsOneLot(s.space_type) ? 0 : openLoadsIn(s.id).length;
         const heldWord = holding > 0 ? ` (${esc(countLots(holding, locale))})` : "";
         // THE LOADING SILO (canon 0.30.81): a truck lot's HBN planned silo preselects like a lot's own space does.
-        const planned = lot.actual_dryspc === s.id || (lot.planned_space_kind !== "silo" && lot.planned_silo_id === s.id);
+        const planned = preselect
+          ? s.id === preselect
+          : lot.actual_dryspc === s.id || (lot.planned_space_kind !== "silo" && lot.planned_silo_id === s.id);
         return `<option value="${esc(s.id)}"${planned ? " selected" : ""}${holding > 0 ? ` data-holding="${holding}"` : ""}>${esc(s.name)}${heldWord}</option>`;
       })
       .join("");
     const noneFree = freeSilos.length === 0;
+    const noSpaceOfKind = Boolean(kind) && siteSilos.length === 0;
+    const selectLabel = kind ? t(locale, DRY_SPACE_TYPE_LABELS[kind]) : t(locale, "Silo");
+    const nextField = kind ? `<input type="hidden" name="next" value="${esc(dryingStagePath(dryingStageOfType(kind)))}">` : "";
     // Canon 0.30.9: the HH:MM colon mask (the Acquire idiom) on the Start time,
     // which IS the loaded time and the clock's zero; blank loads now.
     // THE EFFECTIVE DATE (canon 0.30.92; owner: "a date override in the load
@@ -344,8 +370,15 @@ export function loadSiloPage(input: {
       <form class="stack" method="post" action="/station/load_silo/load" data-load-silo>
         <input type="hidden" name="lot_id" value="${esc(lot.id)}">
         <input type="hidden" name="loaded_at_iso" value="">
-        <label class="field">${esc(t(locale, "Silo"))} <select name="dry_space_id" required>${siloOptions}</select></label>
-        ${noneFree ? `<p class="banner warn" data-silos-full>${esc(t(locale, "Every silo is occupied. Unload one first."))}</p>` : ""}
+        ${nextField}
+        <label class="field">${esc(selectLabel)} <select name="dry_space_id" required${kind ? ` data-space-kind="${esc(kind)}"` : ""}>${siloOptions}</select></label>
+        ${
+          noSpaceOfKind
+            ? `<p class="banner warn" data-no-space-of-kind>${esc(t(locale, "There is no space of this kind in Dry Spaces."))}</p>`
+            : noneFree
+              ? `<p class="banner warn" data-silos-full>${esc(t(locale, "Every silo is occupied. Unload one first."))}</p>`
+              : ""
+        }
         <label class="field">${esc(t(locale, "Start time (24h, blank = now)"))} <input type="text" name="start_time" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" inputmode="numeric" placeholder="HH:MM" data-time24-mask id="start_time"></label>
         <p class="muted">${esc(t(locale, "The clock runs from this loaded time."))}</p>
         ${effectiveDateField(input.nowIso, locale, t(locale, "Here the Start time falls on that day and is required with it."), undefined, input.farmDayStart ?? FARM_DAY_START_HOUR_DEFAULT)}
@@ -367,4 +400,98 @@ export function loadSiloPage(input: {
       </aside>
       <div class="working-pane">${working}</div>
     </div>`;
+}
+
+/** THE DRYING SCHEDULE (canon 0.30.226): an open load's label, the one Load
+ * Silo reads for its lot (Truck n - HBN when the lot rode a truck). */
+export function loadLotLabel(load: SiloLoadRow): string {
+  return barnLotLabel({
+    metrc_harvest_tag: load.metrc_harvest_tag,
+    package_code: null,
+    farm_code: load.farm_code,
+    strain_label: load.strain_label,
+    hbn: load.hbn,
+    truck_number: load.truck_number ?? null,
+  });
+}
+
+/** The joint unload's share order: first loaded first, the id breaking a tie
+ * (the order listOpenSiloLoadsInSpace reads), so the last share, the one that
+ * takes the remainder, is the last lot loaded. */
+export function shareOrder(a: SiloLoadRow, b: SiloLoadRow): number {
+  if (a.loaded_at !== b.loaded_at) return a.loaded_at < b.loaded_at ? -1 : 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/** One load per lot, in share order: a lot holding two open loads in one space
+ * (a repeated Load Silo tap) is one lot with one share; its finish ends every
+ * one of its loads. */
+export function oneLoadPerLot(loads: readonly SiloLoadRow[]): SiloLoadRow[] {
+  const kept: SiloLoadRow[] = [];
+  for (const load of [...loads].sort(shareOrder)) {
+    if (!kept.some((other) => other.wet_weight_entry_id === load.wet_weight_entry_id)) kept.push(load);
+  }
+  return kept;
+}
+
+/** THE JOINT UNLOAD, DRY PRO RATA (canon 0.30.226; his pick "Every entry, dry
+ * pro rata"): a space holding several open loads, unloaded as a whole. One
+ * form asks the total dry grams and the unload's questions once: the
+ * operator, the effective day, and the reconcile choice the gate offers
+ * (every dry total falls short of the wet-born package). Every loadable space
+ * is kind silo, which forces bucked, so the material reads as a line the way
+ * Unload Dry Space reads it and no on-site question is asked. The load ids
+ * ride along so a group that changed before the post is refused, and the
+ * first tap locks the button (THE FOUR START TAPS, canon 0.30.89). */
+export function unloadTogetherForm(input: {
+  stage: DryingStage;
+  space: SiloRow;
+  loads: SiloLoadRow[];
+  nowIso: string;
+  farmDayStart?: number;
+  locale?: Locale;
+}): string {
+  const locale = input.locale ?? "en";
+  const loads = [...input.loads].sort(shareOrder);
+  const perLot = oneLoadPerLot(loads);
+  const groupWet = perLot.reduce((sum, load) => sum + Number(load.weight_grams ?? 0), 0);
+  const path = dryingStagePath(input.stage);
+  const lots = perLot
+    .map(
+      (load) => `<li data-share-lot="${esc(load.wet_weight_entry_id)}" data-wet="${esc(String(Number(load.weight_grams ?? 0)))}">
+          <span class="schedule-identity">${esc(loadLotLabel(load))}</span>
+          <span class="muted">${esc(t(locale, "Wet"))} ${esc(formatGrams(Number(load.weight_grams ?? 0)))} g</span>
+        </li>`
+    )
+    .join("");
+  return `<form class="stack unload-together" method="post" action="${esc(`${path}/unload_together/${input.space.id}`)}" data-unload-together="${esc(input.space.id)}" data-lock-on-submit>
+      <input type="hidden" name="load_ids" value="${esc(loads.map((load) => load.id).join(","))}">
+      <p class="muted">${esc(
+        tFill(
+          locale,
+          "Each lot's share is the total dry grams times its wet grams over {g} g, the wet grams of every load here, in whole grams; the last lot takes the remainder.",
+          { g: formatGrams(groupWet) }
+        )
+      )}</p>
+      <ol class="unload-together-lots">${lots}</ol>
+      <label class="field">${esc(t(locale, "Total dry grams"))} <input type="number" name="total_dry_grams" min="1" step="1" inputmode="numeric" required data-total-dry></label>
+      <label class="field">${esc(t(locale, "Operator"))} <input type="text" name="operator_name"></label>
+      <p class="muted" data-material-form>${esc(t(locale, "Material"))}: ${esc(t(locale, "Bucked"))}</p>
+      ${effectiveDateField(
+        input.nowIso,
+        locale,
+        t(locale, "The unload's transaction date. Today by default; the Admin PIN sets another day."),
+        undefined,
+        input.farmDayStart ?? FARM_DAY_START_HOUR_DEFAULT
+      )}
+      <fieldset class="choice-row" data-reconcile-choice>
+        <legend>${esc(t(locale, "If the dry total differs from the packages"))}</legend>
+        <label><input type="radio" name="gate_choice" value="queue_adjust" required> ${esc(t(locale, "Queue an adjustment CSV"))}</label>
+        <label><input type="radio" name="gate_choice" value="nothing"> ${esc(t(locale, "Nothing, just finish"))}</label>
+      </fieldset>
+      <div class="row-actions">
+        <button type="submit">${esc(t(locale, "Unload together"))}</button>
+        <a class="btn secondary" href="${esc(path)}">${esc(t(locale, "Cancel"))}</a>
+      </div>
+    </form>${lockOnSubmitScript()}`;
 }

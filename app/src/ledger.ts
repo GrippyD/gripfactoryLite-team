@@ -78,8 +78,10 @@ export function receiveMintKind(materialForm: string): string | null {
   return null;
 }
 
-export function lotPackageCode(hbn: string, metrcHarvestTag: string | null | undefined): string {
-  return shortLotId(hbn, metrcHarvestTag);
+export function lotPackageCode(hbn: string, metrcHarvestTag: string | null | undefined, truckNumber?: string | null): string {
+  const base = shortLotId(hbn, metrcHarvestTag);
+  const truck = String(truckNumber ?? "").trim();
+  return truck ? `${base}-T${truck}` : base;
 }
 
 export type MintInput = {
@@ -98,6 +100,8 @@ export type MintInput = {
   /** THE TAG LAW (canon 0.30.38): the METRC package tag typed at Finish lot,
    * optional; normalized by the caller; null keeps the internal code alone. */
   metrcTag?: string | null;
+  /** THE TRUCK RECORD (canon 0.30.226): appends -T<n> so two trucks of one HBN never share a code. */
+  truckNumber?: string | null;
 };
 
 export type MintPlan =
@@ -152,7 +156,7 @@ export function planFinishMint(
   return {
     action: "insert",
     item_kind: kind,
-    package_code: lotPackageCode(input.hbn, input.metrcHarvestTag),
+    package_code: lotPackageCode(input.hbn, input.metrcHarvestTag, input.truckNumber),
     metrc_tag: metrcTag,
     qty,
     uom: "g",
@@ -238,6 +242,27 @@ export function planUnloadFinish(input: {
     delta: roundGrams(dry - parent),
     requireTruck: stage,
   };
+}
+
+/** THE JOINT UNLOAD, DRY PRO RATA (canon 0.30.226; his pick "Every entry, dry
+ * pro rata"): each load's share of one total dry is the total times its wet
+ * grams over the wet grams of every load in the group, in whole grams (round
+ * half up), the last share taking the remainder so the shares sum to the
+ * total. The caller refuses a group with no wet grams and a negative share. */
+export function jointUnloadShares(totalDry: number, wetGrams: readonly number[]): number[] {
+  const total = roundGrams(totalDry);
+  const wets = wetGrams.map((grams) => Math.max(0, Number(grams) || 0));
+  const groupWet = wets.reduce((sum, grams) => sum + grams, 0);
+  if (wets.length === 0 || groupWet <= 0) return [];
+  const shares: number[] = [];
+  let given = 0;
+  for (let i = 0; i < wets.length - 1; i++) {
+    const share = roundGrams((total * wets[i]) / groupWet);
+    shares.push(share);
+    given += share;
+  }
+  shares.push(total - given);
+  return shares;
 }
 
 /** to_processor lands the picked processor-side location (CSB when omitted).

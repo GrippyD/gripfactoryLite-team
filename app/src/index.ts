@@ -17,6 +17,8 @@ import {
   PRODUCTION_SCHEDULING_PATH,
   SCHEDULE_STAGE_TITLES,
   SCHEDULE_STAGES,
+  DRY_SPACE_TYPES,
+  type DrySpaceType,
   isKnownSiteLicense,
   materialAtNorth,
   METRC_UPLOAD_KINDS,
@@ -46,7 +48,7 @@ import {
   type Identity,
 } from "./identity";
 import { SERVICE_IDENTITY, SERVICE_REFUSAL, isAccessFronted, isServiceRoute, loginEmailOf } from "./service";
-import { farmDayStartHour } from "./effective";
+import { farmDayStartHour, farmToday } from "./effective";
 import {
   addDrySpace,
   addGrowMethod,
@@ -73,6 +75,7 @@ import {
   loadSilo,
   startSiloLoad,
   pauseSiloLoad,
+  unloadTogether,
   locationChangeUploadCsv,
   deactivatePerson,
   clearAllUploads,
@@ -152,7 +155,7 @@ import { listingsWithMatch, marketplacePage, parseMarketplacePane, salesOrderPag
 import { listZohoMenuItems, listZohoMounts, mountZohoInventory } from "./zohoinv";
 import { buildLiveSalesHelperMenu, decorateSalesHelperPage } from "./saleshelper";
 import { parseSendBody, sendSalesOrderMail, SH_MAIL_TO_DEFAULT, SH_SEND_GATE_KEY, type ShSendBody } from "./sendmail";
-import { dryingTotals, ffzLiveEntry, ffzTile, loadFfzVisual, loadSiloVisuals, siloLiveEntry, spaceShapeOf, SILO_LIVE_PATH } from "./silo";
+import { dryingTotals, loadSiloVisuals, siloLiveEntry, spaceShapeOf, SILO_LIVE_PATH } from "./silo";
 import {
   findMetrcRecord,
   isMountRound,
@@ -224,6 +227,8 @@ import {
   listAdminRows,
   listBatchPlantTags,
   listBatchTruckNumbers,
+  listFarmDayTruckNumbers,
+  listOpenFarmHbns,
   listChangeLog,
   listDrySpacesByKinds,
   listHarvestsByYear,
@@ -243,6 +248,7 @@ import {
   listPendingPackageUploads,
   listPendingLocationChangeUploads,
   listBarnWetLots,
+  listDryingComplete,
   getSiloLoad,
   listPendingManifestUploads,
   listPendingReceiveUploads,
@@ -329,7 +335,15 @@ import { asLocale, refusalText, t, tFill, type Locale } from "./i18n";
 import { asStoredBytes, attachmentFilename, importContentType, type ImportKind } from "./imports";
 import { inventorySheetCsv, parseFgMenu, recallPrefillFromQuery } from "./inventory";
 import { loadSiloPage, siloStrip } from "./drying";
-import { parseScheduleStage, prepackSchedulingPage, schedulingLanding, schedulingPage } from "./scheduling";
+import {
+  dryingCompleteSince,
+  dryingSchedulingPage,
+  parseDryingStage,
+  parseScheduleStage,
+  prepackSchedulingPage,
+  schedulingLanding,
+  schedulingPage,
+} from "./scheduling";
 import { editPage, logPage, lookupSectionPage, lookupsLandingPage, manualHbnPage, voidPage } from "./pages";
 import { LOOKUP_VALUE_SECTIONS } from "./lookups";
 import {
@@ -587,6 +601,11 @@ function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
   // THE BLAST FREEZER(S) (canon 0.30.106): a freezer's unload removes the line and moves nothing.
   if (ok === "frozen") return { kind: "ok", text: t(locale, "Line removed. The packages stand as FFZ in METRC; nothing moved.") };
   if (ok === "completed") return { kind: "ok", text: t(locale, "Completed.") };
+  // THE DRYING SCHEDULE (canon 0.30.226): a load from a surface's >>, and the joint unload.
+  if (ok === "drying_loaded") return { kind: "ok", text: t(locale, "Loaded. The location change pends at the export home.") };
+  if (ok === "unloaded_together") {
+    return { kind: "ok", text: tFill(locale, "Unloaded together: {n} lots.", { n: url.searchParams.get("n") ?? "0" }) };
+  }
   // THE MANIFEST BUILDER (canon 0.30.125; his pick "Download at once, and record").
   if (ok === "manifest") {
     return { kind: "ok", text: t(locale, "Manifest recorded. The T3 file is downloading; it also waits on Pending Data Uploads.") };
@@ -653,6 +672,21 @@ function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
     const parsed = url.searchParams.get("parsed") ?? "0";
     const skipped = url.searchParams.get("skipped") ?? "0";
     return { kind: "ok", text: `${t(locale, "Parsed")} ${parsed}, ${t(locale, "skipped")} ${skipped}.` };
+  }
+  if (ok === "truck_split") {
+    const truck = url.searchParams.get("truck") ?? "";
+    const parts = (url.searchParams.get("parts") ?? "")
+      .split(";")
+      .filter(Boolean)
+      .map((part) => {
+        const [serial, n, g] = part.split("|");
+        return tFill(locale, "{serial} {n} totes {g} g", { serial: serial ?? "", n: n ?? "0", g: g ?? "0" });
+      })
+      .join("; ");
+    const text = truck
+      ? tFill(locale, "Finished Truck {truck}: {parts}.", { truck, parts })
+      : tFill(locale, "Finished: {parts}.", { parts });
+    return { kind: "ok", text };
   }
   if (ok) return { kind: "ok", text: t(locale, "Saved.") };
   const err = url.searchParams.get("err");
@@ -1126,6 +1160,7 @@ app.get("/inventory/metrc", async (c) => {
           released: Number(c.req.query("released") ?? 0) || 0,
           releasedPassed: Number(c.req.query("released_passed") ?? 0) || 0,
           releasedFailed: Number(c.req.query("released_failed") ?? 0) || 0,
+          landed: Number(c.req.query("landed") ?? 0) || 0,
         }
       : undefined;
   return html(
@@ -1291,9 +1326,8 @@ app.get(HARVEST_PATH, async (c) => {
   // THE CONSOLE DAY (canon 0.30.152): ?day=YYYY-MM-DD picks the day the yesterday panes read.
   // The Testing section does not read that day; it reads the harvest year.
   const input = await loadHarvestConsole(c.env.DB, now, c.req.query("day") ?? null);
-  const [silos, ffz, cure, testing, prepack] = await Promise.all([
+  const [silos, cure, testing, prepack] = await Promise.all([
     loadSiloVisuals(c.env.DB),
-    loadFfzVisual(c.env.DB),
     listCurePanes(c.env.DB, now),
     loadTestingSection(c.env.DB, input.year),
     loadPrepackSection(c.env.DB, input.yesterday),
@@ -1305,7 +1339,6 @@ app.get(HARVEST_PATH, async (c) => {
     harvestConsolePage({
       input,
       live: silos.live,
-      ffz: ffz.visual,
       nowIso: now,
       locale: s.locale,
       ok: c.req.query("ok") ?? undefined,
@@ -1414,7 +1447,6 @@ app.get("/admin/uploads", async (c) => {
 app.get(LEDGER_LOCATION_PATH, async (c) => {
   const s = await shell(c);
   const picked = textOrNull(c.req.query("location"));
-  // THE FFZ INVENTORY LOCATION (canon 0.30.145): the picker ends with FFZ inventory, a reading of the ledger's frozen set.
   const [farms, locations, notes] = await Promise.all([
     listLookup(c.env.DB, "farms"),
     listReconcileLocations(c.env.DB, s.locale),
@@ -1940,17 +1972,10 @@ app.get("/continuum/:file", async (c) => {
  * the menu; canon 0.30.69: five cone-topped cylinders with their live fill. */
 async function siloStripFor(c: AppContext): Promise<string> {
   const s = await shell(c);
-  // THE BLAST FREEZER(S) (canon 0.30.106; owner: "Expose FFZ inventory on the
-  // dry ops pages"): the FFZ cube rides the strip on every Drying Operations
-  // page as it does on the console. THE CURE PANES ride the strip's row after
-  // the cube (owner, 2026-09-22: "in line with drying spaces").
+  // THE CURE PANES ride the strip's row after the last space tile.
   const now = nowIso();
-  const [{ live }, ffz, cure] = await Promise.all([
-    loadSiloVisuals(c.env.DB),
-    loadFfzVisual(c.env.DB),
-    listCurePanes(c.env.DB, now),
-  ]);
-  return siloStrip(live, now, s.locale, ffzTile(ffz.visual, s.locale) + curePanes(cure, s.locale));
+  const [{ live }, cure] = await Promise.all([loadSiloVisuals(c.env.DB), listCurePanes(c.env.DB, now)]);
+  return siloStrip(live, now, s.locale, curePanes(cure, s.locale));
 }
 
 app.post(SENSOR_PATH, async (c) => {
@@ -1975,14 +2000,12 @@ app.post(SENSOR_PATH, async (c) => {
  * the same facts on ungated pages. */
 app.get(SILO_LIVE_PATH, async (c) => {
   const s = await shell(c);
-  const [{ live, capacityGrams }, ffz] = await Promise.all([loadSiloVisuals(c.env.DB), loadFfzVisual(c.env.DB)]);
+  const { live, capacityGrams } = await loadSiloVisuals(c.env.DB);
   return c.json(
     {
       capacityGrams,
       at: nowIso(),
       silos: live.map((l) => siloLiveEntry(l.silo.id, l.silo.name, l.visual, s.locale, spaceShapeOf(l.silo))),
-      // THE HARVEST CONSOLE (canon 0.30.73): the FFZ cube repaints with the silos.
-      ffz: { ...ffzLiveEntry(ffz.visual, s.locale), capacityGrams: ffz.capacityGrams },
     },
     200,
     { "cache-control": "no-store" }
@@ -1995,20 +2018,22 @@ app.get("/station/load_silo", async (c) => {
   const s = await shell(c);
   // THE HARVEST CONSOLE (canon 0.30.73): the pane reads every farm's barn; the
   // silo select narrows to the picked lot's own site.
-  const [barnLots, siloVisuals, ffz] = await Promise.all([listBarnWetLots(c.env.DB), loadSiloVisuals(c.env.DB), loadFfzVisual(c.env.DB)]);
+  const [barnLots, siloVisuals] = await Promise.all([listBarnWetLots(c.env.DB), loadSiloVisuals(c.env.DB)]);
   const silos = siloVisuals.live.map((l) => l.silo);
   const loads = siloVisuals.live.flatMap((l) => l.loads);
   const pick = c.req.query("pick") ?? "";
   const loadId = c.req.query("load") ?? "";
   const picked = pick ? barnLots.find((l) => l.id === pick) ?? null : null;
   const pickedLoad = loadId ? await getSiloLoad(c.env.DB, loadId) : null;
+  // THE DRYING SCHEDULE (canon 0.30.226): a drying surface's >> carries its space type and the planned space.
+  const kindRaw = c.req.query("kind") ?? "";
+  const kind = (DRY_SPACE_TYPES as readonly string[]).includes(kindRaw) ? (kindRaw as DrySpaceType) : null;
   const now = nowIso();
   return html(
     c,
     s,
     "Load Silo",
-    // THE BLAST FREEZER(S) (canon 0.30.106): the FFZ cube rides the Load Silo strip too.
-    siloStrip(siloVisuals.live, now, s.locale, ffzTile(ffz.visual, s.locale)) +
+    siloStrip(siloVisuals.live, now, s.locale) +
       loadSiloPage({
         barnLots,
         silos,
@@ -2019,6 +2044,8 @@ app.get("/station/load_silo", async (c) => {
         farmDayStart: s.farmDayStart,
         locale: s.locale,
         ok: c.req.query("ok") ?? undefined,
+        kind,
+        space: kind ? (c.req.query("space") ?? null) : null,
       })
   );
 });
@@ -2046,6 +2073,36 @@ app.get(PRODUCTION_SCHEDULING_PATH, async (c) => {
 });
 
 app.get(`${PRODUCTION_SCHEDULING_PATH}/:stage`, async (c) => {
+  // THE DRYING SCHEDULE (canon 0.30.226): Silos, Dry Rooms and Freezers, views
+  // over the waiting lots, the open loads and the unloads; the silo strip
+  // rides above them as it does every Drying Operations page.
+  const drying = parseDryingStage(c.req.param("stage"));
+  if (drying) {
+    const s = await shell(c);
+    const now = nowIso();
+    const [lots, visuals, complete, cure] = await Promise.all([
+      listBarnWetLots(c.env.DB),
+      loadSiloVisuals(c.env.DB),
+      listDryingComplete(c.env.DB, dryingCompleteSince(now, s.farmDayStart)),
+      listCurePanes(c.env.DB, now),
+    ]);
+    return html(
+      c,
+      s,
+      SCHEDULE_STAGE_TITLES[drying],
+      siloStrip(visuals.live, now, s.locale, curePanes(cure, s.locale)) +
+        dryingSchedulingPage({
+          stage: drying,
+          lots,
+          live: visuals.live,
+          complete,
+          nowIso: now,
+          farmDayStart: s.farmDayStart,
+          together: c.req.query("together") ?? null,
+          locale: s.locale,
+        })
+    );
+  }
   const stage = parseScheduleStage(c.req.param("stage"));
   if (!stage) return c.notFound();
   const s = await shell(c);
@@ -2082,6 +2139,14 @@ app.post(`${PRODUCTION_SCHEDULING_PATH}/:stage/schedule`, async (c) => {
   }
   const hbnId = String(form.get("hbn_id") ?? "");
   const result = await scheduleHbn(c.env.DB, stage, hbnId, form);
+  return c.redirect(result.redirect, 303);
+});
+
+// THE JOINT UNLOAD (canon 0.30.226): Unload together on a drying surface's Working pane.
+app.post(`${PRODUCTION_SCHEDULING_PATH}/:stage/unload_together/:spaceId`, async (c) => {
+  const stage = parseDryingStage(c.req.param("stage"));
+  if (!stage) return c.notFound();
+  const result = await unloadTogether(c.env.DB, stage, c.req.param("spaceId"), actorForm(c, await c.req.formData()));
   return c.redirect(result.redirect, 303);
 });
 
@@ -2217,6 +2282,10 @@ app.get("/station/:key", async (c) => {
     const lot = await getLot(c.env.DB, lotId);
     if (!lot) return c.notFound();
     const weights = await listLotWeights(c.env.DB, ledger, lotId);
+    const toteHbns =
+      ledger.table === "wet_weights" && lot.farm_code && lot.harvest_batch_id
+        ? await listOpenFarmHbns(c.env.DB, lot.farm_code, lot.harvest_batch_id)
+        : [];
     const farmName = await farmDisplayName(c.env.DB, lot.farm_code ?? "");
     const total = sumGrams(weights.map((w) => Number(w.weight_grams)));
     // Owner ruling 2026-08-31: the two-pane theme is the station law for
@@ -2251,7 +2320,7 @@ app.get("/station/:key", async (c) => {
           undefined,
           lotPaneRows,
           s.locale,
-          wetLotPanel(station, lot, weights, farmName, total, s.locale)
+          wetLotPanel(station, lot, weights, farmName, total, s.locale, toteHbns)
         )
       );
     }
@@ -2357,6 +2426,8 @@ app.get("/station/:key", async (c) => {
             }
           }
           const resumeLots = await listLotsByStatus(c.env.DB, picked.id, LOT_STATUS.weighing);
+          const todayTrucks = await listFarmDayTruckNumbers(c.env.DB, farmCode, await farmToday(c.env.DB, nowIso()));
+          const suggestedTruck = String(nextTruckNumber(todayTrucks));
           // Owner ruling 2026-09-01 (alpha feedback): an in-progress lot must never
           // hide behind a blank header form, or a crew member fixing a weight can
           // re-enter the header and mint a duplicate lot. Exactly one weighing lot:
@@ -2381,6 +2452,7 @@ app.get("/station/:key", async (c) => {
             stagedTruck,
             resumeLots,
             newFormOpen: c.req.query("new") != null || c.req.query("truck") != null,
+            suggestedTruck,
           };
         }
         // Owner ruling 2026-08-31: "The weights of the original package and
@@ -2676,7 +2748,7 @@ app.get("/record/:table/:id/edit", async (c) => {
     inventory_location: await listLookup(c.env.DB, "inventory_location"),
     sign_off_name: await listLookup(c.env.DB, "sign_off_name"),
     // THE HBN THAT CAME BACK (canon 0.30.84): the lot pencil's HBN options, read only for a lot.
-    harvest_batches: table === "wet_weight_entries" ? await listLookup(c.env.DB, "harvest_batches") : [],
+    harvest_batches: table === "wet_weight_entries" || table === "wet_weights" ? await listLookup(c.env.DB, "harvest_batches") : [],
   };
   return html(c, s, "Edit", editPage(table, id, row, lookups));
 });
