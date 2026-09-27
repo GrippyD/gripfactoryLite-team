@@ -426,6 +426,12 @@ export const CONFIG_KEYS = {
   // trim package type codes that count as BUD, a comma list in data (canon
   // L-4), seeded BUD,SMALLS,SHAKE by migration 0052.
   btr_type_codes: "btr_type_codes",
+  // THE TRIM BOGEY (canon 0.30.249). Owner, 2026-09-26: "Add a Admin Lookup
+  // Field: [Trim Bogey] expressed as a percentage" and "Determines number of
+  // dark red squares and the order based on our scheme (ROYGBIVWB-Aqua)". A
+  // whole percent 0 to 100 in data (canon L-4), written by Admin, Lookups,
+  // Trim Bogey on its first save; TRIM_BOGEY_DEFAULT until then.
+  trim_bogey_pct: "trim_bogey_pct",
   // THE FARM DAY BEGINS AT SIX (canon 0.30.151). Owner, 2026-09-20: "Second
   // shift ends the next day, how can I have the report date treat the start of
   // the shift a the date?"; his pick "6:00 AM". The Eastern hour at which the
@@ -1245,6 +1251,13 @@ export function dryingReturnPath(raw: unknown): string | null {
 export const DRYING_COMPLETE_DAYS = 7;
 export const SCHEDULE_STATUS = { scheduled: "scheduled", complete: "complete" } as const;
 
+/** THE LOAD AND THE LOT (canon 0.30.241): a pass of an HBN onto Load Silo.
+ * One production_schedules row, entry and package null. Not a line stage. */
+export const INTERNAL_LOGISTICS_STAGE = "internal_logistics";
+export const LOGISTICS_OPS_PATH = "/ops/interco_logistics";
+export const INTERNAL_LOGISTICS_PATH = "/logistics/internal";
+export const PROCESSING_PARTNERS_PATH = "/logistics/partners";
+
 /** THE HARVEST CONSOLE (canon 0.30.73): the Admin button's page, PIN-gated like
  * Admin; /harvest-console stays the vendored Harvest Console Lite. */
 export const HARVEST_PATH = "/harvest";
@@ -1318,6 +1331,24 @@ export function shiftWindowHolds(window: ShiftWindow, clockMinutes: number): boo
 export function parseBtrTypeCodes(raw: string | null | undefined): string[] {
   const codes = parseUpperList(raw);
   return codes.length > 0 ? codes : ["BUD", "SMALLS", "SHAKE"];
+}
+
+/** THE TRIM BOGEY (canon 0.30.249): the product line of 0.30.243, 40 percent,
+ * until a hand saves another. */
+export const TRIM_BOGEY_DEFAULT = 40;
+
+/** A typed Trim Bogey: a whole percent 0 to 100 (a trailing % is tolerated);
+ * null for anything else, so the form refuses it in words. */
+export function trimBogeyOf(raw: unknown): number | null {
+  const text = String(raw ?? "").trim().replace(/%$/, "").trim();
+  if (!/^\d{1,3}$/.test(text)) return null;
+  const n = Number(text);
+  return n >= 0 && n <= 100 ? n : null;
+}
+
+/** The stored Trim Bogey; the default when the row is missing or unreadable. */
+export function parseTrimBogey(raw: string | null | undefined): number {
+  return trimBogeyOf(raw) ?? TRIM_BOGEY_DEFAULT;
 }
 
 /** THE CRYO CATEGORIES (canon 0.30.112): the product categories a cryo line

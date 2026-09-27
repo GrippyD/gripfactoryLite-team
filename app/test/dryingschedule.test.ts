@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addLotWeight, finishUnload, loadSilo, pauseSiloLoad, startSiloLoad, unloadTogether } from "../src/actions";
+import { addLotWeight, finishUnload, loadSilo, pauseSiloLoad, scheduleLogisticsLot, startSiloLoad, unloadTogether } from "../src/actions";
 import { nowIso } from "../src/audit";
 import { dryingReturnPath, LOC_ARL_BARN, LOC_BARN, shortLotId, SYSTEM_REASON } from "../src/config";
 import { listDryingComplete, type BarnWetLotRow, type DryingCompleteRow, type SiloLoadRow, type SiloRow } from "../src/db";
@@ -402,6 +402,7 @@ async function roomOfTwo(m: MigratedDb, person: string): Promise<{ first: string
   seedDryingLot(m, "lot-a", "hb-a", ROOM, 1500);
   seedDryingLot(m, "lot-b", "hb-b", ROOM, 500);
   for (const lotId of ["lot-a", "lot-b"]) {
+    await scheduleLogisticsLot(m.db, formOf({ person_id: person, harvest_batch_id: lotId === "lot-a" ? "hb-a" : "hb-b" }));
     const out = await loadSilo(
       m.db,
       formOf({ person_id: person, lot_id: lotId, dry_space_id: ROOM, start_time: "", loaded_at_iso: "", next: "/production/scheduling/dry_rooms" })
@@ -527,6 +528,7 @@ describe("THE JOINT UNLOAD on a real schema (canon 0.30.226)", () => {
     // A silo with one open load has no joint unload.
     seedBatch(m, { id: "hb-s", hbn: "26244-PNN-GH-001-0-NA-26041", serial: 441, farm: "PNN" });
     seedDryingLot(m, "lot-s", "hb-s", SILO_1, 800);
+    await scheduleLogisticsLot(m.db, formOf({ person_id: person, harvest_batch_id: "hb-s" }));
     await loadSilo(m.db, formOf({ person_id: person, lot_id: "lot-s", dry_space_id: SILO_1, start_time: "", loaded_at_iso: "" }));
     const siloLoad = String(m.get(`SELECT id FROM silo_loads WHERE wet_weight_entry_id = 'lot-s'`)?.id);
     await expect(attempt("silos", SILO_1, { load_ids: siloLoad })).rejects.toThrow(
@@ -645,6 +647,7 @@ describe("THE SPLIT INTO PARTS keeps the single unload's law (canon 0.30.226)", 
     const person = seedPerson(m);
     seedBatch(m, { id: "hb-s", hbn: "26244-PNN-GH-001-0-NA-26051", serial: 451, farm: "PNN" });
     seedDryingLot(m, "lot-s", "hb-s", SILO_1, 1000);
+    await scheduleLogisticsLot(m.db, formOf({ person_id: person, harvest_batch_id: "hb-s" }));
     const loaded = await loadSilo(m.db, formOf({ person_id: person, lot_id: "lot-s", dry_space_id: SILO_1, start_time: "", loaded_at_iso: "" }));
     expect(loaded.redirect).toMatch(/^\/station\/load_silo\?load=.+&ok=loaded$/);
     const unload = stationByKey("unload_dry_space");
@@ -674,6 +677,7 @@ describe("THE SPLIT INTO PARTS keeps the single unload's law (canon 0.30.226)", 
     const person = seedPerson(m);
     seedBatch(m, { id: "hb-f", hbn: "26244-PNN-GH-001-0-NA-26061", serial: 461, farm: "PNN" });
     seedDryingLot(m, "lot-f", "hb-f", FREEZER, 700);
+    await scheduleLogisticsLot(m.db, formOf({ person_id: person, harvest_batch_id: "hb-f" }));
     await loadSilo(m.db, formOf({ person_id: person, lot_id: "lot-f", dry_space_id: FREEZER, start_time: "", loaded_at_iso: "" }));
     const unload = stationByKey("unload_dry_space");
     if (!unload) throw new Error("unload station missing");
@@ -691,6 +695,7 @@ describe("THE DRYING SCHEDULE: the returns and the window on a real schema (cano
     const person = seedPerson(m);
     seedBatch(m, { id: "hb-s", hbn: "26244-PNN-GH-001-0-NA-26071", serial: 471, farm: "PNN" });
     seedDryingLot(m, "lot-s", "hb-s", SILO_1, 900);
+    await scheduleLogisticsLot(m.db, formOf({ person_id: person, harvest_batch_id: "hb-s" }));
     await loadSilo(m.db, formOf({ person_id: person, lot_id: "lot-s", dry_space_id: SILO_1, start_time: "", loaded_at_iso: "" }));
     const loadId = String(m.get(`SELECT id FROM silo_loads WHERE wet_weight_entry_id = 'lot-s'`)?.id);
     const next = "/production/scheduling/silos";

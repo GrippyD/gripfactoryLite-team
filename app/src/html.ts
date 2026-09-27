@@ -38,7 +38,8 @@ import { backCrumb, type BackLink } from "./nav";
 import { salesHelperFitScript } from "./saleshelper";
 import { siloLiveScript, siloTile, siloVisual, siloWaitingLines, siloWetLine, spaceShapeOf, SILO_CAPACITY_WET_LBS_DEFAULT, LB_GRAMS, type SiloLive } from "./silo";
 import { reconcileDeltaLabel, reconcileGate, type ReconcileMode } from "./reconcile";
-import { wetWeightsFilename } from "./csv";
+import { hbnWithSeq, wetWeightsFilename } from "./csv";
+import { locationChangeFilename } from "./interco";
 import type {
   CollapsibleGrams,
   DryingSpaceView,
@@ -93,6 +94,7 @@ import type {
   PendingReceiveUploadRow,
   PendingSplitUploadRow,
   PendingNewPackagesRow,
+  ChangedUploadRow,
   PendingUploadRow,
   PersonRow,
   QueueRow,
@@ -596,13 +598,15 @@ export function defaultTodayScript(): string {
 </script>`;
 }
 
-function opsNode(group: OpsGroup, locale: Locale): string {
+function opsNode(group: OpsGroup, locale: Locale, lines = ""): string {
   const stub = group.reserved ? " ops-node-stub" : "";
-  // Owner ruling 2026-09-02 (map polish): no numbers under the labels; the
-  // node is icon and name alone, a rounded softkey.
+  // THE MENU LINES (canon 0.30.241): Harvest, Logistics and Drying carry a
+  // line under the label. The other three stay icon and name until named.
+  const under = lines ? `<span class="ops-menu-lines" data-ops-lines="${esc(group.key)}">${lines}</span>` : "";
   return `<a class="ops-node${stub}" href="${esc(group.href)}" data-ops-key="${esc(group.key)}">
       ${opsIconImgs(group.icon, true)}
       <span class="ops-label">${esc(t(locale, group.label))}</span>
+      ${under}
     </a>`;
 }
 
@@ -624,17 +628,18 @@ export function continuumCrumb(locale: Locale = "en"): string {
 }
 
 export function homePage(
-  _pipeline?: PipelineEntry[],
+  _pipeline?: PipelineEntry[] | string,
   locale: Locale = "en",
-  view: ViewName = DEFAULT_VIEW
+  view: ViewName = DEFAULT_VIEW,
+  lines: Partial<Record<string, string>> = {}
 ): string {
   if (typeof _pipeline === "string") {
-    locale = _pipeline;
+    locale = _pipeline as Locale;
   }
   const byKey = (key: string) => {
     const group = opsGroupByKey(key);
     if (!group) throw new Error(`ops group missing: ${key}`);
-    return opsNode(group, locale);
+    return opsNode(group, locale, lines[key] ?? "");
   };
   const desktop = `<div class="ops-map ops-map-desktop">
       <div class="ops-row ops-row-1">
@@ -2076,10 +2081,14 @@ export function pendingUploadsPage(
   // THE TESTING DESK (canon 0.30.164): the New Packages CSV for a test manifest.
   testSampleRows: PendingTestSampleRow[] = [],
   prepackFiles: Array<{ id: string; hbn: string; kind: "new_packages" | "package_finish"; filename: string; newest_activity: string }> = [],
+  changedRows: ChangedUploadRow[] = [],
   ok?: string
 ): string {
   const heading = `<h1>${esc(t(locale, "Pending Data Uploads"))}</h1>`;
-  const ackFlash = ok === "acknowledged" ? `<p class="banner ok" data-ack-flash>${esc(t(locale, "Acknowledged."))}</p>` : "";
+  const ackFlash =
+    ok === "acknowledged" || ok === "change_acknowledged"
+      ? `<p class="banner ok" data-ack-flash>${esc(t(locale, "Acknowledged."))}</p>`
+      : "";
   const notesSection = reconcileNotesSection(reconcileNotes, locale);
   const note = rows.some((row) => row.tag_count === 0)
     ? `<p class="muted">${esc(t(locale, "Plant column is blank pending the owner's fill rule."))}</p>`
@@ -2101,7 +2110,7 @@ export function pendingUploadsPage(
     moveRows.length +
     newPackagesRows.length +
     testSampleRows.length;
-  if (pendingTotal === 0) {
+  if (pendingTotal === 0 && changedRows.length === 0) {
     // The notes stand on their own: no file to clear, only a hand to acknowledge.
     return `${heading}
     ${ackFlash}
@@ -2145,25 +2154,53 @@ export function pendingUploadsPage(
     manifestRows.length === 0
       ? ""
       : queueFold("manifests", `<h2 data-count="${manifestRows.length}">${esc(t(locale, "Manifests"))} <span class="tile-count">${manifestRows.length}</span></h2>`, `${uploadBatchBar(manForm, locale)}<table class="data"><thead>${manHead}</thead><tbody>${manBody}</tbody></table>`);
+  const changedBody = changedRows
+    .map((row) => {
+      const file = wetWeightsFilename(row.hbn, row.seq);
+      const grams = `${formatGrams(row.then_grams)} -> ${formatGrams(row.now_grams)} (${formatGrams(row.now_grams - row.then_grams)})`;
+      const count = `${row.then_count ?? ""} -> ${row.now_count ?? ""}`;
+      return `<tr data-changed-upload="${esc(row.id)}">
+        <td>${esc(file)}</td>
+        <td>${esc(row.marked_at)}</td>
+        <td>${esc(grams)}</td>
+        <td>${esc(count)}</td>
+        <td>
+          <form method="post" action="/admin/uploads/wet_weights/${esc(row.id)}/acknowledge" class="stack">
+            <input type="text" name="reason" required>
+            <button type="submit">${esc(t(locale, "Acknowledge"))}</button>
+          </form>
+        </td>
+      </tr>`;
+    })
+    .join("");
+  const changedSection =
+    changedRows.length === 0
+      ? ""
+      : `<section data-changed-after-upload><h2>${esc(t(locale, "Changed after upload"))}</h2><table class="data"><thead><tr><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "Marked"))}</th><th>${esc(t(locale, "Grams"))}</th><th>${esc(t(locale, "Plant count"))}</th><th></th></tr></thead><tbody>${changedBody}</tbody></table></section>`;
   const wetForm = "up-wet_weights";
-  const head = `<tr>${checkHead(wetForm, locale)}<th>${esc(t(locale, "Type"))}</th><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "Lot"))}</th><th>${esc(t(locale, "Finished entries"))}</th><th>${esc(t(locale, "Wet total (g)"))}</th><th>${esc(t(locale, "Last activity"))}</th><th>${esc(t(locale, "Plant tags"))}</th><th>${esc(t(locale, "Controls"))}</th></tr>`;
+  const head = `<tr>${checkHead(wetForm, locale)}<th>${esc(t(locale, "Type"))}</th><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "Lot"))}</th><th>${esc(t(locale, "Load"))}</th><th>${esc(t(locale, "Wet total (g)"))}</th><th>${esc(t(locale, "Plant count"))}</th><th>${esc(t(locale, "Last activity"))}</th><th>${esc(t(locale, "Plant tags"))}</th><th>${esc(t(locale, "Controls"))}</th></tr>`;
   const body = rows
     .map((row) => {
       const href = `/admin/uploads/wet_weights/${esc(row.id)}.csv`;
-      return `<tr>
-        ${checkCell(wetForm, "item", `wet_weights:${row.id}`)}
-        <td>${esc(t(locale, "Wet Weights"))}</td>
-        <td><a href="${href}">${esc(wetWeightsFilename(row.hbn))}</a></td>
-        <td>${esc(row.lot)}</td>
-        <td>${esc(row.finished_count)}</td>
-        <td>${esc(formatGrams(row.wet_total_grams))}</td>
-        <td>${esc(row.newest_activity)}</td>
-        <td>
-          <span class="muted">${esc(t(locale, "Plant tags"))}: ${esc(row.tag_count)}</span>
+      const unassigned = row.unassigned > 0 ? ` <span class="muted" data-unassigned>${esc(row.unassigned)} ${esc(t(locale, "unassigned"))}</span>` : "";
+      const tags = row.tags_locked
+        ? `<span class="muted">${esc(t(locale, "Plant tags"))}: ${esc(row.tag_count)}</span>${unassigned}`
+        : `<span class="muted">${esc(t(locale, "Plant tags"))}: ${esc(row.tag_count)}</span>${unassigned}
           <form method="post" action="/admin/uploads/wet_weights/${esc(row.id)}/tags" class="stack">
             <textarea name="plant_tags" rows="3"></textarea>
             <button type="submit" class="secondary">${esc(t(locale, "Save tags"))}</button>
-          </form>
+          </form>`;
+      return `<tr>
+        ${checkCell(wetForm, "item", `wet_weights:${row.id}`)}
+        <td>${esc(t(locale, "Wet Weights"))}</td>
+        <td><a href="${href}">${esc(wetWeightsFilename(row.hbn, row.seq))}</a></td>
+        <td>${esc(row.lot)}</td>
+        <td>${esc(row.load_label)}</td>
+        <td>${esc(formatGrams(row.wet_total_grams))}</td>
+        <td>${esc(row.plant_count ?? "")}</td>
+        <td>${esc(row.newest_activity)}</td>
+        <td>
+          ${tags}
         </td>
         <td class="row-actions">
           <a class="btn secondary" href="${href}">${esc(t(locale, "Download"))}</a>
@@ -2188,7 +2225,7 @@ export function pendingUploadsPage(
       return `<tr>
         ${checkCell(pkgForm, "item", `${row.kind}:${row.id}`)}
         <td>${esc(t(locale, kindLabel))}</td>
-        <td><a href="${href}">${esc(row.hbn)}</a>${tagGap(tagGaps.batches.has(row.harvest_batch_id))}</td>
+        <td><a href="${href}">${esc(row.kind === "package_from_harvest" ? `packages_from_harvests_${hbnWithSeq(row.hbn, row.seq)}.csv` : `package_adjustments_${hbnWithSeq(row.hbn, row.seq)}.csv`)}</a>${tagGap(tagGaps.batches.has(row.harvest_batch_id))}</td>
         <td>${esc(row.lot)}</td>
         <td>${esc(row.newest_activity)}</td>
         <td class="row-actions">
@@ -2263,7 +2300,7 @@ export function pendingUploadsPage(
       return `<tr>
         ${checkCell(locForm, "item", `location_change:${row.id}`)}
         <td>${esc(t(locale, "Location change"))}</td>
-        <td><a href="${href}">${esc(row.hbn ?? "")}</a>${tagGap(tagGaps.batches.has(row.harvest_batch_id))}</td>
+        <td><a href="${href}">${esc(locationChangeFilename(row.hbn ?? "", row.file_location || row.silo_name || "silo", String(row.newest_activity).slice(0, 10).replaceAll("-", ""), row.seq))}</a>${tagGap(tagGaps.batches.has(row.harvest_batch_id))}</td>
         <td>${esc(row.lot)}</td>
         <td>${esc(row.silo_name ?? "")}</td>
         <td>${esc(row.newest_activity)}</td>
@@ -2390,6 +2427,7 @@ export function pendingUploadsPage(
     ${ackFlash}
     ${clearAll}
     ${note}
+    ${changedSection}
     ${wetTable}
     ${pkgTable}
     ${recTable}
@@ -3172,7 +3210,7 @@ function weightsSection(
           <div class="plant-prompt" data-plant-prompt hidden>
             ${
               opts.finishBlocks ??
-              `<label class="field">${esc(t(locale, "How many plants in this lot?"))} <input type="text" name="plant_count" inputmode="numeric" pattern="[0-9,]*" placeholder="${esc(t(locale, "plants"))}" data-plant-count-input></label>`
+              `<label class="field">${esc(t(locale, "How many plants in this load?"))} <input type="text" name="plant_count" inputmode="numeric" pattern="[0-9,]*" placeholder="${esc(t(locale, "plants"))}" data-plant-count-input></label>`
             }
             <div class="row-actions">
               <button type="submit" name="plant_prompt" value="count">${esc(t(locale, labels.finish))}</button>
@@ -3321,7 +3359,7 @@ export function wetLotPanel(
       <dt>${esc(t(locale, "Running total"))}</dt><dd class="lot-running-total" data-lot-running-total><strong>${esc(formatGrams(total))}</strong> g · <strong>${esc(formatLbs(total))}</strong> lb</dd>
       ${lot.plant_count != null ? `<dt>${esc(t(locale, "Plants"))}</dt><dd data-plant-count>${esc(String(lot.plant_count))}</dd>` : ""}
     </dl>
-    ${weightsSection(station, lot.id, weights, total, { pane: "Weights", finish: "Finish lot", total: "Total" }, locale, finishBlocks ? "" : metrcTagInput(locale), {
+    ${weightsSection(station, lot.id, weights, total, { pane: "Weights", finish: "Finish load", total: "Total" }, locale, finishBlocks ? "" : metrcTagInput(locale), {
       numbered: true,
       plantPrompt: true,
       hbnSelect,

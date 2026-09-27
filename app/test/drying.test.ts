@@ -152,7 +152,7 @@ describe("the silo strip and the Load Silo page", () => {
       plant_count: null,
     };
     const list = loadSiloPage({ barnLots: [lot], silos: SILOS, loads: [], picked: null, pickedLoad: null, nowIso: NOW });
-    expect(list).toContain("Finished wet lots");
+    expect(list).toContain("Scheduled lots");
     expect(list).toContain("012345 / ARL / Fruity Pebbles");
     expect(list).toContain("Pick a lot from the pane.");
     const picked = loadSiloPage({ barnLots: [lot], silos: SILOS, loads: [], picked: lot, pickedLoad: null, nowIso: NOW });
@@ -254,7 +254,7 @@ describe("the silo strip and the Load Silo page", () => {
       "Label,Location,Sublocation,MoveDate\r\n26011,Silo 2,,2026-09-08\r\n"
     );
     expect(locationChangeFilename("26251-ARL-GH-027-0-NA-26011", "Silo 2", "20260908")).toBe(
-      "location_change_26251-ARL-GH-027-0-NA-26011_Silo_2_20260908.csv"
+      "location_change_26251-ARL-GH-027-0-NA-26011(1)_Silo_2_20260908.csv"
     );
   });
 

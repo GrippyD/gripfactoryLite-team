@@ -65,6 +65,14 @@ export const LOOKUP_LANDING: LookupLandingSection[] = [
         description: "Trim package types and the extraction-bound code list.",
         lookupFieldName: "Package Types",
       },
+      {
+        // THE TRIM BOGEY (canon 0.30.249): the trim plume's product line, one whole percent.
+        key: "trim_bogey",
+        title: "Trim Bogey",
+        href: "/admin/lookups/trim_bogey",
+        description: "The trim plume's product line, a percent: that many of its last squares, in ROYGBIVWB-Aqua order, turn dark red when consumed.",
+        lookupFieldName: "Trim Bogey",
+      },
     ],
   },
   {

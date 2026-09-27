@@ -55,6 +55,20 @@ async function text(path, opts = {}) {
   return { res, body };
 }
 
+/** THE LOAD AND THE LOT: a finished entry reaches Load Silo only after >>. */
+async function passEntry(entryId) {
+  const page = await text("/logistics/internal");
+  const rows = [...page.body.matchAll(/data-logistics-lot="([^"]+)" data-logistics-parts="([^"]*)"/g)];
+  const hit = rows.find((row) => row[1] === entryId || row[2].split(/\s+/).includes(entryId));
+  if (!hit) return null;
+  const available = page.body.slice(page.body.indexOf('data-schedule-pane="available"'), page.body.indexOf('data-schedule-pane="working"'));
+  if (!available.includes(`data-logistics-lot="${hit[1]}"`)) return hit[1];
+  const res = await req("/logistics/internal/schedule", { method: "POST", body: form({ harvest_batch_id: hit[1] }) });
+  const detail = res.status === 303 ? "" : await res.text();
+  assert(res.status === 303, `passing ${entryId} expected 303 got ${res.status} ${detail}`);
+  return hit[1];
+}
+
 function form(fields) {
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) {
@@ -318,7 +332,8 @@ function assertOpsMap(html, label) {
     assert(n === 2, `${label} must render ${key} on desktop and phone, got ${n}`);
   }
   assert(html.includes('href="/ops/harvest_ops"'), `${label} missing harvest href`);
-  assert(html.includes('href="/interco"'), `${label} missing interco href`);
+  assert(html.includes('href="/ops/interco_logistics"'), `${label} missing logistics href`);
+  assert(html.includes("Logistics Operations"), `${label} missing the Logistics Operations label`);
   assert(html.includes('href="/marketplace"'), `${label} missing live Marketplace href`);
   const marketNode = html.slice(
     html.indexOf('data-ops-key="marketplace"') - 80,
@@ -387,7 +402,7 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 75 migration(s)")) {
+    if (!String(applyOut).includes("About to apply 76 migration(s)")) {
       throw new Error(`from-zero apply must say 75 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
@@ -804,43 +819,29 @@ async function run() {
       "an off-site next must fall back to /admin"
     );
 
-    // THE BLANK SLATE (canon 0.30.108; owner, verbatim: "We need to completely
-    // wipe the slate clean on the interco logistics tab.  Right now, it exists
-    // to build a csv.  Make the entire menu surface blank.") gave the tab its
-    // title alone; THE MANIFEST BUILDER (canon 0.30.125; owner: "New interco
-    // logistics layout: Three equal panes ... [finish] button [cancel] button")
-    // fills it with the three panes. Before any origin is picked every list
-    // reads - EMPTY - (canon 0.27.6), and every old path under it still lands here.
-    const interco = await text("/interco");
-    if (interco.res.status !== 200) fail("GET /interco", `status ${interco.res.status}`);
-    assert(interco.body.includes(">Interco Logistics</h1>"), "interco missing its title");
-    assert(interco.body.includes('<form class="interco-panes" method="post" action="/interco/manifest/finish" id="manifest-form" data-manifest-builder data-lock-on-submit>'), "the interco surface must be the one-form three-pane builder");
-    for (const marker of ['data-pane="origin"', 'data-pane="destination"', 'data-pane="manifest"', '<p class="muted" data-origin-empty>- EMPTY -</p>', '<p class="muted" data-receive-empty>- EMPTY -</p>', '<p class="muted" data-manifest-empty>- EMPTY -</p>', 'data-finish>Finish</button>', '<a class="btn secondary" href="/interco" data-cancel>Cancel</a>', '<input type="hidden" name="origin_license" value="">']) {
-      assert(interco.body.includes(marker), `the builder must carry ${marker}`);
-    }
-    assert(!interco.body.includes('placeholder="######" data-last-six'), "no last-six filter before an origin is picked");
-    // (The shell's inlined theme carries the old floor's class rules and names the
-    // Arlington Dry Room in a comment, so the sweep reads the floor's own
-    // markup, not its words or class names.)
-    for (const word of ["Working pane", "On the road", 'class="lic-med"', 'class="lic-au"', 'class="card site-window"', 'class="floor-site"', "Create movement", "Receive at", 'name="movement_id"']) {
-      assert(!interco.body.includes(word), `the builder must not carry the old floor's ${word}`);
-    }
-    for (const path of ["/interco/arrivals/pnn", "/interco/send/pns", "/interco/door", "/interco/outbound", "/interco/receiving", "/virtual-move"]) {
+    // THE LOAD AND THE LOT (canon 0.30.241): Logistics Operations, two buttons.
+    // The manifest renderers stay in the file. Every old /interco path lands
+    // on the group page and acts on nothing.
+    const logistics = await text("/ops/interco_logistics");
+    if (logistics.res.status !== 200) fail("GET /ops/interco_logistics", `status ${logistics.res.status}`);
+    assert(logistics.body.includes("Logistics Operations"), "the group page must read Logistics Operations");
+    assert(logistics.body.includes('href="/logistics/internal"') && logistics.body.includes("Internal Logistics"), "the group page must offer Internal Logistics");
+    assert(logistics.body.includes('href="/logistics/partners"') && logistics.body.includes("Processing Partners"), "the group page must offer Processing Partners");
+    assert(!logistics.body.includes("data-manifest-builder"), "the manifest builder must not be served");
+    const partners = await text("/logistics/partners");
+    assert(partners.res.status === 200 && partners.body.includes("Processing Partners") && partners.body.includes("- EMPTY -"), "Processing Partners is its title and empty");
+    for (const path of ["/interco", "/interco/arrivals/pnn", "/interco/send/pns", "/interco/door", "/interco/outbound", "/interco/receiving"]) {
       const gone = await req(path);
       assert(gone.status === 302, `${path} expected 302 got ${gone.status}`);
-      assert((gone.headers.get("location") || "").endsWith("/interco"), `${path} must land on /interco`);
+      assert((gone.headers.get("location") || "").endsWith("/ops/interco_logistics"), `${path} must land on Logistics Operations`);
       await gone.text();
     }
-    for (const path of ["/interco?tab=outbound", "/interco?tab=inbound"]) {
-      const tab = await text(path);
-      assert(tab.res.status === 200 && tab.body.includes("data-manifest-builder"), `${path} must be the builder page`);
-    }
+    const virtualMove = await req("/virtual-move");
+    assert(virtualMove.status === 302 && (virtualMove.headers.get("location") || "").endsWith("/interco"), "virtual-move still leaves the drying menu");
+    await virtualMove.text();
     const staleIntercoPost = await req("/interco/manifest/add", { method: "POST", body: form({ item_id: "x" }) });
-    assert(staleIntercoPost.status === 303 && (staleIntercoPost.headers.get("location") || "").endsWith("/interco"), "a stale interco post must land on the builder page, acting on nothing");
+    assert(staleIntercoPost.status === 303 && (staleIntercoPost.headers.get("location") || "").endsWith("/ops/interco_logistics"), "a stale interco post must land on the group page, acting on nothing");
     await staleIntercoPost.text();
-    // An unknown origin in the query is no origin: the page stays bare.
-    const badOrigin = await text("/interco?origin=NOT-A-LICENSE");
-    assert(badOrigin.res.status === 200 && badOrigin.body.includes('<input type="hidden" name="origin_license" value="">'), "an unknown origin must render as no origin");
 
     // THE BACK LINK (canon 0.30.109; owner, 2026-09-17, verbatim: "All
     // sub-menus need to have a link that goes back to the pervious menu.  Using
@@ -859,7 +860,9 @@ async function run() {
       ["/inventory", "/ops/production_ops", "Production Operations"],
       ["/inventory/metrc", "/inventory", "Inventory"],
       ["/fulfillment", "/ops/production_ops", "Production Operations"],
-      ["/interco", "/", "Home"],
+      ["/ops/interco_logistics", "/", "Home"],
+      ["/logistics/internal", "/ops/interco_logistics", "Logistics Operations"],
+      ["/logistics/partners", "/ops/interco_logistics", "Logistics Operations"],
       ["/reports", "/", "Home"],
       ["/reports/inventory_by_location", "/reports", "Reports"],
       ["/admin", "/", "Home"],
@@ -1692,7 +1695,7 @@ async function run() {
     assert(lotView.body.includes("<dt>Team Lead</dt><dd data-team-lead>Smoke Lead</dd>"), "lot page must show the typed Team Lead");
     assert(lotView.body.includes(`<dt>Supervisor</dt><dd data-supervisor>${SMOKE_EMAIL}</dd>`), "lot page must show the login email as the Supervisor");
     assert(!lotView.body.includes("<dt>Lead</dt>"), "the bare Lead row retired with canon 0.30.67");
-    assert(lotView.body.includes("Finish lot"), "lot page missing the Finish lot button");
+    assert(lotView.body.includes("Finish load"), "lot page missing the Finish load button");
     // The pane and the panel render together (owner ruling 2026-08-31). The
     // weighing lot keeps the batch in the pane for its resume (owner ruling
     // 2026-08-28: "weighing lot keeps the batch visible"; owner ruling
@@ -2111,7 +2114,7 @@ async function run() {
     assert(extraCounted.body.includes("<dt>Plants</dt><dd data-plant-count>7</dd>"), "the finished lot must show its plant count");
     // The batch's METRC file: no tags, one counted lot of 200.00 g, so seven
     // rows, Plant blank, summing cent-exact to 200.00 with the seeded jitter.
-    const countedCsv = await text(`/admin/uploads/wet_weights/${extraBatchId}.csv`);
+    const countedCsv = await text(`/admin/uploads/wet_weights/${extraLotId}.csv`);
     assert(countedCsv.res.status === 200, `counted csv expected 200 got ${countedCsv.res.status}`);
     const countedLines = countedCsv.body.split("\r\n").filter((line) => line.length > 0);
     assert(countedLines.length === 8, `a 7-plant lot must write 7 rows, got ${countedLines.length - 1}`);
@@ -2123,7 +2126,7 @@ async function run() {
       countedCents += Math.round(Number(cells[1]) * 100);
     }
     assert(countedCents === 20000, `the seven rows must sum to 200.00, got ${countedCents / 100}`);
-    const countedAgain = await text(`/admin/uploads/wet_weights/${extraBatchId}.csv`);
+    const countedAgain = await text(`/admin/uploads/wet_weights/${extraLotId}.csv`);
     assert(countedAgain.body === countedCsv.body, "the count split must reproduce byte for byte");
     counts = await homeCounts();
     assert(counts.dry === 1, `dry after extra lot expected 1 got ${counts.dry}`);
@@ -3018,7 +3021,7 @@ async function run() {
     // The extra drying lot on the second HBN also pends. Mark it uploaded before
     // the first uploads GET so its zero tags cannot keep the muted Plant note
     // after the picked batch is fully tagged.
-    const markExtra = await req(`/admin/uploads/wet_weights/${extraBatchId}/uploaded`, {
+    const markExtra = await req(`/admin/uploads/wet_weights/${extraLotId}/uploaded`, {
       method: "POST",
       body: form({}),
     });
@@ -3032,7 +3035,7 @@ async function run() {
     const uploadsPage = await text("/admin/uploads");
     if (uploadsPage.res.status !== 200) fail("GET /admin/uploads", `status ${uploadsPage.res.status}`);
     assert(uploadsPage.body.includes("Wet Weights"), "uploads page missing the Wet Weights type");
-    assert(uploadsPage.body.includes(`${pickedHbn}.csv`), `uploads page must list ${pickedHbn}.csv`);
+    assert(uploadsPage.body.includes(`${pickedHbn}(1).csv`), `uploads page must list ${pickedHbn}(1).csv`);
     // Wet total = the silo lot's 1234.56 (1000.06 + 234.50).
     // Owner ruling 2026-08-31: the page groups thousands; the CSV below stays raw.
     assert(uploadsPage.body.includes("1,235"), "uploads page missing the wet total 1,235");
@@ -3041,15 +3044,15 @@ async function run() {
       "uploads page missing the muted Plant note"
     );
     assert(
-      uploadsPage.body.includes(`action="/admin/uploads/wet_weights/${batchId}/uploaded"`),
+      uploadsPage.body.includes(`action="/admin/uploads/wet_weights/${wetLotId}/uploaded"`),
       "uploads page missing the Mark uploaded form"
     );
 
-    const uploadCsv = await text(`/admin/uploads/wet_weights/${batchId}.csv`);
+    const uploadCsv = await text(`/admin/uploads/wet_weights/${wetLotId}.csv`);
     if (uploadCsv.res.status !== 200) fail("GET upload csv", `status ${uploadCsv.res.status}`);
     assert(
-      (uploadCsv.res.headers.get("content-disposition") || "").includes(`filename="${pickedHbn}.csv"`),
-      "upload csv must attach as <hbn>.csv"
+      (uploadCsv.res.headers.get("content-disposition") || "").includes(`filename="${pickedHbn}(1).csv"`),
+      "upload csv must attach as <hbn>(1).csv"
     );
     const csvLines = uploadCsv.body.split("\r\n").filter((line) => line.length > 0);
     assert(
@@ -3099,7 +3102,7 @@ async function run() {
     // pending batch turns its file into one row per tag, weights split from
     // the finished entries by the seeded jitter, cent-exact to the wet total.
     assert(uploadsPage.body.includes("Plant tags: 0"), "the pending row must start at zero tags");
-    const saveTags = await req(`/admin/uploads/wet_weights/${batchId}/tags`, {
+    const saveTags = await req(`/admin/uploads/wet_weights/${wetLotId}/tags`, {
       method: "POST",
       body: form({ plant_tags: " 1A4PLANT0001 \n1A4PLANT0002\n\n1A4PLANT0002\n1A4PLANT0003\n" }),
     });
@@ -3119,7 +3122,7 @@ async function run() {
     );
 
     const pastedTags = ["1A4PLANT0001", "1A4PLANT0002", "1A4PLANT0003"];
-    const taggedCsv = await text(`/admin/uploads/wet_weights/${batchId}.csv`);
+    const taggedCsv = await text(`/admin/uploads/wet_weights/${wetLotId}.csv`);
     if (taggedCsv.res.status !== 200) fail("GET tagged csv", `status ${taggedCsv.res.status}`);
     const taggedLines = taggedCsv.body.split("\r\n").filter((line) => line.length > 0);
     assert(
@@ -3149,14 +3152,14 @@ async function run() {
       taggedCents === 123500,
       `tag weights must sum cent-exact to the 1235 wet total, got ${taggedCents} cents`
     );
-    const taggedCsvAgain = await text(`/admin/uploads/wet_weights/${batchId}.csv`);
+    const taggedCsvAgain = await text(`/admin/uploads/wet_weights/${wetLotId}.csv`);
     assert(
       taggedCsvAgain.body === taggedCsv.body,
       "a second download must reproduce the identical tagged file (seeded determinism)"
     );
 
     // An empty paste clears the set and the file returns to one row per read.
-    const clearTags = await req(`/admin/uploads/wet_weights/${batchId}/tags`, {
+    const clearTags = await req(`/admin/uploads/wet_weights/${wetLotId}/tags`, {
       method: "POST",
       body: form({ plant_tags: "" }),
     });
@@ -3167,13 +3170,13 @@ async function run() {
       uploadsCleared.body.includes("Plant column is blank pending the owner's fill rule."),
       "a zero-tag pending list must bring the muted Plant note back"
     );
-    const clearedCsv = await text(`/admin/uploads/wet_weights/${batchId}.csv`);
+    const clearedCsv = await text(`/admin/uploads/wet_weights/${wetLotId}.csv`);
     assert(
       clearedCsv.body === uploadCsv.body,
       "clearing tags must return the read-rows file byte for byte"
     );
 
-    const markUploaded = await req(`/admin/uploads/wet_weights/${batchId}/uploaded`, {
+    const markUploaded = await req(`/admin/uploads/wet_weights/${wetLotId}/uploaded`, {
       method: "POST",
       body: form({}),
     });
@@ -3189,8 +3192,8 @@ async function run() {
       "mark uploaded must flash Marked uploaded."
     );
     assert(
-      !uploadsAfterMark.body.includes(`${pickedHbn}.csv`),
-      "a marked batch must leave the pending list"
+      !uploadsAfterMark.body.includes(`/admin/uploads/wet_weights/${wetLotId}.csv`),
+      "a marked load must leave the pending list"
     );
     assert(
       uploadsAfterMark.body.includes("Package Adjustments") ||
@@ -3202,28 +3205,33 @@ async function run() {
       "package files still pending must not show the empty wet list line"
     );
 
-    // A reasoned weight edit on a finished lot re-pends the file on purpose:
-    // changed data wants a re-upload. Reweigh the silo lot's 234.5 read.
+    // A reasoned weight edit after the mark does not re-pend the file. It
+    // shows under Changed after upload. Reweigh the silo lot's 234.5 read.
     const wetLotAfter = await text(`/station/wet_weight?lot=${wetLotId}`);
-    // Owner ruling 2026-08-31: the row renders through formatGrams at 2 decimals.
     const wetRow = wetLotAfter.body.match(
       /<td>235<\/td>[^]*?href="\/record\/wet_weights\/([^/"]+)\/edit"/
     );
-    if (!wetRow) fail("re-pend edit", "missing the pencil on the 235 wet weight");
+    if (!wetRow) fail("changed after upload", "missing the pencil on the 235 wet weight");
     const rePend = await req(`/record/wet_weights/${wetRow[1]}/edit`, {
       method: "POST",
       body: form({ weight_grams: "240", reason: "smoke metrc reweigh" }),
     });
-    if (rePend.status !== 303) fail("re-pend edit", `status ${rePend.status}`);
+    if (rePend.status !== 303) fail("changed after upload", `status ${rePend.status}`);
     const uploadsAfterEdit = await text("/admin/uploads");
     assert(
-      uploadsAfterEdit.body.includes(`${pickedHbn}.csv`),
-      "an edited finished lot must re-pend its batch's file"
+      !uploadsAfterEdit.body.includes(`wet_weights/${wetLotId}.csv`),
+      "an edit after the mark must not re-pend the harvest file"
     );
-    assert(
-      uploadsAfterEdit.body.includes("1,240"),
-      "the re-pended row must carry the recomputed wet total 1,240"
-    );
+    assert(uploadsAfterEdit.body.includes("Changed after upload"), "the edit must show under Changed after upload");
+    assert(uploadsAfterEdit.body.includes(`${pickedHbn}(1).csv`), "the changed row must name the load's file");
+    assert(uploadsAfterEdit.body.includes("1,240"), "the changed row must carry the grams now");
+    const ackChange = await req(`/admin/uploads/wet_weights/${wetLotId}/acknowledge`, {
+      method: "POST",
+      body: form({ reason: "smoke acknowledged the reweigh" }),
+    });
+    if (ackChange.status !== 303) fail("acknowledge change", `status ${ackChange.status} ${await ackChange.text()}`);
+    const afterAck = await text("/admin/uploads");
+    assert(!afterAck.body.includes("data-changed-upload"), "acknowledge must clear the changed row");
 
     // Acquire HBN recall: mint a weightless batch, recall it (void + prefill),
     // remint one serial past the recalled gap (ADR-6).
@@ -3441,7 +3449,7 @@ async function run() {
     );
     const demotedLotView = await text(`/station/wet_weight?lot=${guardLotId2}`);
     assert(
-      demotedLotView.body.includes("Finish lot"),
+      demotedLotView.body.includes("Finish load"),
       "the demoted lot must be back at the wet station as a weighing lot"
     );
     const demoteLog = await text("/log");
@@ -3541,9 +3549,10 @@ async function run() {
     // "finish lot" routine runs"): the pane reads "Finished wet lots", the
     // pick offers every space on the strip, ARL's room among them (the 0.30.73
     // site refusal is repealed with the ledger's hold), Silo 2 preselected.
+    await passEntry(extraLotId);
     const arlPane = await text(`/station/load_silo?pick=${extraLotId}`);
     assert(arlPane.res.status === 200, `load silo pick of the ARL HBN's lot expected 200 got ${arlPane.res.status}`);
-    assert(arlPane.body.includes("Finished wet lots"), "the Load Silo pane must read Finished wet lots");
+    assert(arlPane.body.includes("Scheduled lots"), "the Load Silo pane must read Scheduled lots");
     assert(!arlPane.body.includes("Wet lots in the barn"), "the barn heading is gone with the ledger's hold");
     const arlSelect = arlPane.body.match(/<select name="dry_space_id" required>([^]*?)<\/select>/);
     assert(arlSelect && arlSelect[1].includes(`<option value="${silo2Id}" selected>Silo 2</option>`), "the lot's planned Silo 2 must preselect");
@@ -4444,6 +4453,7 @@ async function run() {
     const liveLoading = await (await req("/silos/live.json")).json();
     const silo5Live = liveLoading.silos.find((x) => x.id === silo5Id);
     assert(silo5Live && silo5Live.state === "loading" && silo5Live.fill === "green" && silo5Live.throb === null && silo5Live.wetGrams === 1500, `live Silo 5 must read loading with the 1,500 g, got ${JSON.stringify(silo5Live)}`);
+    await passEntry(lotId220);
     const pick220Load = await text(`/station/load_silo?pick=${lotId220}`);
     assert(new RegExp(`<option value="${silo5Id}" selected>Silo 5</option>`).test(pick220Load.body), "Load Silo must preselect the HBN's planned silo");
     const consoleLoading = await text("/harvest");
@@ -4508,10 +4518,9 @@ async function run() {
     // THE BLANK SLATE (canon 0.30.108) and THE MANIFEST BUILDER (canon
     // 0.30.125): the floor that carried the barn blocks is the builder page
     // now; the old empty lines cannot come back through it.
-    const floorFinal = await text("/interco");
-    assert(floorFinal.body.includes("data-manifest-builder"), "the interco page must be the manifest builder");
-    assert(!floorFinal.body.includes("No packages in this barn."), "the split-brain barn empty line must be gone");
-    assert(!floorFinal.body.includes("No wet lots at this barn."), "the split-brain wet empty line must be gone from the floor");
+    const floorFinal = await req("/interco");
+    assert(floorFinal.status === 302 && (floorFinal.headers.get("location") || "").endsWith("/ops/interco_logistics"), "the old interco path must land on Logistics Operations");
+    await floorFinal.text();
     const locAdmin = await text("/admin/lookups/inventory_locations");
     assert(locAdmin.body.includes("farm_code"), "locations admin must carry the farm column");
     assert(locAdmin.body.includes('name="farm_code"'), "locations add form must offer the farm select");
@@ -4632,8 +4641,9 @@ async function run() {
     assert(w1132.status === 303, `1132 weight expected 303 got ${w1132.status}`);
     // THE BLANK SLATE (canon 0.30.108): the med line has no floor to sit on
     // while it weighs; the page is the manifest builder (canon 0.30.125).
-    const floor1132 = await text("/interco");
-    assert(floor1132.body.includes("data-manifest-builder") && !floor1132.body.includes('class="lic-med"'), "the interco page must be the manifest builder, no Med line on it");
+    const floor1132 = await req("/interco");
+    assert(floor1132.status === 302 && (floor1132.headers.get("location") || "").endsWith("/ops/interco_logistics"), "the old interco path must land on Logistics Operations");
+    await floor1132.text();
 
     // THE BLANK SLATE (canon 0.30.108; his pick "PNN's 832 at birth"): the
     // finish births the med lot's package in PNN's barn under the grow license
@@ -4677,10 +4687,11 @@ async function run() {
     assert(dryingMenu.body.lastIndexOf('data-silo-shape-kind="cylinder"') < dryingMenu.body.indexOf('data-silo-shape-kind="box"'), "the wire box must follow the five cylinders on the strip");
     assert(dryingMenu.body.indexOf('data-silo-shape-kind="box"') < dryingMenu.body.indexOf('data-silo-shape-kind="cube"'), "the freezer cube must follow the dry room box");
     assert(loadPageStripHasSpaces(await text("/station/load_silo")), "the Load Silo strip must keep the spaces and leave the FFZ cube");
+    const lot1132Batch = await passEntry(lot1132);
     const loadPage = await text("/station/load_silo");
     assert(loadPage.res.status === 200, `load silo page expected 200 got ${loadPage.res.status}`);
-    assert(loadPage.body.includes("Finished wet lots"), "load silo page missing the finished lots pane");
-    assert(loadPage.body.includes(`href="/station/load_silo?pick=${lot1132}"`), "the barn pane must list the waiting med lot");
+    assert(loadPage.body.includes("Scheduled lots"), "load silo page missing the scheduled lots pane");
+    assert(loadPage.body.includes(`href="/station/load_silo?pick=${lot1132Batch}"`), "the barn pane must list the waiting med lot by its HBN");
     assert(loadPage.body.includes("/ PNN / Fruity Pebbles"), "the barn row must read last6 / farm / strain");
     const loadPick = await text(`/station/load_silo?pick=${lot1132}`);
     assert(loadPick.body.includes('action="/station/load_silo/load"'), "the pick must open the load form");
@@ -4714,7 +4725,7 @@ async function run() {
     assert(invPencil.body.includes("PNN,Silo 3,PNN,WIP"), "the pencil must carry the package to Silo 3 (canon 0.28.6)");
     assert(!invPencil.body.includes("PNN,BARN,PNN,WIP"), "the package has left the barn");
     const paneSevered = await text("/station/load_silo");
-    assert(paneSevered.body.includes(`href="/station/load_silo?pick=${lot1132}"`), "a finished lot stays on the pane wherever its package sits (canon 0.30.130)");
+    assert(paneSevered.body.includes(`href="/station/load_silo?pick=${lot1132Batch}"`), "a finished lot stays on the pane wherever its package sits (canon 0.30.130)");
     const pickSevered = await text(`/station/load_silo?pick=${lot1132}`);
     assert(pickSevered.body.includes(`<option value="${silo3IdForPencil}" selected>Silo 3</option>`), "the lot's own space preselects after the pencil");
     assert(pickSevered.body.includes(`<option value="${silo4Id}">Silo 4</option>`), "Silo 4 stands free for the load");
@@ -5037,6 +5048,29 @@ async function run() {
     assert(secondCard.includes('data-hc="trim_other">0.04 lb</span><span class="hc-sub muted">20 g · TRIM 0 + BIO 0 + WIP left 0 + other types 20</span>'), "Second Shift Other must gather the WASTE 20 g as another type");
     assert(secondCard.includes('data-hc-trimline-running="1" data-hc-trimline-total="29"'), "the Second picture must run (victor weighed a minute ago) and hang the 29 g total");
     assert(secondCard.includes('data-hc-bud-consumed="69"'), "Second BTR 31.0% must grey 69 cells of the bud");
+    // THE TRIM BOGEY (canon 0.30.249): 40 until saved; at 35 the 69 consumed reach four product cells, from the 66th.
+    const wasteOf = (card) => {
+      const at = card.indexOf('<svg class="hc-bud"');
+      return (card.slice(at, card.indexOf("</svg>", at)).match(/ data-hc-bud-waste\/>/g) || []).length;
+    };
+    assert(secondCard.includes('data-hc-bud-product="40"') && wasteOf(secondCard) === 9, "the default bogey leaves 40 product cells, 9 of them dug into at 31% BTR");
+    const bogeyPage = await text("/admin/lookups/trim_bogey");
+    assert(bogeyPage.res.status === 200, `GET the Trim Bogey page expected 200 got ${bogeyPage.res.status}`);
+    assert(bogeyPage.body.includes('value="40" data-trim-bogey-value') && bogeyPage.body.includes("data-trim-bogey-default"), "the Trim Bogey page must show the default 40 until saved");
+    const badBogey = await req("/admin/lookups/trim_bogey", { method: "POST", body: form({ trim_bogey_pct: "140", reason: "smoke" }) });
+    assert(badBogey.status === 400, `a bogey past 100 expected 400 got ${badBogey.status}`);
+    assert((await badBogey.text()).includes("Trim Bogey is a whole percent from 0 to 100."), "a bogey past 100 must refuse in words");
+    const saveBogey = await req("/admin/lookups/trim_bogey", { method: "POST", body: form({ trim_bogey_pct: "35", reason: "smoke: a tighter goal" }) });
+    assert(saveBogey.status === 303, `saving the bogey expected 303 got ${saveBogey.status} ${await saveBogey.text()}`);
+    assert((saveBogey.headers.get("location") || "").endsWith("/admin/lookups/trim_bogey?ok=saved"), `saving the bogey must return to its page, got ${saveBogey.headers.get("location")}`);
+    const bogeySaved = await text("/admin/lookups/trim_bogey?ok=saved");
+    assert(bogeySaved.body.includes('value="35" data-trim-bogey-value') && bogeySaved.body.includes("data-trim-bogey-flash") && !bogeySaved.body.includes("data-trim-bogey-default"), "the saved bogey must read 35 with its flash");
+    const bogeyConsole = await text("/harvest");
+    const bogeySecond = bogeyConsole.body.slice(bogeyConsole.body.indexOf('data-hc-shift="second"'));
+    assert(bogeySecond.includes('data-hc-bud-product="35"') && wasteOf(bogeySecond) === 4, "at a bogey of 35 the Second plume must dig into 4 product cells");
+    const bogeyBack = await req("/admin/lookups/trim_bogey", { method: "POST", body: form({ trim_bogey_pct: "40", reason: "smoke: back to the default" }) });
+    assert(bogeyBack.status === 303, `restoring the bogey expected 303 got ${bogeyBack.status}`);
+    await bogeyBack.text();
     assert(secondCard.includes('<text class="hc-node-value" data-hc-node-value="trim" x="850" y="112">20 g</text>'), "the TRIM circle must carry the WASTE 20 g as the rest of Other");
     assert(trimSection.includes("data-hc-trim-unassigned>1 g yesterday by operators on neither shift: Les. Name the shifts' operators in Admin, Lookups, app_config.</p>"), "grams by an operator on neither shift must be named, never dropped");
     const badShift = await req("/harvest/trim-hours", { method: "POST", body: form({ shift: "night", work_date: consoleYesterday, hours: "5" }) });
@@ -5093,7 +5127,8 @@ async function run() {
     const consoleTrimEs = await text("/harvest");
     assert(consoleTrimEs.body.includes("Turno de dia") && consoleTrimEs.body.includes("Segundo turno") && consoleTrimEs.body.includes("Libras producidas ayer"), "the Trimming section must speak Spanish");
     assert(consoleTrimEs.body.includes("<dt>Flor total</dt>") && consoleTrimEs.body.includes(">Total del turno</text>") && consoleTrimEs.body.includes("EN MARCHA"), "the picture and his lines must speak Spanish");
-    assert(consoleTrimEs.body.includes("consumido"), "the bud legend must speak Spanish");
+    // THE CONTRAST (canon 0.30.245): the legend reads bud, byproduct, waste.
+    assert(consoleTrimEs.body.includes("subproducto") && consoleTrimEs.body.includes("desperdicio"), "the bud legend must speak Spanish");
     // THE DRYING TOTALS (canon 0.30.183) speak Spanish too.
     assert(consoleTrimEs.body.includes("Total en espacios de secado") && consoleTrimEs.body.includes("Total en espacios de curado") && consoleTrimEs.body.includes("Total seco en cola") && /seco est\. [0-9,]+\.[0-9]{2} lb al 22%/.test(consoleTrimEs.body), "the drying totals must speak Spanish");
     const toEnTrim = await req("/locale", { method: "POST", body: form({ locale: "en" }) });
@@ -5284,6 +5319,7 @@ async function run() {
     assert(wSecond.status === 303, `second lot weight expected 303 got ${wSecond.status}`);
     const finSecond = await req(`/station/wet_weight/lot/${lotSecond}/finish`, { method: "POST", body: form({}) });
     assert(finSecond.status === 303, `second lot finish expected 303 got ${finSecond.status}`);
+    await passEntry(lotSecond);
     const secondPick = await text(`/station/load_silo?pick=${lotSecond}`);
     assert(secondPick.body.includes('action="/station/load_silo/load"'), "the second lot must open the load form from the barn");
     assert(
@@ -5446,8 +5482,9 @@ async function run() {
 
     // Owner ruling 2026-09-06 (canon 0.27.6): every interco container empty
     // line reads "- EMPTY -". The builder's empty lists show it.
-    assert(floorFinal.body.includes("- EMPTY -"), "an empty pane list must read - EMPTY -");
-    assert(!floorFinal.body.includes("No packages in this barn."), "the old barn empty line must be gone");
+    const partnersEmpty = await text("/logistics/partners");
+    assert(partnersEmpty.body.includes("- EMPTY -"), "Processing Partners must read - EMPTY -");
+    assert(!partnersEmpty.body.includes("No packages in this barn."), "the old barn empty line must be gone");
     for (const gone of [
       "Nothing in this barn.",
       "No items ready to move.",
@@ -5455,7 +5492,7 @@ async function run() {
       "No trucks on the road.",
       "No inbound movements.",
     ]) {
-      assert(!floorFinal.body.includes(gone), `the floor must not read ${gone}`);
+      assert(!partnersEmpty.body.includes(gone), `the floor must not read ${gone}`);
     }
 
     // Owner rulings 2026-09-07 (canon 0.29.0): the Continuum 10 Vendors and
@@ -6130,6 +6167,7 @@ async function run() {
     const finBf = await req(`/station/wet_weight/lot/${bfLot}/finish`, { method: "POST", body: form({ plant_count: "12" }) });
     assert(finBf.status === 303, `freezer lot finish expected 303 got ${finBf.status} ${await finBf.text()}`);
     const loadBfIso = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    await passEntry(bfLot);
     const loadBf = await req("/station/load_silo/load", {
       method: "POST",
       body: form({ lot_id: bfLot, dry_space_id: bfId, start_time: "07:30", loaded_at_iso: loadBfIso }),
@@ -6192,6 +6230,7 @@ async function run() {
     assert(wBf2.status === 303, `second freezer lot weight expected 303 got ${wBf2.status}`);
     const finBf2 = await req(`/station/wet_weight/lot/${bfLot2}/finish`, { method: "POST", body: form({ plant_count: "5" }) });
     assert(finBf2.status === 303, `second freezer lot finish expected 303 got ${finBf2.status} ${await finBf2.text()}`);
+    await passEntry(bfLot2);
     const pickBf2 = await text(`/station/load_silo?pick=${bfLot2}`);
     assert(pickBf2.res.status === 200, `second freezer lot pick expected 200 got ${pickBf2.res.status}`);
     assert(pickBf2.body.includes(`<option value="${bfId}" selected data-holding="1">Blast Freezer(s) (holding 1 lot)</option>`), "the loaded freezer must stay open in the select, holding 1 lot, preselected as the lot's own space");
@@ -6307,6 +6346,7 @@ async function run() {
     assert(wStray.status === 303, `stray weight expected 303 got ${wStray.status}`);
     const finStray = await req(`/station/wet_weight/lot/${strayLot}/finish`, { method: "POST", body: form({ plant_prompt: "skip" }) });
     assert(finStray.status === 303, `stray finish expected 303 got ${finStray.status} ${await finStray.text()}`);
+    await passEntry(strayLot);
     const loadStray = await req("/station/load_silo/load", {
       method: "POST",
       body: form({ lot_id: strayLot, dry_space_id: straySilo.id, start_time: "", loaded_at_iso: "" }),
@@ -6374,120 +6414,10 @@ async function run() {
     const mbMountLoc = mbMount.headers.get("location") || "";
     assert(mbMount.status === 303 && mbMountLoc.includes("added=4") && mbMountLoc.includes("gone=0"), `the builder's packages must mount under 694 with nothing gone, got ${mbMount.status} ${mbMountLoc}`);
     await mbMount.text();
-    const mbBare = await text("/interco");
-    assert(mbBare.body.includes('<option value="AU-P-000694">AU-P-000694 - '), "the origin list must offer the processor license");
-    const mbOrigin = await text("/interco?origin=AU-P-000694&dest=AU-G-C-000832");
-    assert(mbOrigin.res.status === 200, `the origin pick expected 200 got ${mbOrigin.res.status}`);
-    assert(mbOrigin.body.includes('<input type="hidden" name="origin_license" value="AU-P-000694">'), "the origin pick must ride the form");
-    assert(mbOrigin.body.includes('<option value="AU-P-000694" selected>'), "the origin select must show the pick");
-    assert(mbOrigin.body.includes('placeholder="######" data-last-six'), "the last-six filter must sit atop the exposed list");
-    assert(mbOrigin.body.includes('data-origin-count data-total="5">5 packages</p>'), "the origin pane must count the five mirror rows");
-    const mbOrder = [MB("000012"), MB("000105"), MB("000999"), MB("001001"), FFZ_TAG].map((tag) => mbOrigin.body.indexOf(`data-tag="${tag}"`));
-    assert(mbOrder.every((i) => i > 0) && mbOrder.every((i, k) => k === 0 || i > mbOrder[k - 1]), `the rows must sort by the number in the last six, the hex tail last, got ${mbOrder.join(",")}`);
-    assert(mbOrigin.body.includes('<b class="tag-six">000105</b>') && mbOrigin.body.includes("WPR - Donny Burger - PNN - O \u00b7 751 g \u00b7 Cryo 1"), "a row must read its last six, item, grams and location");
-    assert(mbOrigin.body.includes(`<input type="hidden" name="tags" value="${MB("000012")}" disabled>`), "a row's tag box must be disabled until it rides the manifest");
-    assert(mbOrigin.body.includes('data-add aria-label="Add to manifest"') && mbOrigin.body.includes('data-remove aria-label="Put back in the origin list"'), "a row must carry both shuttles");
-    assert(!mbOrigin.body.includes("data-manifested="), "nothing is manifested yet");
-    const mbDestPane = mbOrigin.body.slice(mbOrigin.body.indexOf('data-pane="destination"'), mbOrigin.body.indexOf('data-pane="manifest"'));
-    assert(!mbDestPane.includes('value="AU-P-000694"') && mbDestPane.includes('<option value="AU-G-C-000832" selected>'), "the destination list must leave the origin out and carry the preselected destination");
-    const mbJson = JSON.parse((mbOrigin.body.match(/<script type="application\/json" id="manifest-data">([\s\S]*?)<\/script>/) || [])[1] || "{}");
-    // (832's truck package moved to the Blast Freezer in the Change Location walk above, and the mirror followed it.)
-    assert(JSON.stringify(mbJson.locations["AU-G-C-000832"]) === JSON.stringify(["24.2.A", "Blast Freezer"]), `832's receive-into list must be the mirror's names, got ${JSON.stringify(mbJson.locations["AU-G-C-000832"])}`);
-    assert(JSON.stringify(mbJson.locations["AU-P-000694"]) === JSON.stringify(["Blast Freezer", "Cryo 1", "Trim Room 1", "Trim Room 2"]), `694's receive-into list must be the mirror's names A to Z, got ${JSON.stringify(mbJson.locations["AU-P-000694"])}`);
-    assert(JSON.stringify(mbJson.prefill) === "{}", "no finished manifest, no header prefill yet");
-    for (const name of ["planned_route", "transfer_type", "invoice_number", "payment_term_days", "planned_departure", "planned_arrival", "gross_weight", "gross_weight_uom", "transporter_license", "transporter_phone", "driver", "driver_occupational_license", "driver_license_number", "vehicle_make", "vehicle_model", "vehicle_plate"]) {
-      assert(mbOrigin.body.includes(`name="${name}"`), `the header must carry ${name}`);
-    }
-    const mbHeader = {
-      origin_license: "AU-P-000694",
-      destination_license: "AU-G-C-000832",
-      destination_location: "24.2.A",
-      planned_route: "North on Building 23 drive\nEast to Barn",
-      transfer_type: "Transfer",
-      planned_departure: "9/18/2026",
-      planned_arrival: "9/18/2026",
-      gross_weight: "3",
-      gross_weight_uom: "Pounds",
-      transporter_license: "AU-P-000694",
-      driver: "Smoke Driver",
-      vehicle_make: "Ford",
-      vehicle_plate: "SMOKE1",
-    };
-    const mbFinish = await req("/interco/manifest/finish", {
-      method: "POST",
-      body: form({ ...mbHeader, tags: [MB("000105"), MB("000012")], prices: ["672", ""] }),
-    });
-    const mbFinishLoc = mbFinish.headers.get("location") || "";
-    assert(mbFinish.status === 303, `finish expected 303 got ${mbFinish.status} ${await mbFinish.text()}`);
-    const mbMovement = (mbFinishLoc.match(/movement=([0-9a-f-]+)/) || [])[1];
-    assert(mbMovement && mbFinishLoc.startsWith("/interco?ok=manifest&movement=") && mbFinishLoc.includes("&n=2&origin=AU-P-000694"), `finish must redirect to the page with the movement, got ${mbFinishLoc}`);
-    const mbShort = mbMovement.replaceAll("-", "").slice(0, 8);
-    const mbAfter = await text(mbFinishLoc);
-    assert(mbAfter.body.includes("Manifest recorded. The T3 file is downloading; it also waits on Pending Data Uploads."), "the finish flash must say recorded and downloading");
-    assert(mbAfter.body.includes(`data-manifest-finished="${mbMovement}"`) && mbAfter.body.includes(`<b>${mbShort}</b>: 2 packages.`), "the banner must name the manifest and its count");
-    assert(mbAfter.body.includes(`href="/interco/manifest/${mbMovement}/csv" data-manifest-download>Download the T3 file</a>`), "the banner must carry the download link");
-    assert(mbAfter.body.includes(`window.location.href = "/interco/manifest/${mbMovement}/csv";`), "the page must start the download itself");
-    assert(mbAfter.body.includes(`data-tag="${MB("000105")}" data-last6="000105" data-manifested="${mbShort}"`) && mbAfter.body.includes(`data-tag="${MB("000012")}" data-last6="000012" data-manifested="${mbShort}"`), "the two manifested packages must read dim with the manifest's short id");
-    assert(mbAfter.body.includes(`on manifest ${mbShort}`), "a dim row names its manifest");
-    const mbDimRow = mbAfter.body.slice(mbAfter.body.indexOf(`data-tag="${MB("000105")}"`), mbAfter.body.indexOf(`data-tag="${MB("000999")}"`));
-    assert(!mbDimRow.includes("data-add") && !mbDimRow.includes('name="tags"'), "a dim row carries no >> and no tag box");
-    assert(mbAfter.body.includes(`data-tag="${MB("000999")}" data-last6="000999">`) && !mbAfter.body.includes(`data-tag="${MB("000999")}" data-last6="000999" data-manifested`), "a package off the manifest stays live");
-    const mbJsonAfter = JSON.parse((mbAfter.body.match(/<script type="application\/json" id="manifest-data">([\s\S]*?)<\/script>/) || [])[1] || "{}");
-    assert(mbJsonAfter.prefill["AU-G-C-000832"] && mbJsonAfter.prefill["AU-G-C-000832"].planned_route === mbHeader.planned_route && mbJsonAfter.prefill["AU-G-C-000832"].driver === "Smoke Driver" && !("invoice_number" in mbJsonAfter.prefill["AU-G-C-000832"]), `the header must prefill from the finished manifest on the pair, got ${JSON.stringify(mbJsonAfter.prefill)}`);
-    // The T3 file under the interco gate: the header row, the two package rows in tag order, the price on the priced one.
-    const mbCsvRes = await req(`/interco/manifest/${mbMovement}/csv`);
-    assert(mbCsvRes.status === 200 && (mbCsvRes.headers.get("content-type") || "").includes("text/csv"), `the T3 file expected 200 text/csv got ${mbCsvRes.status} ${mbCsvRes.headers.get("content-type")}`);
-    assert((mbCsvRes.headers.get("content-disposition") || "").startsWith(`attachment; filename="manifest_${mbShort}_`), `the T3 file must download under the manifest's name, got ${mbCsvRes.headers.get("content-disposition")}`);
-    const mbCsv = await mbCsvRes.text();
-    const mbLines = mbCsv.split("\r\n");
-    assert(mbLines[0].startsWith("destination in line.Destinations,") && mbLines[1].startsWith("destination.RecipientId,") && mbLines[2].startsWith("License Number,Planned Route,"), "the T3 file must open with the template's three header rows");
-    assert(mbLines[3].startsWith('AU-G-C-000832,"North on Building 23 drive\nEast to Barn",Transfer,,,9/18/2026,9/18/2026,3,Pounds,AU-P-000694,,,,Smoke Driver,,,,,Ford,,SMOKE1,,'), `the first data row must carry the header as typed, got ${mbLines[3].slice(0, 160)}`);
-    assert(mbLines[3].endsWith(`${MB("000012")},,,`), `the first data row must end with the lower tag and no price, got ${mbLines[3].slice(-40)}`);
-    assert(mbLines[4] === `${",".repeat(22)}${MB("000105")},672,,`, `the second row must carry the priced tag, got ${mbLines[4]}`);
-    assert(mbLines[5] === "" && mbLines.length === 6, `the file must end after the two package rows, got ${mbLines.length} lines`);
-    // The record: Pending Data Uploads lists the manifest; Data Queues carries the move with two items.
-    const mbUploads = await text("/admin/uploads");
-    assert(mbUploads.body.includes(`/admin/uploads/manifest/${mbMovement}.csv`), "the manifest must pend on the export home");
-    const mbUploadRow = mbUploads.body.slice(mbUploads.body.indexOf(`/admin/uploads/manifest/${mbMovement}.csv`), mbUploads.body.indexOf(`/admin/uploads/manifest/${mbMovement}.csv`) + 300);
-    assert(!mbUploadRow.includes("data-tag-missing"), "a manifest of mirror tags has no tag gap");
-    assert(mbUploadRow.includes("AU-P-000694 / AU-G-C-000832"), "the export home row must read the pair");
-    const mbAdminCsv = await text(`/admin/uploads/manifest/${mbMovement}.csv`);
-    assert(mbAdminCsv.res.status === 200 && mbAdminCsv.body === mbCsv, "the export home's copy must be the same bytes");
-    const mbQueues = await text("/admin/queues");
-    const mbQueueRow = mbQueues.body.slice(mbQueues.body.indexOf(`data-movement-id="${mbMovement}"`), mbQueues.body.indexOf(`data-movement-id="${mbMovement}"`) + 900);
-    assert(mbQueueRow.includes("<td>interco</td>") && mbQueueRow.includes("<td>PNN</td>") && mbQueueRow.includes("<td>completed</td>") && mbQueueRow.includes("<td>2</td>"), `the Logistics Moves queue must carry the move with two items, got ${mbQueueRow.replace(/\s+/g, " ").slice(0, 400)}`);
-    // The refusals, in words.
-    const mbAgain = await req("/interco/manifest/finish", { method: "POST", body: form({ ...mbHeader, tags: [MB("000105")], prices: [""] }) });
-    assert(mbAgain.status === 400 && (await mbAgain.text()).includes(`That package already rides a finished manifest. (000105, ${mbShort})`), "a manifested tag must be refused by name");
-    const mbForeign = await req("/interco/manifest/finish", { method: "POST", body: form({ ...mbHeader, tags: [SKU_BULK], prices: [""] }) });
-    assert(mbForeign.status === 400 && (await mbForeign.text()).includes("That package is not in the METRC mirror under the origin license. (028138)"), "a tag under another license must be refused by name");
-    const mbSame = await req("/interco/manifest/finish", { method: "POST", body: form({ ...mbHeader, destination_license: "AU-P-000694", tags: [MB("000999")], prices: [""] }) });
-    assert(mbSame.status === 400 && (await mbSame.text()).includes("The destination must differ from the origin."), "the same license twice must be refused");
-    const mbEmpty = await req("/interco/manifest/finish", { method: "POST", body: form({ ...mbHeader }) });
-    assert(mbEmpty.status === 400 && (await mbEmpty.text()).includes("Add at least one package with &gt;&gt; before finishing."), "no packages must be refused (the words, escaped on the error page)");
-    const mbBadPrice = await req("/interco/manifest/finish", { method: "POST", body: form({ ...mbHeader, tags: [MB("000999")], prices: ["six hundred"] }) });
-    assert(mbBadPrice.status === 400 && (await mbBadPrice.text()).includes("A wholesale price must be a number."), "a wordy price must be refused");
-    const mbUnknownLicense = await req("/interco/manifest/finish", { method: "POST", body: form({ ...mbHeader, destination_license: "AU-X-999999", tags: [MB("000999")], prices: [""] }) });
-    assert(mbUnknownLicense.status === 400 && (await mbUnknownLicense.text()).includes("That destination license is not on the license list."), "an unknown destination must be refused");
-    // Spanish at the pill.
-    const mbEs = await req("/locale", { method: "POST", body: form({ locale: "es" }) });
-    await mbEs.text();
-    const mbEsPage = await text("/interco?origin=AU-P-000694");
-    for (const word of ["<h2>Licencia de origen</h2>", "<h2>Licencia de destino</h2>", "Recibir en", "Ultimos seis", "Destinatario", "Precio mayorista", `en el manifiesto ${mbShort}`, 'data-finish>Terminar</button>', 'data-cancel>Cancelar</a>', "- VACIO -"]) {
-      assert(mbEsPage.body.includes(word), `the Spanish builder must read ${word}`);
-    }
-    const mbEn = await req("/locale", { method: "POST", body: form({ locale: "en" }) });
-    await mbEn.text();
-    // The reasoned void in Data Queues frees the tags; the file leaves the export home.
-    const mbVoid = await req(`/admin/queues/movement/${mbMovement}/void`, { method: "POST", body: form({ reason: "smoke: the manifest builder's walk, voided to free its tags" }) });
-    assert(mbVoid.status === 303, `the manifest void expected 303 got ${mbVoid.status} ${await mbVoid.text()}`);
-    const mbFreed = await text("/interco?origin=AU-P-000694");
-    assert(!mbFreed.body.includes("data-manifested="), "a voided manifest frees its tags");
-    assert(mbFreed.body.includes(`<input type="hidden" name="tags" value="${MB("000105")}" disabled>`), "a freed tag rides a live row again");
-    const mbUploadsAfter = await text("/admin/uploads");
-    assert(!mbUploadsAfter.body.includes(`/admin/uploads/manifest/${mbMovement}.csv`), "a voided manifest leaves the export home");
-    const mbLog = await text("/log");
-    assert(mbLog.body.includes("smoke: the manifest builder's walk, voided to free its tags"), "the void must land in the change log under its reason");
+    // THE LOAD AND THE LOT (canon 0.30.241): the manifest builder is struck. The mirror mount above stays so a later adopt can still read those tags.
+    const struck = await req("/interco/manifest/finish", { method: "POST", body: form({}) });
+    assert(struck.status === 303 && (struck.headers.get("location") || "").endsWith("/ops/interco_logistics"), "a stale manifest finish must land on Logistics Operations and act on nothing");
+    await struck.text();
 
     // THE MIRROR CLOSES THE LEDGER (canon 0.30.128). Owner, 2026-09-19,
     // verbatim: "How do I empty my FFZ inventory.  I passed a METRC Mirror for
@@ -6539,9 +6469,10 @@ async function run() {
     // serial (the package code that carried the tag is gone with the item, and
     // the HBN has no harvest tag); the pick shows the words where the load form
     // would stand; a hand-built load refuses in words naming the lot by its serial.
+    const truckBatch = await passEntry(truckLotId);
     const goneLotPane = await text("/station/load_silo");
-    assert(goneLotPane.body.includes(`href="/station/load_silo?pick=${truckLotId}"`), "a finished lot whose package is gone still stands on the pane");
-    assert(new RegExp(`pick=${truckLotId}"><strong>\\d{5} / PNN / [^<]*</strong> <span class="muted">500 g</span> <span class="muted" data-no-package>\\(no live package\\)</span>`).test(goneLotPane.body), "the gone-package lot must be marked no live package on its row");
+    assert(goneLotPane.body.includes(`href="/station/load_silo?pick=${truckBatch}"`), "a finished lot whose package is gone still stands on the pane");
+    assert(new RegExp(`pick=${truckBatch}"><strong>\\d{5} / PNN / [^<]*</strong> <span class="muted">500 g</span> <span class="muted" data-no-package>\\(no live package\\)</span>`).test(goneLotPane.body), "the gone-package lot must be marked no live package on its row");
     const goneLotPick = await text(`/station/load_silo?pick=${truckLotId}`);
     assert(goneLotPick.body.includes('<p class="banner warn" data-no-package>'), "the pick of a gone-package lot must show the words");
     assert(!goneLotPick.body.includes('action="/station/load_silo/load"'), "no load form for a lot without a live package");
@@ -7269,6 +7200,17 @@ async function run() {
     assert(finishTruck.status === 303, `finish truck expected 303 got ${finishTruck.status} ${await finishTruck.text()}`);
     const truckFinishLoc = finishTruck.headers.get("location") || "";
     assert(truckFinishLoc.includes("ok=truck_split") && truckFinishLoc.includes("truck=1"), `the flash must name Truck 1, got ${truckFinishLoc}`);
+    const dryQueue = await text("/logistics/internal");
+    const dryAvail = dryQueue.body.slice(dryQueue.body.indexOf('data-schedule-pane="available"'), dryQueue.body.indexOf('data-schedule-pane="working"'));
+    assert(dryAvail.includes(headerHbn) && dryAvail.includes(otherHbnFull), "Finish load puts both lots in the Dry Queue");
+    const beforePass = await text("/station/load_silo");
+    assert(!beforePass.body.includes(`Truck 1 - ${headerHbn}`), "Finish load must not put a lot on Load Silo");
+    for (const hbn of [headerHbn, otherHbnFull]) {
+      const row = dryAvail.match(new RegExp(`data-logistics-lot="([^"]+)" data-logistics-parts="[^"]*" data-logistics-hbn="${hbn}"`));
+      assert(row, `the Dry Queue must carry ${hbn}`);
+      const passed = await req("/logistics/internal/schedule", { method: "POST", body: form({ harvest_batch_id: row[1] }) });
+      assert(passed.status === 303, `passing ${hbn} expected 303 got ${passed.status} ${await passed.text()}`);
+    }
     const loadPane = await text("/station/load_silo");
     assert(loadPane.body.includes(`Truck 1 - ${headerHbn}`), `Load Silo must label Truck 1 - ${headerHbn}`);
     assert(loadPane.body.includes(`Truck 1 - ${otherHbnFull}`), `Load Silo must label Truck 1 - ${otherHbnFull}`);
@@ -7325,6 +7267,100 @@ async function run() {
       splitSilos.push(siloPick);
     }
     assert(splitSilos[0] !== splitSilos[1], "the two split lots must land in two different silos");
+    const finishedLots = await text("/logistics/internal");
+    const finishedPane = finishedLots.body.slice(finishedLots.body.indexOf('data-schedule-pane="complete"'));
+    assert(finishedPane.includes(headerHbn) && finishedPane.includes(otherHbnFull), "both loaded lots must read Finished");
+
+    // A lot of two parts: the Scheduled > opens Load Silo on the harvest batch,
+    // and each typed plant count lands on its part.
+    const twoAcquire = await text("/station/acquire_hbn");
+    const twoMint = await req("/station/acquire_hbn", {
+      method: "POST",
+      body: form({ entry_date: "2026-09-26", farm_code: "PNN", grow_method_code: "GH", strain_id: optionValue(twoAcquire.body, "Fruity Pebbles") }),
+    });
+    assert(twoMint.status === 303, `two-part HBN expected 303 got ${twoMint.status} ${await twoMint.text()}`);
+    const twoHbn = new URL(twoMint.headers.get("location") || "", base).searchParams.get("minted");
+    const twoWet = await text("/station/wet_weight");
+    let twoBatch = null;
+    for (const hit of twoWet.body.matchAll(/\?pick=([a-f0-9-]{36})">\d+\. PNN \//g)) {
+      const page = await text(`/station/wet_weight?pick=${hit[1]}`);
+      if (page.body.includes(`<p class="muted">${twoHbn}</p>`)) {
+        twoBatch = hit[1];
+        break;
+      }
+    }
+    assert(twoBatch, "the two-part HBN must be on the wet pane");
+    const twoParts = [];
+    for (const grams of ["300", "120"]) {
+      const start = await req("/station/wet_weight", {
+        method: "POST",
+        body: form({ team_lead: "Smoke Lead", harvest_batch_id: twoBatch, actual_dryspc: silo1Id, notes: "two-part load" }),
+      });
+      assert(start.status === 303, `two-part start expected 303 got ${start.status} ${await start.text()}`);
+      const lot = new URL(start.headers.get("location") || "", base).searchParams.get("lot");
+      assert(lot, "two-part start must name the lot");
+      const weigh = await req(`/station/wet_weight/lot/${lot}/weights`, { method: "POST", body: form({ weight_grams: grams }) });
+      assert(weigh.status === 303, `two-part weight expected 303 got ${weigh.status}`);
+      await weigh.text();
+      const fin = await req(`/station/wet_weight/lot/${lot}/finish`, { method: "POST", body: form({ plant_prompt: "skip" }) });
+      assert(fin.status === 303, `two-part finish expected 303 got ${fin.status} ${await fin.text()}`);
+      twoParts.push(lot);
+    }
+    const roadStart = await req("/station/wet_weight", {
+      method: "POST",
+      body: form({ team_lead: "Smoke Lead", harvest_batch_id: twoBatch, actual_dryspc: silo1Id, truck_number: "9", notes: "on the road" }),
+    });
+    assert(roadStart.status === 303, `road lot start expected 303 got ${roadStart.status} ${await roadStart.text()}`);
+    const roadLot = new URL(roadStart.headers.get("location") || "", base).searchParams.get("lot");
+    assert(roadLot, "the road lot redirect must name the lot");
+    const roadWeigh = await req(`/station/wet_weight/lot/${roadLot}/weights`, { method: "POST", body: form({ weight_grams: "40" }) });
+    assert(roadWeigh.status === 303, `road lot weight expected 303 got ${roadWeigh.status}`);
+    await roadWeigh.text();
+    const truckSpace = drySpaceIdByName((await text("/admin/lookups/dry_spaces")).body, "Truck");
+    const roadMove = await req(`/record/wet_weight_entries/${roadLot}/edit`, {
+      method: "POST",
+      body: form({ actual_dryspc: truckSpace, reason: "smoke: this load rides the truck" }),
+    });
+    assert(roadMove.status === 303, `pointing the lot at the truck expected 303 got ${roadMove.status} ${await roadMove.text()}`);
+    const roadFinish = await req(`/station/wet_weight/lot/${roadLot}/finish`, { method: "POST", body: form({ plant_prompt: "skip" }) });
+    assert(roadFinish.status === 303, `road lot finish expected 303 got ${roadFinish.status} ${await roadFinish.text()}`);
+    const mapBefore = await text("/");
+    const harvestNode = mapBefore.body.slice(mapBefore.body.indexOf('data-ops-key="harvest_ops"'), mapBefore.body.indexOf('data-ops-key="harvest_ops"') + 2500);
+    const logisticsNode = mapBefore.body.slice(mapBefore.body.indexOf('data-ops-key="interco_logistics"'), mapBefore.body.indexOf('data-ops-key="interco_logistics"') + 2500);
+    assert(harvestNode.includes('class="ops-menu-line"') && harvestNode.includes("Lot ") && harvestNode.includes("in progress"), "Harvest must line today's lot as in progress");
+    assert(logisticsNode.includes(">Truck 9<") && logisticsNode.includes("in-transit") && logisticsNode.includes("data-clock"), "Logistics must line Truck 9 while it is on the road");
+    assert(!logisticsNode.includes(">Truck</span>"), "the on-site two-part lot is off the Logistics line");
+    assert(!mapBefore.body.slice(mapBefore.body.indexOf('data-ops-key="marketplace"'), mapBefore.body.indexOf('data-ops-key="marketplace"') + 800).includes("ops-menu-line"), "Marketplace carries no menu line");
+    const twoQueue = await text("/logistics/internal");
+    const twoAvail = twoQueue.body.slice(twoQueue.body.indexOf('data-schedule-pane="available"'), twoQueue.body.indexOf('data-schedule-pane="working"'));
+    const twoRow = twoAvail.match(new RegExp(`data-logistics-lot="${twoBatch}" data-logistics-parts="([^"]*)"`));
+    assert(twoRow && twoParts.every((id) => twoRow[1].split(/\s+/).includes(id)), "both parts must sit on one Dry Queue lot");
+    const twoPass = await req("/logistics/internal/schedule", { method: "POST", body: form({ harvest_batch_id: twoBatch }) });
+    assert(twoPass.status === 303, `passing the two-part lot expected 303 got ${twoPass.status} ${await twoPass.text()}`);
+    const twoDesk = await text("/logistics/internal");
+    const twoSched = twoDesk.body.slice(twoDesk.body.indexOf('data-schedule-pane="working"'), twoDesk.body.indexOf('data-schedule-pane="complete"'));
+    const twoHref = (twoSched.match(new RegExp(`href="(/station/load_silo\\?pick=${twoBatch})"`)) || [])[1];
+    assert(twoHref, "the Scheduled > must open Load Silo on the harvest batch");
+    const twoPick = await text(twoHref);
+    assert(twoPick.body.includes(`name="lot_id" value="${twoBatch}"`), "the picked form must post the harvest batch");
+    for (const id of twoParts) assert(twoPick.body.includes(`name="plant_count[${id}]"`), `the form must ask the plant count for ${id}`);
+    const twoSelect = (twoPick.body.match(/<select name="dry_space_id" required>([\s\S]*?)<\/select>/) || [])[1] || "";
+    const twoSpace = ([...twoSelect.matchAll(/<option value="([^"]+)"(?![^>]*\bdisabled\b)/g)][0] || [])[1];
+    assert(twoSpace, "a free space must be offered for the two-part lot");
+    const twoFields = { lot_id: twoBatch, dry_space_id: twoSpace, start_time: "", loaded_at_iso: "" };
+    twoFields[`plant_count[${twoParts[0]}]`] = "11";
+    twoFields[`plant_count[${twoParts[1]}]`] = "7";
+    const twoLoad = await req("/station/load_silo/load", { method: "POST", body: form(twoFields) });
+    assert(twoLoad.status === 303, `the two-part load expected 303 got ${twoLoad.status} ${await twoLoad.text()}`);
+    const mapDry = await text("/");
+    const dryingNode = mapDry.body.slice(mapDry.body.indexOf('data-ops-key="drying_ops"'), mapDry.body.indexOf('data-ops-key="drying_ops"') + 4000);
+    assert(dryingNode.includes('class="ops-menu-line"') && dryingNode.includes("drying") && dryingNode.includes("data-clock"), "Drying must line a space that holds a load");
+    assert(!dryingNode.includes("Blast Freezer"), "a freezer is off the Drying line");
+    const twoCounts = ["11", "7"];
+    for (let i = 0; i < twoParts.length; i++) {
+      const edit = await text(`/record/wet_weight_entries/${twoParts[i]}/edit`);
+      assert(edit.body.includes(`name="plant_count" value="${twoCounts[i]}"`), `part ${twoParts[i]} must keep plant count ${twoCounts[i]}`);
+    }
 
     // THE DRYING SCHEDULE (canon 0.30.226; Patrick's "scheduling the silos and
     // dry spaces the way we do the lines", his pick "Three surfaces by space
@@ -7371,12 +7407,15 @@ async function run() {
       // The Silos Working pane: each split load under its own silo.
       const silosWorking = schedPaneOf(surfaces.silos.body, "working");
       const splitLoads = [];
+      const splitEntries = [];
       for (let i = 0; i < 2; i++) {
         const section = sectionOf(silosWorking, "data-drying-space", splitSilos[i]);
         assert(section, `the Silos Working pane must carry split lot ${i + 1}'s silo as a section`);
-        assert(section.includes(`data-drying-lot="${splitIds[i]}"`), `split lot ${i + 1} must ride under the silo it loaded into`);
-        assert(!section.includes(`data-drying-lot="${splitIds[1 - i]}"`), `split lot ${i + 1}'s silo must hold that lot alone`);
-        const loadId = (section.match(new RegExp(`data-drying-load="([a-f0-9-]{36})" data-drying-lot="${splitIds[i]}"`)) || [])[1];
+        const entryIds = [...section.matchAll(/data-drying-lot="([a-f0-9-]{36})"/g)].map((m) => m[1]);
+        assert(entryIds.length === 1, `split lot ${i + 1} must ride under the silo it loaded into, alone`);
+        const entryId = entryIds[0];
+        splitEntries.push(entryId);
+        const loadId = (section.match(/data-drying-load="([a-f0-9-]{36})"/) || [])[1];
         assert(loadId, `split lot ${i + 1}'s Working row must name its load`);
         assert(section.includes("data-clock"), `split lot ${i + 1}'s Working row must carry the clock`);
         assert(section.includes(`action="/station/load_silo/${loadId}/start"`), `split lot ${i + 1}'s Working row must carry Start`);
@@ -7385,14 +7424,14 @@ async function run() {
           (section.match(/<input type="hidden" name="next" value="\/production\/scheduling\/silos">/g) || []).length >= 2,
           `Start and Pause on split lot ${i + 1}'s row must each return to the Silos surface`
         );
-        assert(section.includes(`href="/station/unload_dry_space?pick=${splitIds[i]}"`), `split lot ${i + 1}'s > must open Unload Dry Space on the lot`);
+        assert(section.includes(`href="/station/unload_dry_space?pick=${entryId}"`), `split lot ${i + 1}'s > must open Unload Dry Space on the lot`);
         assert(!section.includes("data-unload-together-link"), `a one-load silo offers no Unload together (split lot ${i + 1})`);
         splitLoads.push(loadId);
       }
       assert(Number((surfaces.silos.body.match(/data-schedule-count="working">(\d+)</) || [])[1]) >= 2, "the Silos Working count must hold both split loads");
       // Pause and Resume from the surface return to it.
       const clockStateOf = (body, loadId) => {
-        const row = rowOf(schedPaneOf(body, "working"), splitIds[splitLoads.indexOf(loadId)]);
+        const row = rowOf(schedPaneOf(body, "working"), splitEntries[splitLoads.indexOf(loadId)]);
         return (row.match(/data-clock data-state="([a-z_]+)"/) || [])[1];
       };
       assert(clockStateOf(surfaces.silos.body, splitLoads[0]) === "running", `a load from the surface starts running, got ${clockStateOf(surfaces.silos.body, splitLoads[0])}`);
@@ -7401,7 +7440,7 @@ async function run() {
       assert((pauseSplit.headers.get("location") || "") === surfacePath("silos"), `Pause must return to the Silos surface, got ${pauseSplit.headers.get("location")}`);
       const pausedPage = await text(surfacePath("silos"));
       assert(clockStateOf(pausedPage.body, splitLoads[0]) === "paused", `the paused load must read paused on the surface, got ${clockStateOf(pausedPage.body, splitLoads[0])}`);
-      assert(rowOf(schedPaneOf(pausedPage.body, "working"), splitIds[0]).includes(">Resume</button>"), "a paused load's Pause reads Resume");
+      assert(rowOf(schedPaneOf(pausedPage.body, "working"), splitEntries[0]).includes(">Resume</button>"), "a paused load's Pause reads Resume");
       const resumeSplit = await req(`/station/load_silo/${splitLoads[0]}/pause`, { method: "POST", body: form({ next: surfacePath("silos") }) });
       assert(resumeSplit.status === 303, `Resume from the Silos surface expected 303 got ${resumeSplit.status} ${await resumeSplit.text()}`);
       assert((resumeSplit.headers.get("location") || "") === surfacePath("silos"), `Resume must return to the Silos surface, got ${resumeSplit.headers.get("location")}`);
@@ -7460,27 +7499,28 @@ async function run() {
         assert(weigh.status === 303, `joint walk lot weight expected 303 got ${weigh.status}`);
         const fin = await req(`/station/wet_weight/lot/${lot}/finish`, { method: "POST", body: form({ plant_count: "7" }) });
         assert(fin.status === 303, `joint walk lot finish expected 303 got ${fin.status} ${await fin.text()}`);
-        return lot;
+        const batch = await passEntry(lot);
+        return { entry: lot, batch };
       };
       // The 0.22.0 ARL lot (1,500 g, live package) still waits; else a lot is minted in its place.
-      const waitingRow220 = rowOf(schedPaneOf(roomsBefore.body, "available"), lotId220);
-      const firstRoomLot = waitingRow220 && !waitingRow220.includes("data-no-package") ? lotId220 : await mintRoomLot("1500", "0.30.226 joint unload first lot");
+      // Available rows are the harvest batch. The waiting entry's batch is learned when it is passed.
+      const firstRoomLot = await mintRoomLot("1500", "0.30.226 joint unload first lot");
       const secondRoomLot = await mintRoomLot("900", "0.30.226 joint unload second lot");
       const roomLots = [firstRoomLot, secondRoomLot];
       const roomsAvail = await text(surfacePath("dry_rooms"));
       const roomsAvailPane = schedPaneOf(roomsAvail.body, "available");
-      const secondRow = rowOf(roomsAvailPane, secondRoomLot);
+      const secondRow = rowOf(roomsAvailPane, secondRoomLot.batch);
       assert(secondRow, "the minted lot must wait on the Dry Rooms surface's Available");
       assert(secondRow.includes("data-planned-here"), "a lot weighed into the room reads planned here on the Dry Rooms surface");
       assert(secondRow.includes(`data-planned-space="${roomId}"`), "the minted lot's planned space must be the room");
       for (let i = 0; i < roomLots.length; i++) {
         const lot = roomLots[i];
         const pane = schedPaneOf((await text(surfacePath("dry_rooms"))).body, "available");
-        const row = rowOf(pane, lot);
+        const row = rowOf(pane, lot.batch);
         assert(row, `room lot ${i + 1} must wait on the Dry Rooms surface's Available`);
-        const href = (row.match(new RegExp(`href="(/station/load_silo\\?pick=${lot}&amp;kind=dry_room[^"]*)"`)) || [])[1];
+        const href = (row.match(new RegExp(`href="(/station/load_silo\\?pick=${lot.batch}&amp;kind=dry_room[^"]*)"`)) || [])[1];
         assert(href, `room lot ${i + 1} must carry a >> into Load Silo limited to dry rooms, got\n${row.slice(0, 800)}`);
-        if (lot === secondRoomLot) assert(href.includes(`&amp;space=${roomId}`), "the >> of a lot planned for the room must carry the room");
+        if (lot.entry === secondRoomLot.entry) assert(href.includes(`&amp;space=${roomId}`), "the >> of a lot planned for the room must carry the room");
         const picked = await text(href.replace(/&amp;/g, "&"));
         assert(picked.res.status === 200, `the >> of room lot ${i + 1} expected 200 got ${picked.res.status}`);
         assert(
@@ -7491,10 +7531,10 @@ async function run() {
         assert(select, `the >> of room lot ${i + 1} must render the select limited to dry rooms`);
         assert(select.includes(`<option value="${roomId}"`), `the dry room select must offer the Arlington Dry Room (room lot ${i + 1})`);
         assert(!/>Silo \d/.test(select) && !select.includes("Blast Freezer"), `the dry room select offers no silo and no freezer (room lot ${i + 1})`);
-        if (lot === secondRoomLot) assert(new RegExp(`<option value="${roomId}" selected`).test(select), "the room preselects for the lot planned there");
+        if (lot.entry === secondRoomLot.entry) assert(new RegExp(`<option value="${roomId}" selected`).test(select), "the room preselects for the lot planned there");
         const loaded = await req("/station/load_silo/load", {
           method: "POST",
-          body: form({ lot_id: lot, dry_space_id: roomId, start_time: "", loaded_at_iso: "", next: surfacePath("dry_rooms") }),
+          body: form({ lot_id: lot.batch, dry_space_id: roomId, start_time: "", loaded_at_iso: "", next: surfacePath("dry_rooms") }),
         });
         assert(loaded.status === 303, `loading room lot ${i + 1} expected 303 got ${loaded.status} ${await loaded.text()}`);
         const loadedLoc = loaded.headers.get("location") || "";
@@ -7506,7 +7546,7 @@ async function run() {
       assert(roomSection, "the Arlington Dry Room must ride the Dry Rooms Working pane");
       const roomLoadIds = [...roomSection.matchAll(/data-drying-load="([a-f0-9-]{36})"/g)].map((m) => m[1]);
       assert(roomLoadIds.length === 2, `the room must hold two open loads, saw ${roomLoadIds.length}`);
-      for (const lot of roomLots) assert(roomSection.includes(`data-drying-lot="${lot}"`), `the room's Working section must carry lot ${lot}`);
+      for (const lot of roomLots) assert(roomSection.includes(`data-drying-lot="${lot.entry}"`), `the room's Working section must carry lot ${lot.entry}`);
       assert(roomSection.includes(`data-unload-together-link="${roomId}"`), "a room holding two loads must offer Unload together");
       assert(roomSection.includes(`href="/production/scheduling/dry_rooms?together=${roomId}"`), "Unload together must open the joint form on the surface");
       // A silo holds one lot by law: a joint unload on a one-load silo refuses.
@@ -7528,8 +7568,8 @@ async function run() {
       assert([...loadIds.split(",")].sort().join(",") === [...roomLoadIds].sort().join(","), `the joint form's load ids must be the room's open loads, got ${loadIds}`);
       const wetOf = {};
       for (const m of jointForm.matchAll(/data-share-lot="([a-f0-9-]{36})" data-wet="([0-9.]+)"/g)) wetOf[m[1]] = Number(m[2]);
-      assert(roomLots.every((lot) => wetOf[lot] > 0), `the joint form must list each lot's wet grams, got ${JSON.stringify(wetOf)}`);
-      const groupWet = roomLots.reduce((sum, lot) => sum + wetOf[lot], 0);
+      assert(roomLots.every((lot) => wetOf[lot.entry] > 0), `the joint form must list each lot's wet grams, got ${JSON.stringify(wetOf)}`);
+      const groupWet = roomLots.reduce((sum, lot) => sum + wetOf[lot.entry], 0);
       const totalDry = 602;
       assert(totalDry < groupWet, `the typed total must fall well below the combined wet grams ${groupWet}`);
       const joint = await req(`/production/scheduling/dry_rooms/unload_together/${roomId}`, {
@@ -7545,22 +7585,26 @@ async function run() {
       const roomsComplete = schedPaneOf(roomsAfter.body, "complete");
       let drySum = 0;
       for (const lot of roomLots) {
-        const row = rowOf(roomsComplete, lot);
-        assert(row, `lot ${lot} must land on the Dry Rooms Complete pane`);
+        const row = rowOf(roomsComplete, lot.entry);
+        assert(row, `lot ${lot.entry} must land on the Dry Rooms Complete pane`);
         const dry = Number((row.match(/data-dry-grams="([0-9.]+)"/) || [])[1]);
-        assert(dry > 0, `lot ${lot}'s Complete row must carry its dry grams, got\n${row.slice(0, 600)}`);
-        const exact = (totalDry * wetOf[lot]) / groupWet;
+        assert(dry > 0, `lot ${lot.entry}'s Complete row must carry its dry grams, got\n${row.slice(0, 600)}`);
+        const exact = (totalDry * wetOf[lot.entry]) / groupWet;
         assert(Math.abs(dry - exact) <= 1, `lot ${lot}'s dry share ${dry} must sit within 1 g of its pro rata ${exact.toFixed(2)}`);
         assert(Number.isInteger(dry), `lot ${lot}'s dry share must be whole grams, got ${dry}`);
         assert(row.includes("data-unload-day="), `lot ${lot}'s Complete row must carry the unload's day`);
+        // THE RUN (canon 0.30.248): the row reads how long its load ran.
+        assert(/data-run-seconds="\d+"/.test(row) && row.includes(">Ran "), `lot ${lot.entry}'s Complete row must read its run, got\n${row.slice(0, 600)}`);
         drySum += dry;
       }
       assert(drySum === totalDry, `the dry shares must sum to the typed total ${totalDry}, got ${drySum}`);
+      const roomDone = sectionOf(roomsComplete, "data-drying-space", roomId);
+      assert(roomDone && /data-run-average="\d+"/.test(roomDone) && roomDone.includes("average "), "the room's Complete heading must read its average run");
       const roomsWorkingAfter = schedPaneOf(roomsAfter.body, "working");
       assert(!sectionOf(roomsWorkingAfter, "data-drying-space", roomId), "the emptied room leaves the Dry Rooms Working pane");
       for (const id of roomLoadIds) assert(!roomsWorkingAfter.includes(`data-drying-load="${id}"`), `the ended load ${id} leaves Working`);
       for (const lot of roomLots) {
-        const gone = await req(`/station/unload_dry_space?pick=${lot}`);
+        const gone = await req(`/station/unload_dry_space?pick=${lot.entry}`);
         assert(gone.status === 302, `a lot unloaded together no longer dries: its unload pick expected 302 got ${gone.status}`);
       }
       const jointLog = await text("/log");
@@ -7576,6 +7620,117 @@ async function run() {
         "a repeated joint unload must say the room was already unloaded together"
       );
     }
+
+    // ONE HARVEST FILE PER LOAD: two truck loads of one HBN, each file its own
+    // rows and tags. Mark (1), edit its grams, acknowledge the change, then
+    // see the two loads' location-change and unload files named apart.
+    const pairAcquire = await text("/station/acquire_hbn");
+    const pairStrain = optionValue(pairAcquire.body, "Fruity Pebbles");
+    const pairMint = await req("/station/acquire_hbn", {
+      method: "POST",
+      body: form({ entry_date: "2026-09-01", farm_code: "ARL", grow_method_code: "GH", strain_id: pairStrain }),
+    });
+    assert(pairMint.status === 303, `pair mint expected 303 got ${pairMint.status} ${await pairMint.text()}`);
+    const pairHbn = new URL(pairMint.headers.get("location") || "", base).searchParams.get("minted");
+    assert(pairHbn, "the pair mint must name the HBN");
+    const pairWet = await text("/station/wet_weight");
+    const pairPicks = [...pairWet.body.matchAll(/href="\/station\/wet_weight\?pick=([^"]+)"/g)].map((m) => m[1]);
+    let pairBatch = "";
+    for (const id of pairPicks) {
+      const page = await text(`/station/wet_weight?pick=${id}`);
+      if (page.body.includes(pairHbn)) {
+        pairBatch = id;
+        break;
+      }
+    }
+    assert(pairBatch, "the minted HBN must be on the wet pane");
+    const pairSpace = drySpaceId;
+    const pairTruck = drySpaceIdByName((await text("/admin/lookups/dry_spaces")).body, "Truck");
+    const pairLots = [];
+    for (const spec of [
+      { truck: "11", grams: "100", tag: "1A4PAIRLOAD0001" },
+      { truck: "12", grams: "50", tag: "1A4PAIRLOAD0002" },
+    ]) {
+      const start = await req("/station/wet_weight", {
+        method: "POST",
+        body: form({ team_lead: "Smoke Lead", harvest_batch_id: pairBatch, actual_dryspc: pairSpace, truck_number: spec.truck, notes: `pair ${spec.truck}` }),
+      });
+      assert(start.status === 303, `pair load ${spec.truck} start expected 303 got ${start.status} ${await start.text()}`);
+      const lotId = new URL(start.headers.get("location") || "", base).searchParams.get("lot");
+      assert(lotId, "pair load redirect must name the lot");
+      const weigh = await req(`/station/wet_weight/lot/${lotId}/weights`, { method: "POST", body: form({ weight_grams: spec.grams }) });
+      assert(weigh.status === 303, `pair load ${spec.truck} weight expected 303 got ${weigh.status}`);
+      await weigh.text();
+      const point = await req(`/record/wet_weight_entries/${lotId}/edit`, {
+        method: "POST",
+        body: form({ actual_dryspc: pairTruck, reason: "smoke: this load rides its truck" }),
+      });
+      assert(point.status === 303, `pair load ${spec.truck} truck point expected 303 got ${point.status} ${await point.text()}`);
+      const fin = await req(`/station/wet_weight/lot/${lotId}/finish`, { method: "POST", body: form({ plant_prompt: "count", plant_count: "1" }) });
+      assert(fin.status === 303, `pair load ${spec.truck} finish expected 303 got ${fin.status} ${await fin.text()}`);
+      pairLots.push({ id: lotId, tag: spec.tag, grams: spec.grams });
+    }
+    const pairPage = await text("/admin/uploads");
+    assert(pairPage.body.includes(`${pairHbn}(1).csv`) && pairPage.body.includes(`${pairHbn}(2).csv`), "both load files must pend");
+    for (let i = 0; i < pairLots.length; i += 1) {
+      const saved = await req(`/admin/uploads/wet_weights/${pairLots[i].id}/tags`, {
+        method: "POST",
+        body: form({ plant_tags: pairLots[i].tag }),
+      });
+      assert(saved.status === 303, `pair tags ${i + 1} expected 303 got ${saved.status} ${await saved.text()}`);
+    }
+    const file1 = await text(`/admin/uploads/wet_weights/${pairLots[0].id}.csv`);
+    const file2 = await text(`/admin/uploads/wet_weights/${pairLots[1].id}.csv`);
+    assert((file1.res.headers.get("content-disposition") || "").includes(`${pairHbn}(1).csv`), "load 1 attaches as (1)");
+    assert((file2.res.headers.get("content-disposition") || "").includes(`${pairHbn}(2).csv`), "load 2 attaches as (2)");
+    assert(file1.body.includes(pairLots[0].tag) && !file1.body.includes(pairLots[1].tag), "load 1's file carries only its tag");
+    assert(file2.body.includes(pairLots[1].tag) && !file2.body.includes(pairLots[0].tag), "load 2's file carries only its tag");
+    assert(file1.body.includes(",100.00,") && !file1.body.includes(",50.00,"), "load 1's file carries only its rows");
+    assert(file2.body.includes(",50.00,") && !file2.body.includes(",100.00,"), "load 2's file carries only its rows");
+    const mark1 = await req(`/admin/uploads/wet_weights/${pairLots[0].id}/uploaded`, { method: "POST", body: form({}) });
+    assert(mark1.status === 303, `mark (1) expected 303 got ${mark1.status}`);
+    await mark1.text();
+    const edit1 = await req(`/record/wet_weight_entries/${pairLots[0].id}/edit`, {
+      method: "POST",
+      body: form({ weight_grams: "120", reason: "smoke: grams changed after the file" }),
+    });
+    assert(edit1.status === 303, `edit (1) grams expected 303 got ${edit1.status} ${await edit1.text()}`);
+    const changed = await text("/admin/uploads");
+    assert(changed.body.includes("Changed after upload") && changed.body.includes(`${pairHbn}(1).csv`), "(1) must show under Changed after upload");
+    assert(!changed.body.includes(`href="/admin/uploads/wet_weights/${pairLots[0].id}.csv"`), "(1) must not re-pend");
+    const ackPair = await req(`/admin/uploads/wet_weights/${pairLots[0].id}/acknowledge`, {
+      method: "POST",
+      body: form({ reason: "smoke: acknowledged the pair" }),
+    });
+    assert(ackPair.status === 303, `acknowledge (1) expected 303 got ${ackPair.status} ${await ackPair.text()}`);
+    await passEntry(pairLots[0].id);
+    const siloPage = await text(`/station/load_silo?pick=${pairBatch}`);
+    const freeSilo = ([...siloPage.body.matchAll(/<option value="([a-f0-9-]{36})"(?![^>]*disabled)[^>]*>([^<]*)</g)].find((row) => row[2].trim().startsWith("Silo")) || [])[1];
+    const siloSelect = (siloPage.body.match(/<select name="dry_space_id"[\s\S]*?<\/select>/) || ["no select"])[0].slice(0, 800);
+    assert(freeSilo, `a silo must be free for the pair's location files: ${siloSelect}`);
+    const pairLoad = await req("/station/load_silo/load", {
+      method: "POST",
+      body: form({ lot_id: pairBatch, dry_space_id: freeSilo, start_time: "", loaded_at_iso: "" }),
+    });
+    assert(pairLoad.status === 303, `pair load silo expected 303 got ${pairLoad.status} ${await pairLoad.text()}`);
+    const locPage = await text("/admin/uploads");
+    const locNames = [...locPage.body.matchAll(new RegExp(`location_change_${pairHbn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\((\\d+)\\)_[^"<]+\\.csv`, "g"))].map((m) => m[0]);
+    assert(locNames.some((name) => name.includes("(1)")) && locNames.some((name) => name.includes("(2)")), `the two location files must be named apart, got ${locNames.join(" ")}`);
+    for (const lot of pairLots) {
+      const dry = await req(`/station/unload_dry_space/lot/${lot.id}/weights`, { method: "POST", body: form({ weight_grams: "40" }) });
+      assert(dry.status === 303, `pair dry weight expected 303 got ${dry.status} ${await dry.text()}`);
+      const unloaded = await finishUnloadLot(lot.id, {}, "nothing");
+      assert(unloaded.loc.includes("ok="), `pair unload must finish, got ${unloaded.loc}`);
+    }
+    const unloadPage = await text("/admin/uploads");
+    assert(
+      unloadPage.body.includes(`package_adjustments_${pairHbn}(1).csv`) || unloadPage.body.includes(`packages_from_harvests_${pairHbn}(1).csv`),
+      "unload file (1) must be named with the load number"
+    );
+    assert(
+      unloadPage.body.includes(`package_adjustments_${pairHbn}(2).csv`) || unloadPage.body.includes(`packages_from_harvests_${pairHbn}(2).csv`),
+      "unload file (2) must be named with the load number"
+    );
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

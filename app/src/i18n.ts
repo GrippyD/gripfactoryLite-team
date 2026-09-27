@@ -321,6 +321,7 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Running total": { en: "Running total", es: "Total acumulado" },
   // THE PLANT COUNT (owner ruling 2026-09-14, canon 0.30.62): the Finish lot prompt and the Load Silo re-prompt.
   "How many plants in this lot?": { en: "How many plants in this lot?", es: "Cuantas plantas hay en este lote?" },
+  "How many plants in this load?": { en: "How many plants in this load?", es: "Cuantas plantas hay en esta carga?" },
   "plants": { en: "plants", es: "plantas" },
   "Skip": { en: "Skip", es: "Omitir" },
   "Skip asks again at Load Silo; the METRC file splits the total across the plants.": {
@@ -329,9 +330,14 @@ export const DICT: Record<string, { en: string; es: string }> = {
   },
   "Number of plants": { en: "Number of plants", es: "Numero de plantas" },
   "skipped at Finish lot": { en: "skipped at Finish lot", es: "omitido en Terminar lote" },
+  "skipped at Finish load": { en: "skipped at Finish load", es: "omitido en Terminar carga" },
   "How many plants made this lot. Leave it blank to skip again; the pencil on the lot record can set it later.": {
     en: "How many plants made this lot. Leave it blank to skip again; the pencil on the lot record can set it later.",
     es: "Cuantas plantas formaron este lote. Dejalo en blanco para omitir otra vez; el lapiz del registro del lote puede fijarlo despues.",
+  },
+  "How many plants made this load. Leave it blank to skip again; the pencil on the lot record can set it later.": {
+    en: "How many plants made this load. Leave it blank to skip again; the pencil on the lot record can set it later.",
+    es: "Cuantas plantas formaron esta carga. Dejalo en blanco para omitir otra vez; el lapiz del registro del lote puede fijarlo despues.",
   },
   "Lot": { en: "Lot", es: "Lote" },
   "Packages": { en: "Packages", es: "Paquetes" },
@@ -344,6 +350,40 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Start another lot": { en: "Start another lot", es: "Iniciar otro lote" },
   "Add a weight": { en: "Add a weight", es: "Agregar peso" },
   "Finish lot": { en: "Finish lot", es: "Terminar lote" },
+  "Finish load": { en: "Finish load", es: "Terminar carga" },
+  // THE MENU LINES (canon 0.30.241).
+  "Lot {n}": { en: "Lot {n}", es: "Lote {n}" },
+  "Truck {n}": { en: "Truck {n}", es: "Camion {n}" },
+  "in progress": { en: "in progress", es: "en curso" },
+  "ready to be moved": { en: "ready to be moved", es: "listo para moverse" },
+  "in-transit": { en: "in-transit", es: "en transito" },
+  "Logistics Operations": { en: "Logistics Operations", es: "Operaciones de logistica" },
+  "Internal Logistics": { en: "Internal Logistics", es: "Logistica interna" },
+  "Processing Partners": { en: "Processing Partners", es: "Socios de proceso" },
+  "Dry Queue": { en: "Dry Queue", es: "Cola de secado" },
+  "{n} parts": { en: "{n} parts", es: "{n} partes" },
+  "1 part": { en: "1 part", es: "1 parte" },
+  "Trucks": { en: "Trucks", es: "Camiones" },
+  "no truck": { en: "no truck", es: "sin camion" },
+  "Planned silo": { en: "Planned silo", es: "Silo planeado" },
+  "no planned silo": { en: "no planned silo", es: "sin silo planeado" },
+  "Waited": { en: "Waited", es: "Esperado" },
+  "Pass lot": { en: "Pass lot", es: "Pasar lote" },
+  "Return lot": { en: "Return lot", es: "Devolver lote" },
+  "Open Load Silo": { en: "Open Load Silo", es: "Abrir Cargar Silo" },
+  "Scheduled lots": { en: "Scheduled lots", es: "Lotes programados" },
+  "That lot is not on the Dry Queue.": { en: "That lot is not on the Dry Queue.", es: "Ese lote no esta en la Cola de secado." },
+  "That lot is already scheduled.": { en: "That lot is already scheduled.", es: "Ese lote ya esta programado." },
+  "That lot is loaded; it cannot return to the Dry Queue.": {
+    en: "That lot is loaded; it cannot return to the Dry Queue.",
+    es: "Ese lote esta cargado; no puede volver a la Cola de secado.",
+  },
+  "That lot is not scheduled for a dry space. Pass it from the Dry Queue first.": {
+    en: "That lot is not scheduled for a dry space. Pass it from the Dry Queue first.",
+    es: "Ese lote no esta programado para un espacio seco. Pasalo primero desde la Cola de secado.",
+  },
+  "Passed.": { en: "Passed.", es: "Pasado." },
+  "Returned to the Dry Queue.": { en: "Returned to the Dry Queue.", es: "Devuelto a la Cola de secado." },
   "Weights": { en: "Weights", es: "Pesos" },
   "Total": { en: "Total", es: "Total" },
   // Owner ruling 2026-09-06 (canon 0.27.0): the Inventory by Location report.
@@ -679,6 +719,10 @@ export const DICT: Record<string, { en: string; es: string }> = {
   // the tags themselves never translate.
   "Plant tags": { en: "Plant tags", es: "Etiquetas de plantas" },
   "Save tags": { en: "Save tags", es: "Guardar etiquetas" },
+  "Plant count": { en: "Plant count", es: "Conteo de plantas" },
+  "Changed after upload": { en: "Changed after upload", es: "Cambiado despues de subir" },
+  "unassigned": { en: "unassigned", es: "sin asignar" },
+  "Marked": { en: "Marked", es: "Marcado" },
   "Plant tags saved.": { en: "Plant tags saved.", es: "Etiquetas de plantas guardadas." },
   // Owner ruling 2026-08-31: "The weights of the original package and what's
   // left after a record is created should be on the weight recording pages."
@@ -1101,6 +1145,30 @@ export const DICT: Record<string, { en: string; es: string }> = {
   // THE BUD WAFFLE (canon 0.30.157).
   "bud": { en: "bud", es: "flor" },
   "consumed": { en: "consumed", es: "consumido" },
+  "byproduct": { en: "byproduct", es: "subproducto" },
+  "waste": { en: "waste", es: "desperdicio" },
+  // THE TRIM BOGEY (canon 0.30.249).
+  "Trim Bogey": { en: "Trim Bogey", es: "Meta de recorte" },
+  "Trim Bogey (%)": { en: "Trim Bogey (%)", es: "Meta de recorte (%)" },
+  "The trim plume's product line, a percent: that many of its last squares, in ROYGBIVWB-Aqua order, turn dark red when consumed.": {
+    en: "The trim plume's product line, a percent: that many of its last squares, in ROYGBIVWB-Aqua order, turn dark red when consumed.",
+    es: "La línea de producto del penacho de recorte, en porcentaje: esa cantidad de sus últimos cuadros, en el orden ROYGBIVWB-Aqua, se vuelve rojo oscuro al consumirse.",
+  },
+  "The percent of the trim plume that is product: that many of its last squares, in the ROYGBIVWB-Aqua order, turn dark red when consumed.": {
+    en: "The percent of the trim plume that is product: that many of its last squares, in the ROYGBIVWB-Aqua order, turn dark red when consumed.",
+    es: "El porcentaje del penacho de recorte que es producto: esa cantidad de sus últimos cuadros, en el orden ROYGBIVWB-Aqua, se vuelve rojo oscuro al consumirse.",
+  },
+  "Not saved yet: the plume reads the default, {n}%.": {
+    en: "Not saved yet: the plume reads the default, {n}%.",
+    es: "Aún sin guardar: el penacho usa el valor por defecto, {n}%.",
+  },
+  // THE RUN (canon 0.30.248): the Complete pane's run and each space's average.
+  "Ran {t}": { en: "Ran {t}", es: "Duró {t}" },
+  "average {t}": { en: "average {t}", es: "promedio {t}" },
+  "Trim Bogey is a whole percent from 0 to 100.": {
+    en: "Trim Bogey is a whole percent from 0 to 100.",
+    es: "La meta de recorte es un porcentaje entero de 0 a 100.",
+  },
   "BUD": { en: "BUD", es: "BUD" },
   "OTHER": { en: "OTHER", es: "OTROS" },
   "(BUD+WPR+SHA) / all weight ran": { en: "(BUD+WPR+SHA) / all weight ran", es: "(BUD+WPR+SHA) / todo el peso procesado" },

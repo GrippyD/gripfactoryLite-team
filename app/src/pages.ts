@@ -1,10 +1,10 @@
-import { CAPACITY_UOMS, DRY_SPACE_KINDS, DRY_SPACE_TYPE_LABELS, DRY_SPACE_TYPES, drySpaceTypeOf, FLOOR_SITE_ORDER, SITE_LICENSES } from "./config";
+import { CAPACITY_UOMS, DRY_SPACE_KINDS, DRY_SPACE_TYPE_LABELS, DRY_SPACE_TYPES, drySpaceTypeOf, FLOOR_SITE_ORDER, SITE_LICENSES, TRIM_BOGEY_DEFAULT } from "./config";
 import { etWallClock } from "./farmday";
 import { LOOKUP_LANDING, LOOKUP_VALUE_SECTIONS } from "./lookups";
 import { EDITABLE_FIELDS, type EditFieldDef } from "./pipeline";
 import { esc, licenseChromeScript, licensePicker } from "./html";
 import { licenseToneClass } from "./interco";
-import { t, type Locale } from "./i18n";
+import { t, tFill, type Locale } from "./i18n";
 import type { LookupOption } from "./db";
 
 /** THE DRY SPACE TYPE (canon 0.30.106; owner: "Admin lookups: Dry spaces: 1.
@@ -298,6 +298,31 @@ function adminTable(
     })
     .join("");
   return `<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+/** THE TRIM BOGEY (canon 0.30.249; owner, 2026-09-26: "Add a Admin Lookup
+ * Field: [Trim Bogey] expressed as a percentage" and "Determines number of dark
+ * red squares and the order based on our scheme (ROYGBIVWB-Aqua)"): one whole
+ * percent, the plume's product line, saved under a reason. `stored` is false
+ * while no hand has saved one and the plume reads the default. */
+export function trimBogeyPage(value: number, stored: boolean, locale: Locale = "en", ok?: string): string {
+  const flash = ok === "saved" ? `<p class="banner ok" data-trim-bogey-flash>${esc(t(locale, "Saved."))}</p>` : "";
+  const unset = stored
+    ? ""
+    : `<p class="muted" data-trim-bogey-default>${esc(tFill(locale, "Not saved yet: the plume reads the default, {n}%.", { n: String(TRIM_BOGEY_DEFAULT) }))}</p>`;
+  return `<h1>${esc(t(locale, "Trim Bogey"))}</h1>
+    <p class="muted">${esc(
+      t(
+        locale,
+        "The percent of the trim plume that is product: that many of its last squares, in the ROYGBIVWB-Aqua order, turn dark red when consumed."
+      )
+    )}</p>
+    ${flash}${unset}
+    <form class="stack" method="post" action="/admin/lookups/trim_bogey" data-trim-bogey>
+      <label class="field">${esc(t(locale, "Trim Bogey (%)"))} <input type="text" name="trim_bogey_pct" inputmode="numeric" pattern="[0-9]{1,3}%?" required value="${esc(String(value))}" data-trim-bogey-value></label>
+      <label class="field">${esc(t(locale, "Reason"))} <input type="text" name="reason" required></label>
+      <button type="submit">${esc(t(locale, "Save"))}</button>
+    </form>`;
 }
 
 /** Fork 6 (canon 0.30.1): the Admin-buried manual HBN fallback. Owner verbatim:

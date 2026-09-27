@@ -642,7 +642,7 @@ describe("THE HARVEST DETAILS IMPORT (canon 0.30.205)", () => {
       "upload"
     );
     expect(m.get(`SELECT hbn, market_strain FROM harvest_batches WHERE id = 'hb-held'`)).toEqual({ hbn: held, market_strain: "Held Market" });
-    expect(blocked.message).toContain(`${held}.csv`);
+    expect(blocked.message).toContain(`${held}(1).csv`);
     expect(m.get(`SELECT COUNT(*) AS n FROM record_change_log WHERE record_id = 'hb-held' AND field = 'hbn'`)).toEqual({ n: 0 });
   });
 });

@@ -18,6 +18,7 @@ import {
   parseExtractionCodes,
   projectedDryYieldPct,
   roundGrams,
+  INTERNAL_LOGISTICS_STAGE,
   SCHEDULE_STAGES,
   SCHEDULE_STATUS,
   NON_TRIM_SOURCE_SQL,
@@ -1419,27 +1420,37 @@ export async function getHarvestByHbn(
     .first<{ id: string }>();
 }
 
-/** Owner ruling 2026-08-31: the pending law for [Pending Data Uploads], kind
- * wet_weights. A batch is PENDING when it has at least one non-voided lot whose
- * status is not weighing (finished: drying, in_transit, unloaded, trimmed) AND
- * the newest updated_at among those finished lots is greater than the batch's
- * latest metrc_uploads.uploaded_at for the kind; no upload row at all compares
- * as the empty string, so it always pends (nowIso timestamps sort as text).
- * An edit after upload re-pends the file on purpose: changed data wants a
- * re-upload. */
-export const PENDING_WET_UPLOADS_SQL = `SELECT b.id, b.hbn, b.harvest_year, b.lot_serial,
-       COUNT(*) AS finished_count,
-       COALESCE(ROUND(SUM(w.weight_grams), 2), 0) AS wet_total_grams,
-       MAX(w.updated_at) AS newest_activity
-FROM harvest_batches b
-JOIN wet_weight_entries w
-  ON w.harvest_batch_id = b.id AND w.deleted_at IS NULL AND w.status <> 'weighing'
-WHERE b.deleted_at IS NULL
-GROUP BY b.id, b.hbn, b.harvest_year, b.lot_serial
-HAVING MAX(w.updated_at) > COALESCE(
-  (SELECT MAX(u.uploaded_at) FROM metrc_uploads u
-   WHERE u.harvest_batch_id = b.id AND u.kind = 'wet_weights' AND u.deleted_at IS NULL), '')
-ORDER BY newest_activity DESC`;
+/** A null harvest_file_seq reads as the load's rank by created_at, then id.
+ * Voided loads count, the same order the backfill writes. */
+export const HARVEST_FILE_SEQ_SQL = `COALESCE(w.harvest_file_seq, (
+  SELECT COUNT(*) FROM wet_weight_entries wseq
+  WHERE wseq.harvest_batch_id = w.harvest_batch_id
+    AND (
+      wseq.created_at < w.created_at
+      OR (wseq.created_at = w.created_at AND wseq.id <= w.id)
+    )
+))`;
+
+/** ONE HARVEST FILE PER LOAD (canon 0.30.249): a finished, non-voided load
+ * pends its own file until its own wet_weights mark (ref_id is the load).
+ * A batch-level mark (ref_id null) covers each load of that batch created
+ * before the mark. An edit, an unload, or a trim does not re-pend the file. */
+export const PENDING_WET_UPLOADS_SQL = `SELECT w.id, w.harvest_batch_id, b.hbn, b.harvest_year, b.lot_serial,
+       ${HARVEST_FILE_SEQ_SQL} AS seq, w.weight_grams AS wet_total_grams, w.plant_count,
+       w.truck_number, d.name AS space_name, w.updated_at AS newest_activity
+FROM wet_weight_entries w
+JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
+LEFT JOIN dry_spaces d ON d.id = w.actual_dryspc
+WHERE w.deleted_at IS NULL AND w.status <> 'weighing'
+  AND NOT EXISTS (
+    SELECT 1 FROM metrc_uploads u
+    WHERE u.harvest_batch_id = w.harvest_batch_id AND u.kind = 'wet_weights' AND u.deleted_at IS NULL
+      AND (
+        u.ref_id = w.id
+        OR (u.ref_id IS NULL AND w.created_at < u.uploaded_at)
+      )
+  )
+ORDER BY w.updated_at DESC`;
 
 export type ImportQueueRow = {
   id: string;
@@ -1467,48 +1478,123 @@ export async function listImportQueue(db: D1Database): Promise<ImportQueueRow[]>
 }
 
 export type PendingUploadRow = {
-  /** The harvest batch id; keys the download and mark-uploaded routes. */
+  /** The load id; keys the download, the tags and the mark. */
   id: string;
+  harvest_batch_id: string;
   hbn: string;
+  seq: number;
   /** Owner terms law 2026-08-31: Lot = the YY### serial (year + sequential order). */
   lot: string;
-  finished_count: number;
+  load_label: string;
   wet_total_grams: number;
+  plant_count: number | null;
   newest_activity: string;
-  /** Owner ruling 2026-08-31: the Plant fill rule; the batch's current
-   * non-voided tag count, shown as "Plant tags: N" beside the tag form. */
   tag_count: number;
+  unassigned: number;
+  tags_locked: boolean;
+};
+
+export type ChangedUploadRow = {
+  id: string;
+  hbn: string;
+  seq: number;
+  marked_at: string;
+  then_grams: number;
+  now_grams: number;
+  then_count: number | null;
+  now_count: number | null;
 };
 
 export async function listPendingUploads(db: D1Database): Promise<PendingUploadRow[]> {
   const result = await db.prepare(PENDING_WET_UPLOADS_SQL).all<{
     id: string;
+    harvest_batch_id: string;
     hbn: string;
     harvest_year: number;
     lot_serial: number;
-    finished_count: number;
+    seq: number | null;
     wet_total_grams: number;
+    plant_count: number | null;
+    truck_number: string | null;
+    space_name: string | null;
     newest_activity: string;
   }>();
-  // Owner ruling 2026-08-31: the Plant fill rule; one grouped count query
-  // covers every pending batch's tag count.
-  const countsResult = await db
+  const rows = result.results ?? [];
+  const tagRows = await db
     .prepare(
-      `SELECT harvest_batch_id, COUNT(*) AS n FROM harvest_plant_tags
-       WHERE deleted_at IS NULL GROUP BY harvest_batch_id`
+      `SELECT wet_weight_entry_id, harvest_batch_id FROM harvest_plant_tags WHERE deleted_at IS NULL`
     )
-    .all<{ harvest_batch_id: string; n: number }>();
-  const tagCounts = new Map(
-    (countsResult.results ?? []).map((row) => [row.harvest_batch_id, Number(row.n)])
+    .all<{ wet_weight_entry_id: string | null; harvest_batch_id: string }>();
+  const locked = new Set(
+    (
+      await db
+        .prepare(`SELECT ref_id FROM metrc_uploads WHERE kind = 'wet_weights' AND deleted_at IS NULL AND ref_id IS NOT NULL`)
+        .all<{ ref_id: string }>()
+    ).results?.map((row) => row.ref_id) ?? []
   );
+  const byLoad = new Map<string, number>();
+  const unassigned = new Map<string, number>();
+  for (const tag of tagRows.results ?? []) {
+    if (tag.wet_weight_entry_id) byLoad.set(tag.wet_weight_entry_id, (byLoad.get(tag.wet_weight_entry_id) ?? 0) + 1);
+    else unassigned.set(tag.harvest_batch_id, (unassigned.get(tag.harvest_batch_id) ?? 0) + 1);
+  }
+  return rows.map((row) => {
+    const truck = String(row.truck_number ?? "").trim();
+    return {
+      id: row.id,
+      harvest_batch_id: row.harvest_batch_id,
+      hbn: row.hbn,
+      seq: Number(row.seq ?? 1),
+      lot: formatLotToken(Number(row.harvest_year), Number(row.lot_serial)),
+      load_label: truck ? `Truck ${truck}` : row.space_name ?? "",
+      wet_total_grams: Number(row.wet_total_grams),
+      plant_count: row.plant_count == null ? null : Number(row.plant_count),
+      newest_activity: row.newest_activity,
+      tag_count: byLoad.get(row.id) ?? 0,
+      unassigned: unassigned.get(row.harvest_batch_id) ?? 0,
+      tags_locked: locked.has(row.id),
+    };
+  });
+}
+
+export async function listChangedAfterUpload(db: D1Database): Promise<ChangedUploadRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT w.id, b.hbn, ${HARVEST_FILE_SEQ_SQL} AS seq, w.weight_grams AS now_grams, w.plant_count AS now_count,
+              u.uploaded_at AS marked_at, u.file_wet_grams AS then_grams, u.file_plant_count AS then_count
+       FROM wet_weight_entries w
+       JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
+       JOIN metrc_uploads u ON u.id = (
+         SELECT u2.id FROM metrc_uploads u2
+         WHERE u2.ref_id = w.id AND u2.kind = 'wet_weights' AND u2.deleted_at IS NULL AND u2.file_wet_grams IS NOT NULL
+         ORDER BY u2.uploaded_at DESC LIMIT 1
+       )
+       WHERE w.deleted_at IS NULL
+         AND (
+           ABS(COALESCE(w.weight_grams, 0) - COALESCE(u.file_wet_grams, 0)) > 0.001
+           OR COALESCE(w.plant_count, -1) <> COALESCE(u.file_plant_count, -1)
+         )
+       ORDER BY u.uploaded_at DESC`
+    )
+    .all<{
+      id: string;
+      hbn: string;
+      seq: number | null;
+      now_grams: number;
+      now_count: number | null;
+      marked_at: string;
+      then_grams: number;
+      then_count: number | null;
+    }>();
   return (result.results ?? []).map((row) => ({
     id: row.id,
     hbn: row.hbn,
-    lot: formatLotToken(Number(row.harvest_year), Number(row.lot_serial)),
-    finished_count: Number(row.finished_count),
-    wet_total_grams: Number(row.wet_total_grams),
-    newest_activity: row.newest_activity,
-    tag_count: tagCounts.get(row.id) ?? 0,
+    seq: Number(row.seq ?? 1),
+    marked_at: row.marked_at,
+    then_grams: Number(row.then_grams),
+    now_grams: Number(row.now_grams),
+    then_count: row.then_count == null ? null : Number(row.then_count),
+    now_count: row.now_count == null ? null : Number(row.now_count),
   }));
 }
 
@@ -1530,6 +1616,87 @@ export async function listBatchPlantTags(
   return (result.results ?? []).map((row) => String(row.tag));
 }
 
+export type HarvestLoadRow = {
+  id: string;
+  harvest_batch_id: string;
+  hbn: string;
+  seq: number;
+  weight_grams: number;
+  plant_count: number | null;
+  status: string;
+  effective_date: string | null;
+  created_at: string;
+};
+
+export async function getHarvestLoad(db: D1Database, loadId: string): Promise<HarvestLoadRow | null> {
+  const row = await db
+    .prepare(
+      `SELECT w.id, w.harvest_batch_id, b.hbn, w.harvest_file_seq AS seq, w.weight_grams, w.plant_count,
+              w.status, w.effective_date, w.created_at
+       FROM wet_weight_entries w
+       JOIN harvest_batches b ON b.id = w.harvest_batch_id
+       WHERE w.id = ? AND w.deleted_at IS NULL`
+    )
+    .bind(loadId)
+    .first<{
+      id: string;
+      harvest_batch_id: string;
+      hbn: string;
+      seq: number | null;
+      weight_grams: number;
+      plant_count: number | null;
+      status: string;
+      effective_date: string | null;
+      created_at: string;
+    }>();
+  if (!row) return null;
+  let seq = row.seq == null ? null : Number(row.seq);
+  if (seq == null) {
+    const rank = await db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM wet_weight_entries
+         WHERE harvest_batch_id = ? AND (created_at < ? OR (created_at = ? AND id <= ?))`
+      )
+      .bind(row.harvest_batch_id, row.created_at, row.created_at, row.id)
+      .first<{ n: number }>();
+    seq = Number(rank?.n ?? 1);
+  }
+  return {
+    id: row.id,
+    harvest_batch_id: row.harvest_batch_id,
+    hbn: row.hbn,
+    seq,
+    weight_grams: Number(row.weight_grams ?? 0),
+    plant_count: row.plant_count == null ? null : Number(row.plant_count),
+    status: row.status,
+    effective_date: row.effective_date,
+    created_at: row.created_at,
+  };
+}
+
+export async function listLoadPlantTags(db: D1Database, loadId: string): Promise<string[]> {
+  const result = await db
+    .prepare(
+      `SELECT tag FROM harvest_plant_tags
+       WHERE wet_weight_entry_id = ? AND deleted_at IS NULL
+       ORDER BY created_at, tag`
+    )
+    .bind(loadId)
+    .all<{ tag: string }>();
+  return (result.results ?? []).map((row) => String(row.tag));
+}
+
+export async function loadHasWetMark(db: D1Database, loadId: string): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS n FROM metrc_uploads
+       WHERE ref_id = ? AND kind = 'wet_weights' AND deleted_at IS NULL LIMIT 1`
+    )
+    .bind(loadId)
+    .first<{ n: number }>();
+  return Boolean(row);
+}
+
 /** Owner ruling 2026-08-31: the wet weights file's rows, one per non-voided
  * wet_weights scale read belonging to the batch's finished (not weighing) lots,
  * ordered by created_at. Each read rides its lot's destination (a truck lot
@@ -1537,21 +1704,23 @@ export async function listBatchPlantTags(
  * updated_at as the provisional finish date. */
 export async function listWetWeightUploadReads(
   db: D1Database,
-  harvestBatchId: string
+  harvestBatchId: string,
+  loadId = ""
 ): Promise<WetWeightsCsvRow[]> {
   const result = await db
     .prepare(
       `SELECT r.weight_grams, d.name AS dry_space_name, w.truck_number,
-              b.hbn, w.updated_at AS entry_updated_at, w.id AS entry_id, w.plant_count
+              b.hbn, w.updated_at AS entry_updated_at, w.effective_date, w.created_at, w.id AS entry_id, w.plant_count
        FROM wet_weights r
        JOIN wet_weight_entries w ON w.id = r.wet_weight_entry_id
        JOIN harvest_batches b ON b.id = w.harvest_batch_id
        LEFT JOIN dry_spaces d ON d.id = w.actual_dryspc
        WHERE w.harvest_batch_id = ? AND w.deleted_at IS NULL AND w.status <> 'weighing'
          AND r.deleted_at IS NULL
+         AND (? = '' OR w.id = ?)
        ORDER BY r.created_at`
     )
-    .bind(harvestBatchId)
+    .bind(harvestBatchId, loadId, loadId)
     .all<WetWeightsCsvRow>();
   return result.results ?? [];
 }
@@ -1564,19 +1733,21 @@ export async function listWetWeightUploadReads(
  * order is stable (created_at, then id) for deterministic files. */
 export async function listWetWeightUploadEntries(
   db: D1Database,
-  harvestBatchId: string
+  harvestBatchId: string,
+  loadId = ""
 ): Promise<WetWeightsCsvRow[]> {
   const result = await db
     .prepare(
       `SELECT w.weight_grams, d.name AS dry_space_name, w.truck_number,
-              b.hbn, w.updated_at AS entry_updated_at, w.id AS entry_id, w.plant_count
+              b.hbn, w.updated_at AS entry_updated_at, w.effective_date, w.created_at, w.id AS entry_id, w.plant_count
        FROM wet_weight_entries w
        JOIN harvest_batches b ON b.id = w.harvest_batch_id
        LEFT JOIN dry_spaces d ON d.id = w.actual_dryspc
        WHERE w.harvest_batch_id = ? AND w.deleted_at IS NULL AND w.status <> 'weighing'
+         AND (? = '' OR w.id = ?)
        ORDER BY w.created_at, w.id`
     )
-    .bind(harvestBatchId)
+    .bind(harvestBatchId, loadId, loadId)
     .all<WetWeightsCsvRow>();
   return result.results ?? [];
 }
@@ -3002,6 +3173,7 @@ export type PendingPackageUploadRow = {
   harvest_batch_id: string;
   hbn: string;
   lot: string;
+  seq: number | null;
   newest_activity: string;
 };
 
@@ -3013,7 +3185,7 @@ export async function listPendingPackageUploads(db: D1Database): Promise<Pending
   // queue_finish choice in the log pends no file.
   const result = await db
     .prepare(
-      `SELECT s.id, b.id AS harvest_batch_id, b.hbn, b.harvest_year, b.lot_serial,
+      `SELECT s.id, b.id AS harvest_batch_id, b.hbn, b.harvest_year, b.lot_serial, ${HARVEST_FILE_SEQ_SQL} AS seq,
               s.finished_at AS newest_activity,
               CASE
                 WHEN d.kind = 'silo' THEN 'package_adjust'
@@ -3031,7 +3203,7 @@ export async function listPendingPackageUploads(db: D1Database): Promise<Pending
              AND u.kind IN ('package_from_harvest', 'package_adjust')
          )
        UNION ALL
-       SELECT s.id, b.id AS harvest_batch_id, b.hbn, b.harvest_year, b.lot_serial,
+       SELECT s.id, b.id AS harvest_batch_id, b.hbn, b.harvest_year, b.lot_serial, ${HARVEST_FILE_SEQ_SQL} AS seq,
               s.finished_at AS newest_activity,
               'package_adjust' AS kind
        FROM unload_sessions s
@@ -3049,7 +3221,7 @@ export async function listPendingPackageUploads(db: D1Database): Promise<Pending
            WHERE u.ref_id = s.id AND u.deleted_at IS NULL AND u.kind = 'package_adjust'
          )
        UNION ALL
-       SELECT w.id, b.id AS harvest_batch_id, b.hbn, b.harvest_year, b.lot_serial,
+       SELECT w.id, b.id AS harvest_batch_id, b.hbn, b.harvest_year, b.lot_serial, ${HARVEST_FILE_SEQ_SQL} AS seq,
               w.updated_at AS newest_activity,
               'package_adjust' AS kind
        FROM wet_weight_entries w
@@ -3070,6 +3242,7 @@ export async function listPendingPackageUploads(db: D1Database): Promise<Pending
       hbn: string;
       harvest_year: number;
       lot_serial: number;
+      seq: number | null;
       newest_activity: string;
       kind: string;
     }>();
@@ -3079,6 +3252,7 @@ export async function listPendingPackageUploads(db: D1Database): Promise<Pending
     harvest_batch_id: row.harvest_batch_id,
     hbn: row.hbn,
     lot: formatLotToken(Number(row.harvest_year), Number(row.lot_serial)),
+    seq: row.seq == null ? null : Number(row.seq),
     newest_activity: row.newest_activity,
   }));
 }
@@ -3707,6 +3881,12 @@ export type BarnWetLotRow = {
   notes: string | null;
   /** THE PLANT COUNT (canon 0.30.62): null until typed at Finish lot, here, or by the pencil. */
   plant_count: number | null;
+  /** THE LOAD AND THE LOT (canon 0.30.241): the HBN this part belongs to. */
+  harvest_batch_id?: string | null;
+  /** When Finish load moved the part to drying. */
+  finished_at?: string | null;
+  planned_silo_name?: string | null;
+  planned_dryspc?: string | null;
 };
 
 /** THE FINISHED LOT IS ELIGIBLE (canon 0.30.130). Owner, 2026-09-19, verbatim:
@@ -3722,11 +3902,11 @@ export type BarnWetLotRow = {
  * can move it from where it is. The 0.30.73 gate (the package live in BARN, ARL
  * BARN or PNS BARN) is repealed; the label still rides last-6-of-tag / origin
  * farm / market strain (strain name when no market strain). */
-const BARN_WET_LOT_SELECT = `SELECT w.id, w.status, li.location AS barn_location, b.hbn, b.metrc_harvest_tag, b.farm_code, w.truck_number,
+const BARN_WET_LOT_SELECT = `SELECT w.id, w.status, li.location AS barn_location, b.id AS harvest_batch_id, b.hbn, b.metrc_harvest_tag, b.farm_code, w.truck_number,
               COALESCE(b.market_strain, s.name) AS strain_label, b.entry_date,
-              w.weight_grams, w.material_form, w.actual_dryspc,
+              w.weight_grams, w.material_form, w.actual_dryspc, w.updated_at AS finished_at,
               d.name AS planned_space_name, d.kind AS planned_space_kind,
-              ps.id AS planned_silo_id,
+              ps.id AS planned_silo_id, ps.name AS planned_silo_name, b.planned_dryspc,
               li.package_code, li.id AS item_id, COALESCE(w.team_lead, p.display_name) AS lead_name,
               COALESCE(c.email, c.display_name) AS supervisor_name, w.notes, w.plant_count
        FROM wet_weight_entries w
@@ -3761,6 +3941,185 @@ export async function listBarnWetLots(db: D1Database, barnLocation?: string): Pr
 export async function getBarnWetLot(db: D1Database, lotId: string, barnLocation?: string): Promise<BarnWetLotRow | null> {
   const rows = await listBarnWetLots(db, barnLocation);
   return rows.find((r) => r.id === lotId) ?? null;
+}
+
+/** THE LOAD AND THE LOT (canon 0.30.241): the parts of one HBN still waiting
+ * for a space (drying or a truck-era in_transit, no open load). */
+export async function listLotParts(db: D1Database, harvestBatchId: string): Promise<BarnWetLotRow[]> {
+  const rows = await listBarnWetLots(db);
+  return rows.filter((row) => row.harvest_batch_id === harvestBatchId);
+}
+
+export type OpenLogisticsSchedule = {
+  id: string;
+  harvest_batch_id: string;
+  scheduled_at: string;
+  hbn: string | null;
+  farm_code: string | null;
+  strain_label: string | null;
+  metrc_harvest_tag: string | null;
+  planned_silo_name: string | null;
+};
+
+export async function listOpenLogisticsSchedules(db: D1Database): Promise<OpenLogisticsSchedule[]> {
+  const result = await db
+    .prepare(
+      `SELECT ps.id, ps.harvest_batch_id, ps.scheduled_at, b.hbn, b.farm_code, b.metrc_harvest_tag,
+              COALESCE(b.market_strain, st.name, '') AS strain_label,
+              silo.name AS planned_silo_name
+       FROM production_schedules ps
+       JOIN harvest_batches b ON b.id = ps.harvest_batch_id AND b.deleted_at IS NULL
+       LEFT JOIN strains st ON st.id = b.strain_id
+       LEFT JOIN dry_spaces silo ON silo.kind = 'silo' AND silo.deleted_at IS NULL
+         AND silo.name = 'Silo ' || COALESCE(b.planned_dryspc, '')
+       WHERE ps.stage = ? AND ps.status = ? AND ps.deleted_at IS NULL
+       ORDER BY ps.scheduled_at ASC`
+    )
+    .bind(INTERNAL_LOGISTICS_STAGE, SCHEDULE_STATUS.scheduled)
+    .all<OpenLogisticsSchedule>();
+  return result.results ?? [];
+}
+
+export type FinishedLogisticsRow = {
+  id: string;
+  harvest_batch_id: string;
+  hbn: string | null;
+  farm_code: string | null;
+  strain_label: string | null;
+  metrc_harvest_tag: string | null;
+  completed_at: string | null;
+  space_name: string | null;
+};
+
+/** Lots whose pass was completed inside the window, newest first, with the space of the latest load. */
+export async function listFinishedLogistics(db: D1Database, sinceIso: string): Promise<FinishedLogisticsRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT ps.id, ps.harvest_batch_id, ps.completed_at, b.hbn, b.farm_code, b.metrc_harvest_tag,
+              COALESCE(b.market_strain, s.name) AS strain_label,
+              (
+                SELECT d.name FROM silo_loads l
+                JOIN wet_weight_entries w ON w.id = l.wet_weight_entry_id
+                JOIN dry_spaces d ON d.id = l.dry_space_id
+                WHERE w.harvest_batch_id = ps.harvest_batch_id AND l.deleted_at IS NULL
+                ORDER BY l.loaded_at DESC LIMIT 1
+              ) AS space_name
+       FROM production_schedules ps
+       JOIN harvest_batches b ON b.id = ps.harvest_batch_id
+       LEFT JOIN strains s ON s.id = b.strain_id
+       WHERE ps.stage = ? AND ps.status = ? AND ps.deleted_at IS NULL AND ps.completed_at >= ?
+       ORDER BY ps.completed_at DESC`
+    )
+    .bind(INTERNAL_LOGISTICS_STAGE, SCHEDULE_STATUS.complete, sinceIso)
+    .all<FinishedLogisticsRow>();
+  return result.results ?? [];
+}
+
+/** One row per scheduled HBN for Load Silo and the drying Available panes.
+ * The row id is the harvest batch, so a pick loads every part. */
+export async function listScheduledLotsForLoad(db: D1Database): Promise<BarnWetLotRow[]> {
+  const [parts, open] = await Promise.all([listBarnWetLots(db), listOpenLogisticsSchedules(db)]);
+  const covered = new Set(open.map((row) => row.harvest_batch_id));
+  const byBatch = new Map<string, BarnWetLotRow[]>();
+  for (const part of parts) {
+    const batch = part.harvest_batch_id ?? "";
+    if (!batch || !covered.has(batch)) continue;
+    const group = byBatch.get(batch);
+    if (group) group.push(part);
+    else byBatch.set(batch, [part]);
+  }
+  const order = new Map(open.map((row, i) => [row.harvest_batch_id, i]));
+  return [...byBatch.entries()]
+    .sort((a, b) => (order.get(a[0]) ?? 0) - (order.get(b[0]) ?? 0))
+    .map(([, group]) => syntheticLot(group));
+}
+
+export type MenuEntryRow = {
+  id: string;
+  harvest_batch_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  truck_number: string | null;
+  loaded: number;
+  /** Latest change-log instant that set this part in_transit. Null when the log has none. */
+  transit_at: string | null;
+};
+
+/** Today's farm-day lots, plus every part still in_transit (on the road). */
+export async function listMenuEntries(db: D1Database, startIso: string, endIso: string): Promise<MenuEntryRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT w.id, w.harvest_batch_id, w.status, w.created_at, w.updated_at, w.truck_number,
+              CASE WHEN EXISTS (
+                SELECT 1 FROM silo_loads l
+                WHERE l.wet_weight_entry_id = w.id AND l.deleted_at IS NULL
+              ) THEN 1 ELSE 0 END AS loaded,
+              (
+                SELECT c.changed_at FROM record_change_log c
+                WHERE c.record_table = 'wet_weight_entries' AND c.record_id = w.id
+                  AND c.field = 'status' AND c.new_value = 'in_transit'
+                ORDER BY c.changed_at DESC
+                LIMIT 1
+              ) AS transit_at
+       FROM wet_weight_entries w
+       WHERE w.deleted_at IS NULL
+         AND (
+           w.harvest_batch_id IN (
+             SELECT w2.harvest_batch_id FROM wet_weight_entries w2
+             WHERE w2.deleted_at IS NULL
+             GROUP BY w2.harvest_batch_id
+             HAVING MIN(w2.created_at) >= ? AND MIN(w2.created_at) < ?
+           )
+           OR w.status = 'in_transit'
+         )`
+    )
+    .bind(startIso, endIso)
+    .all<MenuEntryRow>();
+  return result.results ?? [];
+}
+
+export type MenuDryingLoad = {
+  id: string;
+  space_id: string;
+  space_name: string;
+  space_type: string | null;
+  loaded_at: string;
+  started_at: string | null;
+  paused_at: string | null;
+  paused_seconds: number;
+};
+
+/** Open loads in silos and dry rooms. Freezers are not drying. */
+export async function listMenuDryingLoads(db: D1Database): Promise<MenuDryingLoad[]> {
+  const result = await db
+    .prepare(
+      `SELECT l.id, l.loaded_at, l.started_at, l.paused_at, l.paused_seconds,
+              d.id AS space_id, d.name AS space_name, d.space_type
+       FROM silo_loads l
+       JOIN dry_spaces d ON d.id = l.dry_space_id AND d.deleted_at IS NULL
+       WHERE l.ended_at IS NULL AND l.deleted_at IS NULL
+         AND COALESCE(d.space_type, 'silo') <> 'freezer'`
+    )
+    .all<MenuDryingLoad>();
+  return result.results ?? [];
+}
+
+function syntheticLot(group: BarnWetLotRow[]): BarnWetLotRow {
+  const first = group[0];
+  const trucks = [...new Set(group.map((part) => String(part.truck_number ?? "").trim()).filter(Boolean))];
+  const missing = group.some((part) => !part.item_id);
+  const plant = group.every((part) => part.plant_count != null)
+    ? group.reduce((sum, part) => sum + Number(part.plant_count), 0)
+    : null;
+  return {
+    ...first,
+    id: first.harvest_batch_id || first.id,
+    weight_grams: group.reduce((sum, part) => sum + Number(part.weight_grams ?? 0), 0),
+    truck_number: trucks.length === 1 ? trucks[0] : null,
+    item_id: missing ? null : first.item_id,
+    plant_count: plant,
+  };
 }
 
 /** A silo as the strip draws it. THE HARVEST CONSOLE (canon 0.30.73): shape is
@@ -3971,6 +4330,12 @@ export type DryingCompleteRow = {
   effective_date: string | null;
   /** The latest ended load's end instant. */
   ended_at: string | null;
+  /** THE RUN (canon 0.30.248): the latest ended load's clock fields, its run read at its end. */
+  run_loaded_at?: string | null;
+  run_started_at?: string | null;
+  run_paused_at?: string | null;
+  run_paused_seconds?: number | null;
+  run_ended_at?: string | null;
 };
 
 export async function listDryingComplete(db: D1Database, sinceIso: string): Promise<DryingCompleteRow[]> {
@@ -3988,10 +4353,16 @@ export async function listDryingComplete(db: D1Database, sinceIso: string): Prom
                 ORDER BY u.finished_at DESC LIMIT 1) AS effective_date,
               (SELECT l.ended_at FROM silo_loads l
                 WHERE l.wet_weight_entry_id = w.id AND l.deleted_at IS NULL AND l.ended_at IS NOT NULL
-                ORDER BY l.ended_at DESC LIMIT 1) AS ended_at
+                ORDER BY l.ended_at DESC LIMIT 1) AS ended_at,
+              rl.loaded_at AS run_loaded_at, rl.started_at AS run_started_at, rl.paused_at AS run_paused_at,
+              rl.paused_seconds AS run_paused_seconds, rl.ended_at AS run_ended_at
        FROM wet_weight_entries w
        JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
        JOIN dry_spaces d ON d.id = w.actual_dryspc AND d.kind = 'silo'
+       LEFT JOIN silo_loads rl ON rl.id = (
+         SELECT l.id FROM silo_loads l
+         WHERE l.wet_weight_entry_id = w.id AND l.deleted_at IS NULL AND l.ended_at IS NOT NULL
+         ORDER BY l.ended_at DESC, l.id DESC LIMIT 1)
        LEFT JOIN strains s ON s.id = b.strain_id
        LEFT JOIN local_inventory_items li ON li.id = (
          SELECT i.id FROM local_inventory_items i
@@ -4016,6 +4387,9 @@ export type PendingLocationChangeRow = {
   hbn: string | null;
   lot: string;
   silo_name: string | null;
+  /** The place the file name uses: the space's METRC location, else its name. */
+  file_location: string | null;
+  seq: number | null;
   newest_activity: string;
 };
 
@@ -4024,8 +4398,9 @@ export type PendingLocationChangeRow = {
 export async function listPendingLocationChangeUploads(db: D1Database): Promise<PendingLocationChangeRow[]> {
   const result = await db
     .prepare(
-      `SELECT l.id, b.id AS harvest_batch_id, b.hbn, b.harvest_year, b.lot_serial,
-              d.name AS silo_name, l.loaded_at AS newest_activity
+      `SELECT l.id, b.id AS harvest_batch_id, b.hbn, b.harvest_year, b.lot_serial, ${HARVEST_FILE_SEQ_SQL} AS seq,
+              d.name AS silo_name, COALESCE(NULLIF(TRIM(d.location_name), ''), d.name) AS file_location,
+              l.loaded_at AS newest_activity
        FROM silo_loads l
        JOIN wet_weight_entries w ON w.id = l.wet_weight_entry_id AND w.deleted_at IS NULL
        JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
@@ -4044,6 +4419,8 @@ export async function listPendingLocationChangeUploads(db: D1Database): Promise<
       harvest_year: number;
       lot_serial: number;
       silo_name: string | null;
+      file_location: string | null;
+      seq: number | null;
       newest_activity: string;
     }>();
   return (result.results ?? []).map((row) => ({
@@ -4052,6 +4429,8 @@ export async function listPendingLocationChangeUploads(db: D1Database): Promise<
     hbn: row.hbn,
     lot: `${String(row.harvest_year).slice(-2)}${String(row.lot_serial).padStart(3, "0")}`,
     silo_name: row.silo_name,
+    file_location: row.file_location,
+    seq: row.seq == null ? null : Number(row.seq),
     newest_activity: row.newest_activity,
   }));
 }

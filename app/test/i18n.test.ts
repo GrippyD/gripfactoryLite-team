@@ -91,8 +91,8 @@ describe("locale pill and app bar (owner ruling 2026-08-28)", () => {
 describe("Interco Logistics stub (owner ruling 2026-08-28)", () => {
   it("home carries the Interco node linking /interco", () => {
     const html = homePage(PIPELINE);
-    expect(html).toContain('href="/interco"');
-    expect(html).toContain("Interco Logistics");
+    expect(html).toContain('href="/ops/interco_logistics"');
+    expect(html).toContain("Logistics Operations");
     expect(html).toContain('data-ops-key="interco_logistics"');
     const interco = html.slice(
       html.indexOf('data-ops-key="interco_logistics"') - 40,

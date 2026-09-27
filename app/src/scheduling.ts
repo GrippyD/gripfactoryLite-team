@@ -10,6 +10,7 @@ import {
   DRYING_STAGES,
   dryingStagePath,
   formatGrams,
+  INTERNAL_LOGISTICS_PATH,
   LOT_STATUS,
   PREPACK_STATION_PATH,
   PRODUCTION_SCHEDULING_PATH,
@@ -20,14 +21,14 @@ import {
   type LineStage,
   type ScheduleStage,
 } from "./config";
-import type { BarnWetLotRow, DryingCompleteRow, ScheduleHbnGroup, ScheduleItemRow, SiloLoadRow, SiloRow } from "./db";
-import { barnLotLabel, clockMarkup, loadLotLabel, shareOrder, siloClockState, unloadTogetherForm } from "./drying";
+import type { BarnWetLotRow, DryingCompleteRow, FinishedLogisticsRow, ScheduleHbnGroup, ScheduleItemRow, SiloLoadRow, SiloRow } from "./db";
+import { barnLotLabel, clockMarkup, formatRunClock, loadLotLabel, shareOrder, siloClockSeconds, siloClockState, unloadTogetherForm } from "./drying";
 import type { MetrcAdoptPane } from "./metrc";
 import { lastSix, packageIdentityMarkup } from "./prepack";
 import { effectiveDateField } from "./effective";
 import { FARM_DAY_START_HOUR_DEFAULT, dayBefore, farmDay, farmDayBounds } from "./farmday";
 import { QUEUE_FOLD_SCRIPT, localTimeScript, queueFold } from "./html";
-import { t, type Locale } from "./i18n";
+import { t, tFill, type Locale } from "./i18n";
 import { spaceTypeOf } from "./silo";
 import { esc } from "./ui";
 
@@ -576,7 +577,7 @@ export function unloadDayOf(row: DryingCompleteRow, startHour: number = FARM_DAY
 
 export type DryingSurfaceInput = {
   stage: DryingStage;
-  /** Every lot Load Silo lists (listBarnWetLots: drying, no open load). */
+  /** Scheduled lots Load Silo lists (listScheduledLotsForLoad: one row per HBN, id is the harvest batch). */
   lots: BarnWetLotRow[];
   /** Every loadable space with its open loads, the rows the tiles read (loadSiloVisuals). */
   live: ReadonlyArray<{ silo: SiloRow; loads: SiloLoadRow[] }>;
@@ -636,6 +637,32 @@ function workingDryingRow(load: SiloLoadRow, path: string, nowIso: string, local
         </li>`;
 }
 
+/** THE RUN (canon 0.30.248; owner, 2026-09-26: "is it possible to see on the
+ * "complete" pane in the silos screen to see how long they ran according to
+ * timestamps?", his picks "Unload finished (Recommended)" and "Yes, add the
+ * average"): the lot's latest ended load's clock read at its end, the loaded
+ * time to the unload's finish less the banked pauses (frozen at paused_at when
+ * it ended paused), what the tile showed when it cleared; null without a
+ * readable time. */
+export function dryingRunSeconds(row: DryingCompleteRow): number | null {
+  if (!row.run_ended_at) return null;
+  return siloClockSeconds(
+    {
+      loaded_at: row.run_loaded_at ?? "",
+      started_at: row.run_started_at ?? null,
+      paused_at: row.run_paused_at ?? null,
+      paused_seconds: Number(row.run_paused_seconds ?? 0),
+    },
+    row.run_ended_at
+  );
+}
+
+/** THE AVERAGE (canon 0.30.248): the mean run of the rows that have one, whole seconds; null when none has. */
+export function dryingRunAverage(rows: readonly DryingCompleteRow[]): number | null {
+  const runs = rows.map(dryingRunSeconds).filter((n): n is number => n != null);
+  return runs.length === 0 ? null : Math.round(runs.reduce((sum, n) => sum + n, 0) / runs.length);
+}
+
 function completeDryingRow(row: DryingCompleteRow, startHour: number, locale: Locale): string {
   const label = barnLotLabel({
     metrc_harvest_tag: row.metrc_harvest_tag,
@@ -654,9 +681,15 @@ function completeDryingRow(row: DryingCompleteRow, startHour: number, locale: Lo
       : `<span class="muted">${esc(t(locale, "Dry"))} ${esc(formatGrams(dry ?? 0))} g</span>${
           pct ? ` <span class="muted" data-yield>${esc(t(locale, "Yield"))} ${esc(pct)}</span>` : ""
         }`;
+  const run = dryingRunSeconds(row);
+  const ran =
+    run == null
+      ? ""
+      : `<span class="muted" data-run-seconds="${esc(String(run))}">${esc(tFill(locale, "Ran {t}", { t: formatRunClock(run) }))}</span>`;
   return `<li class="schedule-item" data-drying-lot="${esc(row.lot_id)}"${dry == null ? "" : ` data-dry-grams="${esc(String(dry))}"`}>
           <span class="schedule-identity">${esc(label)}</span>
           ${weighed}
+          ${ran}
           <span class="muted" data-unload-day="${esc(day)}">${esc(day)}</span>
         </li>`;
 }
@@ -670,8 +703,9 @@ function completeDryingRow(row: DryingCompleteRow, startHour: number, locale: Lo
  * each space, with the clock as the tiles read it, Start and Pause as Load
  * Silo's (returning here), and > into Unload Dry Space on the lot; a space
  * holding two or more loads carries Unload together. COMPLETE: this kind's
- * lots unloaded in the last seven days, with the dry grams, the yield and the
- * unload's day. Pure: the route prepends the silo strip, whose script keeps
+ * lots unloaded in the last seven days, with the dry grams, the yield, the run
+ * (canon 0.30.248) and the unload's day, each space's average run in its
+ * heading. Pure: the route prepends the silo strip, whose script keeps
  * the clocks ticking. */
 export function dryingSchedulingPage(input: DryingSurfaceInput): string {
   const locale = input.locale ?? "en";
@@ -738,10 +772,17 @@ export function dryingSchedulingPage(input: DryingSurfaceInput): string {
   }
   const complete = [...bySpace.entries()]
     .map(
-      ([spaceId, group]) => `<section class="schedule-group" data-drying-space="${esc(spaceId)}">
-        <h3 class="schedule-hbn-label">${esc(group.name)} <span class="tile-count">${group.rows.length}</span></h3>
+      ([spaceId, group]) => {
+        const average = dryingRunAverage(group.rows);
+        const averageMark =
+          average == null
+            ? ""
+            : ` <span class="muted" data-run-average="${esc(String(average))}">${esc(tFill(locale, "average {t}", { t: formatRunClock(average) }))}</span>`;
+        return `<section class="schedule-group" data-drying-space="${esc(spaceId)}">
+        <h3 class="schedule-hbn-label">${esc(group.name)} <span class="tile-count">${group.rows.length}</span>${averageMark}</h3>
         <ul>${group.rows.map((row) => completeDryingRow(row, startHour, locale)).join("")}</ul>
-      </section>`
+      </section>`;
+      }
     )
     .join("");
 
@@ -761,4 +802,153 @@ export function dryingSchedulingPage(input: DryingSurfaceInput): string {
         ${complete || dryingEmpty(locale)}
       </aside>
     </div>`;
+}
+
+/** THE LOAD AND THE LOT (canon 0.30.241). A lot is an HBN. Its parts are the
+ * finished loads still waiting for a space. */
+export type LogisticsLotView = {
+  harvest_batch_id: string;
+  hbn: string | null;
+  farm_code: string | null;
+  strain_label: string | null;
+  metrc_harvest_tag: string | null;
+  package_code: string | null;
+  trucks: string[];
+  partIds: string[];
+  weight_grams: number;
+  planned_silo_name: string | null;
+  oldest_finished_at: string | null;
+  schedule_id?: string | null;
+};
+
+export function logisticsLotView(parts: BarnWetLotRow[], scheduleId: string | null = null): LogisticsLotView | null {
+  if (parts.length === 0) return null;
+  const first = parts[0];
+  const trucks = [...new Set(parts.map((part) => String(part.truck_number ?? "").trim()).filter(Boolean))];
+  const oldest = parts
+    .map((part) => part.finished_at ?? "")
+    .filter(Boolean)
+    .sort()[0] ?? null;
+  return {
+    harvest_batch_id: first.harvest_batch_id || first.id,
+    hbn: first.hbn,
+    farm_code: first.farm_code,
+    strain_label: first.strain_label,
+    metrc_harvest_tag: first.metrc_harvest_tag,
+    package_code: first.package_code,
+    trucks,
+    partIds: parts.map((part) => part.id),
+    weight_grams: parts.reduce((sum, part) => sum + Number(part.weight_grams ?? 0), 0),
+    planned_silo_name: first.planned_silo_name ?? (first.planned_dryspc ? `Silo ${first.planned_dryspc}` : null),
+    oldest_finished_at: oldest,
+    schedule_id: scheduleId,
+  };
+}
+
+function waitedLabel(iso: string | null, nowIso: string): string {
+  const ms = Date.parse(nowIso) - Date.parse(iso ?? "");
+  if (!Number.isFinite(ms) || ms < 0) return "0d 00:00:00";
+  const s = Math.floor(ms / 1000);
+  const days = Math.floor(s / 86400);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${days}d ${pad(Math.floor((s % 86400) / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+}
+
+function logisticsRow(lot: LogisticsLotView, locale: Locale, nowIso: string, control: string): string {
+  const label = barnLotLabel({
+    metrc_harvest_tag: lot.metrc_harvest_tag,
+    package_code: lot.package_code,
+    farm_code: lot.farm_code,
+    strain_label: lot.strain_label,
+    hbn: lot.hbn,
+    truck_number: lot.trucks.length === 1 ? lot.trucks[0] : null,
+  });
+  const partsWord = lot.partIds.length === 1 ? t(locale, "1 part") : tFill(locale, "{n} parts", { n: String(lot.partIds.length) });
+  const trucks = lot.trucks.length > 0 ? lot.trucks.join(", ") : t(locale, "no truck");
+  const planned = lot.planned_silo_name ?? t(locale, "no planned silo");
+  return `<li class="schedule-item" data-logistics-lot="${esc(lot.harvest_batch_id)}" data-logistics-parts="${esc(lot.partIds.join(" "))}" data-logistics-hbn="${esc(lot.hbn ?? "")}">
+          <span class="schedule-identity">${esc(label)}</span>
+          <span class="muted" data-logistics-part-count>${esc(partsWord)}</span>
+          <span class="muted" data-logistics-trucks>${esc(t(locale, "Trucks"))} ${esc(trucks)}</span>
+          <span class="muted" data-wet-grams="${esc(String(lot.weight_grams))}">${esc(formatGrams(lot.weight_grams))} g</span>
+          <span class="muted" data-planned-silo>${esc(t(locale, "Planned silo"))}: ${esc(planned)}</span>
+          <span class="muted" data-waited="${esc(lot.oldest_finished_at ?? "")}">${esc(t(locale, "Waited"))} ${esc(waitedLabel(lot.oldest_finished_at, nowIso))}</span>
+          ${control}
+        </li>`;
+}
+
+export function internalLogisticsPage(input: {
+  queue: LogisticsLotView[];
+  scheduled: LogisticsLotView[];
+  finished: FinishedLogisticsRow[];
+  nowIso: string;
+  locale?: Locale;
+}): string {
+  const locale = input.locale ?? "en";
+  const pass = t(locale, "Pass lot");
+  const back = t(locale, "Return lot");
+  const open = t(locale, "Open Load Silo");
+  const queue = input.queue
+    .map((lot) =>
+      logisticsRow(
+        lot,
+        locale,
+        input.nowIso,
+        `<form method="post" action="${esc(INTERNAL_LOGISTICS_PATH)}/schedule" class="shuttle-form">
+            <input type="hidden" name="harvest_batch_id" value="${esc(lot.harvest_batch_id)}">
+            <button type="submit" class="shuttle-btn" title="${esc(pass)}" aria-label="${esc(pass)}">&gt;&gt;</button>
+          </form>`
+      )
+    )
+    .join("");
+  const scheduled = input.scheduled
+    .map((lot) =>
+      logisticsRow(
+        lot,
+        locale,
+        input.nowIso,
+        `<form method="post" action="${esc(INTERNAL_LOGISTICS_PATH)}/unschedule/${esc(lot.schedule_id ?? "")}" class="shuttle-form">
+            <button type="submit" class="shuttle-btn" title="${esc(back)}" aria-label="${esc(back)}">&lt;&lt;</button>
+          </form>
+          ${
+            lot.partIds.length > 0
+              ? `<a class="shuttle-btn" href="/station/load_silo?pick=${esc(lot.harvest_batch_id)}" title="${esc(open)}" aria-label="${esc(open)}">&gt;</a>`
+              : ""
+          }`
+      )
+    )
+    .join("");
+  const finished = input.finished
+    .map((row) => {
+      const label = barnLotLabel({
+        metrc_harvest_tag: row.metrc_harvest_tag,
+        package_code: null,
+        farm_code: row.farm_code,
+        strain_label: row.strain_label,
+        hbn: row.hbn,
+      });
+      return `<li class="schedule-item" data-logistics-finished="${esc(row.harvest_batch_id)}" data-logistics-hbn="${esc(row.hbn ?? "")}">
+          <span class="schedule-identity">${esc(label)}</span>
+          <span class="muted" data-logistics-space>${esc(row.space_name ?? "")}</span>
+          ${row.completed_at ? `<time datetime="${esc(row.completed_at)}" data-local>${esc(row.completed_at)}</time>` : ""}
+        </li>`;
+    })
+    .join("");
+  const pane = (name: string, title: string, body: string, count: number) =>
+    `<${name === "working" ? "section" : "aside"} class="queue-pane" data-schedule-pane="${name}">
+        <h2>${esc(t(locale, title))} <span class="tile-count" data-schedule-count="${name}">${count}</span></h2>
+        ${body ? `<ul>${body}</ul>` : `<p class="muted">${esc(t(locale, "- EMPTY -"))}</p>`}
+      </${name === "working" ? "section" : "aside"}>`;
+  return `<h1>${esc(t(locale, "Internal Logistics"))}</h1>
+    <div class="station-triple">
+      ${pane("available", "Dry Queue", queue, input.queue.length)}
+      ${pane("working", "Scheduled", scheduled, input.scheduled.length)}
+      ${pane("complete", "Finished", finished, input.finished.length)}
+    </div>
+    ${localTimeScript()}`;
+}
+
+export function processingPartnersPage(locale: Locale = "en"): string {
+  return `<h1>${esc(t(locale, "Processing Partners"))}</h1>
+    <p class="muted">${esc(t(locale, "- EMPTY -"))}</p>`;
 }

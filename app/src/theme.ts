@@ -696,12 +696,15 @@ table.data th { background: var(--panel-2); }
 /* THE PLUME (canon 0.30.207): the two stem cells are permanent and draw as any unconsumed cell, not a color of their own. */
 .hc-bud-stem { fill: #2e9e4f; }
 .hc-bud-consumed { fill: #b5bab3; }
+/* THE PRODUCT LINE (canon 0.30.243): the first sixty consumed cells grey as byproduct; a consumed cell of the last forty is waste, deep red (THE DEEP RED, 0.30.248; the dark green of 0.30.245 before it). */
+.hc-bud-consumed[data-hc-bud-waste] { fill: #7c1b1b; }
 .hc-bud-empty { fill: none; stroke: var(--line, var(--border, #88888899)); stroke-width: 0.6; }
 .hc-btr-read { font-variant-numeric: tabular-nums; margin: 0.3rem 0 0.15rem; }
 .hc-legend { font-size: 0.72rem; }
 .hc-swatch { display: inline-block; width: 0.65rem; height: 0.65rem; border-radius: 0.12rem; margin: 0 0.22rem 0 0; vertical-align: -0.08rem; }
 .hc-swatch-bud { background: #2e9e4f; }
 .hc-swatch-consumed { background: #b5bab3; margin-left: 0.45rem; }
+.hc-swatch-waste { background: #7c1b1b; margin-left: 0.45rem; }
 .hc-trimline { display: block; width: 100%; max-width: 46rem; height: auto; margin: 0 auto 0.5rem; }
 .hc-trimline .hc-node { fill: var(--panel, var(--surface, transparent)); stroke: var(--line, var(--border, #88888899)); stroke-width: 3; }
 .hc-trimline text { fill: var(--text, currentColor); text-anchor: middle; font-family: inherit; }
@@ -850,6 +853,17 @@ body.device-phone table.data { display: block; overflow-x: auto; white-space: no
 .ops-node-stub:focus, .ops-node-stub:hover { border-left-color: #d97706; }
 .ops-icon-svg { width: 3.4rem; height: 3.4rem; display: block; }
 .ops-label { display: block; font-weight: 700; margin: 0; font-size: 0.88rem; }
+.ops-menu-lines { display: flex; flex-direction: column; gap: 0.08rem; width: 100%; min-width: 0; max-width: 100%; }
+.ops-menu-line { display: flex; flex-wrap: wrap; align-items: baseline; width: 100%; max-width: 100%; min-width: 0; font-size: 0.44rem; line-height: 1.15; font-weight: 600; }
+.ops-menu-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; }
+.ops-menu-status { flex: 0 0 auto; max-width: 100%; white-space: nowrap; }
+.ops-menu-dots { flex: 1 1 0.4rem; overflow: hidden; min-width: 0.4rem; white-space: nowrap; }
+.ops-menu-dots::before { content: "................................................"; }
+@media (max-width: 480px) {
+  .ops-menu-dots { display: none; }
+  .ops-menu-name, .ops-menu-status { flex: 1 0 100%; white-space: normal; }
+  .ops-menu-status { text-align: right; }
+}
 .ops-arrow { color: var(--ops-arrow); flex: 0 0 auto; }
 .ops-arrow-right, .ops-arrow-left, .ops-arrow-down {
   display: block; width: 0; height: 0;
@@ -1363,12 +1377,14 @@ table.data tbody tr:hover td { background: var(--surface-2); }
 .hc-bud-bud { fill: #2e9e4f; }
 .hc-bud-stem { fill: #2e9e4f; }
 .hc-bud-consumed { fill: #7a8088; }
+.hc-bud-consumed[data-hc-bud-waste] { fill: #7c1b1b; }
 .hc-bud-empty { fill: none; stroke: var(--line, var(--border, #88888899)); stroke-width: 0.6; }
 .hc-btr-read { font-variant-numeric: tabular-nums; margin: 0.3rem 0 0.15rem; }
 .hc-legend { font-size: 0.72rem; }
 .hc-swatch { display: inline-block; width: 0.65rem; height: 0.65rem; border-radius: 0.12rem; margin: 0 0.22rem 0 0; vertical-align: -0.08rem; }
 .hc-swatch-bud { background: #2e9e4f; }
 .hc-swatch-consumed { background: #7a8088; margin-left: 0.45rem; }
+.hc-swatch-waste { background: #7c1b1b; margin-left: 0.45rem; }
 .hc-trimline { display: block; width: 100%; max-width: 46rem; height: auto; margin: 0 auto 0.5rem; }
 .hc-trimline .hc-node { fill: var(--panel, var(--surface, transparent)); stroke: var(--line, var(--border, #88888899)); stroke-width: 3; }
 .hc-trimline text { fill: var(--text, currentColor); text-anchor: middle; font-family: inherit; }
@@ -1506,6 +1522,17 @@ body.device-phone table.data { display: block; overflow-x: auto; white-space: no
 .ops-node-stub:focus, .ops-node-stub:hover { border-left-color: #d97706; }
 .ops-icon-svg { width: 3.4rem; height: 3.4rem; display: block; }
 .ops-label { display: block; font-family: var(--font-display); font-weight: 700; margin: 0; font-size: 0.95rem; }
+.ops-menu-lines { display: flex; flex-direction: column; gap: 0.08rem; width: 100%; min-width: 0; max-width: 100%; }
+.ops-menu-line { display: flex; flex-wrap: wrap; align-items: baseline; width: 100%; max-width: 100%; min-width: 0; font-size: 0.475rem; line-height: 1.15; font-weight: 600; }
+.ops-menu-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; }
+.ops-menu-status { flex: 0 0 auto; max-width: 100%; white-space: nowrap; }
+.ops-menu-dots { flex: 1 1 0.4rem; overflow: hidden; min-width: 0.4rem; white-space: nowrap; }
+.ops-menu-dots::before { content: "................................................"; }
+@media (max-width: 480px) {
+  .ops-menu-dots { display: none; }
+  .ops-menu-name, .ops-menu-status { flex: 1 0 100%; white-space: normal; }
+  .ops-menu-status { text-align: right; }
+}
 .ops-arrow { color: var(--ops-arrow); flex: 0 0 auto; }
 .ops-arrow-right, .ops-arrow-left, .ops-arrow-down { display: block; width: 0; height: 0; }
 .ops-arrow-right { border-top: 9px solid transparent; border-bottom: 9px solid transparent; border-left: 16px solid currentColor; }
@@ -1977,12 +2004,14 @@ legend { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; c
 .hc-bud-bud { fill: #3ecf6b; }
 .hc-bud-stem { fill: #3ecf6b; }
 .hc-bud-consumed { fill: #6f7680; }
+.hc-bud-consumed[data-hc-bud-waste] { fill: #ba2929; }
 .hc-bud-empty { fill: none; stroke: var(--line, var(--border, #88888899)); stroke-width: 0.6; }
 .hc-btr-read { font-variant-numeric: tabular-nums; margin: 0.3rem 0 0.15rem; }
 .hc-legend { font-size: 0.72rem; }
 .hc-swatch { display: inline-block; width: 0.65rem; height: 0.65rem; border-radius: 0.12rem; margin: 0 0.22rem 0 0; vertical-align: -0.08rem; }
 .hc-swatch-bud { background: #3ecf6b; }
 .hc-swatch-consumed { background: #6f7680; margin-left: 0.45rem; }
+.hc-swatch-waste { background: #ba2929; margin-left: 0.45rem; }
 .hc-trimline { display: block; width: 100%; max-width: 46rem; height: auto; margin: 0 auto 0.5rem; }
 .hc-trimline .hc-node { fill: var(--panel, var(--surface, transparent)); stroke: var(--line, var(--border, #88888899)); stroke-width: 3; }
 .hc-trimline text { fill: var(--text, currentColor); text-anchor: middle; font-family: inherit; }
@@ -2098,6 +2127,17 @@ body.device-phone table.data { display: block; overflow-x: auto; white-space: no
 .ops-node-stub:focus, .ops-node-stub:hover { border-left-color: #d97706; }
 .ops-icon-svg { width: 3.4rem; height: 3.4rem; display: block; }
 .ops-label { display: block; font-weight: 700; margin: 0; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.ops-menu-lines { display: flex; flex-direction: column; gap: 0.08rem; width: 100%; min-width: 0; max-width: 100%; }
+.ops-menu-line { display: flex; flex-wrap: wrap; align-items: baseline; width: 100%; max-width: 100%; min-width: 0; font-size: 0.36rem; line-height: 1.15; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.ops-menu-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; }
+.ops-menu-status { flex: 0 0 auto; max-width: 100%; white-space: nowrap; }
+.ops-menu-dots { flex: 1 1 0.4rem; overflow: hidden; min-width: 0.4rem; white-space: nowrap; }
+.ops-menu-dots::before { content: "................................................"; }
+@media (max-width: 480px) {
+  .ops-menu-dots { display: none; }
+  .ops-menu-name, .ops-menu-status { flex: 1 0 100%; white-space: normal; letter-spacing: 0; text-transform: none; }
+  .ops-menu-status { text-align: right; }
+}
 .ops-arrow { color: var(--ops-arrow); flex: 0 0 auto; }
 .ops-arrow-right, .ops-arrow-left, .ops-arrow-down { display: block; width: 0; height: 0; }
 .ops-arrow-right { border-top: 9px solid transparent; border-bottom: 9px solid transparent; border-left: 16px solid currentColor; }

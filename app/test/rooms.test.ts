@@ -17,6 +17,10 @@ function fakeDb(input: { lot: Record<string, unknown>; space: Record<string, unk
       },
       async all() {
         if (sql.includes("FROM wet_weight_entries w") && sql.includes("AS barn_location")) return { results: [input.lot] };
+        if (sql.includes("FROM production_schedules") && args.includes("internal_logistics")) {
+          const batch = String(input.lot.harvest_batch_id || input.lot.id || "");
+          return { results: [{ id: "sched-1", harvest_batch_id: batch, scheduled_at: "2026-09-20T12:00:00.000Z" }] };
+        }
         return { results: [] };
       },
       async first() {

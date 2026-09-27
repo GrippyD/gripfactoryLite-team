@@ -1029,53 +1029,46 @@ describe("walk slice helpers", () => {
 });
 
 describe("walk slice HTTP redirects", () => {
-  it("THE BLANK SLATE (canon 0.30.108) and THE MANIFEST BUILDER (canon 0.30.125): every old Interco url lands on the page, and the page is the three panes", async () => {
+  it("THE LOAD AND THE LOT (canon 0.30.241): every old Interco url lands on Logistics Operations, and the manifest page is not served", async () => {
     const db = makePinDb();
     const headers = { cookie: "gf_pin=21319" };
     for (const path of [
+      "/interco",
       "/interco/outbound",
       "/interco/receiving",
       "/interco/arrivals/pnn",
       "/interco/send/pns",
       "/interco/door",
       "/interco/receipt/abc",
-      "/virtual-move",
+      "/interco?tab=inbound",
     ]) {
       const res = await app.request(path, { headers }, pinEnv(db));
       expect(res.status, path).toBe(302);
-      expect(res.headers.get("location") ?? "", path).toMatch(/\/interco$/);
+      expect(res.headers.get("location") ?? "", path).toBe("/ops/interco_logistics");
     }
-    // A stale form posts land there too, acting on nothing.
-    for (const path of ["/interco/manifest/add", "/interco/create", "/interco/receive", "/interco/arrivals/pnn/receive-truck", "/virtual-move/to-processor"]) {
+    for (const path of ["/interco/manifest/add", "/interco/create", "/interco/receive", "/interco/arrivals/pnn/receive-truck", "/interco/manifest/finish"]) {
       const res = await app.request(path, { method: "POST", headers, body: new URLSearchParams({ x: "1" }) }, pinEnv(db));
       expect(res.status, path).toBe(303);
-      expect(res.headers.get("location") ?? "", path).toMatch(/\/interco$/);
+      expect(res.headers.get("location") ?? "", path).toBe("/ops/interco_logistics");
     }
-    // The old tab queries are just the builder page now.
-    for (const path of ["/interco", "/interco?tab=inbound", "/interco?tab=outbound"]) {
-      expect((await app.request(path, { headers }, pinEnv(db))).status, path).toBe(200);
-    }
-    const menu = await app.request("/interco", { headers }, pinEnv(db));
+    const virtual = await app.request("/virtual-move", { headers }, pinEnv(db));
+    expect(virtual.status).toBe(302);
+    expect(virtual.headers.get("location") ?? "").toMatch(/\/interco$/);
+    const menu = await app.request("/ops/interco_logistics", { headers }, pinEnv(db));
     expect(menu.status).toBe(200);
     const menuHtml = await menu.text();
-    expect(menuHtml).toContain(">Interco Logistics</h1>");
-    // THE MANIFEST BUILDER: one form, three panes, every empty container "- EMPTY -".
-    expect(menuHtml).toContain('data-manifest-builder');
-    expect(menuHtml).toContain('data-pane="origin"');
-    expect(menuHtml).toContain('data-pane="destination"');
-    expect(menuHtml).toContain('data-pane="manifest"');
-    expect(menuHtml).toContain('<p class="muted" data-origin-empty>- EMPTY -</p>');
-    expect(menuHtml).toContain('<p class="muted" data-manifest-empty>- EMPTY -</p>');
-    expect(menuHtml).toContain('action="/interco/manifest/finish"');
-    expect(menuHtml).toContain('data-finish>Finish</button>');
-    expect(menuHtml).toContain('href="/interco" data-cancel>Cancel</a>');
-    expect(menuHtml).not.toContain("Working pane");
-    expect(menuHtml).not.toContain("On the road");
-    expect(menuHtml).not.toContain('href="/interco/ship-external"');
-    expect(menuHtml).not.toContain("data-hc-farm");
-    // The builder's own paths are not swept into the redirect.
+    expect(menuHtml).toContain("Logistics Operations");
+    expect(menuHtml).toContain('href="/logistics/internal"');
+    expect(menuHtml).toContain("Internal Logistics");
+    expect(menuHtml).toContain('href="/logistics/partners"');
+    expect(menuHtml).toContain("Processing Partners");
+    expect(menuHtml).not.toContain("data-manifest-builder");
+    const partners = await app.request("/logistics/partners", { headers }, pinEnv(db));
+    expect(partners.status).toBe(200);
+    expect(await partners.text()).toContain("- EMPTY -");
     const csv = await app.request("/interco/manifest/nope/csv", { headers }, pinEnv(db));
-    expect(csv.status).toBe(404);
+    expect(csv.status).toBe(302);
+    expect(csv.headers.get("location")).toBe("/ops/interco_logistics");
   });
 });
 

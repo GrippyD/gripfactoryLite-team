@@ -82,8 +82,8 @@ describe("metrc wet weights csv (owner ruling 2026-08-31)", () => {
   });
 
   it("names the file after the full HBN (owner ruling 2026-08-31: [HBN number].csv)", () => {
-    expect(wetWeightsFilename("26244-ARL-GH-027-0-NA-26002")).toBe(
-      "26244-ARL-GH-027-0-NA-26002.csv"
+    expect(wetWeightsFilename("26244-ARL-GH-027-0-NA-26002", 1)).toBe(
+      "26244-ARL-GH-027-0-NA-26002(1).csv"
     );
   });
 
@@ -313,6 +313,7 @@ describe("metrc wet weights csv with plant counts (owner ruling 2026-09-14: the 
     truck_number: "1",
     hbn: "26257-ARL-GH-027-0-NA-26010",
     entry_updated_at: "2026-09-14T09:00:00.000Z",
+    created_at: "2026-09-14T13:00:00.000Z",
     entry_id: "lot-b",
     plant_count: null,
   };

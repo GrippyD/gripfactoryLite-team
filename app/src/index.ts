@@ -14,6 +14,9 @@ import {
   HARVEST_PREPACK_HOURS_PATH,
   PREPACK_STATION_PATH,
   HARVEST_PATH,
+  INTERNAL_LOGISTICS_PATH,
+  LOGISTICS_OPS_PATH,
+  PROCESSING_PARTNERS_PATH,
   PRODUCTION_SCHEDULING_PATH,
   SCHEDULE_STAGE_TITLES,
   SCHEDULE_STAGES,
@@ -30,6 +33,8 @@ import {
   moveToKindsForFarm,
   nextTruckNumber,
   plantSplitJitterPct,
+  parseTrimBogey,
+  trimBogeyOf,
   sumGrams,
   truckNumberFromPick,
   ADMIN_SHEET_SYNC_PATH,
@@ -53,13 +58,13 @@ import {
   addDrySpace,
   addGrowMethod,
   addLookupValue,
+  saveTrimBogey,
   addLotWeight,
   addPackageType,
   addPerson,
   addStrain,
   addTruck,
   buildManifestCsv,
-  finishManifestBuild,
   buildReceiveCsv,
   buildSplitCsv,
   markSplitUploaded,
@@ -73,6 +78,8 @@ import {
   unscheduleItem,
   manualHbn,
   loadSilo,
+  scheduleLogisticsLot,
+  unscheduleLogisticsLot,
   startSiloLoad,
   pauseSiloLoad,
   unloadTogether,
@@ -83,6 +90,7 @@ import {
   finishLot,
   markManifestUploaded,
   markReceiveManifestUploaded,
+  acknowledgeChangedUpload,
   markUploaded,
   packageUploadCsv,
   queueImport,
@@ -106,7 +114,6 @@ import {
   buildNewPackagesXlsx,
 } from "./actions";
 import { cryoStationPage } from "./cryo";
-import { MANIFEST_FINISH_PATH, manifestBuilderPage, type ManifestBuilderData } from "./manifest";
 import {
   complianceTestingPage,
   equipmentAssetPage,
@@ -162,8 +169,6 @@ import {
   listInternalFieldDefs,
   listInternalFieldValues,
   listMetrcMounts,
-  listMirrorLocationsByLicense,
-  listMirrorPackagesForLicense,
   metrcCrossCheck,
   metrcFgInventory,
   metrcLicenseLines,
@@ -222,10 +227,11 @@ import {
   getConfigValue,
   getInventoryItemForLot,
   getLot,
-  getMovement,
   getOpenUnloadSession,
   listAdminRows,
-  listBatchPlantTags,
+  getHarvestLoad,
+  listChangedAfterUpload,
+  listLoadPlantTags,
   listBatchTruckNumbers,
   listFarmDayTruckNumbers,
   listOpenFarmHbns,
@@ -235,8 +241,6 @@ import {
   listLocalInventory,
   listLookup,
   listLookupValueRows,
-  listManifestHeaderPrefills,
-  listManifestedTags,
   listLotsByStatus,
   listLotTrimPackages,
   listLotWeights,
@@ -248,6 +252,9 @@ import {
   listPendingPackageUploads,
   listPendingLocationChangeUploads,
   listBarnWetLots,
+  listFinishedLogistics,
+  listOpenLogisticsSchedules,
+  listScheduledLotsForLoad,
   listDryingComplete,
   getSiloLoad,
   listPendingManifestUploads,
@@ -334,17 +341,20 @@ import {
 import { asLocale, refusalText, t, tFill, type Locale } from "./i18n";
 import { asStoredBytes, attachmentFilename, importContentType, type ImportKind } from "./imports";
 import { inventorySheetCsv, parseFgMenu, recallPrefillFromQuery } from "./inventory";
-import { loadSiloPage, siloStrip } from "./drying";
+import { clockScript, homeMenuBlocks, loadSiloPage, siloStrip } from "./drying";
 import {
   dryingCompleteSince,
   dryingSchedulingPage,
+  internalLogisticsPage,
+  logisticsLotView,
+  processingPartnersPage,
   parseDryingStage,
   parseScheduleStage,
   prepackSchedulingPage,
   schedulingLanding,
   schedulingPage,
 } from "./scheduling";
-import { editPage, logPage, lookupSectionPage, lookupsLandingPage, manualHbnPage, voidPage } from "./pages";
+import { editPage, logPage, lookupSectionPage, lookupsLandingPage, manualHbnPage, trimBogeyPage, voidPage } from "./pages";
 import { LOOKUP_VALUE_SECTIONS } from "./lookups";
 import {
   aggregateTatDays,
@@ -474,6 +484,8 @@ app.use(HARVEST_PATH, pinGate);
 app.use(`${HARVEST_PATH}/*`, pinGate);
 app.use("/interco", pinGate);
 app.use("/interco/*", pinGate);
+app.use("/logistics", pinGate);
+app.use("/logistics/*", pinGate);
 app.use("/virtual-move", pinGate);
 app.use("/virtual-move/*", pinGate);
 // Owner ruling 2026-08-31: Fulfillment sits behind the same PIN as Admin and Interco.
@@ -755,7 +767,9 @@ function html(
 app.get("/", async (c) => {
   const s = await shell(c);
   // Canon 0.30.28: the home page carries the Continuum crumb only in the co view.
-  return html(c, s, "Home", homePage(PIPELINE, s.locale, s.view));
+  const now = nowIso();
+  const lines = await homeMenuBlocks(c.env.DB, now, s.farmDayStart, s.locale);
+  return html(c, s, "Home", homePage(PIPELINE, s.locale, s.view, lines) + clockScript());
 });
 
 // Owner standing word: /reports carries no PIN.
@@ -839,74 +853,77 @@ app.get("/ops/:key", async (c) => {
   return c.notFound();
 });
 
-// THE BLANK SLATE (canon 0.30.108; owner, 2026-09-17, verbatim: "We need to
-// completely wipe the slate clean on the interco logistics tab.  Right now, it
-// exists to build a csv.  Make the entire menu surface blank.") gave the tab
-// its title and nothing else; THE MANIFEST BUILDER (canon 0.30.125; owner,
-// 2026-09-18, verbatim: "New interco logistics layout: Three equal panes ...
-// [finish] button [cancel] button") fills it with the three panes: the origin
-// license and the METRC mirror's packages by last six with the last-six filter
-// and >>, the destination license with its receive-into locations from the
-// mirror, and the T3 header over the added packages each carrying <<. Finish
-// records the movement (Admin, Data Queues, Logistics Moves; the manifest CSV
-// on Pending Data Uploads) and downloads the T3 file at once; cancel is the
-// bare page. Every old path under /interco and /virtual-move still lands here.
-async function loadManifestBuilder(db: D1Database, url: URL): Promise<ManifestBuilderData> {
-  const licenses = await listLookup(db, "license");
-  const originRaw = (url.searchParams.get("origin") ?? "").trim();
-  const origin = licenses.some((o) => o.value === originRaw) ? originRaw : null;
-  const destRaw = (url.searchParams.get("dest") ?? "").trim();
-  const dest = destRaw && destRaw !== origin && licenses.some((o) => o.value === destRaw) ? destRaw : null;
-  const [packages, manifested, prefillByDestination] = origin
-    ? await Promise.all([
-        listMirrorPackagesForLicense(db, origin),
-        listManifestedTags(db, origin),
-        listManifestHeaderPrefills(db, origin),
-      ])
-    : [[], new Map<string, string>(), {}];
-  const locationsByLicense = await listMirrorLocationsByLicense(db);
-  let finished: ManifestBuilderData["finished"] = null;
-  const movementId = (url.searchParams.get("movement") ?? "").trim();
-  if (url.searchParams.get("ok") === "manifest" && movementId) {
-    const movement = await getMovement(db, movementId);
-    if (movement && movement.status === "completed") {
-      finished = { movementId: movement.id, count: Math.max(0, Number(url.searchParams.get("n") ?? "0") || 0) };
-    }
-  }
-  return {
-    licenses: licenses.map((o) => ({ value: o.value, label: o.label, farm_code: o.farm_code ?? null })),
-    origin,
-    dest,
-    packages,
-    manifested,
-    locationsByLicense,
-    prefillByDestination,
-    finished,
-  };
-}
-app.get("/interco", async (c) => {
+// THE LOAD AND THE LOT (canon 0.30.241): the manifest builder's renderers stay
+// in manifest.ts. No route reaches them. Every path under /interco lands on
+// the Logistics Operations group page.
+app.get("/interco", (c) => c.redirect(LOGISTICS_OPS_PATH, 302));
+app.get("/interco/*", (c) => c.redirect(LOGISTICS_OPS_PATH, 302));
+app.post("/interco", (c) => c.redirect(LOGISTICS_OPS_PATH, 303));
+app.post("/interco/*", (c) => c.redirect(LOGISTICS_OPS_PATH, 303));
+app.get(INTERNAL_LOGISTICS_PATH, async (c) => {
   const s = await shell(c);
-  const data = await loadManifestBuilder(c.env.DB, new URL(c.req.url));
-  return html(c, s, "Interco Logistics", manifestBuilderPage(s.locale, data));
+  const now = nowIso();
+  const [parts, open, finished] = await Promise.all([
+    listBarnWetLots(c.env.DB),
+    listOpenLogisticsSchedules(c.env.DB),
+    listFinishedLogistics(c.env.DB, dryingCompleteSince(now, s.farmDayStart)),
+  ]);
+  const covered = new Set(open.map((row) => row.harvest_batch_id));
+  const byBatch = new Map<string, typeof parts>();
+  for (const part of parts) {
+    const batch = part.harvest_batch_id ?? "";
+    if (!batch) continue;
+    const group = byBatch.get(batch);
+    if (group) group.push(part);
+    else byBatch.set(batch, [part]);
+  }
+  const queue = [];
+  const scheduled = [];
+  for (const [batch, group] of byBatch) {
+    const pass = open.find((row) => row.harvest_batch_id === batch);
+    const view = logisticsLotView(group, pass?.id ?? null);
+    if (!view) continue;
+    if (covered.has(batch) && pass) scheduled.push(view);
+    else queue.push(view);
+  }
+  for (const pass of open) {
+    if (byBatch.has(pass.harvest_batch_id)) continue;
+    scheduled.push({
+      harvest_batch_id: pass.harvest_batch_id,
+      hbn: pass.hbn,
+      farm_code: pass.farm_code,
+      strain_label: pass.strain_label,
+      metrc_harvest_tag: pass.metrc_harvest_tag,
+      package_code: null,
+      trucks: [],
+      partIds: [],
+      weight_grams: 0,
+      planned_silo_name: pass.planned_silo_name,
+      oldest_finished_at: null,
+      schedule_id: pass.id,
+    });
+  }
+  scheduled.sort((a, b) => {
+    const at = open.find((row) => row.id === a.schedule_id)?.scheduled_at ?? "";
+    const bt = open.find((row) => row.id === b.schedule_id)?.scheduled_at ?? "";
+    return at < bt ? -1 : at > bt ? 1 : 0;
+  });
+  return html(c, s, "Internal Logistics", internalLogisticsPage({ queue, scheduled, finished, nowIso: now, locale: s.locale }));
 });
-app.post(MANIFEST_FINISH_PATH, async (c) => {
-  const result = await finishManifestBuild(c.env.DB, actorForm(c, await c.req.formData()));
+app.post(`${INTERNAL_LOGISTICS_PATH}/schedule`, async (c) => {
+  const result = await scheduleLogisticsLot(c.env.DB, actorForm(c, await c.req.formData()));
   return c.redirect(result.redirect, 303);
+});
+app.post(`${INTERNAL_LOGISTICS_PATH}/unschedule/:id`, async (c) => {
+  const result = await unscheduleLogisticsLot(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+app.get(PROCESSING_PARTNERS_PATH, async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Processing Partners", processingPartnersPage(s.locale));
 });
 // The T3 file under the interco gate, so the hand that finished it pulls it
 // again without Admin's PIN; the export home keeps its own copy and the mark.
-app.get("/interco/manifest/:id/csv", async (c) => {
-  const built = await buildManifestCsv(c.env.DB, c.req.param("id"));
-  return new Response(built.body, {
-    headers: {
-      "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="${built.filename}"`,
-      "cache-control": "no-store",
-    },
-  });
-});
-app.get("/interco/*", (c) => c.redirect("/interco", 302));
-app.post("/interco/*", (c) => c.redirect("/interco", 303));
 
 // Owner rulings 2026-09-07 (canon 0.29.0): the Continuum 10 Vendors and
 // Equipment remake, C10 styled, plus the Preventive Maintenance system. Both
@@ -1416,6 +1433,7 @@ app.post("/admin/queues/movement/:id/void", async (c) => {
 app.get("/admin/uploads", async (c) => {
   const s = await shell(c);
   const rows = await listPendingUploads(c.env.DB);
+  const changedRows = await listChangedAfterUpload(c.env.DB);
   const packageRows = await listPendingPackageUploads(c.env.DB);
   const receiveRows = await listPendingReceiveUploads(c.env.DB);
   const manifestRows = await listPendingManifestUploads(c.env.DB);
@@ -1437,7 +1455,7 @@ app.get("/admin/uploads", async (c) => {
     c,
     s,
     "Pending Data Uploads",
-    pendingUploadsPage(rows, s.locale, packageRows, receiveRows, manifestRows, splitRows, locationRows, tagGaps, moveRows, newPackagesRows, reconcileNotes, testSampleRows, prepackFiles, c.req.query("ok") ?? undefined)
+    pendingUploadsPage(rows, s.locale, packageRows, receiveRows, manifestRows, splitRows, locationRows, tagGaps, moveRows, newPackagesRows, reconcileNotes, testSampleRows, prepackFiles, changedRows, c.req.query("ok") ?? undefined)
   );
 });
 
@@ -1522,50 +1540,49 @@ app.post("/admin/uploads/clear-all", async (c) => {
   return c.redirect(result.redirect, 303);
 });
 
-// Owner ruling 2026-08-31: the file is named <HBN>.csv. The path keys on the
-// batch id like every record route; the attachment carries the HBN name.
+// ONE HARVEST FILE PER LOAD (canon 0.30.249): the path keys on the load. The
+// attachment is <HBN>(n).csv. Rows are that load only. The seed is the batch
+// and the load, so a re-download reproduces.
 app.get("/admin/uploads/wet_weights/:file", async (c) => {
   const file = c.req.param("file");
   if (!file.endsWith(".csv")) return c.body("Not found", 404);
-  const batch = await getRow(c.env.DB, "harvest_batches", file.slice(0, -4));
+  const load = await getHarvestLoad(c.env.DB, file.slice(0, -4));
+  if (!load || load.status === "weighing") return c.body("Not found", 404);
+  const batch = await getRow(c.env.DB, "harvest_batches", load.harvest_batch_id);
   if (!batch || batch.deleted_at) return c.body("Not found", 404);
-  // Owner ruling 2026-08-31: the Plant fill rule; with tags saved the file is
-  // one row per tag, split from the finished entries by the seeded jitter law
-  // (the batch id seeds the PRNG, so re-downloads reproduce the identical
-  // file); with none it stays one row per scale read, Plant empty.
-  const tags = await listBatchPlantTags(c.env.DB, String(batch.id));
-  // Owner ruling 2026-09-07 (canon 0.30.1, spine step 3): the harvest CSV's
-  // location is the BARN at the plant-tag license's farm; the space it dries
-  // in is a later move, not the harvest's address.
+  const tags = await listLoadPlantTags(c.env.DB, load.id);
   const batchFarm = String(batch.farm_code ?? "");
   const barn = barnLocationForSite(
     batchFarm === "ARL" || batchFarm === "PNS" ? batchFarm : "PNN"
   );
+  const seed = `${load.harvest_batch_id}:${load.id}`;
   let csvBody: string;
-  const entries = await listWetWeightUploadEntries(c.env.DB, String(batch.id));
+  const entries = await listWetWeightUploadEntries(c.env.DB, load.harvest_batch_id, load.id);
   if (tags.length > 0) {
     const jitterPct = plantSplitJitterPct(
       await getConfigValue(c.env.DB, CONFIG_KEYS.plant_split_jitter_pct)
     );
-    csvBody = wetWeightsCsvWithTags(entries, tags, jitterPct, String(batch.id), barn);
+    csvBody = wetWeightsCsvWithTags(entries, tags, jitterPct, seed, barn);
   } else if (anyPlantCount(entries)) {
-    // THE PLANT COUNT (owner ruling 2026-09-14, canon 0.30.62): no tags yet but
-    // a counted lot: one row per plant, Plant blank, the lot's total split by
-    // the seeded jitter law; uncounted lots keep their scale reads.
     const jitterPct = plantSplitJitterPct(
       await getConfigValue(c.env.DB, CONFIG_KEYS.plant_split_jitter_pct)
     );
-    const reads = await listWetWeightUploadReads(c.env.DB, String(batch.id));
-    csvBody = wetWeightsCsvWithCounts(entries, reads, jitterPct, String(batch.id), barn);
+    const reads = await listWetWeightUploadReads(c.env.DB, load.harvest_batch_id, load.id);
+    csvBody = wetWeightsCsvWithCounts(entries, reads, jitterPct, seed, barn);
   } else {
-    csvBody = wetWeightsCsv(await listWetWeightUploadReads(c.env.DB, String(batch.id)), barn);
+    csvBody = wetWeightsCsv(await listWetWeightUploadReads(c.env.DB, load.harvest_batch_id, load.id), barn);
   }
   return new Response(csvBody, {
     headers: {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="${wetWeightsFilename(String(batch.hbn))}"`,
+      "content-disposition": `attachment; filename="${wetWeightsFilename(load.hbn, load.seq)}"`,
     },
   });
+});
+
+app.post("/admin/uploads/wet_weights/:batchId/acknowledge", async (c) => {
+  const result = await acknowledgeChangedUpload(c.env.DB, c.req.param("batchId"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
 });
 
 app.post("/admin/uploads/wet_weights/:batchId/uploaded", async (c) => {
@@ -2018,12 +2035,19 @@ app.get("/station/load_silo", async (c) => {
   const s = await shell(c);
   // THE HARVEST CONSOLE (canon 0.30.73): the pane reads every farm's barn; the
   // silo select narrows to the picked lot's own site.
-  const [barnLots, siloVisuals] = await Promise.all([listBarnWetLots(c.env.DB), loadSiloVisuals(c.env.DB)]);
+  const [barnLots, waiting, siloVisuals] = await Promise.all([
+    listScheduledLotsForLoad(c.env.DB),
+    listBarnWetLots(c.env.DB),
+    loadSiloVisuals(c.env.DB),
+  ]);
   const silos = siloVisuals.live.map((l) => l.silo);
   const loads = siloVisuals.live.flatMap((l) => l.loads);
   const pick = c.req.query("pick") ?? "";
   const loadId = c.req.query("load") ?? "";
-  const picked = pick ? barnLots.find((l) => l.id === pick) ?? null : null;
+  const pickedDirect = pick ? barnLots.find((l) => l.id === pick) ?? null : null;
+  const pickedPart = !pickedDirect && pick ? waiting.find((part) => part.id === pick) : null;
+  const picked = pickedDirect ?? (pickedPart ? barnLots.find((l) => l.harvest_batch_id && l.harvest_batch_id === pickedPart.harvest_batch_id) ?? null : null);
+  const pickedParts = picked ? waiting.filter((part) => part.harvest_batch_id === picked.id) : [];
   const pickedLoad = loadId ? await getSiloLoad(c.env.DB, loadId) : null;
   // THE DRYING SCHEDULE (canon 0.30.226): a drying surface's >> carries its space type and the planned space.
   const kindRaw = c.req.query("kind") ?? "";
@@ -2046,6 +2070,7 @@ app.get("/station/load_silo", async (c) => {
         ok: c.req.query("ok") ?? undefined,
         kind,
         space: kind ? (c.req.query("space") ?? null) : null,
+        parts: pickedParts,
       })
   );
 });
@@ -2081,7 +2106,7 @@ app.get(`${PRODUCTION_SCHEDULING_PATH}/:stage`, async (c) => {
     const s = await shell(c);
     const now = nowIso();
     const [lots, visuals, complete, cure] = await Promise.all([
-      listBarnWetLots(c.env.DB),
+      listScheduledLotsForLoad(c.env.DB),
       loadSiloVisuals(c.env.DB),
       listDryingComplete(c.env.DB, dryingCompleteSince(now, s.farmDayStart)),
       listCurePanes(c.env.DB, now),
@@ -2693,6 +2718,11 @@ app.get("/admin/lookups/:section", async (c) => {
     const labs = await listTestingLabs(c.env.DB);
     return html(c, s, "Testing labs", testingLabsPage(labs, s.locale));
   }
+  // THE TRIM BOGEY (canon 0.30.249): one whole percent, the plume's product line.
+  if (section === "trim_bogey") {
+    const raw = await getConfigValue(c.env.DB, CONFIG_KEYS.trim_bogey_pct);
+    return html(c, s, "Trim Bogey", trimBogeyPage(parseTrimBogey(raw), trimBogeyOf(raw) != null, s.locale, c.req.query("ok") || undefined));
+  }
   const tables = {
     people: await listAdminRows(c.env.DB, "people"),
     farms: await listAdminRows(c.env.DB, "farms"),
@@ -2713,6 +2743,7 @@ app.post("/admin/lookups/:table", async (c) => {
   const action = String(form.get("action") ?? "add");
   let result;
   if (table === "testing_labs") result = await saveTestingLab(c.env.DB, form);
+  else if (table === "trim_bogey") result = await saveTrimBogey(c.env.DB, form);
   else if (table === "people" && action === "deactivate") result = await deactivatePerson(c.env.DB, form);
   else if (table === "people") result = await addPerson(c.env.DB, form);
   else if (table === "strains") result = await addStrain(c.env.DB, form);

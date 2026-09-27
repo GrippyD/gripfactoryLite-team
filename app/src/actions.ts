@@ -39,6 +39,8 @@ import {
   roundGrams,
   inheritMarketStrain,
   shortLotId,
+  INTERNAL_LOGISTICS_PATH,
+  INTERNAL_LOGISTICS_STAGE,
   SCHEDULE_STAGES,
   SCHEDULE_STATUS,
   sumGrams,
@@ -105,11 +107,11 @@ import { isReconcileChoice, reconcileGate, type ReconcileGate } from "./reconcil
 import { packageAdjustmentsCsv, packagesFromHarvestsCsv, parseCsv } from "./csv";
 import { packageSplitCsv, splitFilename } from "./marketplace";
 import { recallPrefillFromBatch, recallRedirectPath, type RecallableBatch } from "./inventory";
-import { wetWeightsFilename } from "./csv";
+import { hbnWithSeq, wetWeightsFilename } from "./csv";
 import { backRedirect, HttpError, nowIso, parseGrams, parsePlantCount, refusal, requireReason, requireText, textOrNull } from "./audit";
 import { EFFECTIVE_DATE_FIELD, EFFECTIVE_DATE_REASON, effectiveOverrideLog, farmDayStartHour, farmToday, resolveEffectiveDate } from "./effective";
 import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmInstant, farmInstantFromInput } from "./farmday";
-import { capacityUomOf, drySpaceTypeOf, spaceHoldsOneLot, DRY_SPACE_TYPES, CAPACITY_UOMS } from "./config";
+import { capacityUomOf, drySpaceTypeOf, spaceHoldsOneLot, trimBogeyOf, DRY_SPACE_TYPES, CAPACITY_UOMS } from "./config";
 import { assertHbnAvailable, formatLotToken, harvestYearFromEntryDate, hbnFromMetrcName, HbnCollisionError, mintHbn, nextLotSerial } from "./mint";
 import {
   assertTable,
@@ -132,13 +134,17 @@ import {
   getBuckedChildForLot,
   getInventoryItemForLot,
   getActiveBuildingMovement,
-  getBarnWetLot,
+  listBarnWetLots,
+  listLotParts,
+  listOpenLogisticsSchedules,
   getMountedOrder,
   getMovement,
   getOpenSiloLoadForLot,
   getOpenSiloLoadForSilo,
   getOpenUnloadSession,
   getReceipt,
+  HARVEST_FILE_SEQ_SQL,
+  getHarvestLoad,
   getRow,
   getSiloLoad,
   insertLog,
@@ -743,6 +749,14 @@ type FinishLotRow = {
   license_value: string | null;
 };
 
+async function nextHarvestFileSeq(db: D1Database, batchId: string): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COALESCE(MAX(harvest_file_seq), 0) AS n FROM wet_weight_entries WHERE harvest_batch_id = ?`)
+    .bind(batchId)
+    .first<{ n: number }>();
+  return Number(row?.n ?? 0) + 1;
+}
+
 /** THE TRUCK RECORD (canon 0.30.226): when a lot's totes name more than one HBN,
  * Finish lot keeps the header's totes and mints one lot per other HBN, then
  * finishes each with its own package. One HBN returns null and the caller
@@ -772,7 +786,7 @@ async function splitTruckIfNeeded(
   if (groups.size < 2) return null;
   const header = await db
     .prepare(
-      `SELECT actual_dryspc, actual_start_time, truck_number, material_form, lead_person_id, team_lead, notes, effective_date
+      `SELECT actual_dryspc, actual_start_time, truck_number, material_form, lead_person_id, team_lead, notes, effective_date, harvest_file_seq
        FROM wet_weight_entries WHERE id = ?`
     )
     .bind(lot.id)
@@ -785,6 +799,7 @@ async function splitTruckIfNeeded(
       team_lead: string | null;
       notes: string | null;
       effective_date: string | null;
+      harvest_file_seq: number | null;
     }>();
   if (!header) throw new HttpError(404, "Unknown lot.");
   const order = [lot.harvest_batch_id, ...[...groups.keys()].filter((id) => id !== lot.harvest_batch_id)];
@@ -798,6 +813,8 @@ async function splitTruckIfNeeded(
   const next = nextStatus(finishTransitionName(lot.dry_space_kind ?? ""), lot.status);
   const ts = nowIso();
   const stmts: D1PreparedStatement[] = [];
+  const seqNext = new Map<string, number>();
+  for (const hbnId of order) seqNext.set(hbnId, await nextHarvestFileSeq(db, hbnId));
   const parts: string[] = [];
   for (const hbnId of order) {
     const group = groups.get(hbnId);
@@ -810,14 +827,17 @@ async function splitTruckIfNeeded(
     const plantCount = skipped ? null : parsePlantCount(plantRaw);
     const tagRaw = textOrNull(form.get(`metrc_tag[${hbnId}]`)) ?? (isHeader ? textOrNull(form.get("metrc_tag")) : null);
     const typedTag = normalizeMetrcTag(tagRaw);
+    const heldSeq = isHeader && header.harvest_file_seq != null ? Number(header.harvest_file_seq) : null;
+    const seq = heldSeq ?? seqNext.get(hbnId) ?? 1;
+    if (heldSeq == null) seqNext.set(hbnId, seq + 1);
     if (!isHeader) {
       stmts.push(
         db
           .prepare(
             `INSERT INTO wet_weight_entries (
-              id, harvest_batch_id, weight_grams, wet_spear_weight_grams, actual_dryspc, actual_start_time, truck_number, material_form, lead_person_id, team_lead, notes, status, effective_date, plant_count,
+              id, harvest_batch_id, weight_grams, wet_spear_weight_grams, actual_dryspc, actual_start_time, truck_number, material_form, lead_person_id, team_lead, notes, status, effective_date, plant_count, harvest_file_seq,
               created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-            ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+            ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
           )
           .bind(
             rowId,
@@ -833,6 +853,7 @@ async function splitTruckIfNeeded(
             next,
             header.effective_date,
             plantCount,
+            seq,
             ts,
             actorId,
             ts,
@@ -858,9 +879,9 @@ async function splitTruckIfNeeded(
     stmts.push(
       db
         .prepare(
-          `UPDATE wet_weight_entries SET status = ?, weight_grams = ?, plant_count = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+          `UPDATE wet_weight_entries SET status = ?, weight_grams = ?, plant_count = ?, harvest_file_seq = COALESCE(harvest_file_seq, ?), updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
         )
-        .bind(next, group.grams, plantCount, ts, actorId, rowId),
+        .bind(next, group.grams, plantCount, seq, ts, actorId, rowId),
       insertLog(db, {
         record_table: "wet_weight_entries",
         record_id: rowId,
@@ -979,18 +1000,19 @@ export async function finishLot(
   // a whole number of one or more, stored on the lot with its own log line.
   const skipped = String(form.get("plant_prompt") ?? "") === "skip";
   const plantCount = skipped ? null : parsePlantCount(form.get("plant_count"));
+  const fileSeq = await nextHarvestFileSeq(db, lot.harvest_batch_id);
   const stmts: D1PreparedStatement[] = [
     plantCount == null
       ? db
           .prepare(
-            `UPDATE wet_weight_entries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+            `UPDATE wet_weight_entries SET status = ?, harvest_file_seq = COALESCE(harvest_file_seq, ?), updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
           )
-          .bind(next, ts, actor.id, lotId)
+          .bind(next, fileSeq, ts, actor.id, lotId)
       : db
           .prepare(
-            `UPDATE wet_weight_entries SET status = ?, plant_count = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+            `UPDATE wet_weight_entries SET status = ?, plant_count = ?, harvest_file_seq = COALESCE(harvest_file_seq, ?), updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
           )
-          .bind(next, plantCount, ts, actor.id, lotId),
+          .bind(next, plantCount, fileSeq, ts, actor.id, lotId),
     insertLog(db, {
       record_table: "wet_weight_entries",
       record_id: lotId,
@@ -3110,6 +3132,11 @@ export async function markUploaded(
   refId: string | null = null
 ): Promise<ActionOk> {
   const actor = await requireActor(db, personIdFrom(form));
+  if (kind === "wet_weights") {
+    const ts = nowIso();
+    await db.batch(await planUploadMark(db, "wet_weights", batchId, actor.id, ts));
+    return { redirect: "/admin/uploads?ok=upload_marked" };
+  }
   // Owner bug report 2026-09-08 (canon 0.30.5): a mark is history keeping, so
   // it tolerates a batch voided between the page render and the click; the
   // pending list itself never shows voided rows (one predicate both sides).
@@ -3120,22 +3147,35 @@ export async function markUploaded(
   if (!batch) throw new HttpError(404, "Unknown batch.");
   const id = crypto.randomUUID();
   const ts = nowIso();
+  const seqRow = refId
+    ? await db
+        .prepare(
+          `SELECT ${HARVEST_FILE_SEQ_SQL} AS seq FROM wet_weight_entries w
+           WHERE w.id = ?
+              OR w.id = (SELECT wet_weight_entry_id FROM unload_sessions WHERE id = ?)
+              OR w.id = (SELECT wet_weight_entry_id FROM silo_loads WHERE id = ?)
+           LIMIT 1`
+        )
+        .bind(refId, refId, refId)
+        .first<{ seq: number | null }>()
+    : null;
+  const named = seqRow ? hbnWithSeq(batch.hbn, seqRow.seq) : batch.hbn;
   const filename =
-    kind === "wet_weights"
-      ? wetWeightsFilename(batch.hbn)
-      : kind === "package_from_harvest"
-        ? `packages_from_harvests_${batch.hbn}.csv`
+    kind === "package_from_harvest"
+        ? `packages_from_harvests_${named}.csv`
         : kind === "receive_manifest"
           ? `receive_manifest_${batch.hbn}.csv`
         : kind === "package_finish"
           ? `package_finish_${batch.hbn}.csv`
+        : kind === "location_change" && refId
+          ? (await locationChangeUploadCsv(db, refId)).filename
         : kind === "location_change"
-          ? `location_change_${batch.hbn}.csv`
+          ? `location_change_${named}.csv`
         : kind === "new_packages"
           ? newPackagesFilename(batch.hbn)
         : kind === "test_sample"
           ? `test_sample_${batch.hbn}.csv`
-        : `package_adjustments_${batch.hbn}.csv`;
+        : `package_adjustments_${named}.csv`;
   const record = {
     id,
     kind,
@@ -3166,7 +3206,14 @@ function uploadMarkStmts(
   db: D1Database,
   actorId: string,
   ts: string,
-  row: { kind: string; batchId: string; filename: string; refId: string | null }
+  row: {
+    kind: string;
+    batchId: string;
+    filename: string;
+    refId: string | null;
+    fileWetGrams?: number | null;
+    filePlantCount?: number | null;
+  }
 ): D1PreparedStatement[] {
   const id = crypto.randomUUID();
   const record = {
@@ -3176,6 +3223,8 @@ function uploadMarkStmts(
     filename: row.filename,
     uploaded_at: ts,
     ref_id: row.refId,
+    file_wet_grams: row.fileWetGrams ?? null,
+    file_plant_count: row.filePlantCount ?? null,
     created_at: ts,
     created_by: actorId,
     updated_at: ts,
@@ -3185,11 +3234,24 @@ function uploadMarkStmts(
     db
       .prepare(
         `INSERT INTO metrc_uploads (
-          id, kind, harvest_batch_id, filename, uploaded_at, ref_id,
+          id, kind, harvest_batch_id, filename, uploaded_at, ref_id, file_wet_grams, file_plant_count,
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
       )
-      .bind(id, row.kind, row.batchId, row.filename, ts, row.refId, ts, actorId, ts, actorId),
+      .bind(
+        id,
+        row.kind,
+        row.batchId,
+        row.filename,
+        ts,
+        row.refId,
+        row.fileWetGrams ?? null,
+        row.filePlantCount ?? null,
+        ts,
+        actorId,
+        ts,
+        actorId
+      ),
     ...logsForInsert(db, "metrc_uploads", id, record, actorId, SYSTEM_REASON.upload_marked, ts),
   ];
 }
@@ -3252,9 +3314,16 @@ async function planUploadMark(db: D1Database, kind: string, id: string, actorId:
     return uploadMarkStmts(db, actorId, ts, { kind: METRC_UPLOAD_KINDS.location_change, batchId: built.harvest_batch_id, filename: built.filename, refId: id });
   }
   if (kind === "wet_weights") {
-    const batch = await db.prepare(`SELECT id, hbn FROM harvest_batches WHERE id = ?`).bind(id).first<{ id: string; hbn: string }>();
-    if (!batch) throw new HttpError(404, "Unknown batch.");
-    return uploadMarkStmts(db, actorId, ts, { kind: METRC_UPLOAD_KINDS.wet_weights, batchId: id, filename: wetWeightsFilename(batch.hbn), refId: null });
+    const load = await getHarvestLoad(db, id);
+    if (!load) throw new HttpError(404, "Unknown load.");
+    return uploadMarkStmts(db, actorId, ts, {
+      kind: METRC_UPLOAD_KINDS.wet_weights,
+      batchId: load.harvest_batch_id,
+      filename: wetWeightsFilename(load.hbn, load.seq),
+      refId: load.id,
+      fileWetGrams: load.weight_grams,
+      filePlantCount: load.plant_count,
+    });
   }
   if (kind !== "package_from_harvest" && kind !== "package_adjust") throw new HttpError(404, "Unknown file.");
   const built = await packageUploadCsv(db, kind, id);
@@ -3307,7 +3376,7 @@ export async function clearAllUploads(db: D1Database, form: FormData): Promise<A
   const ts = nowIso();
   type ClearItem = { kind: string; batch: string; ref: string | null; name: string };
   const items: ClearItem[] = [];
-  for (const r of await listPendingUploads(db)) items.push({ kind: METRC_UPLOAD_KINDS.wet_weights, batch: r.id, ref: null, name: r.hbn });
+  for (const r of await listPendingUploads(db)) items.push({ kind: METRC_UPLOAD_KINDS.wet_weights, batch: r.harvest_batch_id, ref: r.id, name: wetWeightsFilename(r.hbn, r.seq) });
   for (const r of await listPendingPackageUploads(db)) items.push({ kind: r.kind, batch: r.harvest_batch_id, ref: r.id, name: r.hbn });
   for (const r of await listPendingReceiveUploads(db)) items.push({ kind: METRC_UPLOAD_KINDS.receive_manifest, batch: r.harvest_batch_id, ref: r.id, name: r.harvest_batch_id });
   for (const r of await listPendingManifestUploads(db)) items.push({ kind: "manifest", batch: r.id, ref: r.id, name: r.metrc_manifest_number ?? r.id });
@@ -3373,21 +3442,57 @@ export function parsePlantTags(raw: unknown): string[] {
  * file to one row per scale read. */
 export async function savePlantTags(
   db: D1Database,
-  batchId: string,
+  loadId: string,
   form: FormData
 ): Promise<ActionOk> {
   const actor = await requireActor(db, personIdFrom(form));
-  const batch = await db
-    .prepare(`SELECT id FROM harvest_batches WHERE id = ? AND deleted_at IS NULL`)
-    .bind(batchId)
-    .first<{ id: string }>();
-  if (!batch) throw new HttpError(404, "Unknown batch.");
-  const tags = parsePlantTags(form.get("plant_tags"));
-  const existing = await db
+  const load = await getHarvestLoad(db, loadId);
+  if (!load) throw new HttpError(404, "Unknown load.");
+  const marked = await db
     .prepare(
-      `SELECT id FROM harvest_plant_tags WHERE harvest_batch_id = ? AND deleted_at IS NULL`
+      `SELECT 1 AS n FROM metrc_uploads WHERE ref_id = ? AND kind = 'wet_weights' AND deleted_at IS NULL LIMIT 1`
+    )
+    .bind(loadId)
+    .first<{ n: number }>();
+  if (marked) throw new HttpError(400, "That file is marked uploaded. Its tags are closed.");
+  const tags = parsePlantTags(form.get("plant_tags"));
+  const held = await db
+    .prepare(
+      `SELECT t.tag, b.hbn, ${HARVEST_FILE_SEQ_SQL} AS seq
+       FROM harvest_plant_tags t
+       JOIN wet_weight_entries w ON w.id = t.wet_weight_entry_id AND w.deleted_at IS NULL
+       JOIN harvest_batches b ON b.id = w.harvest_batch_id
+       WHERE t.deleted_at IS NULL AND t.wet_weight_entry_id <> ?`
+    )
+    .bind(loadId)
+    .all<{ tag: string; hbn: string; seq: number | null }>();
+  const byTag = new Map((held.results ?? []).map((row) => [row.tag, row]));
+  for (const tag of tags) {
+    const other = byTag.get(tag);
+    if (other) {
+      throw new HttpError(400, `That tag is already on ${wetWeightsFilename(other.hbn, Number(other.seq))}.`);
+    }
+  }
+  const batchId = load.harvest_batch_id;
+  const loose = await db
+    .prepare(
+      `SELECT id, tag FROM harvest_plant_tags
+       WHERE harvest_batch_id = ? AND deleted_at IS NULL AND wet_weight_entry_id IS NULL
+       ORDER BY created_at, id`
     )
     .bind(batchId)
+    .all<{ id: string; tag: string }>();
+  const looseByTag = new Map<string, string[]>();
+  for (const row of loose.results ?? []) {
+    const ids = looseByTag.get(row.tag) ?? [];
+    ids.push(row.id);
+    looseByTag.set(row.tag, ids);
+  }
+  const existing = await db
+    .prepare(
+      `SELECT id FROM harvest_plant_tags WHERE wet_weight_entry_id = ? AND deleted_at IS NULL`
+    )
+    .bind(loadId)
     .all<{ id: string }>();
   const ts = nowIso();
   const stmts: D1PreparedStatement[] = [];
@@ -3411,11 +3516,53 @@ export async function savePlantTags(
     );
   }
   for (const tag of tags) {
+    const claimed = looseByTag.get(tag) ?? [];
+    if (claimed.length > 0) {
+      const [keep, ...rest] = claimed;
+      stmts.push(
+        db
+          .prepare(
+            `UPDATE harvest_plant_tags SET wet_weight_entry_id = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+          )
+          .bind(loadId, ts, actor.id, keep),
+        insertLog(db, {
+          record_table: "harvest_plant_tags",
+          record_id: keep,
+          field: "wet_weight_entry_id",
+          old_value: null,
+          new_value: loadId,
+          actor_person_id: actor.id,
+          reason: SYSTEM_REASON.tags_replaced,
+          changed_at: ts,
+        })
+      );
+      for (const extra of rest) {
+        stmts.push(
+          db
+            .prepare(
+              `UPDATE harvest_plant_tags SET deleted_at = ?, deleted_by = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+            )
+            .bind(ts, actor.id, ts, actor.id, extra),
+          insertLog(db, {
+            record_table: "harvest_plant_tags",
+            record_id: extra,
+            field: "deleted_at",
+            old_value: null,
+            new_value: ts,
+            actor_person_id: actor.id,
+            reason: SYSTEM_REASON.tags_replaced,
+            changed_at: ts,
+          })
+        );
+      }
+      continue;
+    }
     const id = crypto.randomUUID();
     const record = {
       id,
       harvest_batch_id: batchId,
       tag,
+      wet_weight_entry_id: loadId,
       created_at: ts,
       created_by: actor.id,
       updated_at: ts,
@@ -3425,16 +3572,47 @@ export async function savePlantTags(
       db
         .prepare(
           `INSERT INTO harvest_plant_tags (
-            id, harvest_batch_id, tag,
+            id, harvest_batch_id, tag, wet_weight_entry_id,
             created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
         )
-        .bind(id, batchId, tag, ts, actor.id, ts, actor.id),
+        .bind(id, batchId, tag, loadId, ts, actor.id, ts, actor.id),
       ...logsForInsert(db, "harvest_plant_tags", id, record, actor.id, SYSTEM_REASON.tags_replaced, ts)
     );
   }
   if (stmts.length > 0) await db.batch(stmts);
   return { redirect: "/admin/uploads?ok=tags_saved" };
+}
+
+/** A load changed after its file was marked. The new row is the baseline; no file is cut. */
+export async function acknowledgeChangedUpload(db: D1Database, loadId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const reason = requireReason(textOrNull(form.get("reason")));
+  const load = await getHarvestLoad(db, loadId);
+  if (!load) throw new HttpError(404, "Unknown load.");
+  const ts = nowIso();
+  const stmts = uploadMarkStmts(db, actor.id, ts, {
+    kind: METRC_UPLOAD_KINDS.wet_weights,
+    batchId: load.harvest_batch_id,
+    filename: wetWeightsFilename(load.hbn, load.seq),
+    refId: load.id,
+    fileWetGrams: load.weight_grams,
+    filePlantCount: load.plant_count,
+  });
+  stmts.push(
+    insertLog(db, {
+      record_table: "wet_weight_entries",
+      record_id: loadId,
+      field: "harvest_file_ack",
+      old_value: null,
+      new_value: `${load.weight_grams}|${load.plant_count ?? ""}`,
+      actor_person_id: actor.id,
+      reason,
+      changed_at: ts,
+    })
+  );
+  await db.batch(stmts);
+  return { redirect: "/admin/uploads?ok=change_acknowledged" };
 }
 
 /** Owner ruling 2026-09-01: recall a minted HBN that still has no weights.
@@ -3621,6 +3799,23 @@ export async function editRecord(
         if (!target) throw new HttpError(404, "Unknown HBN.");
         if (target.status !== HARVEST_STATUS.open) throw new HttpError(400, "Pick an open HBN.");
         if (target.born_from === HARVEST_BORN.metrc) throw new HttpError(400, "That HBN was minted from METRC and takes no lot.");
+      }
+      if (raw !== String(existing.harvest_batch_id ?? "") && existing.harvest_file_seq != null) {
+        const moved = await nextHarvestFileSeq(db, raw);
+        sets.push("harvest_file_seq = ?");
+        values.push(moved);
+        logs.push(
+          insertLog(db, {
+            record_table: table,
+            record_id: id,
+            field: "harvest_file_seq",
+            old_value: String(existing.harvest_file_seq),
+            new_value: String(moved),
+            actor_person_id: actor.id,
+            reason,
+            changed_at: ts,
+          })
+        );
       }
       next = raw;
     } else if (field.options) {
@@ -5286,6 +5481,85 @@ export async function addGrowMethod(db: D1Database, form: FormData): Promise<Act
     ),
   ]);
   return { redirect: "/admin/lookups/grow_methods?ok=grow" };
+}
+
+/** THE TRIM BOGEY (canon 0.30.249; owner, 2026-09-26: "Add a Admin Lookup
+ * Field: [Trim Bogey] expressed as a percentage"). Admin, Lookups, Trim Bogey
+ * saves one whole percent 0 to 100 into app_config trim_bogey_pct under the
+ * typed reason: the row is inserted on the first save (the plume reads
+ * TRIM_BOGEY_DEFAULT until then) and updated after, every change logged. */
+export async function saveTrimBogey(db: D1Database, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const value = trimBogeyOf(form.get("trim_bogey_pct"));
+  if (value == null) throw refusal(400, { key: "Trim Bogey is a whole percent from 0 to 100.", vars: {} });
+  const reason = requireReason(textOrNull(form.get("reason")));
+  const key = CONFIG_KEYS.trim_bogey_pct;
+  const text = String(value);
+  const ts = nowIso();
+  const existing = await db
+    .prepare(`SELECT value, deleted_at FROM app_config WHERE key = ?`)
+    .bind(key)
+    .first<{ value: string; deleted_at: string | null }>();
+  const done = { redirect: "/admin/lookups/trim_bogey?ok=saved" };
+  if (existing && existing.deleted_at == null) {
+    if (existing.value === text) return done;
+    await db.batch([
+      db
+        .prepare(`UPDATE app_config SET value = ?, updated_at = ?, updated_by = ? WHERE key = ? AND deleted_at IS NULL`)
+        .bind(text, ts, actor.id, key),
+      insertLog(db, {
+        record_table: "app_config",
+        record_id: key,
+        field: "value",
+        old_value: existing.value,
+        new_value: text,
+        actor_person_id: actor.id,
+        reason,
+        changed_at: ts,
+      }),
+    ]);
+    return done;
+  }
+  if (existing) {
+    // A voided row keeps its key: it comes back with the new value, logged.
+    await db.batch([
+      db
+        .prepare(`UPDATE app_config SET value = ?, deleted_at = NULL, deleted_by = NULL, updated_at = ?, updated_by = ? WHERE key = ?`)
+        .bind(text, ts, actor.id, key),
+      insertLog(db, {
+        record_table: "app_config",
+        record_id: key,
+        field: "deleted_at",
+        old_value: existing.deleted_at,
+        new_value: null,
+        actor_person_id: actor.id,
+        reason,
+        changed_at: ts,
+      }),
+      insertLog(db, {
+        record_table: "app_config",
+        record_id: key,
+        field: "value",
+        old_value: existing.value,
+        new_value: text,
+        actor_person_id: actor.id,
+        reason,
+        changed_at: ts,
+      }),
+    ]);
+    return done;
+  }
+  const record = { key, value: text, created_at: ts, created_by: actor.id, updated_at: ts, updated_by: actor.id };
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO app_config (key, value, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)`
+      )
+      .bind(key, text, ts, actor.id, ts, actor.id),
+    ...logsForInsert(db, "app_config", key, record, actor.id, reason, ts),
+  ]);
+  return done;
 }
 
 export async function addLookupValue(db: D1Database, category: string, form: FormData): Promise<ActionOk> {
@@ -7235,9 +7509,77 @@ export function resolveLoadedAt(
  * row opens, and the location-change CSV pends at the export home until
  * marked uploaded. Canon 0.30.9: THE LOADED TIME IS THE CLOCK'S ZERO; the
  * typed Start time is the loaded time (blank = now) and started_at mirrors it. */
+/** THE LOAD AND THE LOT (canon 0.30.241): >> on the Dry Queue. One schedule row
+ * per pass, entry and package null. A later part rides with an open pass. */
+export async function scheduleLogisticsLot(db: D1Database, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const batchId = requireText(form.get("harvest_batch_id"), "Lot");
+  const parts = await listLotParts(db, batchId);
+  if (parts.length === 0) throw new HttpError(400, "That lot is not on the Dry Queue.");
+  const open = (await listOpenLogisticsSchedules(db)).find((row) => row.harvest_batch_id === batchId);
+  if (open) throw new HttpError(400, "That lot is already scheduled.");
+  const ts = nowIso();
+  const id = crypto.randomUUID();
+  const record = {
+    id,
+    stage: INTERNAL_LOGISTICS_STAGE,
+    harvest_batch_id: batchId,
+    status: SCHEDULE_STATUS.scheduled,
+    scheduled_at: ts,
+    scheduled_by: actor.id,
+    created_at: ts,
+    created_by: actor.id,
+    updated_at: ts,
+    updated_by: actor.id,
+  };
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO production_schedules (
+          id, stage, wet_weight_entry_id, wip_package_id, harvest_batch_id, status,
+          effective_date, scheduled_at, scheduled_by, completed_at, completed_by,
+          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
+        ) VALUES (?, ?, NULL, NULL, ?, ?, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, NULL, NULL, NULL)`
+      )
+      .bind(id, INTERNAL_LOGISTICS_STAGE, batchId, SCHEDULE_STATUS.scheduled, ts, actor.id, ts, actor.id, ts, actor.id),
+    ...logsForInsert(db, "production_schedules", id, record, actor.id, SYSTEM_REASON.schedule, ts),
+  ]);
+  return { redirect: `${INTERNAL_LOGISTICS_PATH}?ok=passed` };
+}
+
+/** << voids the pass while none of the lot is loaded. */
+export async function unscheduleLogisticsLot(db: D1Database, rowId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const row = await getScheduleRow(db, rowId);
+  if (!row || row.stage !== INTERNAL_LOGISTICS_STAGE) throw new HttpError(404, "Unknown schedule row.");
+  if (row.status !== SCHEDULE_STATUS.scheduled) throw new HttpError(400, SCHEDULE_REFUSAL.unscheduleComplete);
+  // An open pass covers only parts that are still waiting. Loading completes the
+  // pass, so an earlier load of this HBN (still drying) does not block <<.
+  const ts = nowIso();
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE production_schedules SET deleted_at = ?, deleted_by = ?, delete_reason = ?,
+                updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+      )
+      .bind(ts, actor.id, SYSTEM_REASON.schedule_unscheduled, ts, actor.id, row.id),
+    insertLog(db, {
+      record_table: "production_schedules",
+      record_id: row.id,
+      field: "deleted_at",
+      old_value: null,
+      new_value: ts,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.schedule_unscheduled,
+      changed_at: ts,
+    }),
+  ]);
+  return { redirect: `${INTERNAL_LOGISTICS_PATH}?ok=returned` };
+}
+
 export async function loadSilo(db: D1Database, form: FormData): Promise<ActionOk> {
   const actor = await requireActor(db, personIdFrom(form));
-  const lotId = requireText(form.get("lot_id"), "Lot");
+  const lotId = requireText(form.get("lot_id") || form.get("harvest_batch_id"), "Lot");
   const siloId = requireText(form.get("dry_space_id"), "Silo");
   const startTime = optionalTime24(form.get("start_time"), "Start time (24h)");
   const loadedAtIso = textOrNull(form.get("loaded_at_iso"));
@@ -7249,15 +7591,21 @@ export async function loadSilo(db: D1Database, form: FormData): Promise<ActionOk
   // that barn's site) are repealed. Its born package moves from wherever it
   // sits; a lot whose package was voided is named in words, since the load
   // would move nothing and pend no paper.
-  const lot = await getBarnWetLot(db, lotId);
-  if (!lot) throw new HttpError(400, "That lot is not waiting for a dry space: Finish lot has not run on it, or a load already holds it.");
-  if (!lot.item_id) {
+  const waiting = await listBarnWetLots(db);
+  const byBatch = waiting.filter((part) => part.harvest_batch_id === lotId);
+  const entry = waiting.find((part) => part.id === lotId);
+  const parts = byBatch.length > 0 ? byBatch : entry?.harvest_batch_id ? waiting.filter((part) => part.harvest_batch_id === entry.harvest_batch_id) : entry ? [entry] : [];
+  if (parts.length === 0) throw new HttpError(400, "That lot is not waiting for a dry space: Finish lot has not run on it, or a load already holds it.");
+  const batchId = parts[0].harvest_batch_id || lotId;
+  const schedule = (await listOpenLogisticsSchedules(db)).find((row) => row.harvest_batch_id === batchId);
+  if (!schedule) throw new HttpError(400, "That lot is not scheduled for a dry space. Pass it from the Dry Queue first.");
+  const missing = parts.find((part) => !part.item_id);
+  if (missing) {
     throw new HttpError(
       400,
-      `Lot ${shortLotId(lot.hbn ?? "", lot.metrc_harvest_tag)} has no live package in the ledger to move (voided or closed); restore it or repair the lot before loading.`
+      `Lot ${shortLotId(missing.hbn ?? "", missing.metrc_harvest_tag)} has no live package in the ledger to move (voided or closed); restore it or repair the lot before loading.`
     );
   }
-  const itemLocation = lot.barn_location ?? "";
   const silo = await db
     .prepare(`SELECT id, name, kind, farm_code, location_name, space_type FROM dry_spaces WHERE id = ? AND deleted_at IS NULL`)
     .bind(siloId)
@@ -7267,8 +7615,10 @@ export async function loadSilo(db: D1Database, form: FormData): Promise<ActionOk
   // the born package moves to the METRC location the space stands over
   // (location_name, migration 0057), the space's own name when it has none.
   const siloLocation = (silo.location_name ?? "").trim() || silo.name;
-  const open = await getOpenSiloLoadForLot(db, lotId);
-  if (open) throw new HttpError(400, "That lot is already loaded in a silo.");
+  for (const part of parts) {
+    const open = await getOpenSiloLoadForLot(db, part.id);
+    if (open) throw new HttpError(400, "That lot is already loaded in a silo.");
+  }
   // Owner ruling 2026-09-08 (canon 0.30.19, verbatim: "occupied silos should
   // not accept more product"): one load per silo until its unload finish ends
   // it. The form offers only empty silos; a stale or hand-built post refuses.
@@ -7297,132 +7647,149 @@ export async function loadSilo(db: D1Database, form: FormData): Promise<ActionOk
   // THE PLANT COUNT (owner ruling 2026-09-14, canon 0.30.62): a lot that skipped
   // the count at Finish lot is asked again here; a typed count lands on the lot
   // with its log line, a blank skips again (the pencil stays open either way).
-  const plantCount = parsePlantCount(form.get("plant_count"));
-  const id = crypto.randomUUID();
-  const record = {
-    id,
-    dry_space_id: silo.id,
-    wet_weight_entry_id: lotId,
-    loaded_at: loadedAt,
-    started_at: startedAt,
-    paused_at: null,
-    paused_seconds: 0,
-    ended_at: null,
-    notes: null,
-    created_at: ts,
-    created_by: actor.id,
-    updated_at: ts,
-    updated_by: actor.id,
-  };
-  const stmts: D1PreparedStatement[] = [
-    db
-      .prepare(
-        `INSERT INTO silo_loads (
+  const stmts: D1PreparedStatement[] = [];
+  let id = "";
+  for (const part of parts) {
+    const keyed = form.get(`plant_count[${part.id}]`);
+    const plantCount = parsePlantCount(keyed != null && String(keyed) !== "" ? keyed : parts.length === 1 ? form.get("plant_count") : null);
+    const partLocation = part.barn_location ?? "";
+    id = crypto.randomUUID();
+    const record = {
+      id,
+      dry_space_id: silo.id,
+      wet_weight_entry_id: part.id,
+      loaded_at: loadedAt,
+      started_at: startedAt,
+      paused_at: null,
+      paused_seconds: 0,
+      ended_at: null,
+      notes: null,
+      created_at: ts,
+      created_by: actor.id,
+      updated_at: ts,
+      updated_by: actor.id,
+    };
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO silo_loads (
           id, dry_space_id, wet_weight_entry_id, loaded_at, started_at, paused_at, paused_seconds, ended_at, notes,
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
         ) VALUES (?, ?, ?, ?, ?, NULL, 0, NULL, NULL, ?, ?, ?, ?, NULL, NULL, NULL)`
+        )
+        .bind(id, silo.id, part.id, loadedAt, startedAt, ts, actor.id, ts, actor.id),
+      ...logsForInsert(db, "silo_loads", id, record, actor.id, SYSTEM_REASON.silo_load, ts)
+    );
+    if (partLocation !== siloLocation && part.item_id) {
+      stmts.push(
+        db
+          .prepare(
+            `UPDATE local_inventory_items SET location = ?, updated_at = ?, updated_by = ?
+           WHERE id = ? AND deleted_at IS NULL`
+          )
+          .bind(siloLocation, ts, actor.id, part.item_id),
+        insertLog(db, {
+          record_table: "local_inventory_items",
+          record_id: part.item_id,
+          field: "location",
+          old_value: partLocation,
+          new_value: siloLocation,
+          actor_person_id: actor.id,
+          reason: SYSTEM_REASON.silo_load,
+          changed_at: ts,
+        })
+      );
+    }
+    if (part.status === LOT_STATUS.in_transit) {
+      stmts.push(
+        db
+          .prepare(`UPDATE wet_weight_entries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
+          .bind(LOT_STATUS.drying, ts, actor.id, part.id),
+        insertLog(db, {
+          record_table: "wet_weight_entries",
+          record_id: part.id,
+          field: "status",
+          old_value: LOT_STATUS.in_transit,
+          new_value: LOT_STATUS.drying,
+          actor_person_id: actor.id,
+          reason: SYSTEM_REASON.silo_load,
+          changed_at: ts,
+        })
+      );
+    }
+    if (part.actual_dryspc !== silo.id) {
+      stmts.push(
+        db
+          .prepare(
+            `UPDATE wet_weight_entries SET actual_dryspc = ?, updated_at = ?, updated_by = ?
+           WHERE id = ? AND deleted_at IS NULL`
+          )
+          .bind(silo.id, ts, actor.id, part.id),
+        insertLog(db, {
+          record_table: "wet_weight_entries",
+          record_id: part.id,
+          field: "actual_dryspc",
+          old_value: part.actual_dryspc,
+          new_value: silo.id,
+          actor_person_id: actor.id,
+          reason: SYSTEM_REASON.silo_load,
+          changed_at: ts,
+        })
+      );
+    }
+    if (plantCount != null && plantCount !== (part.plant_count ?? null)) {
+      stmts.push(
+        db
+          .prepare(
+            `UPDATE wet_weight_entries SET plant_count = ?, updated_at = ?, updated_by = ?
+           WHERE id = ? AND deleted_at IS NULL`
+          )
+          .bind(plantCount, ts, actor.id, part.id),
+        insertLog(db, {
+          record_table: "wet_weight_entries",
+          record_id: part.id,
+          field: "plant_count",
+          old_value: part.plant_count == null ? null : String(part.plant_count),
+          new_value: String(plantCount),
+          actor_person_id: actor.id,
+          reason: SYSTEM_REASON.silo_load,
+          changed_at: ts,
+        })
+      );
+    }
+    if (effective.overridden) {
+      stmts.push(
+        insertLog(db, {
+          record_table: "silo_loads",
+          record_id: id,
+          field: "loaded_at",
+          old_value: effective.today,
+          new_value: loadedAt,
+          actor_person_id: actor.id,
+          reason: EFFECTIVE_DATE_REASON,
+          changed_at: ts,
+        })
+      );
+    }
+  }
+  stmts.push(
+    db
+      .prepare(
+        `UPDATE production_schedules SET status = ?, completed_at = ?, completed_by = ?, updated_at = ?, updated_by = ?
+         WHERE id = ? AND deleted_at IS NULL`
       )
-      .bind(id, silo.id, lotId, loadedAt, startedAt, ts, actor.id, ts, actor.id),
-    ...logsForInsert(db, "silo_loads", id, record, actor.id, SYSTEM_REASON.silo_load, ts),
-  ];
-  // The package moves from where it sits to the space's location (canon
-  // 0.30.130): a package a pencil or a location change already carried to that
-  // very location moves nowhere and writes no line.
-  if (itemLocation !== siloLocation) {
-    stmts.push(
-      db
-        .prepare(
-          `UPDATE local_inventory_items SET location = ?, updated_at = ?, updated_by = ?
-           WHERE id = ? AND deleted_at IS NULL`
-        )
-        .bind(siloLocation, ts, actor.id, lot.item_id),
-      insertLog(db, {
-        record_table: "local_inventory_items",
-        record_id: lot.item_id,
-        field: "location",
-        old_value: itemLocation,
-        new_value: siloLocation,
-        actor_person_id: actor.id,
-        reason: SYSTEM_REASON.silo_load,
-        changed_at: ts,
-      })
-    );
-  }
-  // A truck-era lot still in transit arrives by being loaded (canon 0.30.130):
-  // its status goes drying under the load's reason, the Dry Space Queue reads it.
-  if (lot.status === LOT_STATUS.in_transit) {
-    stmts.push(
-      db
-        .prepare(`UPDATE wet_weight_entries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
-        .bind(LOT_STATUS.drying, ts, actor.id, lotId),
-      insertLog(db, {
-        record_table: "wet_weight_entries",
-        record_id: lotId,
-        field: "status",
-        old_value: LOT_STATUS.in_transit,
-        new_value: LOT_STATUS.drying,
-        actor_person_id: actor.id,
-        reason: SYSTEM_REASON.silo_load,
-        changed_at: ts,
-      })
-    );
-  }
-  if (lot.actual_dryspc !== silo.id) {
-    stmts.push(
-      db
-        .prepare(
-          `UPDATE wet_weight_entries SET actual_dryspc = ?, updated_at = ?, updated_by = ?
-           WHERE id = ? AND deleted_at IS NULL`
-        )
-        .bind(silo.id, ts, actor.id, lotId),
-      insertLog(db, {
-        record_table: "wet_weight_entries",
-        record_id: lotId,
-        field: "actual_dryspc",
-        old_value: lot.actual_dryspc,
-        new_value: silo.id,
-        actor_person_id: actor.id,
-        reason: SYSTEM_REASON.silo_load,
-        changed_at: ts,
-      })
-    );
-  }
-  if (plantCount != null && plantCount !== (lot.plant_count ?? null)) {
-    stmts.push(
-      db
-        .prepare(
-          `UPDATE wet_weight_entries SET plant_count = ?, updated_at = ?, updated_by = ?
-           WHERE id = ? AND deleted_at IS NULL`
-        )
-        .bind(plantCount, ts, actor.id, lotId),
-      insertLog(db, {
-        record_table: "wet_weight_entries",
-        record_id: lotId,
-        field: "plant_count",
-        old_value: lot.plant_count == null ? null : String(lot.plant_count),
-        new_value: String(plantCount),
-        actor_person_id: actor.id,
-        reason: SYSTEM_REASON.silo_load,
-        changed_at: ts,
-      })
-    );
-  }
-  if (effective.overridden) {
-    // The override is never silent: a second row on the loaded time, under the
-    // effective_date reason, names the day it was set to.
-    stmts.push(
-      insertLog(db, {
-        record_table: "silo_loads",
-        record_id: id,
-        field: "loaded_at",
-        old_value: effective.today,
-        new_value: loadedAt,
-        actor_person_id: actor.id,
-        reason: EFFECTIVE_DATE_REASON,
-        changed_at: ts,
-      })
-    );
-  }
+      .bind(SCHEDULE_STATUS.complete, ts, actor.id, ts, actor.id, schedule.id),
+    insertLog(db, {
+      record_table: "production_schedules",
+      record_id: schedule.id,
+      field: "status",
+      old_value: SCHEDULE_STATUS.scheduled,
+      new_value: SCHEDULE_STATUS.complete,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.silo_load,
+      changed_at: ts,
+    })
+  );
   await db.batch(stmts);
   // THE DRYING SCHEDULE (canon 0.30.226): a load opened by a drying surface's >> returns there.
   const back = dryingReturnPath(form.get("next"));
@@ -7520,7 +7887,7 @@ export async function locationChangeUploadCsv(
 ): Promise<{ body: string; filename: string; harvest_batch_id: string }> {
   const row = await db
     .prepare(
-      `SELECT l.id, l.loaded_at, COALESCE(NULLIF(TRIM(d.location_name), ''), d.name) AS silo_name, w.harvest_batch_id, b.hbn, b.metrc_harvest_tag,
+      `SELECT l.id, l.loaded_at, COALESCE(NULLIF(TRIM(d.location_name), ''), d.name) AS silo_name, w.harvest_batch_id, ${HARVEST_FILE_SEQ_SQL} AS harvest_file_seq, b.hbn, b.metrc_harvest_tag,
               li.package_code, li.metrc_tag
        FROM silo_loads l
        JOIN wet_weight_entries w ON w.id = l.wet_weight_entry_id
@@ -7535,6 +7902,7 @@ export async function locationChangeUploadCsv(
       loaded_at: string;
       silo_name: string | null;
       harvest_batch_id: string;
+      harvest_file_seq: number | null;
       hbn: string;
       metrc_harvest_tag: string | null;
       package_code: string | null;
@@ -7553,7 +7921,7 @@ export async function locationChangeUploadCsv(
         moveDate: date,
       },
     ]),
-    filename: locationChangeFilename(row.hbn, row.silo_name ?? "silo", date.replaceAll("-", "")),
+    filename: locationChangeFilename(row.hbn, row.silo_name ?? "silo", date.replaceAll("-", ""), row.harvest_file_seq),
     harvest_batch_id: row.harvest_batch_id,
   };
 }
@@ -7565,7 +7933,7 @@ export async function packageUploadCsv(
 ): Promise<{ body: string; filename: string; harvest_batch_id: string }> {
   const session = await db
     .prepare(
-      `SELECT s.id, s.weigh_mode, s.finished_at, w.id AS lot_id, w.dry_weight_grams, w.harvest_batch_id,
+      `SELECT s.id, s.weigh_mode, s.finished_at, w.id AS lot_id, w.dry_weight_grams, w.harvest_batch_id, ${HARVEST_FILE_SEQ_SQL} AS harvest_file_seq,
               b.hbn, b.metrc_harvest_tag, s2.name AS strain_name, d.kind AS space_kind, d.name AS space_name
        FROM unload_sessions s
        JOIN wet_weight_entries w ON w.id = s.wet_weight_entry_id
@@ -7582,6 +7950,7 @@ export async function packageUploadCsv(
       lot_id: string;
       dry_weight_grams: number | null;
       harvest_batch_id: string;
+      harvest_file_seq: number | null;
       hbn: string;
       metrc_harvest_tag: string | null;
       strain_name: string | null;
@@ -7631,7 +8000,7 @@ export async function packageUploadCsv(
           harvestWeight: dry,
         },
       ]),
-      filename: `packages_from_harvests_${session.hbn}.csv`,
+      filename: `packages_from_harvests_${hbnWithSeq(session.hbn, session.harvest_file_seq)}.csv`,
       harvest_batch_id: session.harvest_batch_id,
     };
   }
@@ -7658,7 +8027,7 @@ export async function packageUploadCsv(
         adjustmentDate: date,
       },
     ]),
-    filename: `package_adjustments_${session.hbn}.csv`,
+    filename: `package_adjustments_${hbnWithSeq(session.hbn, session.harvest_file_seq)}.csv`,
     harvest_batch_id: session.harvest_batch_id,
   };
 }
@@ -7670,7 +8039,7 @@ async function packageUploadCsvForLot(
 ): Promise<{ body: string; filename: string; harvest_batch_id: string }> {
   const lot = await db
     .prepare(
-      `SELECT w.id, w.dry_weight_grams, w.harvest_batch_id, w.updated_at, b.hbn, b.metrc_harvest_tag
+      `SELECT w.id, w.dry_weight_grams, w.harvest_batch_id, ${HARVEST_FILE_SEQ_SQL} AS harvest_file_seq, w.updated_at, b.hbn, b.metrc_harvest_tag
        FROM wet_weight_entries w
        JOIN harvest_batches b ON b.id = w.harvest_batch_id
        WHERE w.id = ? AND w.deleted_at IS NULL`
@@ -7680,6 +8049,7 @@ async function packageUploadCsvForLot(
       id: string;
       dry_weight_grams: number | null;
       harvest_batch_id: string;
+      harvest_file_seq: number | null;
       updated_at: string;
       hbn: string;
       metrc_harvest_tag: string | null;
@@ -7708,7 +8078,7 @@ async function packageUploadCsvForLot(
         adjustmentDate: date,
       },
     ]),
-    filename: `package_adjustments_${lot.hbn}.csv`,
+      filename: `package_adjustments_${hbnWithSeq(lot.hbn, lot.harvest_file_seq)}.csv`,
     harvest_batch_id: lot.harvest_batch_id,
   };
 }

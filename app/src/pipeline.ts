@@ -1053,10 +1053,13 @@ export const OPS_GROUPS: OpsGroup[] = [
   },
   {
     key: "interco_logistics",
-    label: "Interco Logistics",
+    label: "Logistics Operations",
     icon: "truck",
-    href: "/interco",
-    members: [{ key: "interco", title: "Interco Logistics", href: "/interco" }],
+    href: "/ops/interco_logistics",
+    members: [
+      { key: "internal_logistics", title: "Internal Logistics", href: "/logistics/internal" },
+      { key: "processing_partners", title: "Processing Partners", href: "/logistics/partners" },
+    ],
   },
   {
     key: "drying_ops",
@@ -1153,7 +1156,8 @@ export const HOME_SURFACE_KEYS = [
   "unload_dry_space",
   "trim_packages",
   "cryo_weight",
-  "interco",
+  "internal_logistics",
+  "processing_partners",
   "fulfillment",
   "inventory",
   "virtual_move_processor",

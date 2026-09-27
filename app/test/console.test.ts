@@ -25,16 +25,18 @@ import {
   BUD_COLS,
   BUD_CELLS,
   BUD_STEM,
+  BUD_PRODUCT_CELLS,
   budWaffle,
   type HarvestConsoleInput,
   type TrimInput,
 } from "../src/console";
-import { CONFIG_KEYS, parseBtrTypeCodes, parseCryoTypeCategories, parseNameList, parseShiftWindow, shiftWindowHolds, TRIM_SHIFT_HOURS_DEFAULT } from "../src/config";
+import { CONFIG_KEYS, parseBtrTypeCodes, parseCryoTypeCategories, parseNameList, parseShiftWindow, parseTrimBogey, shiftWindowHolds, TRIM_BOGEY_DEFAULT, TRIM_SHIFT_HOURS_DEFAULT, trimBogeyOf } from "../src/config";
 import { etClockMinutes } from "../src/farmday";
 import { HttpError } from "../src/audit";
 import { isReportKey, REPORT_CARDS, REPORT_KEYS } from "../src/reports";
 import { LB_GRAMS, siloVisual, type SiloLive } from "../src/silo";
 import { loadHarvestConsole } from "../src/console";
+import { themeStylesheet } from "../src/theme";
 import { countQueue, listHarvestsByYear, listLookup, listPaneRows, listQueueRows, listRecallableBatches } from "../src/db";
 import { createWetWeight, recallHarvestBatch } from "../src/actions";
 import { queueByKey } from "../src/pipeline";
@@ -359,7 +361,7 @@ describe("THE BUD WAFFLE (canon 0.30.157), drawn as THE PLUME (canon 0.30.207)",
 
   it("budWaffle(0.6) greys the first 40 cells; null outlines every cell; 1.004 greys 0; 0 greys them all", () => {
     const sixty = budWaffle(0.6);
-    expect(sixty).toContain('<svg class="hc-bud" viewBox="0 0 130 160" role="img" aria-label="BTR 60.0%" data-hc-bud data-hc-bud-consumed="40">');
+    expect(sixty).toContain('<svg class="hc-bud" viewBox="0 0 130 160" role="img" aria-label="BTR 60.0%" data-hc-bud data-hc-bud-consumed="40" data-hc-bud-product="40">');
     expect((sixty.match(/class="hc-bud-cell hc-bud-consumed"/g) || []).length).toBe(40);
     expect((sixty.match(/class="hc-bud-cell hc-bud-bud"/g) || []).length).toBe(60);
     // THE PLUME: the two stem cells stand in every state and never count; with a reading they draw as unconsumed cells.
@@ -390,6 +392,72 @@ describe("THE BUD WAFFLE (canon 0.30.157), drawn as THE PLUME (canon 0.30.207)",
     expect(zero).toContain('data-hc-bud-consumed="100"');
     expect((zero.match(/class="hc-bud-cell hc-bud-consumed"/g) || []).length).toBe(100);
     expect((zero.match(/class="hc-bud-cell hc-bud-stem" data-hc-bud-stem/g) || []).length).toBe(2);
+  });
+
+  // THE PRODUCT LINE (canon 0.30.243; owner, 2026-09-26: "40% and under" and "I want it to look like biproduct for the first 60% and waste thereafter").
+  it("the first sixty consumed cells grey as byproduct; a consumed cell of the last forty is waste, deep red", () => {
+    expect(BUD_PRODUCT_CELLS).toBe(40);
+    const waste = (svg: string) => (svg.match(/ data-hc-bud-waste\/>/g) || []).length;
+    expect(waste(budWaffle(0.6))).toBe(0);
+    expect(waste(budWaffle(0.4))).toBe(0);
+    const low = budWaffle(0.31);
+    expect(low).toContain('data-hc-bud-consumed="69"');
+    expect(waste(low)).toBe(9);
+    expect(low).toMatch(/class="hc-bud-cell hc-bud-consumed" data-hc-bud-order="60" [^>]*rx="1.2"\/>/);
+    for (let k = 61; k <= 69; k++) {
+      expect(low).toMatch(new RegExp(`class="hc-bud-cell hc-bud-consumed" data-hc-bud-order="${k}" [^>]* data-hc-bud-waste/>`));
+    }
+    expect(low).toMatch(/class="hc-bud-cell hc-bud-bud" data-hc-bud-order="70" [^>]*rx="1.2"\/>/);
+    const zero = budWaffle(0);
+    expect(waste(zero)).toBe(40);
+    expect((zero.match(/class="hc-bud-cell hc-bud-consumed"/g) || []).length).toBe(100);
+    expect(waste(budWaffle(1.004))).toBe(0);
+    expect(waste(budWaffle(null))).toBe(0);
+    // No bud cell and no stem cell is ever waste.
+    expect(zero).not.toMatch(/data-hc-bud-stem[^>]*data-hc-bud-waste/);
+    expect(low).not.toMatch(/hc-bud-bud"[^>]*data-hc-bud-waste/);
+    expect(themeStylesheet("lite")).toContain(".hc-bud-consumed[data-hc-bud-waste] { fill: #7c1b1b; }");
+    expect(themeStylesheet("co")).toContain(".hc-bud-consumed[data-hc-bud-waste] { fill: #7c1b1b; }");
+    expect(themeStylesheet("cerberus")).toContain(".hc-bud-consumed[data-hc-bud-waste] { fill: #ba2929; }");
+    // THE CONTRAST (canon 0.30.245, his pick "A: deeper green"): the legend swatch matches the waste cell in every skin.
+    // THE DEEP RED (canon 0.30.248, his pick "Deep red (Recommended)"): #7c1b1b in Lite and Continuum, #ba2929 in Cerberus.
+    expect(themeStylesheet("lite")).toContain(".hc-swatch-waste { background: #7c1b1b; margin-left: 0.45rem; }");
+    expect(themeStylesheet("co")).toContain(".hc-swatch-waste { background: #7c1b1b; margin-left: 0.45rem; }");
+    expect(themeStylesheet("cerberus")).toContain(".hc-swatch-waste { background: #ba2929; margin-left: 0.45rem; }");
+  });
+
+  // THE TRIM BOGEY (canon 0.30.249; owner, 2026-09-26: "Add a Admin Lookup Field: [Trim Bogey] expressed as a percentage",
+  // "Determines number of dark red squares and the order based on our scheme (ROYGBIVWB-Aqua)").
+  it("the Trim Bogey sets how many of the last cells are product, in the scheme's order", () => {
+    const waste = (svg: string) => (svg.match(/ data-hc-bud-waste\/>/g) || []).length;
+    const orders = (svg: string) => [...svg.matchAll(/data-hc-bud-order="(\d+)"[^>]* data-hc-bud-waste\/>/g)].map((m) => Number(m[1]));
+    expect(TRIM_BOGEY_DEFAULT).toBe(BUD_PRODUCT_CELLS);
+    const forty = budWaffle(0.31, "en", 40);
+    expect(forty).toBe(budWaffle(0.31));
+    expect(forty).toContain('data-hc-bud-product="40"');
+    // At 35 the last 35 cells are product: at 31% BTR the 69 consumed reach four of them, from the 66th (inside violet).
+    const at35 = budWaffle(0.31, "en", 35);
+    expect(at35).toContain('data-hc-bud-product="35"');
+    expect(waste(at35)).toBe(4);
+    expect(orders(at35)).toEqual([66, 67, 68, 69]);
+    expect(BUD_CELLS[65][2]).toBe("violet");
+    expect(at35).toMatch(/class="hc-bud-cell hc-bud-consumed" data-hc-bud-order="65" [^>]*rx="1.2"\/>/);
+    // 0 draws no dark red; 100 draws every consumed cell; out of range clamps; a non-number keeps the default.
+    expect(waste(budWaffle(0.31, "en", 0))).toBe(0);
+    expect(waste(budWaffle(0.31, "en", 100))).toBe(69);
+    expect(waste(budWaffle(0, "en", 100))).toBe(100);
+    expect(budWaffle(0.31, "en", 150)).toContain('data-hc-bud-product="100"');
+    expect(budWaffle(0.31, "en", Number.NaN)).toContain('data-hc-bud-product="40"');
+    expect(waste(budWaffle(null, "en", 35))).toBe(0);
+    // The stored value: a whole percent 0 to 100 (a trailing % allowed), else the default.
+    expect(parseTrimBogey(null)).toBe(40);
+    expect(parseTrimBogey("35")).toBe(35);
+    expect(parseTrimBogey(" 35% ")).toBe(35);
+    expect(parseTrimBogey("0")).toBe(0);
+    expect(parseTrimBogey("100")).toBe(100);
+    for (const bad of ["101", "-5", "35.5", "abc", ""]) expect(parseTrimBogey(bad)).toBe(40);
+    expect(trimBogeyOf("12.5")).toBeNull();
+    expect(trimBogeyOf("42")).toBe(42);
   });
 });
 
@@ -654,7 +722,7 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(day).toContain('class="hc-visuals"');
     expect(day).toContain('data-hc-bud-consumed="40"');
     expect(day).toContain('data-hc-btr-read><strong>60.0%</strong> BTR</div>');
-    expect(day).toContain('<div class="hc-legend"><span class="hc-swatch hc-swatch-bud"></span>bud <span class="hc-swatch hc-swatch-consumed"></span>consumed</div>');
+    expect(day).toContain('<div class="hc-legend"><span class="hc-swatch hc-swatch-bud"></span>bud <span class="hc-swatch hc-swatch-consumed"></span>byproduct <span class="hc-swatch hc-swatch-waste"></span>waste</div>');
     const order = ["trim_other", "trim_bulk", "trim_prepack", "trim_bud", "trim_btr", "trim_lbs", "trim_dlh", "trim_lbs_per_dlh", "trim_sheet_hours", "trim_input"];
     const positions = order.map((k) => day.indexOf(`data-hc-metric="${k}"`));
     expect(positions.every((p, i) => p >= 0 && (i === 0 || p > positions[i - 1]))).toBe(true);
@@ -690,7 +758,7 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(second.indexOf("data-hc-bud")).toBeLessThan(second.indexOf('data-hc-metric="trim_other"'));
     expect(second).toContain('data-hc-bud-consumed="70"');
     expect(second).toContain('data-hc-btr-read><strong>30.0%</strong> BTR</div>');
-    expect(second).toContain('<div class="hc-legend"><span class="hc-swatch hc-swatch-bud"></span>bud <span class="hc-swatch hc-swatch-consumed"></span>consumed</div>');
+    expect(second).toContain('<div class="hc-legend"><span class="hc-swatch hc-swatch-bud"></span>bud <span class="hc-swatch hc-swatch-consumed"></span>byproduct <span class="hc-swatch hc-swatch-waste"></span>waste</div>');
     expect(html).toContain("data-hc-trim-unassigned>10 g yesterday by operators on neither shift: Les. Name the shifts' operators in Admin, Lookups, app_config.</p>");
     expect(html).toContain('data-hc-trim-running-unassigned><span class="hc-running">RUNNING</span> a package was weighed in the last 30 minutes by an operator on neither shift.</p>');
     expect(html).toContain('.hc-trimline animate');
@@ -748,7 +816,7 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(es).toContain("<dt>Flor total</dt>");
     expect(es).toContain("<dt>Otros</dt>");
     expect(es).toContain("Libras de entrada");
-    expect(es).toContain('hc-swatch-bud"></span>flor <span class="hc-swatch hc-swatch-consumed"></span>consumido</div>');
+    expect(es).toContain('hc-swatch-bud"></span>flor <span class="hc-swatch hc-swatch-consumed"></span>subproducto <span class="hc-swatch hc-swatch-waste"></span>desperdicio</div>');
   });
 
   it("the console page carries the built section open and flashes trim hours saved, and input lbs saved", () => {

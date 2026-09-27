@@ -125,13 +125,18 @@ describe("App config on Lookups (owner ruling 2026-09-01: the yield's home)", ()
 
 describe("pending data uploads surface (owner ruling 2026-08-31)", () => {
   const row: PendingUploadRow = {
-    id: "hb1",
+    id: "load1",
+    harvest_batch_id: "hb1",
     hbn: "26244-ARL-GH-027-0-NA-26002",
+    seq: 1,
     lot: "26002",
-    finished_count: 2,
+    load_label: "Truck 4",
     wet_total_grams: 1734.56,
+    plant_count: 12,
     newest_activity: "2026-09-01T15:00:00.000Z",
     tag_count: 0,
+    unassigned: 0,
+    tags_locked: false,
   };
 
   it("the Admin landing carries [Pending Data Uploads] right after Data Queues", () => {
@@ -161,24 +166,25 @@ describe("pending data uploads surface (owner ruling 2026-08-31)", () => {
     const html = pendingUploadsPage([row]);
     expect(html).toContain("<h1>Pending Data Uploads</h1>");
     expect(html).toContain("<td>Wet Weights</td>");
-    expect(html).toContain('href="/admin/uploads/wet_weights/hb1.csv"');
-    expect(html).toContain(">26244-ARL-GH-027-0-NA-26002.csv</a>");
+    expect(html).toContain('href="/admin/uploads/wet_weights/load1.csv"');
+    expect(html).toContain(">26244-ARL-GH-027-0-NA-26002(1).csv</a>");
     expect(html).toContain("<td>26002</td>");
-    expect(html).toContain("<td>2</td>");
+    expect(html).toContain("<td>Truck 4</td>");
+    expect(html).toContain("<td>12</td>");
     // Owner ruling 2026-08-31: add commas to all thousands; the wet total column
     // formats through formatGrams while the file itself stays raw.
     expect(html).toContain("<td>1,735</td>");
     expect(html).not.toContain("<td>1734.56</td>");
     expect(html).toContain("2026-09-01T15:00:00.000Z");
     expect(html).toContain("Download");
-    expect(html).toContain('action="/admin/uploads/wet_weights/hb1/uploaded"');
+    expect(html).toContain('action="/admin/uploads/wet_weights/load1/uploaded"');
     expect(html).toContain("Mark uploaded");
   });
 
   it("shows the tag count and the paste form on each pending row (owner ruling 2026-08-31: the Plant fill rule)", () => {
     const html = pendingUploadsPage([row]);
     expect(html).toContain("Plant tags: 0");
-    expect(html).toContain('action="/admin/uploads/wet_weights/hb1/tags"');
+    expect(html).toContain('action="/admin/uploads/wet_weights/load1/tags"');
     expect(html).toContain('<textarea name="plant_tags"');
     expect(html).toContain("Save tags");
     const tagged = pendingUploadsPage([{ ...row, tag_count: 3 }]);
@@ -215,7 +221,7 @@ describe("pending data uploads surface (owner ruling 2026-08-31)", () => {
       [],
       [],
       [],
-      [{ id: "sl1", harvest_batch_id: "hb1", hbn: "H", lot: "26002", silo_name: "Silo 1", newest_activity: "2026-09-01T15:00:00.000Z" }]
+      [{ id: "sl1", harvest_batch_id: "hb1", hbn: "H", lot: "26002", silo_name: "Silo 1", file_location: "Silo 1", seq: 1, newest_activity: "2026-09-01T15:00:00.000Z" }]
     );
     expect(many).toContain("Clear all pending (2)</button>");
     // Empty queue: no Clear all control.
@@ -231,7 +237,7 @@ describe("pending data uploads surface (owner ruling 2026-08-31)", () => {
     expect(es).toContain(
       "La columna Plant queda en blanco en espera de la regla de llenado del propietario."
     );
-    expect(es).toContain("26244-ARL-GH-027-0-NA-26002.csv");
+    expect(es).toContain("26244-ARL-GH-027-0-NA-26002(1).csv");
     const esEmpty = pendingUploadsPage([], "es");
     expect(esEmpty).toContain("Nada pendiente.");
   });
@@ -1359,7 +1365,7 @@ describe("wet lot two-pane view (owner ruling 2026-08-31)", () => {
     expect(html).toContain('class="queue-pane"');
     expect(html).toContain("ARL / Fruity Pebbles / 2026-08-28</h2>");
     expect(html).toContain('<p class="muted">26240-ARL-GH-027-0-NA-26001</p>');
-    expect(html).toContain("Finish lot");
+    expect(html).toContain("Finish load");
     expect(html).not.toContain("queue-pane-item selected");
     expect(html).not.toContain('<details class="pane-group" open>');
     expect(html).not.toContain("Pick from the left to begin.");
@@ -1443,11 +1449,11 @@ describe("wet lot two-pane view (owner ruling 2026-08-31)", () => {
     it("Finish lot first asks how many plants, with Skip, on the wet panel alone", () => {
       const html = wetLotPanel(wet(), lot, three, "Arlington", 6000);
       expect(html).toContain('class="row-actions finish-with-plants" data-plant-prompt-form');
-      expect(html).toContain('<button type="submit" class="secondary" data-plant-prompt-open>Finish lot</button>');
+      expect(html).toContain('<button type="submit" class="secondary" data-plant-prompt-open>Finish load</button>');
       expect(html).toContain('<div class="plant-prompt" data-plant-prompt hidden>');
-      expect(html).toContain("How many plants in this lot?");
+      expect(html).toContain("How many plants in this load?");
       expect(html).toMatch(/name="plant_count"[^>]*inputmode="numeric"[^>]*data-plant-count-input/);
-      expect(html).toContain('<button type="submit" name="plant_prompt" value="count">Finish lot</button>');
+      expect(html).toContain('<button type="submit" name="plant_prompt" value="count">Finish load</button>');
       expect(html).toContain('<button type="submit" name="plant_prompt" value="skip" class="secondary" data-plant-skip>Skip</button>');
       expect(html).toContain("Skip asks again at Load Silo");
       expect(html).toContain('document.querySelector("[data-plant-prompt-form]")');
@@ -1762,7 +1768,8 @@ describe("operations map home (owner ruling 2026-09-02)", () => {
     expect(html).toContain('data-ops-key="marketplace"');
     expect(html).toContain('data-ops-key="business_ops"');
     expect(html).toContain('href="/ops/harvest_ops"');
-    expect(html).toContain('href="/interco"');
+    expect(html).toContain('href="/ops/interco_logistics"');
+    expect(html).toContain("Logistics Operations");
     expect(html).toContain('href="/ops/drying_ops"');
     expect(html).toContain('href="/ops/production_ops"');
     expect(html).toContain('href="/marketplace"');

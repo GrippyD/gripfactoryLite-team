@@ -26,7 +26,7 @@ import {
   growLicenseForFarm,
   inheritMarketStrain,
 } from "./config";
-import { insertLog, logsForInsert } from "./db";
+import { HARVEST_FILE_SEQ_SQL, insertLog, logsForInsert } from "./db";
 import { farmToday } from "./effective";
 import { dayAfter, dayBefore, FARM_TIME_ZONE } from "./farmday";
 import { t, type Locale } from "./i18n";
@@ -1141,32 +1141,37 @@ function sheetUpdate(db: D1Database, row: HarvestSheetRow, batchId: string | nul
     .bind(...binds.slice(2), row.sheet_hbn, row.metrc_harvest_tag);
 }
 
-async function pendingHarvestFile(db: D1Database, batchId: string, hbn: string): Promise<string | null> {
+export async function pendingHarvestFile(db: D1Database, batchId: string, hbn: string): Promise<string | null> {
   const wet = await db
     .prepare(
-      `SELECT 1 AS n FROM wet_weight_entries w
+      `SELECT ${HARVEST_FILE_SEQ_SQL} AS seq FROM wet_weight_entries w
        WHERE w.harvest_batch_id = ? AND w.deleted_at IS NULL AND w.status <> 'weighing'
-         AND w.updated_at > COALESCE((SELECT MAX(u.uploaded_at) FROM metrc_uploads u
-           WHERE u.harvest_batch_id = w.harvest_batch_id AND u.kind = 'wet_weights' AND u.deleted_at IS NULL), '')
-       LIMIT 1`
+         AND NOT EXISTS (
+           SELECT 1 FROM metrc_uploads u
+           WHERE u.harvest_batch_id = w.harvest_batch_id AND u.kind = 'wet_weights' AND u.deleted_at IS NULL
+             AND (u.ref_id = w.id OR (u.ref_id IS NULL AND w.created_at < u.uploaded_at))
+         )
+       ORDER BY ${HARVEST_FILE_SEQ_SQL}, w.created_at, w.id`
     )
     .bind(batchId)
-    .first<{ n: number }>();
-  if (wet) return `${hbn}.csv`;
+    .all<{ seq: number | null }>();
+  const names = (wet.results ?? []).map((row) => `${hbn}(${Number(row.seq)}).csv`);
+  if (names.length > 0) return names.join(", ");
   const pkg = await db
     .prepare(
-      `SELECT 1 AS n FROM unload_sessions s
+      `SELECT ${HARVEST_FILE_SEQ_SQL} AS seq FROM unload_sessions s
        JOIN wet_weight_entries w ON w.id = s.wet_weight_entry_id AND w.deleted_at IS NULL
        WHERE w.harvest_batch_id = ? AND s.deleted_at IS NULL AND s.finished_at IS NOT NULL
          AND NOT EXISTS (
            SELECT 1 FROM metrc_uploads u
            WHERE u.ref_id = s.id AND u.deleted_at IS NULL AND u.kind IN ('package_from_harvest', 'package_adjust')
          )
+       ORDER BY s.finished_at
        LIMIT 1`
     )
     .bind(batchId)
-    .first<{ n: number }>();
-  if (pkg) return `packages_from_harvests_${hbn}.csv`;
+    .first<{ seq: number | null }>();
+  if (pkg) return `packages_from_harvests_${hbn}(${Number(pkg.seq)}).csv`;
   return null;
 }
 

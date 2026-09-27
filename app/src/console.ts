@@ -155,6 +155,7 @@ import {
   parseCryoTypeCategories,
   parseNameList,
   parseShiftWindow,
+  parseTrimBogey,
   isMetrcTag,
   roundGrams,
   shiftWindowHolds,
@@ -308,6 +309,8 @@ export type TrimInput = {
   nowIso?: string;
   /** Each shift's hours, HH:MM-HH:MM Eastern (app_config trim_shift_day_hours, trim_shift_second_hours; the code's 6-6 and 6-6 otherwise). */
   shiftHours?: Partial<Record<TrimShiftKey, string | null>>;
+  /** THE TRIM BOGEY (canon 0.30.249): the percent of the plume that is product (app_config trim_bogey_pct; 40 otherwise). */
+  bogeyPct?: number;
 };
 
 export type TrimShiftFigures = {
@@ -589,28 +592,54 @@ const NA = "";
 const fmtCount = (n: number): string => formatGramsWhole(n);
 const fmtPct = (n: number): string => `${(n * 100).toFixed(1)}%`;
 
+/** THE PRODUCT LINE (canon 0.30.243): the last forty cells of the order are the product; consuming one is waste. THE TRIM BOGEY (canon 0.30.249) moves the line from Admin; forty is its default. */
+export const BUD_PRODUCT_CELLS = 40;
+
 /** THE BUD WAFFLE (canon 0.30.157), drawn as THE PLUME (canon 0.30.207): one
  * cell per percent of the shift total. The first round((1 - btr) * 100) cells
  * of BUD_CELLS grey; outlines when nothing ran. The two stem cells are never
  * consumed and never counted: they draw as any unconsumed cell, bud green
  * whenever the plume has a reading, outlines with the rest when nothing ran.
- * The drawing's band names never render. */
-export function budWaffle(btr: number | null, locale: Locale = "en"): string {
+ * The drawing's band names never render. THE PRODUCT LINE (canon 0.30.243;
+ * owner, 2026-09-26: "make the 40% squares on the trim panes of the dashboard
+ * dark green when consumed", "40% and under", and "I want it to look like
+ * biproduct for the first 60% and waste thereafter"): the first 60 cells of the
+ * order grey when consumed, as byproduct; a consumed cell among the last
+ * BUD_PRODUCT_CELLS carries data-hc-bud-waste and draws as waste, the
+ * product dug into. THE CONTRAST (canon 0.30.245; owner: "not enough contrast
+ * between goal and actual", his pick "A: deeper green"): the waste green is
+ * the deepest the skin allows, and the legend reads bud, byproduct, waste.
+ * THE DEEP RED (canon 0.30.248; owner: "how would the 40% consumed look in
+ * bright red?", his pick "Deep red (Recommended)"): the waste draws the
+ * lightest red at 3 to 1 against the skin's bud green, #7c1b1b in Lite and
+ * Continuum and #ba2929 in Cerberus, so red-green color blindness still
+ * reads the dig into product apart from the bud. THE TRIM BOGEY (canon
+ * 0.30.249; owner: "Add a Admin Lookup Field: [Trim Bogey] expressed as a
+ * percentage", "Determines number of dark red squares and the order based
+ * on our scheme (ROYGBIVWB-Aqua)"): bogeyPct cells are product, the last of
+ * the order (red, orange, yellow, green, blue, indigo, violet, white, black,
+ * then the aqua core), BUD_PRODUCT_CELLS when no bogey is passed; at 35 the
+ * dark red starts at the 66th cell, 0 draws none, 100 draws every consumed
+ * cell. The svg carries the count as data-hc-bud-product. */
+export function budWaffle(btr: number | null, locale: Locale = "en", bogeyPct: number = BUD_PRODUCT_CELLS): string {
   const empty = btr == null;
   const consumed = empty
     ? 0
     : Math.max(0, Math.min(BUD_CELLS.length, Math.round((1 - btr) * 100)));
   const label = empty ? t(locale, "no packages yesterday") : `BTR ${fmtPct(btr)}`;
+  // THE TRIM BOGEY (canon 0.30.249): one cell per percent, so the bogey is the count of product cells, the last of the order.
+  const product = Number.isFinite(bogeyPct) ? Math.max(0, Math.min(BUD_CELLS.length, Math.round(bogeyPct))) : BUD_PRODUCT_CELLS;
   const cells = BUD_CELLS.map(([row, col], i) => {
     const order = i + 1;
     const state = empty ? "empty" : order <= consumed ? "consumed" : "bud";
-    return `<rect class="hc-bud-cell hc-bud-${state}" data-hc-bud-order="${order}" x="${col * 10 + 1.2}" y="${row * 10 + 1.2}" width="7.6" height="7.6" rx="1.2"/>`;
+    const waste = state === "consumed" && order > BUD_CELLS.length - product ? " data-hc-bud-waste" : "";
+    return `<rect class="hc-bud-cell hc-bud-${state}" data-hc-bud-order="${order}" x="${col * 10 + 1.2}" y="${row * 10 + 1.2}" width="7.6" height="7.6" rx="1.2"${waste}/>`;
   }).join("");
   const stem = BUD_STEM.map(
     ([row, col]) =>
       `<rect class="hc-bud-cell hc-bud-${empty ? "empty" : "stem"}" data-hc-bud-stem x="${col * 10 + 1.2}" y="${row * 10 + 1.2}" width="7.6" height="7.6" rx="1.2"/>`
   ).join("");
-  return `<svg class="hc-bud" viewBox="0 0 ${BUD_COLS * 10} ${BUD_ROWS * 10}" role="img" aria-label="${esc(label)}" data-hc-bud data-hc-bud-consumed="${consumed}">${cells}${stem}</svg>`;
+  return `<svg class="hc-bud" viewBox="0 0 ${BUD_COLS * 10} ${BUD_ROWS * 10}" role="img" aria-label="${esc(label)}" data-hc-bud data-hc-bud-consumed="${consumed}" data-hc-bud-product="${product}">${cells}${stem}</svg>`;
 }
 
 /** Pounds first, grams under (his numbers are pounds; the floor's are grams). */
@@ -846,9 +875,9 @@ function trimShiftCard(shift: TrimShiftFigures, input: HarvestConsoleInput, loca
             <div class="hc-visuals">
             ${trimLinePicture(shift, locale)}
             <div class="hc-bud-col">
-            ${budWaffle(shift.btr, locale)}
+            ${budWaffle(shift.btr, locale, input.trim?.bogeyPct)}
             <div class="hc-btr-read" data-hc-btr-read>${btrRead}</div>
-            <div class="hc-legend"><span class="hc-swatch hc-swatch-bud"></span>${esc(t(locale, "bud"))} <span class="hc-swatch hc-swatch-consumed"></span>${esc(t(locale, "consumed"))}</div>
+            <div class="hc-legend"><span class="hc-swatch hc-swatch-bud"></span>${esc(t(locale, "bud"))} <span class="hc-swatch hc-swatch-consumed"></span>${esc(t(locale, "byproduct"))} <span class="hc-swatch hc-swatch-waste"></span>${esc(t(locale, "waste"))}</div>
             </div>
             </div>
             <dl class="hc-metrics">${lines}${trimSheetHoursLine(input, locale)}${inputLine}</dl>
@@ -1632,6 +1661,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     dayHoursRaw,
     secondHoursRaw,
     syncView,
+    bogeyRaw,
   ] = await Promise.all([
     db
       .prepare(
@@ -1733,6 +1763,8 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     getConfigValue(db, CONFIG_KEYS.trim_shift_second_hours),
     // THE SHEET SYNC (canon 0.30.162): the last run, for the line under the sheet hours.
     latestSheetSync(db),
+    // THE TRIM BOGEY (canon 0.30.249): the plume's product line, Admin, Lookups.
+    getConfigValue(db, CONFIG_KEYS.trim_bogey_pct),
   ]);
   const trimHours: Record<TrimShiftKey, number | null> = { day: null, second: null };
   for (const row of trimHoursRows.results ?? []) {
@@ -1764,6 +1796,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     queueGrams: Number(queueRow?.grams ?? 0),
     nowIso: atIso,
     shiftHours: { day: dayHoursRaw, second: secondHoursRaw },
+    bogeyPct: parseTrimBogey(bogeyRaw),
   };
   const hours = {} as Record<ConsoleFarm, number | null>;
   for (const farm of CONSOLE_FARMS) hours[farm] = null;

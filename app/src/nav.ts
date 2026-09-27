@@ -40,7 +40,8 @@ const PREFIX_PARENTS: ReadonlyArray<[prefix: string, parent: BackLink]> = [
   [`${MODELS_PATH}/`, { href: MODELS_PATH, label: "Models" }],
   ["/reports/", { href: "/reports", label: "Reports" }],
   ["/queue/", DATA_QUEUES_LINK],
-  ["/interco/", { href: "/interco", label: "Interco Logistics" }],
+  ["/interco/", { href: "/ops/interco_logistics", label: "Logistics Operations" }],
+  ["/logistics/", { href: "/ops/interco_logistics", label: "Logistics Operations" }],
   ["/virtual-move/", { href: "/ops/drying_ops", label: "Drying Operations" }],
 ];
 

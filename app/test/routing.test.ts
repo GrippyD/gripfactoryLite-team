@@ -307,23 +307,13 @@ describe("pending uploads law (owner ruling 2026-08-31)", () => {
     expect(PENDING_WET_UPLOADS_SQL).toContain("b.deleted_at IS NULL");
   });
 
-  it("compares the newest finished activity against the latest upload for the kind", () => {
-    expect(PENDING_WET_UPLOADS_SQL).toContain("MAX(w.updated_at) > COALESCE(");
-    expect(PENDING_WET_UPLOADS_SQL).toContain("MAX(u.uploaded_at)");
+  it("pends a finished load until its own mark, and a batch mark covers loads created before it", () => {
+    expect(PENDING_WET_UPLOADS_SQL).toContain("u.ref_id = w.id");
+    expect(PENDING_WET_UPLOADS_SQL).toContain("u.ref_id IS NULL AND w.created_at < u.uploaded_at");
     expect(PENDING_WET_UPLOADS_SQL).toContain("u.kind = 'wet_weights'");
-    expect(PENDING_WET_UPLOADS_SQL).toContain("u.harvest_batch_id = b.id");
-    expect(PENDING_WET_UPLOADS_SQL).toContain("u.deleted_at IS NULL");
-    // No upload row at all compares as the empty string, so the batch pends.
-    expect(PENDING_WET_UPLOADS_SQL).toContain("''");
-  });
-
-  it("carries the finished count, the wet total at 2 decimals, and the batch's lot identity", () => {
-    expect(PENDING_WET_UPLOADS_SQL).toContain("COUNT(*) AS finished_count");
-    expect(PENDING_WET_UPLOADS_SQL).toContain(
-      "COALESCE(ROUND(SUM(w.weight_grams), 2), 0) AS wet_total_grams"
-    );
-    expect(PENDING_WET_UPLOADS_SQL).toContain("MAX(w.updated_at) AS newest_activity");
-    expect(PENDING_WET_UPLOADS_SQL).toContain("b.harvest_year");
+    expect(PENDING_WET_UPLOADS_SQL).toContain("w.status <> 'weighing'");
+    expect(PENDING_WET_UPLOADS_SQL).toContain("COALESCE(w.harvest_file_seq,");
+    expect(PENDING_WET_UPLOADS_SQL).toContain("wseq.created_at < w.created_at");
     expect(PENDING_WET_UPLOADS_SQL).toContain("b.lot_serial");
   });
 });

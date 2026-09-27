@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { markCheckedUploaded, voidCheckedQueueRows } from "../src/actions";
-import { formOf, migratedDb, seedBatch, seedPerson } from "./migrated";
+import { formOf, migratedDb, seedBatch, seedLot, seedPerson } from "./migrated";
 
 describe("THE CHECK-ALL (canon 0.30.212)", () => {
   it("voids two rows under one reason and refuses the whole batch when one row is refused", async () => {
@@ -39,6 +39,7 @@ describe("THE CHECK-ALL (canon 0.30.212)", () => {
     const m = await migratedDb();
     const person = seedPerson(m);
     seedBatch(m, { id: "hb-w", hbn: "26260-PNN-GH-001-0-NA-26020", serial: 20 });
+    seedLot(m, "load-w", "hb-w", "drying");
     m.run(
       `INSERT INTO local_inventory_items (
          id, package_code, qty, location, license_value, harvest_batch_id, item_kind, farm_code, created_at, updated_at
@@ -46,14 +47,14 @@ describe("THE CHECK-ALL (canon 0.30.212)", () => {
     );
     const form = new FormData();
     form.set("person_id", person);
-    form.append("item", "wet_weights:hb-w");
+    form.append("item", "wet_weights:load-w");
     form.append("item", "package_split:item-1");
     const done = await markCheckedUploaded(m.db, form);
     expect(done.redirect).toBe("/admin/uploads?ok=uploaded&n=2");
     const rows = m.all(`SELECT kind, ref_id, cleared FROM metrc_uploads ORDER BY kind`);
     expect(rows).toEqual([
       { kind: "package_split", ref_id: "item-1", cleared: 0 },
-      { kind: "wet_weights", ref_id: null, cleared: 0 },
+      { kind: "wet_weights", ref_id: "load-w", cleared: 0 },
     ]);
   });
 });

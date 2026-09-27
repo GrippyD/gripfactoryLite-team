@@ -50,7 +50,8 @@ describe("THE BACK LINK (canon 0.30.109): the menu above every page", () => {
     expect(backLinkFor("/reports")).toEqual({ href: "/", label: "Home" });
     expect(backLinkFor("/reports/inventory_by_location?format=csv")).toEqual({ href: "/reports", label: "Reports" });
     expect(backLinkFor("/log")).toEqual({ href: "/", label: "Home" });
-    expect(backLinkFor("/interco/arrivals/pnn")).toEqual({ href: "/interco", label: "Interco Logistics" });
+    expect(backLinkFor("/interco/arrivals/pnn")).toEqual({ href: "/ops/interco_logistics", label: "Logistics Operations" });
+    expect(backLinkFor("/logistics/internal")).toEqual({ href: "/ops/interco_logistics", label: "Logistics Operations" });
   });
 
   it("Admin and its pages: Admin goes Home; its pages go to Admin; lookups, uploads and queues go to their landings", () => {

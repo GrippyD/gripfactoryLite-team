@@ -1,4 +1,5 @@
 import { metrcLocationName, metrcQuantity } from "./config";
+import { FARM_DAY_START_HOUR_DEFAULT, farmDay } from "./farmday";
 
 /** RFC 4180 reader. Returns rows of cells; the first row is headers when present. */
 export function parseCsv(text: string): string[][] {
@@ -181,17 +182,24 @@ export type WetWeightsCsvRow = {
   truck_number: string | null;
   /** Owner terms law 2026-08-31: the HBN is the METRC harvest name. */
   hbn: string;
-  /** The lot's updated_at; its date part is the provisional ActualDate. */
+  /** The lot's updated_at; kept for older callers. ActualDate prefers effective_date. */
   entry_updated_at: string;
+  effective_date?: string | null;
+  created_at?: string | null;
   /** THE PLANT COUNT (canon 0.30.62): the lot id and its typed plant count,
    * carried so the count split can pair each entry with its scale reads. */
   entry_id?: string;
   plant_count?: number | null;
 };
 
-/** Owner ruling 2026-08-31: the wet weights file is named <HBN>.csv ("[HBN number].csv"). */
-export function wetWeightsFilename(hbn: string): string {
-  return `${hbn}.csv`;
+/** ONE HARVEST FILE PER LOAD (canon 0.30.249): <HBN>(n).csv, a lone load included. */
+export function wetWeightsFilename(hbn: string, seq = 1): string {
+  return `${hbn}(${seq}).csv`;
+}
+
+/** The HBN with its load number, for the load's other files. */
+export function hbnWithSeq(hbn: string, seq: number | null | undefined): string {
+  return `${hbn}(${seq && seq > 0 ? seq : 1})`;
 }
 
 /** Owner ruling 2026-08-31: the Plant fill rule needs a stable seed per batch;
@@ -344,6 +352,14 @@ export function splitPlantWeights(
   });
 }
 
+/** ActualDate is the load's effective date, else the farm day of its created_at. */
+export function wetActualDate(row: WetWeightsCsvRow, startHour = FARM_DAY_START_HOUR_DEFAULT): string {
+  const effective = String(row.effective_date ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(effective)) return effective.slice(0, 10);
+  const created = String(row.created_at ?? row.entry_updated_at ?? "");
+  return created ? farmDay(created, startHour) : "";
+}
+
 export function wetWeightsCsv(rows: WetWeightsCsvRow[], barnLocation?: string): string {
   const lines = [METRC_WET_WEIGHTS_HEADER];
   for (const row of rows) {
@@ -358,7 +374,7 @@ export function wetWeightsCsv(rows: WetWeightsCsvRow[], barnLocation?: string): 
       barnLocation ?? (row.truck_number ? `Truck ${row.truck_number}` : row.dry_space_name ?? "");
     // Owner ruling 2026-08-31: ActualDate is the lot's finish date, provisionally
     // the date part of its updated_at until a dedicated finish timestamp exists.
-    const actualDate = row.entry_updated_at.slice(0, 10);
+    const actualDate = wetActualDate(row);
     lines.push(
       [
         "",
@@ -403,7 +419,7 @@ export function wetWeightsCsvWithCounts(
   const rowFor = (entry: WetWeightsCsvRow, grams: number): string => {
     const dryingLocation =
       barnLocation ?? (entry.truck_number ? `Truck ${entry.truck_number}` : entry.dry_space_name ?? "");
-    const actualDate = entry.entry_updated_at.slice(0, 10);
+    const actualDate = wetActualDate(entry);
     return ["", grams.toFixed(2), "Grams", csvCell(metrcLocationName(dryingLocation)), "", csvCell(entry.hbn), "", csvCell(actualDate)].join(",");
   };
   for (const entry of entries) {
@@ -447,7 +463,7 @@ export function wetWeightsCsvWithTags(
     // license; the physical space stays the fallback when no barn is passed.
     const dryingLocation =
       barnLocation ?? (entry.truck_number ? `Truck ${entry.truck_number}` : entry.dry_space_name ?? "");
-    const actualDate = entry.entry_updated_at.slice(0, 10);
+    const actualDate = wetActualDate(entry);
     for (const grams of splits[i]) {
       lines.push(
         [

@@ -275,9 +275,10 @@ export function locationChangeCsv(rows: readonly LocationChangeCsvRow[]): string
   return LOCATION_CHANGE_CSV_HEADER + "\r\n" + (body.length ? body.join("\r\n") + "\r\n" : "");
 }
 
-export function locationChangeFilename(hbn: string, siloName: string, yyyymmdd: string): string {
+export function locationChangeFilename(hbn: string, siloName: string, yyyymmdd: string, seq: number | null = 1): string {
   const silo = siloName.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  return `location_change_${hbn}_${silo}_${yyyymmdd}.csv`;
+  const n = seq && seq > 0 ? seq : 1;
+  return `location_change_${hbn}(${n})_${silo}_${yyyymmdd}.csv`;
 }
 
 /** Prefer the TL-typed METRC/T3 number; otherwise the movement id short. */

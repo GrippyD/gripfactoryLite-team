@@ -750,7 +750,7 @@ describe("THE TAG LAW (canon 0.30.38, forks F4 and F5)", () => {
     expect(html).toContain(metrcTagInput("en"));
     expect(html).toContain('name="metrc_tag"');
     expect(html).toContain("METRC package tag (optional)");
-    expect(html.indexOf('name="metrc_tag"')).toBeLessThan(html.indexOf("Finish lot</button>"));
+    expect(html.indexOf('name="metrc_tag"')).toBeLessThan(html.indexOf("Finish load</button>"));
   });
 
   it("the trim room says Package tag and marks a code that is not a tag; the cryo line IS the tag (THE CRYO RUN, canon 0.30.110)", () => {
@@ -826,7 +826,7 @@ describe("THE TAG LAW (canon 0.30.38, forks F4 and F5)", () => {
     const html = pendingUploadsPage(
       [],
       "en",
-      [{ id: "s1", kind: "package_from_harvest", harvest_batch_id: "b1", hbn: "46258-PNN-ID-062-0-NA-26007", lot: "26007", newest_activity: "2026-09-11" }],
+      [{ id: "s1", kind: "package_from_harvest", harvest_batch_id: "b1", hbn: "46258-PNN-ID-062-0-NA-26007", lot: "26007", seq: 1, newest_activity: "2026-09-11" }],
       [{ id: "r1", movement_id: "m1", filename: "receive.csv", newest_activity: "2026-09-11", harvest_batch_id: "b1" }],
       [
         { id: "m1", movement_kind: "interco", origin_license: "GR-C-002600", destination_license: "AU-G-C-001509", metrc_manifest_number: null, newest_activity: "2026-09-11", filename: "manifest_m1.csv" },

@@ -21,14 +21,15 @@ import {
   dryingStageOfType,
   dryingStagePath,
   formatGrams,
+  LOT_STATUS,
   shortLotId,
   spaceHoldsOneLot,
   type DrySpaceType,
   type DryingStage,
 } from "./config";
-import type { BarnWetLotRow, SiloLoadRow, SiloRow } from "./db";
+import { listMenuDryingLoads, listMenuEntries, listOpenLogisticsSchedules, type BarnWetLotRow, type MenuDryingLoad, type MenuEntryRow, type SiloLoadRow, type SiloRow } from "./db";
 import { effectiveDateField } from "./effective";
-import { FARM_DAY_START_HOUR_DEFAULT } from "./farmday";
+import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmDayBounds } from "./farmday";
 import { esc, lockOnSubmitScript, time24MaskScript } from "./html";
 import { t, tFill, type Locale } from "./i18n";
 import { lotStrainLine, siloLiveScript, siloTile, siloWaitingLines, spaceShapeOf, spaceTypeOf, type SiloLive } from "./silo";
@@ -77,6 +78,16 @@ export function formatClock(seconds: number): string {
   const mm = String(Math.floor((rem % 3600) / 60)).padStart(2, "0");
   const ss = String(rem % 60).padStart(2, "0");
   return `${days}d ${hh}:${mm}:${ss}`;
+}
+
+/** THE RUN (canon 0.30.248): "1d 02:14", days then hours and minutes, a finished clock's shape. */
+export function formatRunClock(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const days = Math.floor(s / 86400);
+  const rem = s % 86400;
+  const hh = String(Math.floor(rem / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((rem % 3600) / 60)).padStart(2, "0");
+  return `${days}d ${hh}:${mm}`;
 }
 
 /** THE ROOM HOLDS MANY (canon 0.30.132): "holding 1 lot" / "holding 2 lots" on a room's or freezer's option. */
@@ -248,11 +259,21 @@ function lotEntryCard(lot: BarnWetLotRow, locale: Locale): string {
  * user skips, you're prompted again when you load a silo or a dry room in the
  * load silo page"): the load form asks again for a lot without a count; blank
  * skips again, and the reasoned pencil stays open on the lot record. */
-function plantCountPrompt(lot: BarnWetLotRow, locale: Locale): string {
-  if (lot.plant_count != null) return "";
+function plantCountPrompt(lot: BarnWetLotRow, locale: Locale, parts: BarnWetLotRow[] = []): string {
+  const missing = (parts.length > 0 ? parts : [lot]).filter((part) => part.plant_count == null);
+  if (missing.length === 0) return "";
+  const fields =
+    missing.length === 1 && parts.length <= 1
+      ? `<label class="field">${esc(t(locale, "Number of plants"))} <input type="text" name="plant_count" inputmode="numeric" pattern="[0-9,]*" placeholder="${esc(t(locale, "skipped at Finish load"))}" data-plant-count-input></label>`
+      : missing
+          .map(
+            (part) =>
+              `<label class="field">${esc(t(locale, "Number of plants"))} ${esc(shortLotId(part.hbn ?? "", part.metrc_harvest_tag))} <input type="text" name="plant_count[${esc(part.id)}]" inputmode="numeric" pattern="[0-9,]*" placeholder="${esc(t(locale, "skipped at Finish load"))}" data-plant-count-input></label>`
+          )
+          .join("");
   return `<div class="plant-prompt" data-plant-prompt>
-        <label class="field">${esc(t(locale, "Number of plants"))} <input type="text" name="plant_count" inputmode="numeric" pattern="[0-9,]*" placeholder="${esc(t(locale, "skipped at Finish lot"))}" data-plant-count-input></label>
-        <p class="muted">${esc(t(locale, "How many plants made this lot. Leave it blank to skip again; the pencil on the lot record can set it later."))}</p>
+        ${fields}
+        <p class="muted">${esc(t(locale, "How many plants made this load. Leave it blank to skip again; the pencil on the lot record can set it later."))}</p>
       </div>`;
 }
 
@@ -267,6 +288,8 @@ export function loadSiloPage(input: {
   farmDayStart?: number;
   locale?: Locale;
   ok?: string;
+  /** Parts of the picked lot that still need a plant count, one field each. */
+  parts?: BarnWetLotRow[];
   /** THE DRYING SCHEDULE (canon 0.30.226): the >> of a drying surface opens
    * the picked form with the select limited to that surface's space type, the
    * planned space preselected when it is of that type, and a return to the
@@ -382,7 +405,7 @@ export function loadSiloPage(input: {
         <label class="field">${esc(t(locale, "Start time (24h, blank = now)"))} <input type="text" name="start_time" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" inputmode="numeric" placeholder="HH:MM" data-time24-mask id="start_time"></label>
         <p class="muted">${esc(t(locale, "The clock runs from this loaded time."))}</p>
         ${effectiveDateField(input.nowIso, locale, t(locale, "Here the Start time falls on that day and is required with it."), undefined, input.farmDayStart ?? FARM_DAY_START_HOUR_DEFAULT)}
-        ${plantCountPrompt(lot, locale)}
+        ${plantCountPrompt(lot, locale, input.parts ?? [])}
         <button type="submit"${noneFree ? " disabled" : ""}>${esc(t(locale, "Load silo"))}</button>
       </form>${time24MaskScript()}${loadedAtScript()}`;
   } else {
@@ -395,7 +418,7 @@ export function loadSiloPage(input: {
     ${flash}
     <div class="station-split">
       <aside class="queue-pane">
-        <h2>${esc(t(locale, "Finished wet lots"))} <span class="tile-count">${esc(String(input.barnLots.length))}</span></h2>
+        <h2>${esc(t(locale, "Scheduled lots"))} <span class="tile-count">${esc(String(input.barnLots.length))}</span></h2>
         ${rows}
       </aside>
       <div class="working-pane">${working}</div>
@@ -494,4 +517,137 @@ export function unloadTogetherForm(input: {
         <a class="btn secondary" href="${esc(path)}">${esc(t(locale, "Cancel"))}</a>
       </div>
     </form>${lockOnSubmitScript()}`;
+}
+
+/** THE MENU LINES (canon 0.30.241). Name at the left, status at the right, dots in the gap. */
+export type OpsMenuLine = {
+  name: string;
+  status: string;
+  clock: { state: "running" | "paused"; started: number; pausedSeconds: number; text: string } | null;
+};
+
+export function menuLineMarkup(line: OpsMenuLine, locale: Locale): string {
+  const status = line.clock
+    ? `<span class="ops-menu-state">${esc(t(locale, line.status))}</span> <span class="silo-clock" data-clock data-state="${esc(line.clock.state)}" data-started="${esc(String(line.clock.started))}" data-paused-at="" data-paused-seconds="${esc(String(line.clock.pausedSeconds))}">${esc(line.clock.text)}</span>${
+        line.clock.state === "paused" ? ` <span class="muted silo-clock-state">${esc(t(locale, "Paused"))}</span>` : ""
+      }`
+    : esc(t(locale, line.status));
+  return `<span class="ops-menu-line" data-menu-line>
+      <span class="ops-menu-name">${esc(line.name)}</span>
+      <span class="ops-menu-dots" aria-hidden="true"></span>
+      <span class="ops-menu-status">${status}</span>
+    </span>`;
+}
+
+/** Lots whose first load began on this farm day, numbered by that first load. A lot that has left the scale and the Dry Queue is off the line. */
+export function harvestMenuLines(entries: MenuEntryRow[], scheduled: ReadonlySet<string>, nowIso: string, startHour: number, locale: Locale = "en"): OpsMenuLine[] {
+  const bounds = farmDayBounds(farmDay(nowIso, startHour), startHour);
+  const byBatch = new Map<string, MenuEntryRow[]>();
+  for (const entry of entries) {
+    const group = byBatch.get(entry.harvest_batch_id);
+    if (group) group.push(entry);
+    else byBatch.set(entry.harvest_batch_id, [entry]);
+  }
+  const lots: Array<{ first: string; rows: MenuEntryRow[] }> = [];
+  for (const rows of byBatch.values()) {
+    const first = rows.map((row) => row.created_at).sort()[0];
+    if (!first || first < bounds.startIso || first >= bounds.endIso) continue;
+    lots.push({ first, rows });
+  }
+  lots.sort((a, b) => (a.first < b.first ? -1 : a.first > b.first ? 1 : 0));
+  const lines: OpsMenuLine[] = [];
+  lots.forEach((lot, index) => {
+    const weighing = lot.rows.some((row) => row.status === LOT_STATUS.weighing);
+    const waiting = lot.rows.some((row) => row.status !== LOT_STATUS.weighing && !Number(row.loaded));
+    if (!weighing && !waiting) return;
+    const passed = scheduled.has(lot.rows[0].harvest_batch_id);
+    lines.push({
+      name: tFill(locale, "Lot {n}", { n: String(index + 1) }),
+      status: !weighing && passed ? "ready to be moved" : "in progress",
+      clock: null,
+    });
+  });
+  return lines;
+}
+
+/** A part is on the Logistics line only while its status is in_transit. The clock is the earliest Finish load still out: each part's latest in_transit log row, or updated_at when the log has none. */
+export function truckMenuLines(entries: MenuEntryRow[], nowIso: string, locale: Locale = "en"): OpsMenuLine[] {
+  const groups = new Map<string, MenuEntryRow[]>();
+  for (const entry of entries) {
+    if (entry.status !== LOT_STATUS.in_transit) continue;
+    const number = String(entry.truck_number ?? "").trim();
+    const key = number ? `n:${number}` : `id:${entry.id}`;
+    const group = groups.get(key);
+    if (group) group.push(entry);
+    else groups.set(key, [entry]);
+  }
+  const lines: OpsMenuLine[] = [];
+  for (const [key, rows] of groups) {
+    const instants = rows
+      .map((row) => row.transit_at || row.updated_at)
+      .filter(Boolean)
+      .sort();
+    const started = Date.parse(instants[0] ?? "");
+    const seconds = Number.isFinite(started) ? Math.max(0, Math.floor((Date.parse(nowIso) - started) / 1000)) : 0;
+    const number = key.startsWith("n:") ? key.slice(2) : "";
+    lines.push({
+      name: number ? tFill(locale, "Truck {n}", { n: number }) : t(locale, "Truck"),
+      status: "in-transit",
+      clock: { state: "running", started: Number.isFinite(started) ? started : Date.parse(nowIso), pausedSeconds: 0, text: formatClock(seconds) },
+    });
+  }
+  lines.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return lines;
+}
+
+/** One line per silo or dry room with an open load. Freezers are off the line. Two loads show the longest clock. */
+export function dryingMenuLines(loads: MenuDryingLoad[], nowIso: string, locale: Locale = "en"): OpsMenuLine[] {
+  void locale;
+  const bySpace = new Map<string, MenuDryingLoad[]>();
+  for (const load of loads) {
+    if ((load.space_type ?? "silo") === "freezer") continue;
+    const group = bySpace.get(load.space_id);
+    if (group) group.push(load);
+    else bySpace.set(load.space_id, [load]);
+  }
+  const lines: OpsMenuLine[] = [];
+  for (const group of bySpace.values()) {
+    const ranked = group
+      .map((load) => ({ load, seconds: siloClockSeconds(load, nowIso) ?? 0 }))
+      .sort((a, b) => b.seconds - a.seconds);
+    const load = ranked[0].load;
+    const state = siloClockState(load);
+    const clockState = state === "paused" ? "paused" : "running";
+    lines.push({
+      name: load.space_name,
+      status: "drying",
+      clock: {
+        state: clockState,
+        started: clockZeroMs(load) ?? Date.parse(nowIso),
+        pausedSeconds: Number(load.paused_seconds ?? 0),
+        text: formatClock(ranked[0].seconds),
+      },
+    });
+  }
+  lines.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return lines;
+}
+
+export function opsMenuHtml(lines: OpsMenuLine[], locale: Locale): string {
+  return lines.map((line) => menuLineMarkup(line, locale)).join("");
+}
+
+export async function homeMenuBlocks(db: D1Database, nowIso: string, startHour: number, locale: Locale): Promise<Record<string, string>> {
+  const bounds = farmDayBounds(farmDay(nowIso, startHour), startHour);
+  const [entries, open, drying] = await Promise.all([
+    listMenuEntries(db, bounds.startIso, bounds.endIso),
+    listOpenLogisticsSchedules(db),
+    listMenuDryingLoads(db),
+  ]);
+  const scheduled = new Set(open.map((row) => row.harvest_batch_id));
+  return {
+    harvest_ops: opsMenuHtml(harvestMenuLines(entries, scheduled, nowIso, startHour, locale), locale),
+    interco_logistics: opsMenuHtml(truckMenuLines(entries, nowIso, locale), locale),
+    drying_ops: opsMenuHtml(dryingMenuLines(drying, nowIso, locale), locale),
+  };
 }

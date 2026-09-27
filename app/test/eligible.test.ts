@@ -19,6 +19,11 @@ function fakeDb(rows: { lots?: Array<Record<string, unknown>>; spaces?: Array<Re
       async all() {
         prepared.push({ sql, args });
         if (sql.includes("FROM wet_weight_entries w") && sql.includes("AS barn_location")) return { results: rows.lots ?? [] };
+        if (sql.includes("FROM production_schedules") && args.includes("internal_logistics")) {
+          const lot = (rows.lots ?? [])[0];
+          const batch = lot ? String(lot.harvest_batch_id || lot.id || "") : "";
+          return { results: batch ? [{ id: "sched-1", harvest_batch_id: batch, scheduled_at: "2026-09-19T12:00:00.000Z" }] : [] };
+        }
         return { results: [] };
       },
       async first() {
@@ -113,7 +118,7 @@ describe("THE FINISHED LOT IS ELIGIBLE (canon 0.30.130; owner: sever its hold on
     ];
     const moved = lotRow({ barn_location: "Silo 3" });
     const page = loadSiloPage({ barnLots: [moved], silos, loads: [], picked: moved, pickedLoad: null, nowIso: "2026-09-19T12:00:00.000Z" });
-    expect(page).toContain("Finished wet lots");
+    expect(page).toContain("Scheduled lots");
     expect(page).not.toContain("Wet lots in the barn");
     expect(page).toContain('<option value="s1">Silo 1</option>');
     expect(page).toContain('<option value="s3" selected>Silo 3</option>');
@@ -133,7 +138,7 @@ describe("THE FINISHED LOT IS ELIGIBLE (canon 0.30.130; owner: sever its hold on
     expect(page3).toContain("<strong>26027 / PNS / Goji</strong>");
     expect(page3).not.toContain("<strong>? /");
     const es = loadSiloPage({ barnLots: [untagged], silos, loads: [], picked: untagged, pickedLoad: null, nowIso: "2026-09-19T12:00:00.000Z", locale: "es" });
-    expect(es).toContain("Lotes humedos terminados");
+    expect(es).toContain("Lotes programados");
     expect(es).toContain("(sin paquete vivo)");
     expect(es).toContain("Este lote no tiene paquete vivo en el libro");
   });

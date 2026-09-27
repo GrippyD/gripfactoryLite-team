@@ -32,7 +32,8 @@ describe("OPS_GROUPS registry (owner ruling 2026-09-02)", () => {
     expect(opsGroupByKey("marketplace")?.icon).toBe("storefront");
     expect(opsGroupByKey("business_ops")?.icon).toBe("scales");
     expect(opsGroupByKey("harvest_ops")?.href).toBe("/ops/harvest_ops");
-    expect(opsGroupByKey("interco_logistics")?.href).toBe("/interco");
+    expect(opsGroupByKey("interco_logistics")?.href).toBe("/ops/interco_logistics");
+    expect(opsGroupByKey("interco_logistics")?.label).toBe("Logistics Operations");
     expect(opsGroupByKey("marketplace")?.href).toBe("/marketplace");
     expect(opsGroupByKey("marketplace")?.reserved).toBeUndefined();
     expect(opsGroupByKey("marketplace")?.members.map((m) => m.href)).toEqual(["/marketplace"]);
@@ -53,7 +54,8 @@ describe("OPS_GROUPS registry (owner ruling 2026-09-02)", () => {
       "unload_dry_space",
       "trim_packages",
       "cryo_weight",
-      "interco",
+      "internal_logistics",
+      "processing_partners",
       "fulfillment",
       "inventory",
       "virtual_move_processor",
