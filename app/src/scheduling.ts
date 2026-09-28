@@ -23,7 +23,7 @@ import {
 } from "./config";
 import type { BarnWetLotRow, DryingCompleteRow, FinishedLogisticsRow, ScheduleHbnGroup, ScheduleItemRow, SiloLoadRow, SiloRow } from "./db";
 import { barnLotLabel, clockMarkup, formatRunClock, loadLotLabel, shareOrder, siloClockSeconds, siloClockState, unloadTogetherForm } from "./drying";
-import type { MetrcAdoptPane } from "./metrc";
+import type { MetrcAdoptPane, MetrcAdoptRow } from "./metrc";
 import { lastSix, packageIdentityMarkup } from "./prepack";
 import { effectiveDateField } from "./effective";
 import { FARM_DAY_START_HOUR_DEFAULT, dayBefore, farmDay, farmDayBounds } from "./farmday";
@@ -271,50 +271,6 @@ function emptyToggle(locale: Locale, anyShown: boolean): string {
   return `<p class="muted" data-schedule-empty${anyShown ? " hidden" : ""}>${esc(t(locale, "- EMPTY -"))}</p>`;
 }
 
-function adoptSection(adopt: MetrcAdoptPane, locale: Locale, q: string, formId: string): string {
-  if (adopt.rows.length === 0) {
-    return `<section data-schedule-adopt>
-      <h3>${esc(t(locale, "From METRC"))}</h3>
-      <p class="muted">${esc(t(locale, "Nothing to adopt."))}</p>
-    </section>`;
-  }
-  let anyShown = false;
-  const adoptTitle = t(locale, "Adopt and schedule");
-  const rows = adopt.rows
-    .map((row) => {
-      const shown = scheduleFilterHit(q, row.harvest, row.tag);
-      if (shown) anyShown = true;
-      // THE HBN INHERITED (canon 0.30.196): the HBN line names the harvest the
-      // package will inherit, known or new from METRC. A row whose lineage
-      // names no harvest carries no >>.
-      const inherit = row.harvest
-        ? `<span class="schedule-inherit" data-adopt-hbn="${esc(row.harvest)}" data-adopt-known="${row.hbnId ? "1" : "0"}">${esc(row.harvest)} <strong>${esc(
-            t(locale, row.hbnId ? "known" : "new from METRC")
-          )}</strong></span>`
-        : `<span class="muted schedule-inherit" data-adopt-hbn="">${esc(t(locale, "no harvest in METRC's lineage"))}</span>`;
-      // >> ADOPTS AND SCHEDULES (canon 0.30.200): the control is the Available
-      // pane's shared schedule form, so the effective date and the filter ride
-      // with the tag.
-      const button = row.harvest
-        ? `<button type="submit" form="${esc(formId)}" name="tag" value="${esc(row.tag)}" class="shuttle-btn" title="${esc(adoptTitle)}" aria-label="${esc(adoptTitle)}">&gt;&gt;</button>`
-        : "";
-      // THE PACKAGE READS IN FOUR LINES (canon 0.30.199): the whole tag, the
-      // strain and grams, the HBN it will inherit, the location METRC states.
-      return `<li class="schedule-item" data-adopt-tag="${esc(row.tag)}" data-schedule-tag="${esc(row.tag)}" data-schedule-hbn="${esc(row.harvest ?? "")}"${shown ? "" : " hidden"}>
-        ${packageIdentityMarkup({ tag: row.tag, strain: row.strain, grams: row.grams, hbn: row.harvest, location: row.location }, locale, inherit)}
-        ${button}
-      </li>`;
-    })
-    .join("");
-  return `<section data-schedule-adopt>
-      <h3>${esc(t(locale, "From METRC"))}</h3>
-      <div data-schedule-list="adopt">
-        <ul>${rows}</ul>
-        ${emptyToggle(locale, anyShown)}
-      </div>
-    </section>`;
-}
-
 export type PrepackPanes = { available: ScheduleItemRow[]; working: ScheduleItemRow[]; complete: ScheduleItemRow[] };
 
 /** THE PREPACK HEADINGS (canon 0.30.229). Seed display names, in the owner's order.
@@ -333,26 +289,38 @@ function growHeadingRank(name: string | null): string {
   return `1${name.toLowerCase()}`;
 }
 
+function strangerHeading(row: MetrcAdoptRow): string | null {
+  const name = String(row.growMethod ?? "").trim();
+  return name || null;
+}
+
 function availableByMethod(
   rows: ScheduleItemRow[],
+  strangers: MetrcAdoptRow[],
   locale: Locale,
   query: string,
-  controls: (item: ScheduleItemRow) => string
+  controls: (item: ScheduleItemRow) => string,
+  formId: string
 ): { html: string; shown: number } {
-  const groups = new Map<string, { name: string | null; rows: ScheduleItemRow[] }>();
-  for (const item of rows) {
-    const name = growMethodLabel(item);
+  const groups = new Map<string, { name: string | null; apps: ScheduleItemRow[]; strangers: MetrcAdoptRow[] }>();
+  const bucket = (name: string | null) => {
     const key = name ?? "";
     const group = groups.get(key);
-    if (group) group.rows.push(item);
-    else groups.set(key, { name, rows: [item] });
-  }
+    if (group) return group;
+    const made = { name, apps: [] as ScheduleItemRow[], strangers: [] as MetrcAdoptRow[] };
+    groups.set(key, made);
+    return made;
+  };
+  for (const item of rows) bucket(growMethodLabel(item)).apps.push(item);
+  for (const row of [...strangers].sort((a, b) => a.tag.localeCompare(b.tag))) bucket(strangerHeading(row)).strangers.push(row);
   const ordered = [...groups.values()].sort((a, b) => growHeadingRank(a.name).localeCompare(growHeadingRank(b.name)));
+  const adoptTitle = t(locale, "Adopt and schedule");
+  const noHarvest = `<span class="muted schedule-inherit" data-adopt-hbn="">${esc(t(locale, "no harvest in METRC's lineage"))}</span>`;
   let shown = 0;
   const blocks = ordered
     .map((group) => {
       let visible = 0;
-      const items = group.rows
+      const appItems = group.apps
         .map((item) => {
           const hit = scheduleFilterHit(query, item.hbn, item.tag);
           if (hit) visible += 1;
@@ -362,11 +330,24 @@ function availableByMethod(
         </li>`;
         })
         .join("");
+      const strangerItems = group.strangers
+        .map((row) => {
+          const hit = scheduleFilterHit(query, row.harvest, row.tag);
+          if (hit) visible += 1;
+          const button = row.harvest
+            ? `<button type="submit" form="${esc(formId)}" name="tag" value="${esc(row.tag)}" class="shuttle-btn" title="${esc(adoptTitle)}" aria-label="${esc(adoptTitle)}">&gt;&gt;</button>`
+            : "";
+          return `<li class="schedule-item" data-adopt-tag="${esc(row.tag)}" data-schedule-tag="${esc(row.tag)}" data-schedule-hbn="${esc(row.harvest ?? "")}"${hit ? "" : " hidden"}>
+          ${packageIdentityMarkup({ tag: row.tag, strain: row.strain, grams: row.grams, hbn: row.harvest, location: row.location }, locale, row.harvest ? undefined : noHarvest)}
+          ${button}
+        </li>`;
+        })
+        .join("");
       shown += visible;
       const label = group.name ?? t(locale, "Unknown");
       const heading = `<h3>${esc(label)} <span class="tile-count" data-schedule-heading-count>${visible}</span></h3>`;
       const foldKey = group.name ? `grow:${group.name}` : "grow:unknown";
-      const fold = queueFold(foldKey, heading, `<ul>${items}</ul>`);
+      const fold = queueFold(foldKey, heading, `<ul>${appItems}${strangerItems}</ul>`);
       const hidden = visible === 0 ? " hidden" : "";
       return fold.replace("<details ", `<details data-schedule-heading${hidden} `);
     })
@@ -415,8 +396,9 @@ export function prepackSchedulingPage(panes: PrepackPanes, adopt: MetrcAdoptPane
       shown,
     };
   };
-  const available = availableByMethod(panes.available, locale, query, (item) =>
-    `<button type="submit" form="${esc(formId)}" name="wip_package_id" value="${esc(item.id)}" class="shuttle-btn" title="${esc(scheduleTitle)}" aria-label="${esc(scheduleTitle)}">&gt;&gt;</button>`
+  const available = availableByMethod(panes.available, adopt?.rows ?? [], locale, query, (item) =>
+    `<button type="submit" form="${esc(formId)}" name="wip_package_id" value="${esc(item.id)}" class="shuttle-btn" title="${esc(scheduleTitle)}" aria-label="${esc(scheduleTitle)}">&gt;&gt;</button>`,
+    formId
   );
   const working = pane(
     "working",
@@ -445,7 +427,6 @@ export function prepackSchedulingPage(panes: PrepackPanes, adopt: MetrcAdoptPane
           ${qField(query)}
         </form>
         ${available.html}
-        ${adopt ? adoptSection(adopt, locale, query, formId) : ""}
       </aside>
       <section class="queue-pane" data-schedule-pane="working">
         <h2>${esc(t(locale, "Scheduled"))} <span class="tile-count" data-schedule-count="working">${working.shown}</span></h2>

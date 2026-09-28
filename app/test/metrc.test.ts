@@ -1107,7 +1107,8 @@ async function releaseMemory(): Promise<{
       id TEXT PRIMARY KEY, record_table TEXT, record_id TEXT, field TEXT, old_value TEXT, new_value TEXT,
       actor_person_id TEXT, reason TEXT, changed_at TEXT
     );
-    CREATE TABLE harvest_batches (id TEXT PRIMARY KEY, hbn TEXT, deleted_at TEXT, created_at TEXT);
+    CREATE TABLE harvest_batches (id TEXT PRIMARY KEY, hbn TEXT, grow_method_code TEXT, deleted_at TEXT, created_at TEXT);
+    CREATE TABLE grow_methods (code TEXT PRIMARY KEY, display_name TEXT, hbn_code TEXT, deleted_at TEXT);
   `);
   const vocab = "TestPassed=passed;RetestPassed=passed;TestFailed=failed;RetestFailed=failed";
   sqlite.prepare(`INSERT INTO app_config (key, value, deleted_at) VALUES ('metrc_release_states', ?, NULL)`).run(vocab);

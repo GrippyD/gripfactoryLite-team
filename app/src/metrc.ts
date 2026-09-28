@@ -33,6 +33,7 @@
 import { HttpError, nowIso, textOrNull } from "./audit";
 import { applyTransition, CONFIG_KEYS, isKnownSiteLicense, isPrepackWpr, ITEM_KIND_FG, LOC_BLAST_FREEZER, metrcQuantity, parseCryoTypeCategories, parseFfzItemKinds, parseMetrcReleaseStates, roundGrams, siteOfLicense, SYSTEM_REASON, WIP_STATUS } from "./config";
 import { parseCsv } from "./csv";
+import { parseHbn } from "./mint";
 import { ffzKindBinds, ffzKindClause, getConfigValue, insertLog, logsForInsert, requireActor } from "./db";
 import type { ActionOk } from "./actions";
 import type { MirrorPackage } from "./manifest";
@@ -1707,6 +1708,8 @@ export type MetrcAdoptRow = {
   harvest: string | null;
   /** The app's batch for that harvest; null when the harvest is new from METRC. */
   hbnId: string | null;
+  /** The heading this stranger files under: the batch's grow method, else the method its HBN code names. Null is Unknown. */
+  growMethod: string | null;
   packagedDate: string | null;
 };
 
@@ -1743,6 +1746,28 @@ export function inheritedHarvest(
   return null;
 }
 
+/** The grow heading a stranger files under. A known batch uses that batch's
+ * display name. Otherwise the live method whose hbn_code matches the code
+ * parseHbn reads. Null (Unknown) when there is no harvest, the harvest is not
+ * a seven-part HBN, or no live method carries the code. */
+export function adoptGrowMethod(
+  row: { harvest: string | null; hbnId: string | null },
+  batchMethod: ReadonlyMap<string, string | null>,
+  methods: readonly { display_name: string; hbn_code: string }[]
+): string | null {
+  if (row.hbnId) {
+    const named = String(batchMethod.get(row.hbnId) ?? "").trim();
+    return named || null;
+  }
+  if (!row.harvest) return null;
+  const parts = parseHbn(row.harvest);
+  if (!parts) return null;
+  const code = parts.grow_code.trim().toUpperCase();
+  const hit = methods.find((method) => method.hbn_code.trim().toUpperCase() === code);
+  const name = String(hit?.display_name ?? "").trim();
+  return name || null;
+}
+
 function adoptStrain(item: string | null, named: string | null): string {
   const strain = String(named ?? "").trim();
   if (strain) return strain;
@@ -1752,7 +1777,7 @@ function adoptStrain(item: string | null, named: string | null): string {
 export async function listMetrcAdoptions(db: D1Database): Promise<MetrcAdoptPane> {
   const categories = parseCryoTypeCategories(await getConfigValue(db, CONFIG_KEYS.cryo_type_categories));
   const vocab = parseMetrcReleaseStates(await getConfigValue(db, CONFIG_KEYS.metrc_release_states));
-  const [mirror, batches, takenPackages, takenItems] = await Promise.all([
+  const [mirror, batches, methods, takenPackages, takenItems] = await Promise.all([
     db
       .prepare(
         `SELECT tag, license_value, source_harvests, source_packages, location, item, item_strain, quantity, uom,
@@ -1772,12 +1797,22 @@ export async function listMetrcAdoptions(db: D1Database): Promise<MetrcAdoptPane
         lab_test_status: string | null;
         packaged_date: string | null;
       }>(),
-    db.prepare(`SELECT id, hbn FROM harvest_batches WHERE deleted_at IS NULL AND hbn IS NOT NULL`).all<{ id: string; hbn: string }>(),
+    db
+      .prepare(
+        `SELECT b.id, b.hbn, gm.display_name AS grow_method
+         FROM harvest_batches b
+         LEFT JOIN grow_methods gm ON gm.code = b.grow_method_code AND gm.deleted_at IS NULL
+         WHERE b.deleted_at IS NULL AND b.hbn IS NOT NULL`
+      )
+      .all<{ id: string; hbn: string; grow_method: string | null }>(),
+    db.prepare(`SELECT display_name, hbn_code FROM grow_methods WHERE deleted_at IS NULL ORDER BY code`).all<{ display_name: string; hbn_code: string }>(),
     db.prepare(`SELECT upper(package_code) AS tag FROM wip_packages WHERE package_code IS NOT NULL`).all<{ tag: string }>(),
     db.prepare(`SELECT upper(metrc_tag) AS tag FROM local_inventory_items WHERE deleted_at IS NULL AND metrc_tag IS NOT NULL AND trim(metrc_tag) <> ''`).all<{ tag: string }>(),
   ]);
   const taken = new Set([...(takenPackages.results ?? []).map((row) => row.tag), ...(takenItems.results ?? []).map((row) => row.tag)]);
   const known = new Map((batches.results ?? []).map((row) => [row.hbn.trim().toUpperCase(), row.id]));
+  const batchMethod = new Map((batches.results ?? []).map((row) => [row.id, row.grow_method]));
+  const growMethods = methods.results ?? [];
   const candidates = (mirror.results ?? []).filter(
     (row) =>
       !taken.has(row.tag.toUpperCase()) &&
@@ -1815,6 +1850,11 @@ export async function listMetrcAdoptions(db: D1Database): Promise<MetrcAdoptPane
       license: row.license_value,
       harvest: lineage?.harvest ?? null,
       hbnId: lineage?.hbnId ?? null,
+      growMethod: adoptGrowMethod(
+        { harvest: lineage?.harvest ?? null, hbnId: lineage?.hbnId ?? null },
+        batchMethod,
+        growMethods
+      ),
       packagedDate: row.packaged_date,
     });
   }

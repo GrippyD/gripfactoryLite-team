@@ -28,6 +28,7 @@ import {
   type DryingStage,
 } from "./config";
 import { listMenuDryingLoads, listMenuEntries, listOpenLogisticsSchedules, type BarnWetLotRow, type MenuDryingLoad, type MenuEntryRow, type SiloLoadRow, type SiloRow } from "./db";
+import { listEnvironmentFlags } from "./environment";
 import { effectiveDateField } from "./effective";
 import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmDayBounds } from "./farmday";
 import { esc, lockOnSubmitScript, time24MaskScript } from "./html";
@@ -137,9 +138,9 @@ export function clockMarkup(load: SiloLoadRow, nowIso: string, locale: Locale): 
  * screen fills it, red and throbbing once the clock runs), the state word under
  * the shape, the load's lot link and clock, and the wet weight at the bottom;
  * the live script keeps every tile current. */
-export function siloStrip(live: SiloLive[], nowIso: string, locale: Locale = "en", extraTiles = ""): string {
+export function siloStrip(live: SiloLive[], nowIso: string, locale: Locale = "en", extraTiles = "", flags: Readonly<Record<string, string[]>> = {}): string {
   const tiles = live
-    .map(({ silo, visual, loads, waiting }) => {
+    .map(({ silo, visual, loads, waiting, emptySince }) => {
       // THE LOADING SILO (canon 0.30.81): the lots waiting in the barn for this silo ride under its word.
       const body =
         loads
@@ -156,7 +157,7 @@ export function siloStrip(live: SiloLive[], nowIso: string, locale: Locale = "en
       // THE HARVEST CONSOLE (canon 0.30.73): the silo's shape is data; the
       // Arlington Dry Room draws as the wire box beside the five cylinders.
       // THE DRY SPACE TYPE (canon 0.30.106): the type decides the shape.
-      return siloTile({ id: silo.id, name: silo.name, visual, body, locale, shape: spaceShapeOf(silo) });
+      return siloTile({ id: silo.id, name: silo.name, visual, body, locale, shape: spaceShapeOf(silo), flags: flags[silo.name] ?? [], emptySince: emptySince ?? null, nowIso });
     })
     .join("");
   return `<section class="silo-strip" data-silo-strip>
@@ -524,6 +525,7 @@ export type OpsMenuLine = {
   name: string;
   status: string;
   clock: { state: "running" | "paused"; started: number; pausedSeconds: number; text: string } | null;
+  flag?: string;
 };
 
 export function menuLineMarkup(line: OpsMenuLine, locale: Locale): string {
@@ -535,7 +537,7 @@ export function menuLineMarkup(line: OpsMenuLine, locale: Locale): string {
   return `<span class="ops-menu-line" data-menu-line>
       <span class="ops-menu-name">${esc(line.name)}</span>
       <span class="ops-menu-dots" aria-hidden="true"></span>
-      <span class="ops-menu-status">${status}</span>
+      <span class="ops-menu-status">${status}${line.flag ? ` <span class="silo-flags" data-menu-flag>${esc(line.flag)}</span>` : ""}</span>
     </span>`;
 }
 
@@ -601,7 +603,12 @@ export function truckMenuLines(entries: MenuEntryRow[], nowIso: string, locale: 
 }
 
 /** One line per silo or dry room with an open load. Freezers are off the line. Two loads show the longest clock. */
-export function dryingMenuLines(loads: MenuDryingLoad[], nowIso: string, locale: Locale = "en"): OpsMenuLine[] {
+export function dryingMenuLines(
+  loads: MenuDryingLoad[],
+  nowIso: string,
+  locale: Locale = "en",
+  flags: Readonly<Record<string, string[]>> = {}
+): OpsMenuLine[] {
   void locale;
   const bySpace = new Map<string, MenuDryingLoad[]>();
   for (const load of loads) {
@@ -627,6 +634,7 @@ export function dryingMenuLines(loads: MenuDryingLoad[], nowIso: string, locale:
         pausedSeconds: Number(load.paused_seconds ?? 0),
         text: formatClock(ranked[0].seconds),
       },
+      flag: (flags[load.space_name] ?? []).join(" "),
     });
   }
   lines.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -639,15 +647,16 @@ export function opsMenuHtml(lines: OpsMenuLine[], locale: Locale): string {
 
 export async function homeMenuBlocks(db: D1Database, nowIso: string, startHour: number, locale: Locale): Promise<Record<string, string>> {
   const bounds = farmDayBounds(farmDay(nowIso, startHour), startHour);
-  const [entries, open, drying] = await Promise.all([
+  const [entries, open, drying, flags] = await Promise.all([
     listMenuEntries(db, bounds.startIso, bounds.endIso),
     listOpenLogisticsSchedules(db),
     listMenuDryingLoads(db),
+    listEnvironmentFlags(db, nowIso, locale),
   ]);
   const scheduled = new Set(open.map((row) => row.harvest_batch_id));
   return {
     harvest_ops: opsMenuHtml(harvestMenuLines(entries, scheduled, nowIso, startHour, locale), locale),
     interco_logistics: opsMenuHtml(truckMenuLines(entries, nowIso, locale), locale),
-    drying_ops: opsMenuHtml(dryingMenuLines(drying, nowIso, locale), locale),
+    drying_ops: opsMenuHtml(dryingMenuLines(drying, nowIso, locale, flags), locale),
   };
 }

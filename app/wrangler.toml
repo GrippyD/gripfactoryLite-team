@@ -47,11 +47,13 @@ MS_TENANT_ID = "TBD"
 MS_CLIENT_ID = "TBD"
 # Sandbox until the owner replaces this with the production base. Keys stay secrets.
 METRC_API_BASE = "https://sandbox-api-mi.metrc.com"
+# THE ENVIRONMENT FLAGS (canon 0.30.246). The email and password are wrangler secrets.
+SENSORPUSH_API_BASE = "https://api.sensorpush.com/api/v1"
 
-# A quarter past every hour, UTC. The same cron reads the sheet and, when the
-# keys exist, the Metrc mirror. The cron is not a request.
+# A quarter past every hour for the sheet, the mirror and In Testing. Every five
+# minutes for the SensorPush pull. The handler tells the two apart by event.cron.
 [env.grip.triggers]
-crons = ["15 * * * *"]
+crons = ["15 * * * *", "*/5 * * * *"]
 
 [env.grip.assets]
 directory = "public"

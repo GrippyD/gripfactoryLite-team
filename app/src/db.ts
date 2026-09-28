@@ -4195,6 +4195,24 @@ export async function listOpenSiloLoads(db: D1Database): Promise<SiloLoadRow[]> 
   return result.results ?? [];
 }
 
+/** THE EMPTY CLOCK (canon 0.30.270): the moment a space's last load left it.
+ * The unload finish's press is ended_at. A load that left by its lot's void
+ * has no ended_at, so the moment is deleted_at. The newer of the two wins.
+ * An open load is not a departure. effective_date is not this moment. */
+export async function listSiloEmptySince(db: D1Database): Promise<{ dry_space_id: string; left_at: string }[]> {
+  const result = await db
+    .prepare(
+      `SELECT dry_space_id,
+              MAX(CASE WHEN ended_at IS NOT NULL AND TRIM(ended_at) <> '' THEN ended_at ELSE deleted_at END) AS left_at
+       FROM silo_loads
+       WHERE (ended_at IS NOT NULL AND TRIM(ended_at) <> '')
+          OR (deleted_at IS NOT NULL AND TRIM(deleted_at) <> '')
+       GROUP BY dry_space_id`
+    )
+    .all<{ dry_space_id: string; left_at: string }>();
+  return (result.results ?? []).filter((row) => Boolean(row.left_at));
+}
+
 /** The lots a silo tile counts besides its open loads (canon 0.30.69): the lots
  * weighing into a silo (the wet weight screen filling it) and the finished lots
  * that wait in the barn for Load Silo, one row per lot with its grams.

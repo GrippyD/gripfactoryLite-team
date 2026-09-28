@@ -117,7 +117,8 @@ body.device-phone .shuttle-btn { width: auto; min-width: 2.8rem; }
 .schedule-hbn-summary { display: flex; align-items: center; justify-content: space-between; gap: 0.45rem; }
 .queue-fold { margin: 0 0 0.8rem; }
 .queue-fold > summary { cursor: pointer; }
-.queue-fold > summary h2 { display: inline; }
+.silo-flags { color: var(--danger, #8b2e2e); font-weight: 700; }
+.queue-fold > summary h2, .queue-fold > summary h3 { display: inline; }
 .check-cell { width: 2rem; }
 .batch-bar { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: end; margin: 0.4rem 0 0.6rem; }
 .batch-bar .field { margin: 0; }
@@ -698,6 +699,10 @@ table.data th { background: var(--panel-2); }
 .hc-bud-consumed { fill: #b5bab3; }
 /* THE PRODUCT LINE (canon 0.30.243): the first sixty consumed cells grey as byproduct; a consumed cell of the last forty is waste, deep red (THE DEEP RED, 0.30.248; the dark green of 0.30.245 before it). */
 .hc-bud-consumed[data-hc-bud-waste] { fill: #7c1b1b; }
+/* THE THROBBING WASTE (canon 0.30.266): the deep red pulses while a waste cell is drawn. The trough stays at 0.55 so it never reads as the grey beside it. The legend swatch does not pulse. */
+.hc-bud-consumed[data-hc-bud-waste] { animation: hc-waste-throb 1.6s ease-in-out infinite; }
+@keyframes hc-waste-throb { 0%, 100% { fill-opacity: 0.55; } 50% { fill-opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .hc-bud-consumed[data-hc-bud-waste] { animation-duration: 3.2s; } }
 .hc-bud-empty { fill: none; stroke: var(--line, var(--border, #88888899)); stroke-width: 0.6; }
 .hc-btr-read { font-variant-numeric: tabular-nums; margin: 0.3rem 0 0.15rem; }
 .hc-legend { font-size: 0.72rem; }
@@ -1378,6 +1383,10 @@ table.data tbody tr:hover td { background: var(--surface-2); }
 .hc-bud-stem { fill: #2e9e4f; }
 .hc-bud-consumed { fill: #7a8088; }
 .hc-bud-consumed[data-hc-bud-waste] { fill: #7c1b1b; }
+/* THE THROBBING WASTE (canon 0.30.266): the deep red pulses while a waste cell is drawn. The trough stays at 0.55 so it never reads as the grey beside it. The legend swatch does not pulse. */
+.hc-bud-consumed[data-hc-bud-waste] { animation: hc-waste-throb 1.6s ease-in-out infinite; }
+@keyframes hc-waste-throb { 0%, 100% { fill-opacity: 0.55; } 50% { fill-opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .hc-bud-consumed[data-hc-bud-waste] { animation-duration: 3.2s; } }
 .hc-bud-empty { fill: none; stroke: var(--line, var(--border, #88888899)); stroke-width: 0.6; }
 .hc-btr-read { font-variant-numeric: tabular-nums; margin: 0.3rem 0 0.15rem; }
 .hc-legend { font-size: 0.72rem; }
@@ -2005,6 +2014,10 @@ legend { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; c
 .hc-bud-stem { fill: #3ecf6b; }
 .hc-bud-consumed { fill: #6f7680; }
 .hc-bud-consumed[data-hc-bud-waste] { fill: #ba2929; }
+/* THE THROBBING WASTE (canon 0.30.266): the deep red pulses while a waste cell is drawn. The trough stays at 0.55 so it never reads as the grey beside it. The legend swatch does not pulse. */
+.hc-bud-consumed[data-hc-bud-waste] { animation: hc-waste-throb 1.6s ease-in-out infinite; }
+@keyframes hc-waste-throb { 0%, 100% { fill-opacity: 0.55; } 50% { fill-opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .hc-bud-consumed[data-hc-bud-waste] { animation-duration: 3.2s; } }
 .hc-bud-empty { fill: none; stroke: var(--line, var(--border, #88888899)); stroke-width: 0.6; }
 .hc-btr-read { font-variant-numeric: tabular-nums; margin: 0.3rem 0 0.15rem; }
 .hc-legend { font-size: 0.72rem; }

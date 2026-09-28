@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { drawsFromParentLot, NON_TRIM_SOURCE_SQL, parseMetrcReleaseStates } from "../src/config";
-import { harvestTokens, inheritedHarvest, type MetrcAdoptRow } from "../src/metrc";
+import { harvestTokens, inheritedHarvest } from "../src/metrc";
 import { SCHEDULE_STAGE_TITLES, SCHEDULE_STAGES } from "../src/config";
 import type { ScheduleHbnGroup, ScheduleItemRow } from "../src/db";
 import {
@@ -308,57 +308,11 @@ describe("adopt from METRC (canon 0.30.193, the HBN inherited 0.30.196)", () => 
     expect(inheritedHarvest({ sourceHarvests: null, sourcePackages: null }, new Map(), known)).toBeNull();
   });
 
-  const adoptRow = (over: Partial<MetrcAdoptRow>): MetrcAdoptRow => ({
-    tag: "1A4050300000000000000D01",
-    kind: "WPR",
-    strain: "Chem",
-    grams: 1500,
-    location: "Trim Room",
-    license: "AU-P-000694",
-    harvest: "26260-PNN-GH-001-0-NA-26001",
-    hbnId: "hb-1",
-    packagedDate: "2026-09-15",
-    ...over,
-  });
-
-  it("From METRC reads the HBN each row will inherit, known or new, with no select; Adopt posts the tag alone", () => {
-    const html = prepackSchedulingPage({ available: [], working: [], complete: [] }, {
-      rows: [
-        adoptRow({}),
-        adoptRow({ tag: "1A4050300000000000000D02", harvest: "46258-PNN-ID-062-0-NA-26007", hbnId: null }),
-        adoptRow({ tag: "1A4050300000000000000D03", harvest: null, hbnId: null }),
-      ],
-    }, "en");
-    expect(html).toContain("data-schedule-adopt");
-    expect(html).toContain("From METRC");
-    expect(html).not.toContain("<select");
-    expect(html).not.toContain('name="hbn_id"');
-    expect(html).toContain('data-adopt-hbn="26260-PNN-GH-001-0-NA-26001" data-adopt-known="1">26260-PNN-GH-001-0-NA-26001 <strong>known</strong>');
-    expect(html).toContain('data-adopt-hbn="46258-PNN-ID-062-0-NA-26007" data-adopt-known="0">46258-PNN-ID-062-0-NA-26007 <strong>new from METRC</strong>');
-    expect(html).toContain("no harvest in METRC's lineage");
-    // THE PACKAGE READS IN FOUR LINES (canon 0.30.199): the whole tag, the
-    // strain and grams, the HBN it will inherit, the location; the license is
-    // no longer on the row.
-    expect(html).toContain('<span class="pkg-tag">1A4050300000000000000D01</span>');
-    expect(html).toContain('<span class="pkg-strain-grams">Chem - 1,500 g</span>');
-    expect(html).toContain('<span class="pkg-location">Location: Trim Room</span>');
-    expect(html).not.toContain("...000D01");
-    expect(html).not.toContain("AU-P-000694");
-    const noHarvestRow = html.slice(html.indexOf('data-adopt-tag="1A4050300000000000000D03"'));
-    expect(noHarvestRow.slice(0, noHarvestRow.indexOf("</li>"))).toContain('<span class="pkg-hbn"><span class="muted schedule-inherit" data-adopt-hbn="">no harvest in METRC\'s lineage</span></span>');
-    expect(noHarvestRow.slice(0, noHarvestRow.indexOf("</li>"))).not.toContain("<button");
-    expect(html).not.toContain("schedule-adopt-row");
-    expect(html).not.toContain(">Adopt</button>");
-    expect((html.match(/name="tag"/g) || []).length).toBe(2);
-    expect(html).toContain('form="schedule-prepack" name="tag" value="1A4050300000000000000D01" class="shuttle-btn" title="Adopt and schedule"');
-    const es = prepackSchedulingPage({ available: [], working: [], complete: [] }, { rows: [adoptRow({ harvest: "46258-PNN-ID-062-0-NA-26007", hbnId: null }), adoptRow({ tag: "1A4050300000000000000D04" }), adoptRow({ tag: "1A4050300000000000000D05", harvest: null, hbnId: null })] }, "es");
-    expect(es).toContain("Desde METRC");
-    expect(es).toContain("nuevo desde METRC");
-    expect(es).toContain("conocido");
-    expect(es).toContain("sin cosecha en el linaje de METRC");
-    expect(es).toContain('title="Adoptar y programar"');
-    const none = prepackSchedulingPage({ available: [], working: [], complete: [] }, { rows: [] }, "es");
-    expect(none).toContain("Nada para adoptar.");
+  it("the Available pane has no From METRC section", () => {
+    const html = prepackSchedulingPage({ available: [], working: [], complete: [] }, { rows: [] }, "en");
+    expect(html).not.toContain("data-schedule-adopt");
+    expect(html).not.toContain("From METRC");
+    expect(html).not.toContain("Nothing to adopt.");
   });
 
   it("filters by the HBN or the last six, ignoring case; a scanned tag matches whole", () => {

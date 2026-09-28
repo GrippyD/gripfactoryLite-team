@@ -402,14 +402,14 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 76 migration(s)")) {
-      throw new Error(`from-zero apply must say 75 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 77 migration(s)")) {
+      throw new Error(`from-zero apply must say 77 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
         // THE SHEET SYNC (canon 0.30.162): the cron is walked through /__scheduled, and the
         // default env reads the smoke's own fixture workbook, never the owner's file.
-        `npx wrangler dev --persist-to .smoke-persist --port ${port} --ip 127.0.0.1 --test-scheduled --var SHEET_FIXTURE_URL:http://127.0.0.1:${port}/__sheet-fixture`,
+        `npx wrangler dev --persist-to .smoke-persist --port ${port} --ip 127.0.0.1 --test-scheduled --var SHEET_FIXTURE_URL:http://127.0.0.1:${port}/__sheet-fixture --var SENSORPUSH_API_BASE:http://127.0.0.1:${port}/__sensorpush --var SENSORPUSH_EMAIL:smoke@local --var SENSORPUSH_PASSWORD:smoke`,
         { cwd: appRoot, shell: true, env: { ...process.env, BROWSER: "none", CI: "1" } }
       );
       let buf = "";
@@ -3630,6 +3630,25 @@ async function run() {
     const roomAfter = await text("/station/load_silo");
     assert(roomAfter.body.includes(`data-silo="${silo2Id}" data-silo-state="filling" data-silo-shape-kind="cylinder"`), "the unloaded Silo 2 must drop its drying state (the guard lot keeps it filling)");
     assert(!roomAfter.body.includes(`data-silo="${silo2Id}" data-silo-state="drying"`), "the ended load must clear Silo 2's clock");
+    const siloTileHtml = (html, id) => {
+      const marker = `data-silo="${id}"`;
+      const at = html.indexOf(marker);
+      if (at < 0) return "";
+      const next = html.indexOf('data-silo="', at + marker.length);
+      return next < 0 ? html.slice(at) : html.slice(at, next);
+    };
+    const silo2Tile = siloTileHtml(roomAfter.body, silo2Id);
+    const liveEmpty = await (await req("/silos/live.json")).json();
+    const silo2LiveEmpty = (liveEmpty.silos || []).find((x) => x.id === silo2Id);
+    assert(silo2Tile.includes("Empty since") && silo2Tile.includes('data-silo-empty="1">'), "an unloaded silo must show Empty since");
+    assert(silo2Tile.includes('data-state="running"') && silo2Tile.includes('data-paused-seconds="0"'), "the empty clock must run from the unload, with no banked pause");
+    assert(/\d+d \d{2}:\d{2}:\d{2}/.test(silo2Tile), "the empty clock must read in the load clock's shape");
+    assert(
+      silo2LiveEmpty && silo2LiveEmpty.state === "filling" && typeof silo2LiveEmpty.emptySince === "string" && /^\d{4}-\d{2}-\d{2}T/.test(silo2LiveEmpty.emptySince) && silo2LiveEmpty.wetGrams != null,
+      `live.json must carry Silo 2's empty origin beside the old fields, got ${JSON.stringify(silo2LiveEmpty)}`
+    );
+    const bfEmptyTile = siloTileHtml(roomAfter.body, drySpaceIdByName(lookupsPage.body, "Blast Freezer(s)"));
+    assert(bfEmptyTile && !bfEmptyTile.includes("Empty since") && !bfEmptyTile.includes("data-silo-empty"), "a freezer tile must not carry the empty clock");
     const invAfterRoomCsv = await text("/reports/inventory_by_location?format=csv");
     assert(
       Math.abs(pnnBarnWip(invAfterRoomCsv.body) - (pnnBarnBefore + 80)) < 0.005,
@@ -4946,11 +4965,10 @@ async function run() {
     // minute ago lights the section's RUNNING note for an operator on neither shift.
     assert((trimBefore.match(/data-hc-trimline-total="0"/g) || []).length === 2, "with nothing dated yesterday both pictures hang a zero total");
     assert((trimBefore.match(/data-hc-bud-consumed="0"/g) || []).length === 2, "with nothing dated yesterday both buds carry consumed 0");
-    // THE PLUME (canon 0.30.207): the bud is the plume on a 16 by 13 lattice; with nothing run its hundred cells and its
-    // two stem cells are all outlines, so the stem reads no different from the rest.
-    assert((trimBefore.match(/class="hc-bud-cell hc-bud-empty"/g) || []).length === 204, "with nothing dated yesterday every cell of both plumes, stems included, is an outline");
-    assert((trimBefore.match(/viewBox="0 0 130 160" role="img"/g) || []).length === 2, "both plumes must ride the 16 by 13 lattice");
-    assert((trimBefore.match(/data-hc-bud-stem/g) || []).length === 4, "both plumes must carry their two permanent stem cells");
+    // THE PROGRESSION BUD (canon 0.30.273): 100 cells on a 13 by 19 lattice. Nothing ran: every cell is an outline. No permanent stem.
+    assert((trimBefore.match(/class="hc-bud-cell hc-bud-empty"/g) || []).length === 200, "with nothing dated yesterday every cell of both buds is an outline");
+    assert((trimBefore.match(/viewBox="0 0 130 190" role="img"/g) || []).length === 2, "both buds must ride the 13 by 19 lattice");
+    assert(!trimBefore.includes("data-hc-bud-stem"), "the progression bud has no permanent stem");
     // THE LINE RUNS ON THE CLOCK (canon 0.30.163): with the Unloaded Queue empty of scheduled lots and no shift
     // operator weighing lately, both cards stand still; once a lot is scheduled for trim, the shift on duty
     // (Day 6:00 AM to 6:00 PM Eastern, Second the other twelve hours) runs by the clock alone.
@@ -5027,7 +5045,8 @@ async function run() {
     // The picture: the total hangs 50 g, BUD carries the 30 g, RETRIM the TRIM 20 g; Olga weighed a minute ago, so the card runs and its stripes move.
     assert(dayCard.includes('data-hc-trimline-running="1" data-hc-trimline-total="50"'), "the Day picture must run and hang the 50 g total");
     assert(dayCard.includes('data-hc-bud-consumed="40"'), "Day BTR 60.0% must grey 40 cells of the bud");
-    assert((dayCard.match(/class="hc-bud-cell hc-bud-stem" data-hc-bud-stem/g) || []).length === 2, "the plume's two stem cells stand as unconsumed cells while the bud is consumed");
+    assert(dayCard.includes('hc-bud-bud" data-hc-bud-order="100" data-hc-bud-n="1"'), "at 60% the heart, cell 1, is still bud");
+    assert(dayCard.includes('hc-bud-consumed" data-hc-bud-order="1" data-hc-bud-n="100"'), "at 60% the foot, cell 100, is the first consumed");
     assert(dayCard.includes('data-hc-node-value="bud" x="262" y="530">30 g</text>'), "the BUD endpoint must carry the Total Bud 30 g");
     assert(dayCard.includes("bulk 30 · prepack 0</text>"), "the BUD endpoint must name bulk and prepack");
     assert(dayCard.includes('<text class="hc-node-value" data-hc-node-value="trim" x="850" y="112">20 g</text>'), "the TRIM circle must carry the rest of Other, the TRIM 20 g (his correction)");
@@ -6928,26 +6947,30 @@ async function run() {
     const availReleased = await text("/production/scheduling/prepack");
     assert(availReleased.body.includes("000C11"), "the released package must stand in Prepack Available");
     // THE HBN INHERITED (canon 0.30.196): the row names the HBN it will inherit; no select, no pick.
-    assert(
-      availReleased.body.includes("data-schedule-adopt") && availReleased.body.includes("000D01") &&
-        availReleased.body.includes(`data-adopt-hbn="${pickedHbn}" data-adopt-known="1">${pickedHbn} <strong>known</strong>`),
-      "From METRC must list the stranger with the HBN it inherits, known"
-    );
-    assert(!schedPaneOf(availReleased.body, "available").includes("<select"), "From METRC must carry no HBN select");
-    // THE PACKAGE READS IN FOUR LINES (canon 0.30.199) on From METRC too: the whole
-    // tag, the strain and grams, the HBN it inherits with its marker, the location.
+    const strangerAvail = schedPaneOf(availReleased.body, "available");
+    assert(!strangerAvail.includes("data-schedule-adopt") && !strangerAvail.includes("From METRC") && !strangerAvail.includes("new from METRC"), "the From METRC section is gone");
+    const strangerGhStart = strangerAvail.indexOf('data-fold="grow:Greenhouse"');
+    const strangerGhNext = strangerAvail.indexOf("<details", strangerGhStart + 10);
+    const strangerGh = strangerAvail.slice(strangerGhStart, strangerGhNext < 0 ? undefined : strangerGhNext);
+    assert(strangerGh.includes(`data-adopt-tag="${STRANGER}"`) && strangerGh.includes(`<span class="pkg-hbn">${pickedHbn}</span>`), "the stranger sits under Greenhouse and its HBN line is the HBN alone");
+    const ghRows = (strangerGh.match(/<li class="schedule-item"/g) || []).length;
+    const ghBadge = Number((strangerGh.match(/data-schedule-heading-count>(\d+)/) || [])[1]);
+    assert(ghBadge === ghRows && strangerGh.includes(`name="tag" value="${STRANGER}"`), `the Greenhouse count must include the stranger, badge ${ghBadge} rows ${ghRows}`);
+    assert(!strangerAvail.includes("<select"), "Available must carry no HBN select");
+    // THE PACKAGE READS IN FOUR LINES (canon 0.30.199): the whole tag, the
+    // strain and grams, the HBN, the location.
     const strangerRow = availReleased.body.slice(availReleased.body.indexOf(`data-adopt-tag="${STRANGER}"`));
     const strangerForm = strangerRow.slice(0, strangerRow.indexOf("</li>"));
     assert(
       strangerForm.includes(`<span class="pkg-tag">${STRANGER}</span>`) && /<span class="pkg-strain-grams">[^<]+ - [\d,]+ g<\/span>/.test(strangerForm) &&
-        strangerForm.includes(`<span class="pkg-hbn"><span class="schedule-inherit" data-adopt-hbn="${pickedHbn}" data-adopt-known="1">`) && /<span class="pkg-location">Location: [^<]+<\/span>/.test(strangerForm),
-      "a From METRC row must read the whole tag, the strain and grams, the HBN it inherits and the location on their own lines"
+        strangerForm.includes(`<span class="pkg-hbn">${pickedHbn}</span>`) && /<span class="pkg-location">Location: [^<]+<\/span>/.test(strangerForm),
+      "a stranger row must read the whole tag, the strain and grams, the HBN and the location on their own lines"
     );
     assert(!strangerForm.includes("AU-P-000694") && !strangerForm.includes("AU-G-C-000832"), "the license is no longer on the From METRC row");
     const adoptEsOn = await req("/locale", { method: "POST", body: form({ locale: "es" }) });
     await adoptEsOn.text();
     const adoptEsPage = await text("/production/scheduling/prepack");
-    assert(adoptEsPage.body.includes("Desde METRC") && adoptEsPage.body.includes("Adoptar y programar") && adoptEsPage.body.includes("conocido") && adoptEsPage.body.includes("Filtrar"), "the From METRC section and the filter must speak Spanish");
+    assert(!adoptEsPage.body.includes("Desde METRC") && !adoptEsPage.body.includes("nuevo desde METRC") && adoptEsPage.body.includes("Adoptar y programar") && adoptEsPage.body.includes("Filtrar"), "the adopt control and the filter must speak Spanish, with no From METRC section");
     const adoptEsOff = await req("/locale", { method: "POST", body: form({ locale: "en" }) });
     await adoptEsOff.text();
     const adoptNo = await req("/production/scheduling/prepack/schedule", { method: "POST", body: form({ tag: TAG_HOLD }) });
@@ -6978,16 +7001,19 @@ async function run() {
     const hcBefore = hcFigures((await text("/harvest")).body);
     assert(hcBefore.includes("harvested=") && hcBefore.includes("lots_ready="), `the console must read its harvest figures, got ${hcBefore}`);
     const beforeNew = await text("/production/scheduling/prepack");
+    const indoorStart = beforeNew.body.indexOf('data-fold="grow:Indoor"');
+    const indoorNext = beforeNew.body.indexOf("<details", indoorStart + 10);
+    const indoor = indoorStart < 0 ? "" : beforeNew.body.slice(indoorStart, indoorNext < 0 ? undefined : indoorNext);
     assert(
-      beforeNew.body.includes(`data-adopt-tag="${MB105}"`) && beforeNew.body.includes(`data-adopt-hbn="${NEW_HBN}" data-adopt-known="0">${NEW_HBN} <strong>new from METRC</strong>`),
-      "From METRC must read the unminted harvest as new from METRC"
+      indoor.includes(`data-adopt-tag="${MB105}"`) && indoor.includes(`<span class="pkg-hbn">${NEW_HBN}</span>`) && !beforeNew.body.includes("new from METRC"),
+      "an unminted ID harvest files under Indoor, and the HBN line is the HBN alone"
     );
     const adoptNew = await req("/production/scheduling/prepack/schedule", { method: "POST", body: form({ tag: MB105 }) });
     assert(adoptNew.status === 303 && (adoptNew.headers.get("location") || "").includes("ok=adopted&n=1"), `>> on the new-from-METRC stranger expected adopted and scheduled, got ${adoptNew.status} ${await adoptNew.text()}`);
     const scheduledNew = await text("/production/scheduling/prepack");
     const newPane = schedPaneOf(scheduledNew.body, "working");
     assert(newPane.includes(`data-schedule-tag="${MB105}" data-schedule-hbn="${NEW_HBN}">`) && newPane.includes("Donny Burger - 751 g") && !newPane.includes("Super Boof -"), "the four lines must read METRC's market name over the real strain");
-    assert(!schedPaneOf(scheduledNew.body, "available").includes(`data-adopt-tag="${MB105}"`), "the adopted package leaves From METRC");
+    assert(!schedPaneOf(scheduledNew.body, "available").includes(`data-adopt-tag="${MB105}"`), "the adopted package leaves the stranger rows");
     const byNewHbn = await text(`/production/scheduling/prepack?q=${encodeURIComponent("46258-pnn")}`);
     assert(
       schedPaneOf(byNewHbn.body, "working").includes(`data-schedule-tag="${MB105}" data-schedule-hbn="${NEW_HBN}">`) && byNewHbn.body.includes(`data-schedule-tag="${TAG_Q}" data-schedule-hbn="${pickedHbn}" hidden>`),
@@ -7032,8 +7058,8 @@ async function run() {
     // THE TWO BOOKS (canon 0.30.205): the historical lot was minted from the sheet under METRC's text, so >> inherits it and mints nothing.
     const knownBefore = await text("/production/scheduling/prepack");
     assert(
-      knownBefore.body.includes(`data-adopt-tag="${HIST}"`) && knownBefore.body.includes(`data-adopt-hbn="${aliasMetrc}" data-adopt-known="1"`),
-      "the historical package must read known under METRC's harvest name"
+      knownBefore.body.includes(`data-adopt-tag="${HIST}"`) && knownBefore.body.includes(`<span class="pkg-hbn">${aliasMetrc}</span>`) && !knownBefore.body.includes("new from METRC"),
+      "the historical package must read METRC's harvest name"
     );
     const batchesBeforeHist = (await text("/export/harvest_batches.csv")).body;
     const adoptHist = await req("/production/scheduling/prepack/schedule", { method: "POST", body: form({ tag: HIST }) });
@@ -7265,6 +7291,20 @@ async function run() {
       const loadedLoc = loaded.headers.get("location") || "";
       assert(loadedLoc === "/production/scheduling/silos?ok=drying_loaded", `a load from the Silos surface must return there, got ${loadedLoc}`);
       splitSilos.push(siloPick);
+      if (i === 0) {
+        assert(siloPick === silo2Id, "the first free silo must be Silo 2, the one counting empty since its unload");
+        const reloadedStrip = await text("/station/load_silo");
+        const reloadedTile = siloTileHtml(reloadedStrip.body, silo2Id);
+        assert(reloadedTile.includes('data-silo-state="drying"'), "Silo 2 must read drying once loaded again");
+        assert(reloadedTile.includes('data-silo-empty="1" hidden'), "the empty clock must leave the tile once a load begins");
+        assert(!reloadedTile.includes('data-silo-empty="1">'), "the empty clock must not stay visible on the loaded tile");
+        const liveReloaded = await (await req("/silos/live.json")).json();
+        const silo2Reloaded = (liveReloaded.silos || []).find((x) => x.id === silo2Id);
+        assert(
+          silo2Reloaded && silo2Reloaded.state === "drying" && silo2Reloaded.emptySince == null && silo2Reloaded.wetGrams != null,
+          `live.json must clear emptySince once Silo 2 is loaded, got ${JSON.stringify(silo2Reloaded)}`
+        );
+      }
     }
     assert(splitSilos[0] !== splitSilos[1], "the two split lots must land in two different silos");
     const finishedLots = await text("/logistics/internal");
@@ -7731,6 +7771,47 @@ async function run() {
       unloadPage.body.includes(`package_adjustments_${pairHbn}(2).csv`) || unloadPage.body.includes(`packages_from_harvests_${pairHbn}(2).csv`),
       "unload file (2) must be named with the load number"
     );
+
+    const envOpen = await text("/admin/environment");
+    assert(envOpen.res.status === 200 && envOpen.body.includes("Environment"), `environment page expected 200 got ${envOpen.res.status}`);
+    const envRefresh = await req("/admin/environment/refresh", { method: "POST", body: form({}) });
+    assert(envRefresh.status === 303, `sensor refresh expected 303 got ${envRefresh.status} ${await envRefresh.text()}`);
+    const envBind = await req("/admin/environment/bind", {
+      method: "POST",
+      body: form({ sensor_id: "sp-silo3", space_name: "Silo 3", role: "plenum", reason: "smoke bind" }),
+    });
+    assert(envBind.status === 303, `binding the plenum expected 303 got ${envBind.status} ${await envBind.text()}`);
+    const envRange = await req("/admin/environment/range", {
+      method: "POST",
+      body: form({ space_name: "Silo 3", role: "plenum", temp_high: "100", reason: "smoke range" }),
+    });
+    assert(envRange.status === 303, `the plenum range expected 303 got ${envRange.status} ${await envRange.text()}`);
+    const envCron = await req(`/__scheduled?cron=${encodeURIComponent("*/5 * * * *")}`, { noIdentity: true });
+    const envCronBody = await envCron.text();
+    assert(envCron.status === 200, `the environment cron expected 200 got ${envCron.status}: ${envCronBody.slice(0, 200)}`);
+    const flagged = await text("/ops/drying_ops");
+    assert(flagged.body.includes("Plenum 104.2 F, above 100 F"), "Silo 3 must flag the plenum on the strip");
+    const liveFlagged = await (await req("/silos/live.json")).json();
+    const silo3 = (liveFlagged.silos || []).find((row) => row.name === "Silo 3");
+    assert(silo3 && silo3.state && silo3.wetGrams != null && Array.isArray(silo3.flags) && silo3.flags.includes("Plenum 104.2 F, above 100 F"), "live.json must add flags and keep the old fields");
+    const envClear = await req(`/__scheduled?cron=${encodeURIComponent("*/5 * * * *")}`, { noIdentity: true });
+    await envClear.text();
+    const liveClear = await (await req("/silos/live.json")).json();
+    const silo3Clear = (liveClear.silos || []).find((row) => row.name === "Silo 3");
+    assert(silo3Clear && Array.isArray(silo3Clear.flags) && silo3Clear.flags.length === 0, "an in-range reading must clear the flag");
+    const freezerPost = await req("/sensors/readings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ room: "Blast Freezer(s)", temperature_f: 20, read_at: new Date().toISOString(), source: "plc" }),
+    });
+    assert(freezerPost.status === 200, `a freezer reading expected 200 got ${freezerPost.status} ${await freezerPost.text()}`);
+    const freezerRange = await req("/admin/environment/range", {
+      method: "POST",
+      body: form({ space_name: "Blast Freezer(s)", role: "room", temp_high: "10", reason: "smoke freezer" }),
+    });
+    assert(freezerRange.status === 303, `the freezer range expected 303 got ${freezerRange.status}`);
+    const freezerPage = await text("/ops/drying_ops");
+    assert(freezerPage.body.includes("Room 20 F, above 10 F"), "the freezer tile must flag a temperature-only reading");
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

@@ -6,6 +6,7 @@ import {
   formatGramsWhole,
   GRAM_FIELDS,
   ADMIN_SHEET_SYNC_PATH,
+  ENVIRONMENT_PATH,
   ADMIN_METRC_API_PATH,
   TESTING_PATH,
   HARVEST_PATH,
@@ -1753,6 +1754,7 @@ function dryingGauges(spaces: DryingSpaceView[], locale: Locale, siloLive: SiloL
           locale,
           extraClass: "inv-gauge-silo",
           shape: live ? spaceShapeOf(live.silo) : undefined,
+          emptySince: live?.emptySince ?? null,
         });
       }
       const shape = space.kind === "hang" ? "inv-gauge inv-gauge-hang" : "inv-gauge";
@@ -2008,6 +2010,7 @@ export function adminHomePage(locale: Locale = "en"): string {
     // THE SHEET SYNC (canon 0.30.162). Owner, 2026-09-21: "can we setup a cron
     // job or something to regularly check the sheet?" The last runs and Run now.
     { href: ADMIN_SHEET_SYNC_PATH, kind: "Admin", title: "Sheet sync" },
+    { href: ENVIRONMENT_PATH, kind: "Admin", title: "Environment" },
     // THE TESTING DESK (canon 0.30.164): the lab tech's station, behind the Admin PIN.
     { href: TESTING_PATH, kind: "Admin", title: "Testing desk" },
     // THE TESTING DESK (canon 0.30.164), part 3: keys, the last sweep, the month's calls.

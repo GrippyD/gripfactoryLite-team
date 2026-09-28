@@ -472,6 +472,9 @@ export const CONFIG_KEYS = {
   // THE CURE PANES (canon 0.30.164): the rooms a sensor may name, a comma
   // list in data, seeded CSA,CSB by migration 0067.
   cure_rooms: "cure_rooms",
+  // THE ENVIRONMENT FLAGS (canon 0.30.246): a reading older than this many
+  // minutes is stale. Seeded 60 by migration 0077.
+  environment_stale_minutes: "environment_stale_minutes",
   // THE SHEET SYNC (canon 0.30.162): the Labor workbook's place, and the name
   // and web URL of the last read, values in data (canon L-4).
   sheet_drive_id: "sheet_drive_id",
@@ -1152,6 +1155,9 @@ export function metrcLocationName(location: string | null | undefined): string {
 export const PRODUCTION_SCHEDULING_PATH = "/production/scheduling";
 /** THE SHEET SYNC (canon 0.30.162): the Admin page of the Labor tab reads. */
 export const ADMIN_SHEET_SYNC_PATH = "/admin/sheet-sync";
+export const ENVIRONMENT_PATH = "/admin/environment";
+export const ENV_ROLES = ["room", "bed", "plenum", "exhaust"] as const;
+export type EnvRole = (typeof ENV_ROLES)[number];
 /** THE TESTING DESK (canon 0.30.164), part 3: the Admin page of the Metrc mirror. */
 export const ADMIN_METRC_API_PATH = "/admin/metrc-api";
 

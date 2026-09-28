@@ -3,6 +3,8 @@ import {
   assembleSiloVisuals,
   dryingTotals,
   dryingTotalsMarkup,
+  emptyClockLine,
+  emptyOrigin,
   lotStrainLine,
   siloWaitingLines,
   BOX_GEOMETRY,
@@ -26,7 +28,10 @@ import {
   SILO_LIVE_PATH,
 } from "../src/silo";
 import type { SiloLoadRow } from "../src/db";
+import { listSiloEmptySince } from "../src/db";
+import { loadSiloVisuals } from "../src/silo";
 import { themeStylesheet } from "../src/theme";
+import { migratedDb } from "./migrated";
 
 const CAP = SILO_CAPACITY_WET_LBS_DEFAULT * LB_GRAMS;
 const base = { fillingGrams: 0, fillingLots: 0, awaitingGrams: 0, loadedGrams: 0, clock: null, capacityGrams: CAP } as const;
@@ -157,6 +162,8 @@ describe("THE SILO SHAPE AND THE LIVE WET WEIGHT (canon 0.30.69)", () => {
       fillClass: "silo-fill silo-fill-green silo-throb",
       pctLabel: "0% full",
       spaceType: "silo",
+      flags: [],
+      emptySince: null,
     });
     const es = siloLiveEntry("s2", "Silo 2", siloVisual({ ...base, loadedGrams: 10, clock: "running" }), "es");
     expect(es.label).toBe("secando");
@@ -434,5 +441,132 @@ describe("THE DRYING TOTALS AND THE STRAIN ON THE LOT LINE (canon 0.30.183)", ()
     const bare = assembleSiloVisuals(spaces, [], [{ dry_space_id: "s1", status: "drying", weight_grams: 5, lots: 1, lot_id: "lotX", hbn: "26264-ARL-OD-009-0-NA-26031", metrc_harvest_tag: null, planned: 0 }], CAP);
     expect(bare[0].waiting[0]).toEqual({ lot_id: "lotX", hbn: "26264-ARL-OD-009-0-NA-26031", metrc_harvest_tag: null, weight_grams: 5, planned: false });
     expect(siloWaitingLines(bare[0].waiting)).not.toContain("data-lot-strain");
+  });
+});
+
+describe("THE EMPTY CLOCK (canon 0.30.270)", () => {
+  const ended = "2026-09-27T12:00:00.000Z";
+  const voided = "2026-09-27T18:00:00.000Z";
+  const now = "2026-09-27T22:00:00.000Z";
+  const space = { id: "s3", name: "Silo 3", shape: "cylinder" as const, farm_code: "PNN", space_type: "silo" };
+
+  it("takes the newest departure, and none while a load is open or none has ever left", () => {
+    expect(emptyOrigin([{ ended_at: ended, deleted_at: null }], false)).toBe(ended);
+    expect(emptyOrigin([{ ended_at: null, deleted_at: voided }], false)).toBe(voided);
+    expect(emptyOrigin([{ ended_at: ended, deleted_at: null }, { ended_at: null, deleted_at: voided }], false)).toBe(voided);
+    expect(emptyOrigin([{ ended_at: voided, deleted_at: ended }], false)).toBe(voided);
+    expect(emptyOrigin([{ ended_at: ended, deleted_at: null }], true)).toBeNull();
+    expect(emptyOrigin([], false)).toBeNull();
+    expect(emptyOrigin([{ ended_at: null, deleted_at: null }], false)).toBeNull();
+  });
+
+  it("draws the clock under the state word on an empty, filling, or loading tile, and not on a loaded tile or a freezer", () => {
+    const empty = siloVisual(base);
+    const filling = siloVisual({ ...base, fillingGrams: 10, fillingLots: 1 });
+    const loading = siloVisual({ ...base, awaitingGrams: 10, awaitingLots: 1 });
+    const loaded = siloVisual({ ...base, loadedGrams: 10, clock: "running" });
+    const freezer = siloVisual({ ...base, freezer: true });
+    for (const visual of [empty, filling, loading]) {
+      const tile = siloTile({ id: "s3", name: "Silo 3", visual, body: "", emptySince: ended, nowIso: now });
+      const word = tile.indexOf("data-silo-label");
+      const line = tile.indexOf("data-silo-empty");
+      expect(line).toBeGreaterThan(word);
+      expect(tile).toContain("Empty since");
+      expect(tile).toContain('data-silo-empty-clock');
+      expect(tile).toContain('data-state="running"');
+      expect(tile).toContain(`data-started="${Date.parse(ended)}"`);
+      expect(tile).toContain("0d 10:00:00");
+      expect(tile).not.toContain('data-silo-empty="1" hidden');
+    }
+    const drying = siloTile({ id: "s3", name: "Silo 3", visual: loaded, body: "", emptySince: ended, nowIso: now });
+    expect(drying).toContain('data-silo-empty="1" hidden');
+    expect(drying).toContain('data-state="not_started"');
+    expect(drying).not.toContain('data-state="running"');
+    const cube = siloTile({ id: "bf", name: "Blast Freezer(s)", visual: freezer, body: "", shape: "cube", emptySince: ended, nowIso: now });
+    expect(cube).not.toContain("data-silo-empty");
+    expect(cube).not.toContain("Empty since");
+    expect(siloTile({ id: "s3", name: "Silo 3", visual: empty, body: "", emptySince: ended, nowIso: now, locale: "es" })).toContain("Vacío desde");
+    expect(emptyClockLine(null, now)).toContain('data-silo-empty="1" hidden');
+  });
+
+  it("carries emptySince on live.json and the refresh script sets and clears the line", () => {
+    const filling = siloVisual({ ...base, fillingGrams: 10, fillingLots: 1 });
+    const entry = siloLiveEntry("s3", "Silo 3", filling, "en", "cylinder", [], ended);
+    expect(entry).toMatchObject({
+      id: "s3",
+      state: "filling",
+      wetGrams: 10,
+      fill: "green",
+      throb: "green",
+      flags: [],
+      emptySince: ended,
+    });
+    const drying = siloVisual({ ...base, loadedGrams: 10, clock: "running" });
+    expect(siloLiveEntry("s3", "Silo 3", drying, "en", "cylinder", ["Plenum 104.2 F, above 100 F"], ended).emptySince).toBe(ended);
+    const freezer = siloVisual({ ...base, freezer: true });
+    expect(siloLiveEntry("bf", "Blast Freezer(s)", freezer, "en", "cube", [], ended).emptySince).toBeNull();
+    const script = siloLiveScript();
+    expect(script).toContain("entry.emptySince");
+    expect(script).toContain("[data-silo-empty]");
+    expect(script).toContain('clock.setAttribute("data-state", "running")');
+    expect(script).toContain('clock.setAttribute("data-state", "not_started")');
+    expect(script).toContain("empty.hidden = false");
+    expect(script).toContain("empty.hidden = true");
+  });
+
+  it("assembles the origin beside an open load, a void, and a freezer", () => {
+    const departures = [
+      { dry_space_id: "s3", left_at: ended },
+      { dry_space_id: "bf", left_at: voided },
+    ];
+    const open = load({ id: "open", dry_space_id: "s3" });
+    const withOpen = assembleSiloVisuals([space], [open], [], CAP, 22, departures);
+    expect(withOpen[0].visual.state).toBe("drying");
+    expect(withOpen[0].emptySince).toBeNull();
+    const quiet = assembleSiloVisuals([space], [], [], CAP, 22, departures);
+    expect(quiet[0].visual.state).toBe("empty");
+    expect(quiet[0].emptySince).toBe(ended);
+    const filling = assembleSiloVisuals([space], [], [{ dry_space_id: "s3", status: "weighing", weight_grams: 8, lots: 1 }], CAP, 22, departures);
+    expect(filling[0].visual.state).toBe("filling");
+    expect(filling[0].emptySince).toBe(ended);
+    const freezerSpace = { id: "bf", name: "Blast Freezer(s)", shape: "cube" as const, farm_code: "PNN", space_type: "freezer" };
+    const held = assembleSiloVisuals([freezerSpace], [], [], CAP, 22, departures);
+    expect(held[0].emptySince).toBeNull();
+    expect(assembleSiloVisuals([space], [], [], CAP)[0].emptySince).toBeNull();
+  });
+
+  it("reads the newer of an ended load and a voided load from the table", async () => {
+    const m = await migratedDb();
+    const t = "2026-09-27T00:00:00.000Z";
+    m.run(`INSERT INTO dry_spaces (id, name, kind, space_type, created_at, updated_at) VALUES ('sp-e', 'Empty Clock Silo', 'silo', 'silo', ?, ?)`, t, t);
+    m.run(
+      `INSERT INTO silo_loads (id, dry_space_id, wet_weight_entry_id, loaded_at, paused_seconds, ended_at, created_at, updated_at)
+       VALUES ('ld-ended', 'sp-e', 'w1', ?, 0, ?, ?, ?)`,
+      ended,
+      ended,
+      t,
+      t
+    );
+    m.run(
+      `INSERT INTO silo_loads (id, dry_space_id, wet_weight_entry_id, loaded_at, paused_seconds, ended_at, deleted_at, created_at, updated_at)
+       VALUES ('ld-void', 'sp-e', 'w2', ?, 0, NULL, ?, ?, ?)`,
+      voided,
+      voided,
+      t,
+      t
+    );
+    const rows = await listSiloEmptySince(m.db);
+    expect(rows.find((row) => row.dry_space_id === "sp-e")?.left_at).toBe(voided);
+    const live = await loadSiloVisuals(m.db);
+    expect(live.live.find((row) => row.silo.id === "sp-e")?.emptySince).toBe(voided);
+    m.run(
+      `INSERT INTO silo_loads (id, dry_space_id, wet_weight_entry_id, loaded_at, paused_seconds, ended_at, created_at, updated_at)
+       VALUES ('ld-open', 'sp-e', 'w3', ?, 0, NULL, ?, ?)`,
+      now,
+      t,
+      t
+    );
+    const again = await loadSiloVisuals(m.db);
+    expect(again.live.find((row) => row.silo.id === "sp-e")?.emptySince).toBeNull();
   });
 });

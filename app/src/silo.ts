@@ -55,6 +55,7 @@ import { formatLbs } from "./compliance";
 import {
   getConfigValue,
   listOpenSiloLoads,
+  listSiloEmptySince,
   listSiloLotGrams,
   listSilos,
   type SiloLoadRow,
@@ -353,6 +354,46 @@ export function siloWetLine(wetGrams: number, locale: Locale = "en"): string {
   )}</strong> g</div>`;
 }
 
+/** THE EMPTY CLOCK (canon 0.30.270): the origin is the newest moment a load left
+ * the space. ended_at is the unload finish's press. A void that took the load
+ * and left ended_at null counts from deleted_at. An open load, or a space no
+ * load has ever left, has none. */
+export function emptyOrigin(rows: readonly { ended_at?: string | null; deleted_at?: string | null }[], openLoad: boolean): string | null {
+  if (openLoad) return null;
+  let best: string | null = null;
+  for (const row of rows) {
+    const ended = String(row.ended_at ?? "").trim();
+    const deleted = String(row.deleted_at ?? "").trim();
+    const at = ended || deleted;
+    if (!at) continue;
+    if (best == null || at > best) best = at;
+  }
+  return best;
+}
+
+function emptyClockText(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const days = Math.floor(s / 86400);
+  const rem = s % 86400;
+  const hh = String(Math.floor(rem / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((rem % 3600) / 60)).padStart(2, "0");
+  const ss = String(rem % 60).padStart(2, "0");
+  return `${days}d ${hh}:${mm}:${ss}`;
+}
+
+/** Under the state word: muted "Empty since" and a running clock from the origin.
+ * Hidden when there is no origin, so the live refresh can set it without a page load. */
+export function emptyClockLine(origin: string | null, nowIso: string, locale: Locale = "en"): string {
+  const started = origin ? Date.parse(origin) : NaN;
+  const now = Date.parse(nowIso);
+  const show = Boolean(origin) && Number.isFinite(started);
+  const seconds = show && Number.isFinite(now) ? Math.max(0, Math.floor((now - started) / 1000)) : 0;
+  const hidden = show ? "" : " hidden";
+  return `<div class="muted silo-empty" data-silo-empty="1"${hidden}>${esc(t(locale, "Empty since"))} <span class="silo-clock" data-clock data-silo-empty-clock data-state="${
+    show ? "running" : "not_started"
+  }" data-started="${esc(show ? String(started) : "")}" data-paused-at="" data-paused-seconds="0">${esc(emptyClockText(seconds))}</span></div>`;
+}
+
 /** A silo tile for any surface: the name, the shape, the state word, the caller's body (lots, clocks), the wet weight at the bottom. */
 export function siloTile(input: {
   id: string;
@@ -363,10 +404,17 @@ export function siloTile(input: {
   extraClass?: string;
   /** Canon 0.30.73: the silo's drawn shape; the cylinder when absent. */
   shape?: SiloShape | string | null;
+  flags?: string[];
+  /** THE EMPTY CLOCK (canon 0.30.270): the origin ISO, or null. */
+  emptySince?: string | null;
+  nowIso?: string;
 }): string {
   const locale = input.locale ?? "en";
   const v = input.visual;
   const shape = siloShapeOf(input.shape);
+  const flagLine = `<div class="silo-flags" data-silo-flags>${esc((input.flags ?? []).join(" "))}</div>`;
+  const quiet = v.state === "empty" || v.state === "filling" || v.state === "loading";
+  const emptyLine = v.freezer ? "" : emptyClockLine(quiet ? (input.emptySince ?? null) : null, input.nowIso ?? new Date().toISOString(), locale);
   if (v.freezer) {
     // THE BLAST FREEZER(S) (canon 0.30.106; owner: "Merge the blast freezer
     // formatting to the FFZ inventory one"; his pick: the status and the percent
@@ -376,6 +424,7 @@ export function siloTile(input: {
       input.id
     )}" data-silo-state="${esc(v.state)}" data-silo-shape-kind="${shape}" data-space-type="freezer">
           <div class="inv-gauge-name">${esc(input.name)}</div>
+          ${flagLine}
           ${siloSvg(v, input.id, locale, shape)}
           <div class="silo-state ffz-state freezer-state"><span data-silo-label>${esc(t(locale, v.label))}</span> · <span data-silo-pct>${esc(
       siloPctLabel(v, locale)
@@ -387,8 +436,10 @@ export function siloTile(input: {
   }
   return `<div class="inv-gauge silo-gauge${input.extraClass ? ` ${esc(input.extraClass)}` : ""}" data-silo="${esc(input.id)}" data-silo-state="${esc(v.state)}" data-silo-shape-kind="${shape}">
           <div class="inv-gauge-name">${esc(input.name)}</div>
+          ${flagLine}
           ${siloSvg(v, input.id, locale, shape)}
           <div class="silo-state silo-state-${esc(v.state)}" data-silo-label>${esc(t(locale, v.label))}</div>
+          ${emptyLine}
           ${siloUnloadLine(v, locale)}
           ${input.body}
           ${siloWetLine(v.wetGrams, locale)}
@@ -421,9 +472,20 @@ export type SiloLiveEntry = {
   fillClass: string;
   pctLabel: string;
   spaceType: DrySpaceType;
+  flags: string[];
+  /** THE EMPTY CLOCK (canon 0.30.270): the origin's ISO, or null while a load is open, on a freezer, or when no load has ever left. */
+  emptySince: string | null;
 };
 
-export function siloLiveEntry(id: string, name: string, v: SiloVisual, locale: Locale = "en", shape: SiloShape | string | null = "cylinder"): SiloLiveEntry {
+export function siloLiveEntry(
+  id: string,
+  name: string,
+  v: SiloVisual,
+  locale: Locale = "en",
+  shape: SiloShape | string | null = "cylinder",
+  flags: string[] = [],
+  emptySince: string | null = null
+): SiloLiveEntry {
   return {
     id,
     name,
@@ -442,6 +504,8 @@ export function siloLiveEntry(id: string, name: string, v: SiloVisual, locale: L
     fillClass: siloFillClass(v),
     pctLabel: siloPctLabel(v, locale),
     spaceType: v.freezer ? "freezer" : siloShapeOf(shape) === "box" ? "dry_room" : "silo",
+    flags,
+    emptySince: v.freezer ? null : emptySince,
   };
 }
 
@@ -501,6 +565,30 @@ export function siloLiveScript(): string {
         if (uPct && entry.unloadPct != null) uPct.textContent = entry.unloadPct + "%";
       }
       paintWet(tile, entry.wetLb, entry.wetG);
+      var flags = tile.querySelector("[data-silo-flags]");
+      if (flags) flags.textContent = Array.isArray(entry.flags) ? entry.flags.join(" ") : "";
+      var empty = tile.querySelector("[data-silo-empty]");
+      if (empty) {
+        var clock = empty.querySelector("[data-silo-empty-clock]");
+        var since = entry.emptySince || "";
+        var quiet = entry.state === "empty" || entry.state === "filling" || entry.state === "loading";
+        if (since && quiet && clock) {
+          var ms = Date.parse(since);
+          empty.hidden = false;
+          clock.setAttribute("data-state", "running");
+          clock.setAttribute("data-started", String(ms));
+          clock.setAttribute("data-paused-seconds", "0");
+          if (isFinite(ms)) {
+            var sec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+            var days = Math.floor(sec / 86400), rem = sec % 86400;
+            clock.textContent = days + "d " + String(Math.floor(rem / 3600)).padStart(2, "0") + ":" + String(Math.floor((rem % 3600) / 60)).padStart(2, "0") + ":" + String(sec % 60).padStart(2, "0");
+          }
+        } else if (clock) {
+          empty.hidden = true;
+          clock.setAttribute("data-state", "not_started");
+          clock.setAttribute("data-started", "");
+        }
+      }
     });
   }
   function refresh() {
@@ -541,7 +629,7 @@ export type SiloWaitingLot = {
   strain_label?: string | null;
 };
 
-export type SiloLive = { silo: SiloRow; visual: SiloVisual; loads: SiloLoadRow[]; waiting: SiloWaitingLot[] };
+export type SiloLive = { silo: SiloRow; visual: SiloVisual; loads: SiloLoadRow[]; waiting: SiloWaitingLot[]; emptySince: string | null };
 
 /** Pure assembly: silos, their open loads, and the weighing / awaiting grams per silo.
  * THE UNLOADING SILO (canon 0.30.77): the loads' dry grams weighed out so far
@@ -561,7 +649,8 @@ export function assembleSiloVisuals(
     strain_label?: string | null;
   }[],
   capacityGrams: number,
-  dryYieldPct: number = PROJECTED_DRY_YIELD_PCT_DEFAULT
+  dryYieldPct: number = PROJECTED_DRY_YIELD_PCT_DEFAULT,
+  departures: readonly { dry_space_id: string; left_at: string | null }[] = []
 ): SiloLive[] {
   return silos.map((silo) => {
     const mine = loads.filter((l) => l.dry_space_id === silo.id);
@@ -598,7 +687,9 @@ export function assembleSiloVisuals(
       dryYieldPct,
       freezer: spaceTypeOf(silo) === "freezer",
     });
-    return { silo, visual, loads: mine, waiting };
+    const left = departures.find((row) => row.dry_space_id === silo.id)?.left_at ?? null;
+    const emptySince = spaceTypeOf(silo) === "freezer" ? null : emptyOrigin(left ? [{ ended_at: left }] : [], mine.length > 0);
+    return { silo, visual, loads: mine, waiting, emptySince };
   });
 }
 
@@ -705,14 +796,15 @@ export function siloWaitingLines(waiting: readonly SiloWaitingLot[], locale: Loc
 
 /** Everything the silo surfaces draw, read once per request. */
 export async function loadSiloVisuals(db: D1Database): Promise<{ live: SiloLive[]; capacityGrams: number; dryYieldPct: number }> {
-  const [silos, loads, lotGrams, capRaw, yieldRaw] = await Promise.all([
+  const [silos, loads, lotGrams, departures, capRaw, yieldRaw] = await Promise.all([
     listSilos(db),
     listOpenSiloLoads(db),
     listSiloLotGrams(db),
+    listSiloEmptySince(db),
     getConfigValue(db, CONFIG_KEYS.silo_capacity_wet_lbs),
     getConfigValue(db, CONFIG_KEYS.projected_dry_yield_pct),
   ]);
   const capacityGrams = siloCapacityGrams(capRaw);
   const dryYieldPct = projectedDryYieldPct(yieldRaw);
-  return { live: assembleSiloVisuals(silos, loads, lotGrams, capacityGrams, dryYieldPct), capacityGrams, dryYieldPct };
+  return { live: assembleSiloVisuals(silos, loads, lotGrams, capacityGrams, dryYieldPct, departures), capacityGrams, dryYieldPct };
 }

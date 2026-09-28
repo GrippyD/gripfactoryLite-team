@@ -38,6 +38,7 @@ import {
   sumGrams,
   truckNumberFromPick,
   ADMIN_SHEET_SYNC_PATH,
+  ENVIRONMENT_PATH,
   ADMIN_METRC_API_PATH,
   MODELS_PATH,
   MODELS_PIN_PATH,
@@ -410,6 +411,8 @@ import {
   voidPrepackLine,
 } from "./prepack";
 import { curePanes, listCurePanes, SENSOR_PATH, storeSensorReadings } from "./cure";
+import { environmentPage, loadEnvironmentPage, saveEnvironmentRange, saveSensorBinding, saveStaleMinutes, listEnvironmentFlags } from "./environment";
+import { pullSensorPush, refreshSensorCatalog } from "./sensorpush";
 import {
   buildTestSampleCsv,
   createTestManifest,
@@ -1308,6 +1311,61 @@ app.get("/__sheet-fixture", async (c) => {
   return fixtureHttpResponse(c.env.DB, c.env.SHEET_FIXTURE_URL ?? "", c.req.query("meta") === "1");
 });
 
+function sensorFixtureOpen(env: Env): boolean {
+  return (env.SENSORPUSH_API_BASE ?? "").includes("__sensorpush");
+}
+
+app.post("/__sensorpush/oauth/authorize", async (c) => {
+  if (!sensorFixtureOpen(c.env)) return c.notFound();
+  return c.json({ authorization: "fixture-authorization" });
+});
+app.post("/__sensorpush/oauth/accesstoken", async (c) => {
+  if (!sensorFixtureOpen(c.env)) return c.notFound();
+  return c.json({ accesstoken: "fixture-access" });
+});
+app.post("/__sensorpush/devices/sensors", async (c) => {
+  if (!sensorFixtureOpen(c.env)) return c.notFound();
+  return c.json([{ id: "sp-silo3", name: "Silo 3 sensor", battery_voltage: 3.1, active: true }]);
+});
+app.post("/__sensorpush/samples", async (c) => {
+  if (!sensorFixtureOpen(c.env)) return c.notFound();
+  const body = (await c.req.json().catch(() => ({}))) as { startTime?: string };
+  const start = Date.parse(String(body.startTime ?? ""));
+  const hot = !Number.isFinite(start) || Date.now() - start > 10 * 60 * 1000;
+  const observed = new Date(Date.now() + (hot ? 0 : 1000)).toISOString();
+  return c.json({
+    sensors: { "sp-silo3": [{ observed, temperature: hot ? 104.2 : 70, humidity: 40 }] },
+    last_time: observed,
+    truncated: false,
+  });
+});
+
+app.get(ENVIRONMENT_PATH, async (c) => {
+  const s = await shell(c);
+  const page = await loadEnvironmentPage(c.env.DB);
+  return html(c, s, "Environment", environmentPage(page, s.locale, c.req.query("ok") ?? null, c.req.query("n") ?? null));
+});
+app.post(`${ENVIRONMENT_PATH}/refresh`, async (c) => {
+  const result = await refreshSensorCatalog(c.env);
+  if (result.error) {
+    const code = result.error.replace(/^HTTP /, "") || "0";
+    return c.redirect(`${ENVIRONMENT_PATH}?ok=refused&n=${encodeURIComponent(code)}`, 303);
+  }
+  return c.redirect(`${ENVIRONMENT_PATH}?ok=saved`, 303);
+});
+app.post(`${ENVIRONMENT_PATH}/bind`, async (c) => {
+  await saveSensorBinding(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(`${ENVIRONMENT_PATH}?ok=saved`, 303);
+});
+app.post(`${ENVIRONMENT_PATH}/range`, async (c) => {
+  await saveEnvironmentRange(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(`${ENVIRONMENT_PATH}?ok=saved`, 303);
+});
+app.post(`${ENVIRONMENT_PATH}/stale`, async (c) => {
+  await saveStaleMinutes(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(`${ENVIRONMENT_PATH}?ok=saved`, 303);
+});
+
 // The last ten runs, the sheet's name and web URL from the last metadata, and Run now.
 app.get(ADMIN_SHEET_SYNC_PATH, async (c) => {
   const s = await shell(c);
@@ -1345,7 +1403,7 @@ app.get(HARVEST_PATH, async (c) => {
   const input = await loadHarvestConsole(c.env.DB, now, c.req.query("day") ?? null);
   const [silos, cure, testing, prepack] = await Promise.all([
     loadSiloVisuals(c.env.DB),
-    listCurePanes(c.env.DB, now),
+    listCurePanes(c.env.DB, now, s.locale),
     loadTestingSection(c.env.DB, input.year),
     loadPrepackSection(c.env.DB, input.yesterday),
   ]);
@@ -1360,6 +1418,7 @@ app.get(HARVEST_PATH, async (c) => {
       locale: s.locale,
       ok: c.req.query("ok") ?? undefined,
       cureTiles: curePanes(cure, s.locale),
+      envFlags: await listEnvironmentFlags(c.env.DB, now, s.locale),
       // THE DRYING TOTALS (canon 0.30.183): loaded in the silos and the dry rooms with the estimate
       // at the Admin percent, the cure panes' dry grams, the Unloaded Queue for trim.
       dryingTotals: dryingTotals({
@@ -1991,8 +2050,12 @@ async function siloStripFor(c: AppContext): Promise<string> {
   const s = await shell(c);
   // THE CURE PANES ride the strip's row after the last space tile.
   const now = nowIso();
-  const [{ live }, cure] = await Promise.all([loadSiloVisuals(c.env.DB), listCurePanes(c.env.DB, now)]);
-  return siloStrip(live, now, s.locale, curePanes(cure, s.locale));
+  const [{ live }, cure, flags] = await Promise.all([
+    loadSiloVisuals(c.env.DB),
+    listCurePanes(c.env.DB, now, s.locale),
+    listEnvironmentFlags(c.env.DB, now, s.locale),
+  ]);
+  return siloStrip(live, now, s.locale, curePanes(cure, s.locale), flags);
 }
 
 app.post(SENSOR_PATH, async (c) => {
@@ -2018,11 +2081,12 @@ app.post(SENSOR_PATH, async (c) => {
 app.get(SILO_LIVE_PATH, async (c) => {
   const s = await shell(c);
   const { live, capacityGrams } = await loadSiloVisuals(c.env.DB);
+  const flags = await listEnvironmentFlags(c.env.DB, nowIso(), s.locale);
   return c.json(
     {
       capacityGrams,
       at: nowIso(),
-      silos: live.map((l) => siloLiveEntry(l.silo.id, l.silo.name, l.visual, s.locale, spaceShapeOf(l.silo))),
+      silos: live.map((l) => siloLiveEntry(l.silo.id, l.silo.name, l.visual, s.locale, spaceShapeOf(l.silo), flags[l.silo.name] ?? [], l.emptySince)),
     },
     200,
     { "cache-control": "no-store" }
@@ -2053,11 +2117,12 @@ app.get("/station/load_silo", async (c) => {
   const kindRaw = c.req.query("kind") ?? "";
   const kind = (DRY_SPACE_TYPES as readonly string[]).includes(kindRaw) ? (kindRaw as DrySpaceType) : null;
   const now = nowIso();
+  const flags = await listEnvironmentFlags(c.env.DB, now, s.locale);
   return html(
     c,
     s,
     "Load Silo",
-    siloStrip(siloVisuals.live, now, s.locale) +
+    siloStrip(siloVisuals.live, now, s.locale, "", flags) +
       loadSiloPage({
         barnLots,
         silos,
@@ -2105,17 +2170,18 @@ app.get(`${PRODUCTION_SCHEDULING_PATH}/:stage`, async (c) => {
   if (drying) {
     const s = await shell(c);
     const now = nowIso();
-    const [lots, visuals, complete, cure] = await Promise.all([
+    const [lots, visuals, complete, cure, flags] = await Promise.all([
       listScheduledLotsForLoad(c.env.DB),
       loadSiloVisuals(c.env.DB),
       listDryingComplete(c.env.DB, dryingCompleteSince(now, s.farmDayStart)),
-      listCurePanes(c.env.DB, now),
+      listCurePanes(c.env.DB, now, s.locale),
+      listEnvironmentFlags(c.env.DB, now, s.locale),
     ]);
     return html(
       c,
       s,
       SCHEDULE_STAGE_TITLES[drying],
-      siloStrip(visuals.live, now, s.locale, curePanes(cure, s.locale)) +
+      siloStrip(visuals.live, now, s.locale, curePanes(cure, s.locale), flags) +
         dryingSchedulingPage({
           stage: drying,
           lots,
@@ -3490,12 +3556,14 @@ app.post("/marketplace/orders/:id/status", async (c) => {
 // (canon 0.30.140) is untouched. The handler registers the run with waitUntil
 // and awaits it, so a dev trigger's response means the run has finished.
 function scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-  void event;
-  const run = (async () => {
-    await runSheetSync(env, "cron");
-    await runMetrcSweep(env, "cron");
-    await runInTestingSync(env, "cron");
-  })();
+  const cron = String(event.cron ?? "");
+  const run = cron.startsWith("*/5")
+    ? pullSensorPush(env).then(() => undefined)
+    : (async () => {
+        await runSheetSync(env, "cron");
+        await runMetrcSweep(env, "cron");
+        await runInTestingSync(env, "cron");
+      })();
   ctx.waitUntil(run);
   return run;
 }

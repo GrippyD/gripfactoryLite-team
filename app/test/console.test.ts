@@ -24,7 +24,6 @@ import {
   BUD_ROWS,
   BUD_COLS,
   BUD_CELLS,
-  BUD_STEM,
   BUD_PRODUCT_CELLS,
   budWaffle,
   type HarvestConsoleInput,
@@ -72,8 +71,8 @@ const input: HarvestConsoleInput = {
 const CAP = 15000 * LB_GRAMS;
 const base = { fillingGrams: 0, fillingLots: 0, awaitingGrams: 0, loadedGrams: 0, clock: null, capacityGrams: CAP } as const;
 const live: SiloLive[] = [
-  { silo: { id: "s1", name: "Silo 1", shape: "cylinder", farm_code: "PNN" }, visual: siloVisual(base), loads: [], waiting: [] },
-  { silo: { id: "s6", name: "Arlington Dry Room", shape: "box", farm_code: "ARL" }, visual: siloVisual({ ...base, fillingGrams: CAP / 4, fillingLots: 1 }), loads: [], waiting: [] },
+  { silo: { id: "s1", name: "Silo 1", shape: "cylinder", farm_code: "PNN" }, visual: siloVisual(base), loads: [], waiting: [], emptySince: null },
+  { silo: { id: "s6", name: "Arlington Dry Room", shape: "box", farm_code: "ARL" }, visual: siloVisual({ ...base, fillingGrams: CAP / 4, fillingLots: 1 }), loads: [], waiting: [], emptySince: null },
 ];
 
 describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console at /harvest", () => {
@@ -289,88 +288,61 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
   });
 });
 
-/** THE BUD WAFFLE (canon 0.30.157) and THE DEEPER BUD (canon 0.30.160). The
- * cell map is his fourth drawing, THE PLUME (canon 0.30.207): 100 cells on a
- * 16 by 13 lattice, ten each of red, orange, yellow, green, blue, indigo,
- * violet, white, black and the teal core as the center, plus two permanent
- * dark green stem cells that never count and draw as any unconsumed cell.
- * Consumption order is the array order: red first, white then black after
- * violet, the center last; within a band top to bottom, left to right. */
-describe("THE BUD WAFFLE (canon 0.30.157), drawn as THE PLUME (canon 0.30.207)", () => {
-  it("the cell map has the count the map states, every band its count, no duplicate cell, every cell inside the lattice", () => {
-    expect(BUD_ROWS).toBe(16);
+/** THE PROGRESSION BUD (canon 0.30.273): his drawing, 100 cells on a 13 by 19
+ * lattice, 1 at the heart and 100 at the foot. Every cell has its mirror. */
+describe("THE BUD WAFFLE (canon 0.30.157), drawn as THE PROGRESSION BUD (canon 0.30.273)", () => {
+  it("the table holds 100 cells, every number once, every cell with its mirror", () => {
+    expect(BUD_ROWS).toBe(19);
     expect(BUD_COLS).toBe(13);
     expect(BUD_CELLS).toHaveLength(100);
-    const bands = ["red", "orange", "yellow", "green", "blue", "indigo", "violet", "white", "black", "center"] as const;
-    const counts: Record<(typeof bands)[number], number> = {
-      red: 10,
-      orange: 10,
-      yellow: 10,
-      green: 10,
-      blue: 10,
-      indigo: 10,
-      violet: 10,
-      white: 10,
-      black: 10,
-      center: 10,
-    };
-    expect(BUD_CELLS.map((c) => c[2])).toEqual(bands.flatMap((band) => Array(counts[band]).fill(band)));
+    const numbers = BUD_CELLS.map((c) => c[2]).sort((a, b) => a - b);
+    expect(numbers).toEqual(Array.from({ length: 100 }, (_, i) => i + 1));
+    const byNumber = new Map(BUD_CELLS.map((c) => [c[2], c]));
+    expect(byNumber.get(1)).toEqual([13, 6, 1]);
+    expect(byNumber.get(100)).toEqual([18, 6, 100]);
+    expect([50, 82, 83, 100].map((n) => byNumber.get(n))).toEqual([[15, 6, 50], [16, 6, 82], [17, 6, 83], [18, 6, 100]]);
     const seen = new Set<string>();
-    for (const [row, col, band] of BUD_CELLS) {
+    for (const [row, col, n] of BUD_CELLS) {
       expect(row).toBeGreaterThanOrEqual(0);
       expect(row).toBeLessThan(BUD_ROWS);
       expect(col).toBeGreaterThanOrEqual(0);
       expect(col).toBeLessThan(BUD_COLS);
-      expect(bands.includes(band as (typeof bands)[number])).toBe(true);
       const key = `${row}:${col}`;
       expect(seen.has(key)).toBe(false);
       seen.add(key);
+      const mirror = BUD_CELLS.find((c) => c[0] === row && c[1] === 12 - col);
+      expect(mirror).toBeTruthy();
+      expect(mirror?.[2]).not.toBe(0);
+      if (col !== 6) expect(mirror?.[2]).not.toBe(n);
     }
     expect(seen.size).toBe(100);
-    expect(BUD_CELLS[0][2]).toBe("red");
-    expect(BUD_CELLS[BUD_CELLS.length - 1][2]).toBe("center");
-    // The stem's two reds are red cells in reading order, the last two of the red band.
-    expect(BUD_CELLS.slice(8, 10)).toEqual([[14, 6, "red"], [15, 6, "red"]]);
-    // THE DEEPER BUD: white and black follow violet, so a 15% BTR (85 consumed) still leaves the center and half the black.
-    expect(BUD_CELLS[70][2]).toBe("white");
-    expect(BUD_CELLS[80][2]).toBe("black");
-    expect(BUD_CELLS[90][2]).toBe("center");
-    for (const band of bands) {
-      const cells = BUD_CELLS.filter((c) => c[2] === band);
-      expect(cells).toHaveLength(counts[band]);
-      for (let i = 1; i < cells.length; i++) {
-        const [r0, c0] = cells[i - 1];
-        const [r1, c1] = cells[i];
-        expect(r1 > r0 || (r1 === r0 && c1 > c0)).toBe(true);
-      }
-    }
-    // THE PLUME: the tip is indigo, the crown orange and yellow, the eye's core is the center, the stem
-    // reads dark green, dark green, red, red under the eye (his pick: the stem's orange dropped).
-    expect(BUD_CELLS.filter((c) => c[0] === 0)).toEqual([[0, 6, "indigo"]]);
-    expect(BUD_CELLS.filter((c) => c[0] === 1).map((c) => `${c[1]}:${c[2]}`).sort()).toEqual(["4:orange", "5:yellow", "6:indigo", "7:yellow", "8:orange"]);
-    expect(BUD_CELLS.filter((c) => c[2] === "center").map((c) => [c[0], c[1]])).toEqual([[8, 6], [9, 5], [9, 6], [9, 7], [10, 5], [10, 6], [10, 7], [11, 5], [11, 6], [11, 7]]);
-    expect(BUD_CELLS.filter((c) => c[0] >= 14)).toEqual([[14, 6, "red"], [15, 6, "red"]]);
-    expect(BUD_CELLS.filter((c) => c[1] === 6 && c[0] >= 12)).toEqual([[14, 6, "red"], [15, 6, "red"]]);
-    expect(BUD_STEM).toEqual([[12, 6], [13, 6]]);
-    for (const [row, col] of BUD_STEM) {
-      expect(row).toBeLessThan(BUD_ROWS);
-      expect(col).toBeLessThan(BUD_COLS);
-      expect(seen.has(`${row}:${col}`)).toBe(false);
-    }
+    const sixtyThree = budWaffle(0.63);
+    expect(sixtyThree).toContain('viewBox="0 0 130 190"');
+    for (let n = 1; n <= 63; n++) expect(sixtyThree).toContain(`hc-bud-bud" data-hc-bud-order="${101 - n}" data-hc-bud-n="${n}"`);
+    for (let n = 64; n <= 100; n++) expect(sixtyThree).toContain(`hc-bud-consumed" data-hc-bud-order="${101 - n}" data-hc-bud-n="${n}"`);
+    const low = budWaffle(0.31);
+    for (let n = 32; n <= 40; n++) expect(low).toMatch(new RegExp(`data-hc-bud-order="${101 - n}" data-hc-bud-n="${n}" [^>]* data-hc-bud-waste/>`));
+    for (let n = 41; n <= 69; n++) expect(low).toMatch(new RegExp(`hc-bud-consumed" data-hc-bud-order="${101 - n}" data-hc-bud-n="${n}" [^>]*rx="1.2"/>`));
+    expect(low).toMatch(/data-hc-bud-order="61" data-hc-bud-n="40" [^>]* data-hc-bud-waste\/>/);
+    expect((budWaffle(0.31, "en", 0).match(/ data-hc-bud-waste\/>/g) || []).length).toBe(0);
+    expect((budWaffle(0.31, "en", 100).match(/ data-hc-bud-waste\/>/g) || []).length).toBe(69);
+    const none = budWaffle(null);
+    expect((none.match(/class="hc-bud-cell hc-bud-empty"/g) || []).length).toBe(100);
+    expect(none).not.toContain("data-hc-bud-stem");
+    const pairs = [...none.matchAll(/data-hc-bud-order="(\d+)" data-hc-bud-n="(\d+)"/g)];
+    expect(pairs).toHaveLength(100);
+    for (const pair of pairs) expect(Number(pair[2])).toBe(101 - Number(pair[1]));
   });
 
   it("budWaffle(0.6) greys the first 40 cells; null outlines every cell; 1.004 greys 0; 0 greys them all", () => {
     const sixty = budWaffle(0.6);
-    expect(sixty).toContain('<svg class="hc-bud" viewBox="0 0 130 160" role="img" aria-label="BTR 60.0%" data-hc-bud data-hc-bud-consumed="40" data-hc-bud-product="40">');
+    expect(sixty).toContain('<svg class="hc-bud" viewBox="0 0 130 190" role="img" aria-label="BTR 60.0%" data-hc-bud data-hc-bud-consumed="40" data-hc-bud-product="40">');
     expect((sixty.match(/class="hc-bud-cell hc-bud-consumed"/g) || []).length).toBe(40);
     expect((sixty.match(/class="hc-bud-cell hc-bud-bud"/g) || []).length).toBe(60);
-    // THE PLUME: the two stem cells stand in every state and never count; with a reading they draw as unconsumed cells.
-    expect((sixty.match(/class="hc-bud-cell hc-bud-stem" data-hc-bud-stem/g) || []).length).toBe(2);
-    expect(sixty).toContain('<rect class="hc-bud-cell hc-bud-stem" data-hc-bud-stem x="61.2" y="121.2" width="7.6" height="7.6" rx="1.2"/>');
-    expect(sixty).toContain('<rect class="hc-bud-cell hc-bud-stem" data-hc-bud-stem x="61.2" y="131.2" width="7.6" height="7.6" rx="1.2"/>');
-    // The stem's reds are cells 9 and 10 of the hundred: consumed with the reds, as drawn.
-    expect(sixty).toContain('class="hc-bud-cell hc-bud-consumed" data-hc-bud-order="9" x="61.2" y="141.2"');
-    expect(sixty).toContain('class="hc-bud-cell hc-bud-consumed" data-hc-bud-order="10" x="61.2" y="151.2"');
+    expect(sixty).not.toContain("data-hc-bud-stem");
+    // Cell 1, the heart, is bud. Cell 100, the foot, is the first consumed.
+    expect(sixty).toContain('hc-bud-bud" data-hc-bud-order="100" data-hc-bud-n="1"');
+    expect(sixty).toContain('hc-bud-consumed" data-hc-bud-order="1" data-hc-bud-n="100"');
     for (let k = 1; k <= 40; k++) {
       expect(sixty).toContain(`class="hc-bud-cell hc-bud-consumed" data-hc-bud-order="${k}"`);
     }
@@ -378,10 +350,8 @@ describe("THE BUD WAFFLE (canon 0.30.157), drawn as THE PLUME (canon 0.30.207)",
     const none = budWaffle(null);
     expect(none).toContain('data-hc-bud-consumed="0"');
     expect(none).toContain('aria-label="no packages yesterday"');
-    // Nothing ran: the hundred and the two stem cells are all outlines; the stem reads no different.
-    expect((none.match(/class="hc-bud-cell hc-bud-empty"/g) || []).length).toBe(102);
-    expect((none.match(/class="hc-bud-cell hc-bud-empty" data-hc-bud-stem/g) || []).length).toBe(2);
-    expect(none).not.toContain("hc-bud-stem\"");
+    expect((none.match(/class="hc-bud-cell hc-bud-empty"/g) || []).length).toBe(100);
+    expect(none).not.toContain("data-hc-bud-stem");
     expect(none).not.toContain('class="hc-bud-cell hc-bud-bud"');
     expect(none).not.toContain('class="hc-bud-cell hc-bud-consumed"');
     expect(budWaffle(null, "es")).toContain('aria-label="sin paquetes ayer"');
@@ -391,7 +361,7 @@ describe("THE BUD WAFFLE (canon 0.30.157), drawn as THE PLUME (canon 0.30.207)",
     const zero = budWaffle(0);
     expect(zero).toContain('data-hc-bud-consumed="100"');
     expect((zero.match(/class="hc-bud-cell hc-bud-consumed"/g) || []).length).toBe(100);
-    expect((zero.match(/class="hc-bud-cell hc-bud-stem" data-hc-bud-stem/g) || []).length).toBe(2);
+    expect(zero).not.toContain("data-hc-bud-stem");
   });
 
   // THE PRODUCT LINE (canon 0.30.243; owner, 2026-09-26: "40% and under" and "I want it to look like biproduct for the first 60% and waste thereafter").
@@ -413,8 +383,7 @@ describe("THE BUD WAFFLE (canon 0.30.157), drawn as THE PLUME (canon 0.30.207)",
     expect((zero.match(/class="hc-bud-cell hc-bud-consumed"/g) || []).length).toBe(100);
     expect(waste(budWaffle(1.004))).toBe(0);
     expect(waste(budWaffle(null))).toBe(0);
-    // No bud cell and no stem cell is ever waste.
-    expect(zero).not.toMatch(/data-hc-bud-stem[^>]*data-hc-bud-waste/);
+    expect(zero).not.toContain("data-hc-bud-stem");
     expect(low).not.toMatch(/hc-bud-bud"[^>]*data-hc-bud-waste/);
     expect(themeStylesheet("lite")).toContain(".hc-bud-consumed[data-hc-bud-waste] { fill: #7c1b1b; }");
     expect(themeStylesheet("co")).toContain(".hc-bud-consumed[data-hc-bud-waste] { fill: #7c1b1b; }");
@@ -426,6 +395,28 @@ describe("THE BUD WAFFLE (canon 0.30.157), drawn as THE PLUME (canon 0.30.207)",
     expect(themeStylesheet("cerberus")).toContain(".hc-swatch-waste { background: #ba2929; margin-left: 0.45rem; }");
   });
 
+  // THE THROBBING WASTE (canon 0.30.266; owner, 2026-09-27: "make the dark red throb on the btr graph").
+  it("a consumed waste cell throbs in its deep red, and the legend swatch stands still", () => {
+    const rule = ".hc-bud-consumed[data-hc-bud-waste] { animation: hc-waste-throb 1.6s ease-in-out infinite; }";
+    const frames = "@keyframes hc-waste-throb { 0%, 100% { fill-opacity: 0.55; } 50% { fill-opacity: 1; } }";
+    const slow = "@media (prefers-reduced-motion: reduce) { .hc-bud-consumed[data-hc-bud-waste] { animation-duration: 3.2s; } }";
+    for (const skin of ["lite", "co", "cerberus"] as const) {
+      const css = themeStylesheet(skin);
+      expect(css).toContain(rule);
+      expect(css).toContain(frames);
+      expect(css).toContain(slow);
+      const reduced = css.slice(css.indexOf(slow), css.indexOf(slow) + slow.length);
+      expect(reduced).not.toContain("animation: none");
+      const swatch = css.match(/\.hc-swatch-waste \{[^}]+\}/)?.[0] ?? "";
+      expect(swatch).not.toContain("animation");
+      const trough = frames.match(/fill-opacity: ([0-9.]+)/g) ?? [];
+      expect(trough.map((part) => Number(part.replace("fill-opacity: ", "")))).toEqual([0.55, 1]);
+    }
+    const low = budWaffle(0.31);
+    expect(low).not.toContain("hc-waste-throb");
+    expect(low).toMatch(/class="hc-bud-cell hc-bud-consumed" data-hc-bud-order="61" [^>]* data-hc-bud-waste\/>/);
+  });
+
   // THE TRIM BOGEY (canon 0.30.249; owner, 2026-09-26: "Add a Admin Lookup Field: [Trim Bogey] expressed as a percentage",
   // "Determines number of dark red squares and the order based on our scheme (ROYGBIVWB-Aqua)").
   it("the Trim Bogey sets how many of the last cells are product, in the scheme's order", () => {
@@ -435,12 +426,12 @@ describe("THE BUD WAFFLE (canon 0.30.157), drawn as THE PLUME (canon 0.30.207)",
     const forty = budWaffle(0.31, "en", 40);
     expect(forty).toBe(budWaffle(0.31));
     expect(forty).toContain('data-hc-bud-product="40"');
-    // At 35 the last 35 cells are product: at 31% BTR the 69 consumed reach four of them, from the 66th (inside violet).
+    // At 35 the product is cells 1 to 35. At 31% BTR the waste is n 32 to 35, consumption positions 69 down to 66.
     const at35 = budWaffle(0.31, "en", 35);
     expect(at35).toContain('data-hc-bud-product="35"');
     expect(waste(at35)).toBe(4);
-    expect(orders(at35)).toEqual([66, 67, 68, 69]);
-    expect(BUD_CELLS[65][2]).toBe("violet");
+    expect(orders(at35).slice().sort((a, b) => a - b)).toEqual([66, 67, 68, 69]);
+    expect(BUD_CELLS.find((c) => c[2] === 35)?.slice(0, 2)).toEqual([11, 3]);
     expect(at35).toMatch(/class="hc-bud-cell hc-bud-consumed" data-hc-bud-order="65" [^>]*rx="1.2"\/>/);
     // 0 draws no dark red; 100 draws every consumed cell; out of range clamps; a non-number keeps the default.
     expect(waste(budWaffle(0.31, "en", 0))).toBe(0);
@@ -800,8 +791,8 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(html.match(/data-hc-trimline-total="0"/g)).toHaveLength(2);
     expect(html.match(/data-hc-trimline-running="0"/g)).toHaveLength(2);
     expect(html.match(/data-hc-bud-consumed="0"/g)).toHaveLength(2);
-    expect((html.match(/class="hc-bud-cell hc-bud-empty"/g) || []).length).toBe(204);
-    expect((html.match(/data-hc-bud-stem/g) || []).length).toBe(4);
+    expect((html.match(/class="hc-bud-cell hc-bud-empty"/g) || []).length).toBe(200);
+    expect(html).not.toContain("data-hc-bud-stem");
     expect(html).toContain('aria-label="no packages yesterday"');
     expect(html).toContain("data-hc-btr-read>no packages yesterday</div>");
     expect(html).not.toContain("<animate ");

@@ -250,37 +250,25 @@ export type TrimRecentRow = { trim_operator: string | null };
  * stands in the Unloaded Queue for trim. */
 export const TRIM_RUNNING_MINUTES = 30;
 
-// THE PLUME (canon 0.30.207): the owner's fourth drawing as cells in consumption order (band by band, top to
-// bottom, left to right: red, orange, yellow, green, blue, indigo, violet, white, black, then the teal core as the
-// center, last, so a BTR as low as 15% still reads on the plume). The stem's two red cells are red cells, consumed
-// with the reds as he drew them. The two dark green stem cells are permanent (BUD_STEM), never counted, and drawn as
-// any unconsumed cell (owner, 2026-09-23: "the two "greys" should be left as "unconsumed" not their very own color").
-// 16 rows by 13 columns; 100 cells plus the stem.
-export const BUD_ROWS = 16;
+// THE PROGRESSION BUD (canon 0.30.273). Owner, 2026-09-27, verbatim: "change trim
+// consumption graph to the attached shape/progression. ... each one represents a
+// cumulative percent--so instead of "consumption" this reads more like progression,
+// but either way, reverse the order for consumption". His drawing: 100 cells, 1 at
+// the heart and 100 at the foot of the stem. Each entry is [row, column, drawn number].
+// 19 rows by 13 columns. The stem (50, 82, 83, 100) counts like any cell.
+export const BUD_ROWS = 19;
 export const BUD_COLS = 13;
-export const BUD_CELLS: ReadonlyArray<readonly [number, number, string]> = [
-  [2, 0, "red"], [2, 12, "red"], [3, 0, "red"], [3, 12, "red"], [4, 1, "red"], [4, 2, "red"], [4, 10, "red"],
-  [4, 11, "red"], [14, 6, "red"], [15, 6, "red"], [1, 4, "orange"], [1, 8, "orange"], [2, 2, "orange"],
-  [2, 4, "orange"], [2, 8, "orange"], [2, 10, "orange"], [3, 4, "orange"], [3, 8, "orange"], [4, 3, "orange"],
-  [4, 9, "orange"], [1, 5, "yellow"], [1, 7, "yellow"], [3, 3, "yellow"], [3, 9, "yellow"], [5, 2, "yellow"],
-  [5, 10, "yellow"], [6, 2, "yellow"], [6, 10, "yellow"], [7, 2, "yellow"], [7, 10, "yellow"], [2, 5, "green"],
-  [2, 7, "green"], [3, 5, "green"], [3, 7, "green"], [4, 4, "green"], [4, 8, "green"], [5, 3, "green"],
-  [5, 9, "green"], [6, 3, "green"], [6, 9, "green"], [5, 4, "blue"], [5, 8, "blue"], [8, 2, "blue"],
-  [8, 10, "blue"], [9, 2, "blue"], [9, 10, "blue"], [11, 3, "blue"], [11, 9, "blue"], [12, 4, "blue"],
-  [12, 8, "blue"], [0, 6, "indigo"], [1, 6, "indigo"], [4, 5, "indigo"], [4, 7, "indigo"], [6, 4, "indigo"],
-  [6, 8, "indigo"], [7, 3, "indigo"], [7, 9, "indigo"], [8, 3, "indigo"], [8, 9, "indigo"], [2, 6, "violet"],
-  [3, 6, "violet"], [5, 5, "violet"], [5, 7, "violet"], [9, 3, "violet"], [9, 9, "violet"], [10, 3, "violet"],
-  [10, 9, "violet"], [11, 4, "violet"], [11, 8, "violet"], [4, 6, "white"], [5, 6, "white"], [6, 5, "white"],
-  [6, 7, "white"], [7, 4, "white"], [7, 8, "white"], [8, 4, "white"], [8, 8, "white"], [9, 4, "white"],
-  [9, 8, "white"], [6, 6, "black"], [7, 5, "black"], [7, 6, "black"], [7, 7, "black"], [8, 5, "black"],
-  [8, 7, "black"], [10, 4, "black"], [10, 8, "black"], [12, 5, "black"], [12, 7, "black"], [8, 6, "center"],
-  [9, 5, "center"], [9, 6, "center"], [9, 7, "center"], [10, 5, "center"], [10, 6, "center"], [10, 7, "center"],
-  [11, 5, "center"], [11, 6, "center"], [11, 7, "center"],
-];
-/** THE PLUME: the stem's two dark green cells, permanent on the picture in the bud's own green (canon 0.30.207). */
-export const BUD_STEM: ReadonlyArray<readonly [number, number]> = [
-  [12, 6],
-  [13, 6],
+export const BUD_CELLS: ReadonlyArray<readonly [number, number, number]> = [
+  [13, 6, 1], [12, 6, 2], [11, 6, 3], [12, 5, 4], [12, 7, 5], [11, 7, 6], [11, 5, 7], [10, 6, 8], [9, 6, 9], [10, 5, 10],
+  [10, 7, 11], [12, 4, 12], [12, 8, 13], [13, 5, 14], [13, 7, 15], [14, 6, 16], [8, 6, 17], [9, 5, 18], [9, 7, 19], [11, 4, 20],
+  [11, 8, 21], [10, 8, 22], [10, 4, 23], [7, 6, 24], [8, 5, 25], [8, 7, 26], [9, 4, 27], [9, 8, 28], [6, 6, 29], [13, 4, 30],
+  [13, 8, 31], [12, 3, 32], [12, 9, 33], [11, 9, 34], [11, 3, 35], [10, 3, 36], [10, 9, 37], [7, 5, 38], [7, 7, 39], [5, 6, 40],
+  [8, 4, 41], [8, 8, 42], [9, 3, 43], [9, 9, 44], [6, 5, 45], [6, 7, 46], [4, 6, 47], [7, 4, 48], [7, 8, 49], [15, 6, 50],
+  [14, 5, 51], [14, 7, 52], [5, 5, 53], [5, 7, 54], [4, 5, 55], [4, 7, 56], [3, 6, 57], [6, 4, 58], [6, 8, 59], [5, 4, 60],
+  [5, 8, 61], [8, 3, 62], [8, 9, 63], [7, 3, 64], [7, 9, 65], [2, 7, 66], [2, 5, 67], [4, 3, 68], [4, 9, 69], [3, 10, 70],
+  [3, 2, 71], [7, 2, 72], [7, 10, 73], [6, 11, 74], [6, 1, 75], [5, 1, 76], [5, 11, 77], [6, 0, 78], [6, 12, 79], [10, 10, 80],
+  [10, 2, 81], [16, 6, 82], [17, 6, 83], [10, 1, 84], [10, 11, 85], [9, 12, 86], [11, 12, 87], [9, 0, 88], [11, 0, 89], [2, 2, 90],
+  [2, 10, 91], [1, 11, 92], [1, 1, 93], [1, 4, 94], [1, 8, 95], [0, 10, 96], [0, 7, 97], [0, 5, 98], [0, 2, 99], [18, 6, 100],
 ];
 
 export type TrimInput = {
@@ -595,51 +583,28 @@ const fmtPct = (n: number): string => `${(n * 100).toFixed(1)}%`;
 /** THE PRODUCT LINE (canon 0.30.243): the last forty cells of the order are the product; consuming one is waste. THE TRIM BOGEY (canon 0.30.249) moves the line from Admin; forty is its default. */
 export const BUD_PRODUCT_CELLS = 40;
 
-/** THE BUD WAFFLE (canon 0.30.157), drawn as THE PLUME (canon 0.30.207): one
- * cell per percent of the shift total. The first round((1 - btr) * 100) cells
- * of BUD_CELLS grey; outlines when nothing ran. The two stem cells are never
- * consumed and never counted: they draw as any unconsumed cell, bud green
- * whenever the plume has a reading, outlines with the rest when nothing ran.
- * The drawing's band names never render. THE PRODUCT LINE (canon 0.30.243;
- * owner, 2026-09-26: "make the 40% squares on the trim panes of the dashboard
- * dark green when consumed", "40% and under", and "I want it to look like
- * biproduct for the first 60% and waste thereafter"): the first 60 cells of the
- * order grey when consumed, as byproduct; a consumed cell among the last
- * BUD_PRODUCT_CELLS carries data-hc-bud-waste and draws as waste, the
- * product dug into. THE CONTRAST (canon 0.30.245; owner: "not enough contrast
- * between goal and actual", his pick "A: deeper green"): the waste green is
- * the deepest the skin allows, and the legend reads bud, byproduct, waste.
- * THE DEEP RED (canon 0.30.248; owner: "how would the 40% consumed look in
- * bright red?", his pick "Deep red (Recommended)"): the waste draws the
- * lightest red at 3 to 1 against the skin's bud green, #7c1b1b in Lite and
- * Continuum and #ba2929 in Cerberus, so red-green color blindness still
- * reads the dig into product apart from the bud. THE TRIM BOGEY (canon
- * 0.30.249; owner: "Add a Admin Lookup Field: [Trim Bogey] expressed as a
- * percentage", "Determines number of dark red squares and the order based
- * on our scheme (ROYGBIVWB-Aqua)"): bogeyPct cells are product, the last of
- * the order (red, orange, yellow, green, blue, indigo, violet, white, black,
- * then the aqua core), BUD_PRODUCT_CELLS when no bogey is passed; at 35 the
- * dark red starts at the 66th cell, 0 draws none, 100 draws every consumed
- * cell. The svg carries the count as data-hc-bud-product. */
+/** THE BUD WAFFLE (canon 0.30.157), drawn as THE PROGRESSION BUD (canon 0.30.273):
+ * one cell per cumulative percent. Cell n is bud when n is at most round(btr * 100)
+ * and consumed otherwise, which is the consumption order run from 100 down to 1:
+ * the first round((1 - btr) * 100) cells of that order are consumed. Outlines when
+ * nothing ran. THE PRODUCT LINE and THE TRIM BOGEY: the product is cells 1 to the
+ * bogey, the heart, the last of the reversed order. A consumed cell among them
+ * carries data-hc-bud-waste. BUD_PRODUCT_CELLS when no bogey is passed; 0 draws
+ * no waste; 100 draws every consumed cell as waste. data-hc-bud-order is the
+ * consumption position, 101 - n, and data-hc-bud-n is the drawn number. */
 export function budWaffle(btr: number | null, locale: Locale = "en", bogeyPct: number = BUD_PRODUCT_CELLS): string {
   const empty = btr == null;
-  const consumed = empty
-    ? 0
-    : Math.max(0, Math.min(BUD_CELLS.length, Math.round((1 - btr) * 100)));
+  const lit = empty ? 0 : Math.max(0, Math.min(BUD_CELLS.length, Math.round(btr * 100)));
+  const consumed = empty ? 0 : BUD_CELLS.length - lit;
   const label = empty ? t(locale, "no packages yesterday") : `BTR ${fmtPct(btr)}`;
-  // THE TRIM BOGEY (canon 0.30.249): one cell per percent, so the bogey is the count of product cells, the last of the order.
   const product = Number.isFinite(bogeyPct) ? Math.max(0, Math.min(BUD_CELLS.length, Math.round(bogeyPct))) : BUD_PRODUCT_CELLS;
-  const cells = BUD_CELLS.map(([row, col], i) => {
-    const order = i + 1;
-    const state = empty ? "empty" : order <= consumed ? "consumed" : "bud";
-    const waste = state === "consumed" && order > BUD_CELLS.length - product ? " data-hc-bud-waste" : "";
-    return `<rect class="hc-bud-cell hc-bud-${state}" data-hc-bud-order="${order}" x="${col * 10 + 1.2}" y="${row * 10 + 1.2}" width="7.6" height="7.6" rx="1.2"${waste}/>`;
+  const cells = BUD_CELLS.map(([row, col, n]) => {
+    const order = 101 - n;
+    const state = empty ? "empty" : n <= lit ? "bud" : "consumed";
+    const waste = state === "consumed" && n <= product ? " data-hc-bud-waste" : "";
+    return `<rect class="hc-bud-cell hc-bud-${state}" data-hc-bud-order="${order}" data-hc-bud-n="${n}" x="${col * 10 + 1.2}" y="${row * 10 + 1.2}" width="7.6" height="7.6" rx="1.2"${waste}/>`;
   }).join("");
-  const stem = BUD_STEM.map(
-    ([row, col]) =>
-      `<rect class="hc-bud-cell hc-bud-${empty ? "empty" : "stem"}" data-hc-bud-stem x="${col * 10 + 1.2}" y="${row * 10 + 1.2}" width="7.6" height="7.6" rx="1.2"/>`
-  ).join("");
-  return `<svg class="hc-bud" viewBox="0 0 ${BUD_COLS * 10} ${BUD_ROWS * 10}" role="img" aria-label="${esc(label)}" data-hc-bud data-hc-bud-consumed="${consumed}" data-hc-bud-product="${product}">${cells}${stem}</svg>`;
+  return `<svg class="hc-bud" viewBox="0 0 ${BUD_COLS * 10} ${BUD_ROWS * 10}" role="img" aria-label="${esc(label)}" data-hc-bud data-hc-bud-consumed="${consumed}" data-hc-bud-product="${product}">${cells}</svg>`;
 }
 
 /** Pounds first, grams under (his numbers are pounds; the floor's are grams). */
@@ -709,6 +674,7 @@ export type HarvestConsolePageInput = {
   /** THE CURE PANES (canon 0.30.164): CSA and CSB as tiles in the drying row after the FFZ cube
    * (owner, 2026-09-22: "in line with drying spaces, in the void after FFZ Inventory set the same size"). */
   cureTiles?: string;
+  envFlags?: Record<string, string[]>;
   /** THE DRYING TOTALS (canon 0.30.183): in dry spaces (loaded only, with the dry estimate), in cure spaces, dry queued; omitted draws no line. */
   dryingTotals?: DryingTotals;
   /** THE TESTING DESK (canon 0.30.164), part 2. Omitted reads as an empty season. */
@@ -1437,7 +1403,7 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
     </details>
     <details class="hc-section" data-hc-section="drying" open>
       <summary>${esc(t(locale, "Drying"))}</summary>
-      ${siloStrip(page.live, page.nowIso, locale, page.cureTiles ?? "")}
+      ${siloStrip(page.live, page.nowIso, locale, page.cureTiles ?? "", page.envFlags ?? {})}
       ${page.dryingTotals ? dryingTotalsMarkup(page.dryingTotals, locale) : ""}
     </details>
     ${trimmingSection(page.input, locale)}

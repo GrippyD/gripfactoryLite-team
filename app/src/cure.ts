@@ -10,6 +10,7 @@ import { HttpError } from "./audit";
 import { CONFIG_KEYS, formatGrams, shortLotId } from "./config";
 import { formatLbs } from "./compliance";
 import { t, type Locale } from "./i18n";
+import { listEnvironmentFlags } from "./environment";
 import { esc } from "./ui";
 
 export const CURE_ROOMS_DEFAULT = ["CSA", "CSB"] as const;
@@ -38,7 +39,7 @@ export type CureLot = {
 
 export type CureReading = {
   temperatureF: number;
-  humidityPct: number;
+  humidityPct: number | null;
   readAt: string;
 };
 
@@ -47,6 +48,7 @@ export type CurePanesData = {
   csb: CureLot[];
   readings: { CSA: CureReading | null; CSB: CureReading | null };
   nowIso: string;
+  flags?: Record<string, string[]>;
 };
 
 type LotSql = {
@@ -136,7 +138,8 @@ export function conditionsLine(reading: CureReading | null, nowIso: string, loca
       : min < 120
         ? t(locale, "1 hour ago")
         : t(locale, "{n} hours ago").replace("{n}", String(Math.floor(min / 60)));
-  return { text: `${numWord(reading.temperatureF)} F · ${numWord(reading.humidityPct)} % · ${ago}`, stale };
+  const humid = reading.humidityPct == null ? "" : ` · ${numWord(reading.humidityPct)} %`;
+  return { text: `${numWord(reading.temperatureF)} F${humid} · ${ago}`, stale };
 }
 
 export function formatCureClock(ms: number): string {
@@ -173,7 +176,7 @@ const LOTS_SQL = `SELECT w.id, w.status, w.dry_weight_grams, b.hbn, b.metrc_harv
      JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
      WHERE w.deleted_at IS NULL AND w.status IN ('unloaded', 'trimmed')`;
 
-export async function listCurePanes(db: D1Database, nowIso: string): Promise<CurePanesData> {
+export async function listCurePanes(db: D1Database, nowIso: string, locale: Locale = "en"): Promise<CurePanesData> {
   const lots = await db.prepare(LOTS_SQL).all<LotSql>();
   const tests = await db
     .prepare(
@@ -182,6 +185,7 @@ export async function listCurePanes(db: D1Database, nowIso: string): Promise<Cur
        WHERE deleted_at IS NULL AND lower(analyte) IN ('moisture', 'water_activity')`
     )
     .all<TestSql>();
+  const flags = await listEnvironmentFlags(db, nowIso, locale);
   const readings = {
     CSA: await latestReading(db, "CSA"),
     CSB: await latestReading(db, "CSB"),
@@ -214,7 +218,7 @@ export async function listCurePanes(db: D1Database, nowIso: string): Promise<Cur
   const byId = (a: CureLot, b: CureLot) => a.shortId.localeCompare(b.shortId) || a.id.localeCompare(b.id);
   csa.sort(byId);
   csb.sort(byId);
-  return { csa, csb, readings, nowIso };
+  return { csa, csb, readings, nowIso, flags };
 }
 
 function matchesLot(row: TestSql, hbn: string | null, tag: string | null): boolean {
@@ -232,9 +236,13 @@ export async function latestReading(db: D1Database, room: string): Promise<CureR
        WHERE room = ? ORDER BY read_at DESC LIMIT 1`
     )
     .bind(room)
-    .first<{ temperature_f: number; humidity_pct: number; read_at: string }>();
+    .first<{ temperature_f: number; humidity_pct: number | null; read_at: string }>();
   if (!row) return null;
-  return { temperatureF: Number(row.temperature_f), humidityPct: Number(row.humidity_pct), readAt: row.read_at };
+  return {
+    temperatureF: Number(row.temperature_f),
+    humidityPct: row.humidity_pct == null ? null : Number(row.humidity_pct),
+    readAt: row.read_at,
+  };
 }
 
 async function roomList(db: D1Database): Promise<string[]> {
@@ -242,34 +250,44 @@ async function roomList(db: D1Database): Promise<string[]> {
     .prepare(`SELECT value FROM app_config WHERE key = ? AND deleted_at IS NULL`)
     .bind(CONFIG_KEYS.cure_rooms)
     .first<{ value: string }>();
-  return parseCureRooms(row?.value);
+  const names = parseCureRooms(row?.value);
+  const spaces = await db.prepare(`SELECT name FROM dry_spaces WHERE deleted_at IS NULL`).all<{ name: string }>();
+  for (const space of spaces.results ?? []) {
+    if (!names.some((name) => name.toUpperCase() === space.name.toUpperCase())) names.push(space.name);
+  }
+  return names;
 }
 
-type SensorIn = { room: string; temperature_f: number; humidity_pct: number; read_at: string; source: string; raw: string };
+type SensorIn = { room: string; temperature_f: number; humidity_pct: number | null; read_at: string; source: string; raw: string };
 
 function oneReading(value: unknown, rooms: readonly string[], index: string): SensorIn {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
     throw new HttpError(400, `Reading ${index} must be an object.`);
   }
   const rec = value as Record<string, unknown>;
-  const roomRaw = String(rec.room ?? "").trim().toUpperCase();
-  if (!roomRaw || !rooms.includes(roomRaw)) {
-    throw new HttpError(400, `Reading ${index} names a room that is not on the cure room list.`);
+  const roomRaw = String(rec.room ?? "").trim();
+  const room = rooms.find((name) => name.toUpperCase() === roomRaw.toUpperCase());
+  if (!room) {
+    throw new HttpError(400, `Reading ${index} names a room that is not a dry space or a cure room.`);
   }
   const temperature = Number(rec.temperature_f);
-  const humidity = Number(rec.humidity_pct);
+  const humidityRaw = rec.humidity_pct;
+  let humidity: number | null = null;
+  if (humidityRaw != null && String(humidityRaw).trim() !== "") {
+    humidity = Number(humidityRaw);
+    if (!Number.isFinite(humidity) || humidity < 0 || humidity > 100) {
+      throw new HttpError(400, `Reading ${index} needs a humidity between 0 and 100 percent.`);
+    }
+  }
   if (!Number.isFinite(temperature) || temperature < TEMP_MIN || temperature > TEMP_MAX) {
     throw new HttpError(400, `Reading ${index} needs a temperature between ${TEMP_MIN} and ${TEMP_MAX} F.`);
-  }
-  if (!Number.isFinite(humidity) || humidity < 0 || humidity > 100) {
-    throw new HttpError(400, `Reading ${index} needs a humidity between 0 and 100 percent.`);
   }
   const readAt = Date.parse(String(rec.read_at ?? ""));
   if (!Number.isFinite(readAt)) throw new HttpError(400, `Reading ${index} needs a readable read_at.`);
   const source = String(rec.source ?? "").trim();
   if (source.length > 80) throw new HttpError(400, `Reading ${index} source is too long.`);
   return {
-    room: roomRaw,
+    room,
     temperature_f: temperature,
     humidity_pct: humidity,
     read_at: new Date(readAt).toISOString(),
@@ -289,8 +307,8 @@ export async function storeSensorReadings(db: D1Database, body: unknown, nowIso:
   const stmts = rows.map((row) =>
     db
       .prepare(
-        `INSERT INTO sensor_readings (id, room, temperature_f, humidity_pct, source, read_at, received_at, raw)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO sensor_readings (id, room, temperature_f, humidity_pct, source, read_at, received_at, raw, sensor_id, role)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
       )
       .bind(crypto.randomUUID(), row.room, row.temperature_f, row.humidity_pct, row.source, row.read_at, nowIso, row.raw)
   );
@@ -329,14 +347,16 @@ function lotRow(lot: CureLot, nowIso: string, locale: Locale): string {
     </details>`;
 }
 
-function paneCard(name: CurePaneName, lots: CureLot[], reading: CureReading | null, nowIso: string, locale: Locale): string {
+function paneCard(name: CurePaneName, lots: CureLot[], reading: CureReading | null, nowIso: string, locale: Locale, flags: string[]): string {
   const cond = conditionsLine(reading, nowIso, locale);
+  const alert = flags.length > 0;
+  const text = alert ? `${cond.text} · ${flags.join(" ")}` : cond.text;
   const body = lots.length
     ? lots.map((lot) => lotRow(lot, nowIso, locale)).join("")
     : `<p class="muted" data-cure-empty>${esc(t(locale, "No lots."))}</p>`;
   return `<div class="inv-gauge cure-pane" data-cure-pane="${name}">
       <div class="inv-gauge-name">${name}</div>
-      <p class="cure-conditions${cond.stale ? " cure-stale" : ""}" data-cure-conditions>${esc(cond.text)}</p>
+      <p class="cure-conditions${cond.stale || alert ? " cure-stale" : ""}" data-cure-conditions>${esc(text)}</p>
       ${body}
     </div>`;
 }
@@ -372,11 +392,13 @@ export function cureClockScript(): string {
  * hands this string to siloStrip as extra tiles, so the two cards stand in the
  * drying row after the FFZ cube, the width of the tiles beside them. */
 export function curePanes(data: CurePanesData, locale: Locale = "en"): string {
-  return `${paneCard("CSA", data.csa, data.readings.CSA, data.nowIso, locale)}${paneCard(
+  const flags = data.flags ?? {};
+  return `${paneCard("CSA", data.csa, data.readings.CSA, data.nowIso, locale, flags.CSA ?? [])}${paneCard(
     "CSB",
     data.csb,
     data.readings.CSB,
     data.nowIso,
-    locale
+    locale,
+    flags.CSB ?? []
   )}${cureClockScript()}`;
 }
