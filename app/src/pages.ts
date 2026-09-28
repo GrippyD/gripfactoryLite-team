@@ -325,6 +325,37 @@ export function trimBogeyPage(value: number, stored: boolean, locale: Locale = "
     </form>`;
 }
 
+/** The harvest year the page opens on: the asked four digits, else the farm day's year. */
+export function plantCountYear(asked: string | null | undefined, today: string): string {
+  const text = String(asked ?? "").trim();
+  return /^\d{4}$/.test(text) ? text : today.slice(0, 4);
+}
+
+/** THE FARM PLANT COUNT (canon 0.30.288): one whole number per farm per harvest year. */
+export function plantCountPage(
+  year: string,
+  farms: Array<{ code: string; name: string; count: number | null }>,
+  locale: Locale = "en",
+  ok?: string
+): string {
+  const flash = ok === "saved" ? `<p class="banner ok" data-plant-count-flash>${esc(t(locale, "Saved."))}</p>` : "";
+  const fields = farms
+    .map(
+      (farm) =>
+        `<label class="field" data-plant-count-farm="${esc(farm.code)}">${esc(farm.name)} (${esc(farm.code)}) <input type="text" name="count_${esc(farm.code)}" inputmode="numeric" value="${farm.count == null ? "" : esc(String(farm.count))}"></label>`
+    )
+    .join("");
+  return `<h1>${esc(t(locale, "Farm Plant Count"))}</h1>
+    <p class="muted">${esc(t(locale, "One number per farm per harvest year: the denominator of Plants Remaining/Total on the console, never overridden by METRC."))}</p>
+    ${flash}
+    <form class="stack" method="post" action="/admin/lookups/plant_count" data-plant-count>
+      <label class="field">${esc(t(locale, "Harvest year"))} <input type="text" name="harvest_year" inputmode="numeric" required value="${esc(year)}" data-plant-count-year></label>
+      ${fields}
+      <label class="field">${esc(t(locale, "Reason"))} <input type="text" name="reason" required></label>
+      <button type="submit">${esc(t(locale, "Save"))}</button>
+    </form>`;
+}
+
 /** Fork 6 (canon 0.30.1): the Admin-buried manual HBN fallback. Owner verbatim:
  * "bury it in Admin somewhere for now.  I don't want that to be the default."
  * Acquire stays the default; this hand-types the whole HBN when the system

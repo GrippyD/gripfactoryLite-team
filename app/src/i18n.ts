@@ -1147,6 +1147,7 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Dry Weight/plant AVG": { en: "Dry Weight/plant AVG", es: "Peso seco/planta PROM" },
   "Cutting and Bucking Hours Yesterday": { en: "Cutting and Bucking Hours Yesterday", es: "Horas de corte y deshoje de ayer" },
   "Weight/DLH Yesterday": { en: "Weight/DLH Yesterday", es: "Peso/hora de trabajo de ayer" },
+  "Weight Harvested": { en: "Weight Harvested", es: "Peso cosechado" },
   "type hours": { en: "type hours", es: "escriba las horas" },
   "yesterday": { en: "yesterday", es: "ayer" },
   "hours": { en: "hours", es: "horas" },
@@ -1156,6 +1157,11 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "picked; the panes below read this day": { en: "picked; the panes below read this day", es: "elegido; los paneles de abajo leen este dia" },
   "yesterday, the default": { en: "yesterday, the default", es: "ayer, el valor por defecto" },
   "Back to yesterday": { en: "Back to yesterday", es: "Volver a ayer" },
+  "Today so far": { en: "Today so far", es: "Hoy hasta ahora" },
+  "today so far; the panes below read today up to now": {
+    en: "today so far; the panes below read today up to now",
+    es: "hoy hasta ahora; los paneles de abajo leen hoy hasta este momento",
+  },
   "Yesterday is": { en: "Yesterday is", es: "Ayer es" },
   "the hours you type land on the day shown.": { en: "the hours you type land on the day shown.", es: "las horas que escribas caen en el dia mostrado." },
   // THE FOUR START TAPS (canon 0.30.89).
@@ -1245,7 +1251,23 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "Yesterday's packages from Trim Packages Entry, each on the shift its operator is named on. BTR is BUD (BUD, SMALLS as WPR, SHAKE as SHA) over all weight ran; the type list and the shift operators are values in Admin, Lookups, app_config. DLH is typed here per shift per day.",
     es: "Los paquetes de ayer de Trim Packages Entry, cada uno en el turno de su operador. BTR es BUD (BUD, SMALLS como WPR, SHAKE como SHA) sobre todo el peso procesado; la lista de tipos y los operadores por turno son valores en Admin, Lookups, app_config. Las horas directas se escriben aqui por turno y dia.",
   },
-  "Harvest year": { en: "Harvest year", es: "Ano de cosecha" },
+  "Harvest year": { en: "Harvest year", es: "Año de cosecha" },
+  "Farm Plant Count": { en: "Farm Plant Count", es: "Conteo de plantas de la finca" },
+  "One number per farm per harvest year: the denominator of Plants Remaining/Total on the console, never overridden by METRC.": {
+    en: "One number per farm per harvest year: the denominator of Plants Remaining/Total on the console, never overridden by METRC.",
+    es: "Un numero por finca por ano de cosecha: el denominador de Plantas restantes/Total en la consola, nunca reemplazado por METRC.",
+  },
+  "Harvest year must be a four-digit year.": { en: "Harvest year must be a four-digit year.", es: "El ano de cosecha debe ser un ano de cuatro digitos." },
+  "Plant count must be a whole number, zero or more.": {
+    en: "Plant count must be a whole number, zero or more.",
+    es: "El conteo de plantas debe ser un numero entero, cero o mas.",
+  },
+  "Labor hours": { en: "Labor hours", es: "Horas de trabajo" },
+  "Every hour and input lb typed on the console, by date and operation.": {
+    en: "Every hour and input lb typed on the console, by date and operation.",
+    es: "Cada hora y libra de entrada escrita en la consola, por fecha y operacion.",
+  },
+  "No hours in this window.": { en: "No hours in this window.", es: "No hay horas en esta ventana." },
   "Stub: this section waits on the owner's definition.": {
     en: "Stub: this section waits on the owner's definition.",
     es: "Pendiente: esta seccion espera la definicion del propietario.",

@@ -4637,3 +4637,31 @@ export async function listMountedLinesAll(
     .all<MountedLineRow & { deleted_at: string | null }>();
   return result.results ?? [];
 }
+
+/** Labor hours report: one row per saved console value, newest date first. */
+export async function listLaborHours(
+  db: D1Database,
+  from: string,
+  to: string
+): Promise<Array<{ work_date: string; operation: string; value: number; unit: string; updated_at: string }>> {
+  const result = await db
+    .prepare(
+      `SELECT work_date, operation, value, unit, updated_at FROM (
+         SELECT work_date, 'Cutting and bucking, ' || farm_code AS operation, hours AS value, 'h' AS unit, updated_at
+         FROM harvest_labor_hours WHERE work_date >= ? AND work_date <= ?
+         UNION ALL
+         SELECT work_date, 'Trim DLH, ' || shift AS operation, hours AS value, 'h' AS unit, updated_at
+         FROM trim_labor_hours WHERE work_date >= ? AND work_date <= ?
+         UNION ALL
+         SELECT work_date, 'Trim input lbs, ' || shift AS operation, lbs AS value, 'lb' AS unit, updated_at
+         FROM trim_line_inputs WHERE work_date >= ? AND work_date <= ?
+         UNION ALL
+         SELECT work_date, 'Prepack hours' AS operation, hours AS value, 'h' AS unit, updated_at
+         FROM prepack_labor_hours WHERE work_date >= ? AND work_date <= ?
+       )
+       ORDER BY work_date DESC, operation ASC`
+    )
+    .bind(from, to, from, to, from, to, from, to)
+    .all<{ work_date: string; operation: string; value: number; unit: string; updated_at: string }>();
+  return (result.results ?? []).map((row) => ({ ...row, value: Number(row.value) }));
+}

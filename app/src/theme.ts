@@ -661,6 +661,7 @@ table.data th { background: var(--panel-2); }
 /* The console: collapsible sections; the three farm boxes and Total, each shaded by its % complete. */
 .hc-section { margin: 0 0 0.9rem; }
 .hc-section > summary { cursor: pointer; font-weight: 800; font-size: 1.05rem; padding: 0.35rem 0; }
+.hc-section > summary .hc-year { font-weight: 500; font-size: 0.8rem; margin-left: 0.45rem; }
 .hc-farms { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0; }
 .hc-farm { position: relative; overflow: hidden; flex: 1 1 14rem; min-width: 13rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); }
 .hc-shade { position: absolute; inset: 0; background: var(--accent); pointer-events: none; }
@@ -1347,6 +1348,7 @@ table.data tbody tr:hover td { background: var(--surface-2); }
 /* The console: collapsible sections; the three farm boxes and Total, each shaded by its % complete. */
 .hc-section { margin: 0 0 0.9rem; }
 .hc-section > summary { cursor: pointer; font-weight: 800; font-size: 1.05rem; padding: 0.35rem 0; }
+.hc-section > summary .hc-year { font-weight: 500; font-size: 0.8rem; margin-left: 0.45rem; }
 .hc-farms { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0; }
 .hc-farm { position: relative; overflow: hidden; flex: 1 1 14rem; min-width: 13rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); }
 .hc-shade { position: absolute; inset: 0; background: var(--primary); pointer-events: none; }
@@ -1978,6 +1980,7 @@ legend { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; c
 /* The console: collapsible sections; the three farm boxes and Total, each shaded by its % complete. */
 .hc-section { margin: 0 0 0.9rem; }
 .hc-section > summary { cursor: pointer; font-weight: 800; font-size: 1.05rem; padding: 0.35rem 0; }
+.hc-section > summary .hc-year { font-weight: 500; font-size: 0.8rem; margin-left: 0.45rem; }
 .hc-farms { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0; }
 .hc-farm { position: relative; overflow: hidden; flex: 1 1 14rem; min-width: 13rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); }
 .hc-shade { position: absolute; inset: 0; background: var(--gold); pointer-events: none; }

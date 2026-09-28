@@ -214,6 +214,8 @@ export type HarvestConsoleInput = {
   yesterdayWet: FarmGrams[];
   /** Yesterday's Cutting and Bucking hours typed per farm; null when none typed. */
   hours: Record<ConsoleFarm, number | null>;
+  /** Farm Plant Count for the harvest year: the constant denominator, null when none is saved. */
+  plantCounts: Record<ConsoleFarm, number | null>;
   /** THE TRIMMING SECTION (canon 0.30.88): yesterday's trim room, by shift; absent renders the section empty. */
   trim?: TrimInput;
   /** THE SHEET SYNC (canon 0.30.162): the last run of the sheet sync (ok, skipped or failed), null before any run;
@@ -612,13 +614,19 @@ function weightPair(grams: number, suffix = ""): { value: string; sub: string } 
   return { value: `${formatLbs(grams)} lb${suffix}`, sub: `${formatGrams(roundGrams(grams))} g${suffix}` };
 }
 
-/** The seven metrics for one farm (null is the Total column), pure; the values are display text in the locale. */
+/** The eight metrics for one farm (null is the Total column), pure; the values are display text in the locale. */
 export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"): ConsoleBox[] {
   const columns: Array<ConsoleFarm | null> = [...CONSOLE_FARMS, null];
   return columns.map((f) => {
-    const remaining = sumBy(input.remaining, f, (r) => r.plants, (r) => r.farm);
-    const harvested = sumBy(input.seasonHarvested, f, (r) => r.plants, (r) => r.farm);
-    const total = remaining + harvested;
+    const farmRemaining = (farm: ConsoleFarm) => sumBy(input.remaining, farm, (r) => r.plants, (r) => r.farm);
+    const farmHarvested = (farm: ConsoleFarm) => sumBy(input.seasonHarvested, farm, (r) => r.plants, (r) => r.farm);
+    const farmTotal = (farm: ConsoleFarm) => {
+      const typed = input.plantCounts[farm];
+      return typed == null ? farmRemaining(farm) + farmHarvested(farm) : typed;
+    };
+    const remaining = f == null ? CONSOLE_FARMS.reduce((n, farm) => n + farmRemaining(farm), 0) : farmRemaining(f);
+    const harvested = f == null ? CONSOLE_FARMS.reduce((n, farm) => n + farmHarvested(farm), 0) : farmHarvested(f);
+    const total = f == null ? CONSOLE_FARMS.reduce((n, farm) => n + farmTotal(farm), 0) : farmTotal(f);
     const pct = total > 0 ? harvested / total : null;
     const counted = input.seasonLots.filter((l) => (f == null || farmOf(l.farm) === f) && Number(l.plant_count ?? 0) >= 1);
     const plantsIn = (lots: ConsoleLot[]) => lots.reduce((n, l) => n + Number(l.plant_count ?? 0), 0);
@@ -650,13 +658,12 @@ export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"):
       { key: "pct", label: "% Complete", value: pct == null ? NA : fmtPct(pct) },
       { key: "wet_per_plant", label: "Wet Weight/plant AVG", ...(wetPerPlant == null ? { value: NA } : weightPair(wetPerPlant)) },
       { key: "dry_per_plant", label: "Dry Weight/plant AVG", ...(dryPerPlant == null ? { value: NA } : weightPair(dryPerPlant)) },
+      { key: "weight_harvested", label: "Weight Harvested", ...weightPair(wetYesterday) },
       { key: "hours", label: "Cutting and Bucking Hours Yesterday", value: hours == null ? NA : String(hours) },
       {
         key: "weight_per_dlh",
         label: "Weight/DLH Yesterday",
-        ...(perDlh == null
-          ? { value: hours == null ? t(locale, "type hours") : NA, sub: `${formatLbs(wetYesterday)} lb ${t(locale, "yesterday")}` }
-          : weightPair(perDlh, "/h")),
+        ...(perDlh == null ? { value: hours == null ? t(locale, "type hours") : NA } : weightPair(perDlh, "/h")),
       },
     ];
     return { farm: f ?? "Total", pct, metrics };
@@ -706,7 +713,7 @@ function farmBox(box: ConsoleBox, input: HarvestConsoleInput, locale: Locale): s
         m.key === "hours" && box.farm !== "Total"
           ? hoursBox(box.farm, input, locale)
           : `<span class="hc-value" data-hc="${esc(m.key)}">${esc(m.value)}</span>${m.sub ? `<span class="hc-sub muted">${esc(m.sub)}</span>` : ""}`;
-      const dateNote = m.key === "hours" || m.key === "weight_per_dlh" ? ` <span class="hc-date muted">${esc(input.yesterday)}</span>` : "";
+      const dateNote = m.key === "hours" || m.key === "weight_per_dlh" || m.key === "weight_harvested" ? ` <span class="hc-date muted">${esc(input.yesterday)}</span>` : "";
       return `<div class="hc-metric" data-hc-metric="${esc(m.key)}"><dt>${esc(t(locale, m.label))}${dateNote}</dt><dd>${value}</dd></div>`;
     })
     .join("");
@@ -725,6 +732,36 @@ function hoursScript(): string {
   document.querySelectorAll("[data-hc-hours-input]").forEach(function (box) {
     box.addEventListener("change", function () { if (box.form && box.form.requestSubmit) box.form.requestSubmit(); });
   });
+})();
+</script>`;
+}
+
+/** THE FOLD REMEMBERED (canon 0.30.288): each area stays as this browser last left it. */
+function foldScript(): string {
+  return `<script>
+(function () {
+  var key = "gf_hc_fold";
+  var stored = null;
+  try { stored = JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { stored = null; }
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) stored = null;
+  var sections = document.querySelectorAll("details.hc-section[data-hc-section]");
+  if (stored) {
+    sections.forEach(function (el) {
+      var name = el.getAttribute("data-hc-section");
+      if (!name || !Object.prototype.hasOwnProperty.call(stored, name)) return;
+      if (stored[name] === "1") el.setAttribute("open", "");
+      else if (stored[name] === "0") el.removeAttribute("open");
+    });
+  }
+  function write() {
+    var next = {};
+    sections.forEach(function (el) {
+      var name = el.getAttribute("data-hc-section");
+      if (name) next[name] = el.open ? "1" : "0";
+    });
+    try { localStorage.setItem(key, JSON.stringify(next)); } catch (e) {}
+  }
+  sections.forEach(function (el) { el.addEventListener("toggle", write); });
 })();
 </script>`;
 }
@@ -879,12 +916,6 @@ export function trimmingSection(input: HarvestConsoleInput, locale: Locale = "en
       <summary>${esc(t(locale, "Trimming"))}</summary>
       <div class="hc-shifts">${cards}</div>
       ${unassigned}${unassignedRunning}
-      <p class="muted hc-note">${esc(
-        t(
-          locale,
-          "The day's packages from Trim Packages Entry, each on the shift its operator is named on. Total Bud is BUD, SHAKE (bulk) and SMALLS as WPR (prepack); Other is TRIM, BIO, the WIP left in the packages the shift finished, and every other type; BTR is Total Bud over the shift total. RUNNING means the clock is inside the shift's hours (Day 6:00 AM to 6:00 PM, Second 6:00 PM to 6:00 AM Eastern) with a lot standing in the Unloaded Queue for trim, or a package weighed in the last 30 minutes. The type lists, the shift operators and the shift hours are values in Admin, Lookups, app_config. DLH and input lbs are typed here per shift per day. The sheet is the source of the cutting and bucking hours and replaces a typed number at the next hour."
-        )
-      )}</p>
       ${trimLineScript()}
     </details>`;
 }
@@ -1245,15 +1276,22 @@ export function testingSection(
     </details>`;
 }
 
-/** The console: five collapsible sections, Plants, Drying, Trimming and Testing open. */
+/** The console sections. Plants, Trimming, Testing and Prepack start open. Drying and the pasteurization stub start closed. */
 /** THE CONSOLE DAY (canon 0.30.152): the date control, yesterday by default, any day up to today. */
 export function consoleDayControl(input: HarvestConsoleInput, locale: Locale): string {
   const yesterday = dayBefore(input.today);
+  const viewingToday = input.yesterday === input.today;
+  const state = viewingToday
+    ? t(locale, "today so far; the panes below read today up to now")
+    : input.dayPicked
+      ? t(locale, "picked; the panes below read this day")
+      : t(locale, "yesterday, the default");
   return `<form class="hc-day" method="get" action="${HARVEST_PATH}" data-hc-day>
       <label class="field">${esc(t(locale, "Day"))}
         <input type="date" name="day" value="${esc(input.yesterday)}" max="${esc(input.today)}" data-hc-day-input onchange="this.form.submit()">
       </label>
-      <span class="muted" data-hc-day-state>${esc(input.dayPicked ? t(locale, "picked; the panes below read this day") : t(locale, "yesterday, the default"))}</span>
+      <span class="muted" data-hc-day-state>${esc(state)}</span>
+      ${viewingToday ? "" : `<a class="secondary" href="${HARVEST_PATH}?day=${esc(input.today)}" data-hc-day-today>${esc(t(locale, "Today so far"))}</a>`}
       ${input.dayPicked ? `<a class="secondary" href="${HARVEST_PATH}" data-hc-day-reset>${esc(t(locale, "Back to yesterday"))}</a>` : ""}
       <noscript><button type="submit" class="secondary">${esc(t(locale, "Show"))}</button></noscript>
       <span class="muted">${esc(t(locale, "Yesterday is"))} ${esc(yesterday)}; ${esc(t(locale, "the hours you type land on the day shown."))}</span>
@@ -1392,16 +1430,10 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
     ${flash}
     ${consoleDayControl(page.input, locale)}
     <details class="hc-section" data-hc-section="plants" open>
-      <summary>${esc(t(locale, "Plants"))}</summary>
+      <summary>${esc(t(locale, "Plants"))} <span class="muted hc-year">${esc(t(locale, "Harvest year"))} ${esc(String(page.input.year))}</span></summary>
       <div class="hc-farms">${boxes.map((b) => farmBox(b, page.input, locale)).join("")}</div>
-      <p class="muted hc-note">${esc(
-        t(
-          locale,
-          "Plants remaining are the live plants in the METRC mirror under each farm's licenses; harvested adds the plant counts typed on the farm's finished lots this season; the per-plant averages read the season's counted lots. Hours are typed here per farm per day; Weight/DLH divides yesterday's weighed wet grams by them. The sheet is the source of the cutting and bucking hours and replaces a typed number at the next hour."
-        )
-      )} ${esc(t(locale, "Harvest year"))} ${esc(String(page.input.year))}.</p>
     </details>
-    <details class="hc-section" data-hc-section="drying" open>
+    <details class="hc-section" data-hc-section="drying">
       <summary>${esc(t(locale, "Drying"))}</summary>
       ${siloStrip(page.live, page.nowIso, locale, page.cureTiles ?? "", page.envFlags ?? {})}
       ${page.dryingTotals ? dryingTotalsMarkup(page.dryingTotals, locale) : ""}
@@ -1416,7 +1448,7 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
       dayPicked: page.input.dayPicked,
     })}
     ${prepackSection(page.prepack ?? emptyPrepack(page.input.yesterday), page.input, locale)}
-    ${hoursScript()}`;
+    ${hoursScript()}${foldScript()}`;
 }
 
 /* ------------------------------------------------------------ the loaders */
@@ -1628,6 +1660,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     secondHoursRaw,
     syncView,
     bogeyRaw,
+    plantCountRows,
   ] = await Promise.all([
     db
       .prepare(
@@ -1731,6 +1764,10 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     latestSheetSync(db),
     // THE TRIM BOGEY (canon 0.30.249): the plume's product line, Admin, Lookups.
     getConfigValue(db, CONFIG_KEYS.trim_bogey_pct),
+    db
+      .prepare(`SELECT farm_code, plant_count FROM farm_plant_counts WHERE harvest_year = ? AND deleted_at IS NULL`)
+      .bind(year)
+      .all<{ farm_code: string; plant_count: number }>(),
   ]);
   const trimHours: Record<TrimShiftKey, number | null> = { day: null, second: null };
   for (const row of trimHoursRows.results ?? []) {
@@ -1770,6 +1807,12 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     const farm = farmOf(row.farm_code);
     if (farm) hours[farm] = Number(row.hours);
   }
+  const plantCounts = {} as Record<ConsoleFarm, number | null>;
+  for (const farm of CONSOLE_FARMS) plantCounts[farm] = null;
+  for (const row of plantCountRows.results ?? []) {
+    const farm = farmOf(row.farm_code);
+    if (farm) plantCounts[farm] = Number(row.plant_count);
+  }
   return {
     today,
     yesterday,
@@ -1785,6 +1828,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     })),
     yesterdayWet: (yesterdayWet.results ?? []).map((r) => ({ farm: r.farm, wet_grams: Number(r.wet_grams ?? 0) })),
     hours,
+    plantCounts,
     trim,
     sheetSync: syncView,
   };
@@ -1968,7 +2012,7 @@ export async function saveTrimInputLbs(db: D1Database, form: FormData): Promise<
       old_value: oldValue,
       new_value: newValue,
       actor_person_id: actorId,
-      reason: SYSTEM_REASON.trim_input_lbs,
+      reason: SYSTEM_REASON.labor_hours,
       changed_at: ts,
     });
   const stmts: D1PreparedStatement[] = [];
