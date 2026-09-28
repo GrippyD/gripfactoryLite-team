@@ -3,6 +3,7 @@
  * TAT metric definitions are provisional (Scribe-derived from the pipeline).
  */
 
+import { dayBefore } from "./farmday";
 import { isPotencyAnalyte } from "./compliance";
 import { formatGrams, ITEM_KIND_WET_TOTAL, round2, roundGrams } from "./config";
 import { t, type Locale } from "./i18n";
@@ -30,6 +31,7 @@ export const REPORT_KEYS = [
   "external_audits",
   "rf",
   "internal_testing",
+  "labor_hours",
 ] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
@@ -309,6 +311,11 @@ export const REPORT_CARDS: Array<{ key: ReportKey; title: string; blurb: string 
     title: "Internal testing",
     blurb: "HBN, harvest date, testing date, aW results, potency results.",
   },
+  {
+    key: "labor_hours",
+    title: "Labor hours",
+    blurb: "Every hour and input lb typed on the console, by date and operation.",
+  },
 ];
 
 export function salesOrdersEmptyCopy(): string {
@@ -321,6 +328,43 @@ export function inventoryFgEmptyCopy(): string {
 
 export function tatFootnote(): string {
   return TAT_METRICS.map((m) => `${m.label}: ${m.definition}`).join(" ");
+}
+
+/** The last 30 farm days ending today, inclusive. */
+export function laborHoursDefaultWindow(today: string): { from: string; to: string } {
+  let from = today;
+  for (let i = 0; i < 29; i++) from = dayBefore(from);
+  return { from, to: today };
+}
+
+export type LaborHourRow = {
+  work_date: string;
+  operation: string;
+  value: number;
+  unit: string;
+  updated_at: string;
+};
+
+export function laborHoursView(rows: LaborHourRow[]): ReportView {
+  return {
+    key: "labor_hours",
+    title: "Labor hours",
+    columns: [
+      { key: "date", label: "Date" },
+      { key: "operation", label: "Operation" },
+      { key: "value", label: "Value" },
+      { key: "unit", label: "Unit" },
+      { key: "updated", label: "Updated" },
+    ],
+    rows: rows.map((row) => ({
+      date: row.work_date,
+      operation: row.operation,
+      value: Number(row.value),
+      unit: row.unit,
+      updated: row.updated_at,
+    })),
+    empty: "No hours in this window.",
+  };
 }
 
 export type TatPeriod = { year?: number; from?: string; to?: string };

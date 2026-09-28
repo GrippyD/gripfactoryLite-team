@@ -53,6 +53,13 @@ export const LOOKUP_LANDING: LookupLandingSection[] = [
         description: "Planned dry slot on Acquire HBN (1 through 5, or NA).",
         lookupFieldName: "Silo #",
       },
+      {
+        key: "plant_count",
+        title: "Farm Plant Count",
+        href: "/admin/lookups/plant_count",
+        description: "One number per farm per harvest year: the denominator of Plants Remaining/Total on the console, never overridden by METRC.",
+        lookupFieldName: "Farm Plant Count",
+      },
     ],
   },
   {

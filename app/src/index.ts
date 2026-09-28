@@ -60,6 +60,7 @@ import {
   addGrowMethod,
   addLookupValue,
   saveTrimBogey,
+  saveFarmPlantCounts,
   addLotWeight,
   addPackageType,
   addPerson,
@@ -282,6 +283,7 @@ import {
   listExternalTests,
   listFinishedExternalAudits,
   listInternalTestingReport,
+  listLaborHours,
   listLabelTemplates,
   listLabelPackages,
   latestFinalizedPotency,
@@ -355,7 +357,7 @@ import {
   schedulingLanding,
   schedulingPage,
 } from "./scheduling";
-import { editPage, logPage, lookupSectionPage, lookupsLandingPage, manualHbnPage, trimBogeyPage, voidPage } from "./pages";
+import { editPage, logPage, lookupSectionPage, lookupsLandingPage, manualHbnPage, plantCountPage, plantCountYear, trimBogeyPage, voidPage } from "./pages";
 import { LOOKUP_VALUE_SECTIONS } from "./lookups";
 import {
   aggregateTatDays,
@@ -367,6 +369,8 @@ import {
   inventoryReportView,
   isReportKey,
   internalTestingView,
+  laborHoursDefaultWindow,
+  laborHoursView,
   productMixView,
   reportCsv,
   reportFileStamp,
@@ -785,6 +789,12 @@ app.get("/reports/:key", async (c) => {
   const key = c.req.param("key");
   if (!isReportKey(key)) return c.notFound();
   const url = new URL(c.req.url);
+  if (key === "labor_hours") {
+    const today = await farmToday(c.env.DB, nowIso());
+    const window = laborHoursDefaultWindow(today);
+    if (!url.searchParams.get("from")) url.searchParams.set("from", window.from);
+    if (!url.searchParams.get("to")) url.searchParams.set("to", window.to);
+  }
   const format = url.searchParams.get("format");
   const s = await shell(c);
   const view = await buildReportView(c.env.DB, key, url.searchParams);
@@ -2789,6 +2799,18 @@ app.get("/admin/lookups/:section", async (c) => {
     const raw = await getConfigValue(c.env.DB, CONFIG_KEYS.trim_bogey_pct);
     return html(c, s, "Trim Bogey", trimBogeyPage(parseTrimBogey(raw), trimBogeyOf(raw) != null, s.locale, c.req.query("ok") || undefined));
   }
+  if (section === "plant_count") {
+    const today = await farmToday(c.env.DB, nowIso());
+    const year = plantCountYear(c.req.query("year"), today);
+    const farms = await c.env.DB.prepare(`SELECT code, display_name FROM farms WHERE deleted_at IS NULL ORDER BY code`).all<{ code: string; display_name: string }>();
+    const counts = await c.env.DB
+      .prepare(`SELECT farm_code, plant_count FROM farm_plant_counts WHERE harvest_year = ? AND deleted_at IS NULL`)
+      .bind(Number(year))
+      .all<{ farm_code: string; plant_count: number }>();
+    const byFarm = new Map((counts.results ?? []).map((row) => [row.farm_code, Number(row.plant_count)]));
+    const rows = (farms.results ?? []).map((farm) => ({ code: farm.code, name: farm.display_name, count: byFarm.has(farm.code) ? byFarm.get(farm.code)! : null }));
+    return html(c, s, "Farm Plant Count", plantCountPage(year, rows, s.locale, c.req.query("ok") || undefined));
+  }
   const tables = {
     people: await listAdminRows(c.env.DB, "people"),
     farms: await listAdminRows(c.env.DB, "farms"),
@@ -2810,6 +2832,7 @@ app.post("/admin/lookups/:table", async (c) => {
   let result;
   if (table === "testing_labs") result = await saveTestingLab(c.env.DB, form);
   else if (table === "trim_bogey") result = await saveTrimBogey(c.env.DB, form);
+  else if (table === "plant_count") result = await saveFarmPlantCounts(c.env.DB, form);
   else if (table === "people" && action === "deactivate") result = await deactivatePerson(c.env.DB, form);
   else if (table === "people") result = await addPerson(c.env.DB, form);
   else if (table === "strains") result = await addStrain(c.env.DB, form);
@@ -3071,6 +3094,10 @@ function reportFilterForm(key: string, params: URLSearchParams, locale: Locale):
       <label class="field">${t(locale, "From")} <input type="date" name="from" value="${escQuery(params.get("from"))}"></label>
       <label class="field">${t(locale, "To")} <input type="date" name="to" value="${escQuery(params.get("to"))}"></label>`;
   }
+  if (key === "labor_hours") {
+    return `<label class="field">${t(locale, "From")} <input type="date" name="from" value="${escQuery(params.get("from"))}"></label>
+      <label class="field">${t(locale, "To")} <input type="date" name="to" value="${escQuery(params.get("to"))}"></label>`;
+  }
   if (key === "internal_testing") {
     return `<label class="field">${t(locale, "Year")} <input type="text" name="year" value="${escQuery(params.get("year"))}"></label>
       <label class="field">${t(locale, "Strain")} <input type="text" name="strain" value="${escQuery(params.get("strain"))}"></label>`;
@@ -3142,6 +3169,9 @@ async function buildReportView(
     return externalAuditsView(rows);
   }
   if (key === "rf") return rfReportView();
+  if (key === "labor_hours") {
+    return laborHoursView(await listLaborHours(db, params.get("from") ?? "", params.get("to") ?? ""));
+  }
   if (key === "internal_testing") {
     const raw = await listInternalTestingReport(db, {
       year: params.get("year") || undefined,

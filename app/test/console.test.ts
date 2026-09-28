@@ -10,6 +10,8 @@ import {
   HARVEST_TRIM_HOURS_PATH,
   HARVEST_TRIM_INPUT_PATH,
   harvestConsolePage,
+  consoleDayOf,
+  loadHarvestConsole,
   parseHours,
   parseInputLbs,
   prepackCodesOf,
@@ -30,11 +32,10 @@ import {
   type TrimInput,
 } from "../src/console";
 import { CONFIG_KEYS, parseBtrTypeCodes, parseCryoTypeCategories, parseNameList, parseShiftWindow, parseTrimBogey, shiftWindowHolds, TRIM_BOGEY_DEFAULT, TRIM_SHIFT_HOURS_DEFAULT, trimBogeyOf } from "../src/config";
-import { etClockMinutes } from "../src/farmday";
+import { etClockMinutes, farmDayBounds } from "../src/farmday";
 import { HttpError } from "../src/audit";
 import { isReportKey, REPORT_CARDS, REPORT_KEYS } from "../src/reports";
 import { LB_GRAMS, siloVisual, type SiloLive } from "../src/silo";
-import { loadHarvestConsole } from "../src/console";
 import { themeStylesheet } from "../src/theme";
 import { countQueue, listHarvestsByYear, listLookup, listPaneRows, listQueueRows, listRecallableBatches } from "../src/db";
 import { createWetWeight, recallHarvestBatch } from "../src/actions";
@@ -66,6 +67,7 @@ const input: HarvestConsoleInput = {
     { farm: "ARL", wet_grams: 4535.9237 },
   ],
   hours: { PNN: 8, ARL: null, PNS: 0 },
+  plantCounts: { PNN: null, ARL: null, PNS: null },
 };
 
 const CAP = 15000 * LB_GRAMS;
@@ -81,7 +83,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(isReportKey("harvest_dashboard")).toBe(false);
     expect(REPORT_CARDS.map((c) => c.key)).not.toContain("harvest_dashboard");
     expect(REPORT_CARDS[0].key).toBe("inventory");
-    expect(REPORT_KEYS).toHaveLength(9);
+    expect(REPORT_KEYS).toHaveLength(10);
   });
 
   it("names the page and the hours post, and knows the three farms", () => {
@@ -101,12 +103,12 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(etDayBounds("2026-11-01")).toEqual({ startIso: "2026-11-01T04:00:00.000Z", endIso: "2026-11-02T05:00:00.000Z" });
   });
 
-  it("computes the seven metrics per farm and for Total, pounds first with grams under", () => {
+  it("computes the metrics per farm and for Total, pounds first with grams under", () => {
     const boxes = consoleBoxes(input);
     expect(boxes.map((b) => b.farm)).toEqual(["PNN", "ARL", "PNS", "Total"]);
     const pnn = boxes[0];
     expect(pnn.pct).toBeCloseTo(0.4, 9);
-    expect(pnn.metrics.map((m) => m.key)).toEqual(["remaining_total", "harvested", "pct", "wet_per_plant", "dry_per_plant", "hours", "weight_per_dlh"]);
+    expect(pnn.metrics.map((m) => m.key)).toEqual(["remaining_total", "harvested", "pct", "wet_per_plant", "dry_per_plant", "weight_harvested", "hours", "weight_per_dlh"]);
     const by = (farm: string, key: string) => {
       const box = boxes.find((b) => b.farm === farm)!;
       return box.metrics.find((m) => m.key === key)!;
@@ -124,7 +126,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(by("ARL", "pct").value).toBe("0.0%");
     expect(by("ARL", "wet_per_plant").value).toBe("");
     expect(by("ARL", "hours").value).toBe("");
-    expect(by("ARL", "weight_per_dlh")).toEqual({ key: "weight_per_dlh", label: "Weight/DLH Yesterday", value: "type hours", sub: "10.12 lb yesterday" });
+    expect(by("ARL", "weight_per_dlh")).toEqual({ key: "weight_per_dlh", label: "Weight/DLH Yesterday", value: "type hours" });
     // PNS: all harvested; zero hours typed divides nothing.
     expect(boxes[2].pct).toBe(1);
     expect(by("PNS", "pct").value).toBe("100.0%");
@@ -132,10 +134,10 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(by("PNS", "weight_per_dlh").value).toBe("");
     // Total: every farm plus the plants under a license with no farm (the 9).
     const total = boxes[3];
-    expect(by("Total", "remaining_total").value).toBe("1,509 / 2,359");
+    expect(by("Total", "remaining_total").value).toBe("1,500 / 2,350");
     expect(by("Total", "harvested").value).toBe("850");
-    expect(total.pct).toBeCloseTo(850 / 2359, 9);
-    expect(by("Total", "pct").value).toBe("36.0%");
+    expect(total.pct).toBeCloseTo(850 / 2350, 9);
+    expect(by("Total", "pct").value).toBe("36.2%");
     expect(by("Total", "hours").value).toBe("8");
     expect(by("Total", "weight_per_dlh")).toEqual({ key: "weight_per_dlh", label: "Weight/DLH Yesterday", value: "26.58 lb/h", sub: "11,907 g/h" });
     // No plants known at all: no percent, not a division by zero.
@@ -150,8 +152,8 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" });
     expect(html).toContain("<h1>Harvest Console</h1>");
     expect(html).toContain('<details class="hc-section" data-hc-section="plants" open>');
-    expect(html).toContain("<summary>Plants</summary>");
-    expect(html).toContain('<details class="hc-section" data-hc-section="drying" open>');
+    expect(html).toContain('<summary>Plants <span class="muted hc-year">Harvest year 2026</span></summary>');
+    expect(html).toContain('<details class="hc-section" data-hc-section="drying">');
     expect(html).toContain("<summary>Drying</summary>");
     expect(html).toContain('<details class="hc-section" data-hc-section="trimming" open>');
     expect(html).toContain("<summary>Trimming</summary>");
@@ -162,6 +164,8 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(html).toContain('data-hc="lots_ready">0<');
     expect(html.match(/data-hc-stub>/g)).toHaveLength(1);
     expect(html).toContain("Stub: this section waits on the owner's definition.");
+    expect(html).toContain('gf_hc_fold');
+    expect(html).not.toContain('data-hc-section="drying" open');
     const order = ["plants", "drying", "trimming", "pasteurization", "testing", "prepack"].map((k) => html.indexOf(`data-hc-section="${k}"`));
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     // THE DRYING TOTALS (canon 0.30.183): none handed, none drawn.
@@ -204,6 +208,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
       "% Complete",
       "Wet Weight/plant AVG",
       "Dry Weight/plant AVG",
+      "Weight Harvested",
       "Cutting and Bucking Hours Yesterday",
       "Weight/DLH Yesterday",
     ];
@@ -227,12 +232,68 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     const total = html.slice(html.indexOf('data-hc-farm="Total"'), html.indexOf('data-hc-section="drying"'));
     expect(total).not.toContain("hc-hours");
     expect(total).toContain('<span class="hc-value" data-hc="hours">8</span>');
-    // The date under the two yesterday lines, and the flash after a save.
-    // Eight on the Plants boxes (hours and Weight/DLH per box), one per shift card (canon 0.30.88)
-    // and one on each card's sheet-hours line (canon 0.30.154).
-    expect(html.match(/<span class="hc-date muted">2026-09-14<\/span>/g)).toHaveLength(12);
+    // The date under the yesterday lines, and the flash after a save.
+    // Twelve on the Plants boxes (hours, Weight Harvested and Weight/DLH per box), one per shift card
+    // (canon 0.30.88) and one on each card's sheet-hours line (canon 0.30.154).
+    expect(html.match(/<span class="hc-date muted">2026-09-14<\/span>/g)).toHaveLength(16);
     expect(html).toContain('<p class="banner ok" data-hc-flash>Hours saved.</p>');
     expect(harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" })).not.toContain("data-hc-flash");
+  });
+
+  it("today so far is one tap, the plant count is the denominator, and the harvested weight shows even at zero", () => {
+    expect(consoleDayOf("2026-09-15", "2026-09-15")).toEqual({ day: "2026-09-15", dayPicked: true });
+    const today = harvestConsolePage({ input: { ...input, yesterday: "2026-09-15", dayPicked: true }, live, nowIso: "2026-09-15T16:00:00.000Z" });
+    expect(today).toContain('data-hc-day-state>today so far; the panes below read today up to now');
+    expect(today).toContain('data-hc-day-reset');
+    expect(today).not.toContain("data-hc-day-today");
+    const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T16:00:00.000Z" });
+    expect(html).toContain('data-hc-day-today');
+    expect(html).toContain('href="/harvest?day=2026-09-15"');
+    expect(html).toContain("Today so far");
+    const counted = consoleBoxes({ ...input, plantCounts: { PNN: 1000, ARL: null, PNS: null }, seasonHarvested: [{ farm: "PNN", plants: 250 }], remaining: [{ farm: "PNN", plants: 800 }] });
+    const pnn = counted.find((b) => b.farm === "PNN")!;
+    expect(pnn.metrics.find((m) => m.key === "remaining_total")!.value).toBe("800 / 1,000");
+    expect(pnn.metrics.find((m) => m.key === "pct")!.value).toBe("25.0%");
+    const stale = consoleBoxes({
+      ...input,
+      plantCounts: { PNN: 100, ARL: null, PNS: null },
+      seasonHarvested: [{ farm: "PNN", plants: 250 }],
+      remaining: [{ farm: "PNN", plants: 10 }],
+    }).find((b) => b.farm === "PNN")!;
+    expect(stale.metrics.find((m) => m.key === "pct")!.value).toBe("250.0%");
+    expect(stale.pct).toBeCloseTo(2.5, 9);
+    const fallback = consoleBoxes(input).find((b) => b.farm === "ARL")!;
+    expect(fallback.metrics.find((m) => m.key === "remaining_total")!.value).toBe("300 / 300");
+    const page = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" });
+    expect(page.match(/data-hc-metric="weight_harvested"/g)).toHaveLength(4);
+    expect(page).toContain('data-hc="weight_harvested">0.00 lb</span><span class="hc-sub muted">0 g</span>');
+    expect(page).not.toContain("Plants remaining are the live plants");
+    expect(page).not.toContain("The day's packages from Trim Packages Entry");
+    expect(page).toContain("Harvest year 2026");
+  });
+
+  it("today picked bounds the weighed totes to today's farm day", async () => {
+    const m = await migratedDb();
+    const at = "2026-09-15T16:00:00.000Z";
+    const bounds = farmDayBounds("2026-09-15", 6);
+    seedBatch(m, { id: "hb-day", hbn: "26258-PNN-GH-001-0-NA-26001", serial: 1, farm: "PNN" });
+    seedLot(m, "lot-day", "hb-day", "drying");
+    m.run(
+      `INSERT INTO wet_weights (id, wet_weight_entry_id, weight_grams, created_at, updated_at) VALUES ('w-in', 'lot-day', 448, ?, ?)`,
+      "2026-09-15T15:00:00.000Z",
+      "2026-09-15T15:00:00.000Z"
+    );
+    m.run(
+      `INSERT INTO wet_weights (id, wet_weight_entry_id, weight_grams, created_at, updated_at) VALUES ('w-out', 'lot-day', 896, ?, ?)`,
+      "2026-09-15T09:00:00.000Z",
+      "2026-09-15T09:00:00.000Z"
+    );
+    const loaded = await loadHarvestConsole(m.db, at, "2026-09-15");
+    expect(loaded.dayPicked).toBe(true);
+    expect(loaded.yesterday).toBe("2026-09-15");
+    expect(loaded.yesterdayWet).toEqual([{ farm: "PNN", wet_grams: 448 }]);
+    expect(bounds.startIso < "2026-09-15T15:00:00.000Z" && "2026-09-15T15:00:00.000Z" < bounds.endIso).toBe(true);
+    expect("2026-09-15T09:00:00.000Z" < bounds.startIso).toBe(true);
   });
 
   it("the Drying section is the silo strip with the Arlington Dry Room as the wire box", () => {
@@ -277,7 +338,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
 
   it("speaks Spanish on the sections and the lines", () => {
     const es = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z", locale: "es" });
-    expect(es).toContain("<summary>Plantas</summary>");
+    expect(es).toContain('<summary>Plantas <span class="muted hc-year">Año de cosecha 2026</span></summary>');
     expect(es).toContain("<summary>Secado</summary>");
     expect(es).toContain("<summary>Recorte</summary>");
     expect(es).toContain("<summary>Pasteurizacion</summary>");
@@ -763,12 +824,11 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(never).toContain('<dd class="hc-sheet-sync muted" data-hc-sheet-sync-line>sheet never read</dd>');
     const neverEs = trimmingSection(withTrim, "es");
     expect(neverEs).toContain("data-hc-sheet-sync-line>la hoja nunca se leyo</dd>");
-    // The Trimming footnote speaks both hands' sentences, in both languages (the clock rule and the sheet as the source).
-    expect(never).toContain("RUNNING means the clock is inside the shift's hours");
-    expect(never).toContain("The sheet is the source of the cutting and bucking hours and replaces a typed number at the next hour.");
-    expect(neverEs).toContain("EN MARCHA significa que el reloj esta dentro de las horas del turno");
-    expect(neverEs).toContain("La hoja es la fuente de las horas de corte y deshoje y reemplaza un numero escrito en la hora siguiente.");
-    expect(neverEs).not.toContain("The sheet is the source of the cutting and bucking hours");
+    // The long Trimming footnote is gone (canon 0.30.288). The sheet-hours line stays.
+    expect(never).not.toContain("RUNNING means the clock is inside the shift's hours");
+    expect(never).toContain("Cutting and bucking hours from the sheet");
+    expect(neverEs).not.toContain("EN MARCHA significa que el reloj esta dentro de las horas del turno");
+    expect(neverEs).toContain("Horas de corte y desrame de la hoja");
     // A run that read the sheet: the Eastern stamp, rows seen and rows changed (2026-09-21T14:15:00Z is 10:15 AM ET).
     const okView = { status: "ok" as const, at: "2026-09-21T14:15:00Z", rowsSeen: 44, rowsChanged: 3, message: null };
     const ok = trimmingSection({ ...withTrim, sheetSync: okView });

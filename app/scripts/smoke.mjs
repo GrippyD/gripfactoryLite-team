@@ -402,8 +402,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 77 migration(s)")) {
-      throw new Error(`from-zero apply must say 77 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 78 migration(s)")) {
+      throw new Error(`from-zero apply must say 78 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -4842,7 +4842,7 @@ async function run() {
     for (const section of ["plants", "drying", "trimming", "pasteurization", "testing"]) {
       assert(consolePage.body.includes(`data-hc-section="${section}"`), `the console must carry the ${section} section`);
     }
-    assert(consolePage.body.includes('data-hc-section="plants" open') && consolePage.body.includes('data-hc-section="drying" open'), "Plants and Drying open by default");
+    assert(consolePage.body.includes('data-hc-section="plants" open') && consolePage.body.includes('data-hc-section="drying">') && !consolePage.body.includes('data-hc-section="drying" open'), "Plants open and Drying closed on a first visit");
     assert((consolePage.body.match(/data-hc-stub>/g) || []).length === 1, "Pasteurization is the remaining stub; Testing is built");
     assert(consolePage.body.includes('data-hc-section="testing"') && !consolePage.body.includes('hc-stub" data-hc-section="testing"'), "Testing must be a section, not a stub");
     assert(consolePage.body.includes('data-hc="lots_ready">1<'), "the season must count the trimmed lot as ready");
@@ -5178,7 +5178,7 @@ async function run() {
     const toEsConsole = await req("/locale", { method: "POST", body: form({ locale: "es" }) });
     await toEsConsole.text();
     const consoleEs = await text("/harvest");
-    assert(consoleEs.body.includes("<summary>Plantas</summary>") && consoleEs.body.includes("<summary>Secado</summary>"), "the console must speak Spanish");
+    assert(consoleEs.body.includes('<summary>Plantas <span class="muted hc-year">Año de cosecha') && consoleEs.body.includes("<summary>Secado</summary>"), "the console must speak Spanish");
     assert(!consoleEs.body.includes("Inventario FFZ") && !consoleEs.body.includes("data-ffz"), "the Spanish console must not carry the FFZ cube");
     const toEnConsole = await req("/locale", { method: "POST", body: form({ locale: "en" }) });
     await toEnConsole.text();
@@ -6756,7 +6756,7 @@ async function run() {
     const uploadPage = await text(uploadLoc);
     assert(uploadPage.body.includes("In testing sheet: 2 seen,"), "the import page must say the counts in words");
     const syncTrimNote = syncSkipped.body.slice(syncSkipped.body.indexOf('data-hc-section="trimming"'), syncSkipped.body.indexOf('data-hc-section="pasteurization"'));
-    assert(syncTrimNote.includes("The sheet is the source of the cutting and bucking hours and replaces a typed number at the next hour."), "the Trimming footnote must name the sheet as the source");
+    assert(syncTrimNote.includes("Cutting and bucking hours from the sheet") && !syncTrimNote.includes("The day's packages from Trim Packages Entry"), "the Trimming section keeps the sheet hours and drops the long footnote");
     const dropsPath = join(appRoot, "..", "DROPS", "In Testing (2026).xlsb");
     if (existsSync(dropsPath)) {
       const dropped = readFileSync(dropsPath);

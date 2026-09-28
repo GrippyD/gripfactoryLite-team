@@ -5562,6 +5562,90 @@ export async function saveTrimBogey(db: D1Database, form: FormData): Promise<Act
   return done;
 }
 
+/** THE FARM PLANT COUNT (canon 0.30.288): one whole number per farm per harvest year. */
+export async function saveFarmPlantCounts(db: D1Database, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const reason = requireReason(textOrNull(form.get("reason")));
+  const yearText = textOrNull(form.get("harvest_year")) ?? "";
+  if (!/^\d{4}$/.test(yearText)) throw new HttpError(400, "Harvest year must be a four-digit year.");
+  const year = Number(yearText);
+  const farms = await db.prepare(`SELECT code FROM farms WHERE deleted_at IS NULL ORDER BY code`).all<{ code: string }>();
+  const ts = nowIso();
+  const stmts: D1PreparedStatement[] = [];
+  for (const farm of farms.results ?? []) {
+    const raw = textOrNull(form.get(`count_${farm.code}`));
+    let next: number | null = null;
+    if (raw != null) {
+      if (!/^\d+$/.test(raw)) throw new HttpError(400, "Plant count must be a whole number, zero or more.");
+      next = Number(raw);
+    }
+    const existing = await db
+      .prepare(`SELECT id, plant_count FROM farm_plant_counts WHERE farm_code = ? AND harvest_year = ? AND deleted_at IS NULL`)
+      .bind(farm.code, year)
+      .first<{ id: string; plant_count: number }>();
+    if (next == null) {
+      if (!existing) continue;
+      stmts.push(
+        db
+          .prepare(
+            `UPDATE farm_plant_counts SET deleted_at = ?, deleted_by = ?, delete_reason = ?, updated_at = ?, updated_by = ? WHERE id = ?`
+          )
+          .bind(ts, actor.id, reason, ts, actor.id, existing.id),
+        insertLog(db, {
+          record_table: "farm_plant_counts",
+          record_id: existing.id,
+          field: "plant_count",
+          old_value: String(existing.plant_count),
+          new_value: null,
+          actor_person_id: actor.id,
+          reason,
+          changed_at: ts,
+        })
+      );
+      continue;
+    }
+    if (existing) {
+      if (Number(existing.plant_count) === next) continue;
+      stmts.push(
+        db.prepare(`UPDATE farm_plant_counts SET plant_count = ?, updated_at = ?, updated_by = ? WHERE id = ?`).bind(next, ts, actor.id, existing.id),
+        insertLog(db, {
+          record_table: "farm_plant_counts",
+          record_id: existing.id,
+          field: "plant_count",
+          old_value: String(existing.plant_count),
+          new_value: String(next),
+          actor_person_id: actor.id,
+          reason,
+          changed_at: ts,
+        })
+      );
+      continue;
+    }
+    const id = crypto.randomUUID();
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO farm_plant_counts (
+             id, farm_code, harvest_year, plant_count, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`
+        )
+        .bind(id, farm.code, year, next, ts, actor.id, ts, actor.id),
+      insertLog(db, {
+        record_table: "farm_plant_counts",
+        record_id: id,
+        field: "plant_count",
+        old_value: null,
+        new_value: String(next),
+        actor_person_id: actor.id,
+        reason,
+        changed_at: ts,
+      })
+    );
+  }
+  if (stmts.length) await db.batch(stmts);
+  return { redirect: `/admin/lookups/plant_count?year=${yearText}&ok=saved` };
+}
+
 export async function addLookupValue(db: D1Database, category: string, form: FormData): Promise<ActionOk> {
   const actor = await requireActor(db, personIdFrom(form));
   const value = requireText(form.get("value"), "Value");

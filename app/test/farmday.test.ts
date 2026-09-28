@@ -171,6 +171,7 @@ const baseInput: HarvestConsoleInput = {
   seasonLots: [],
   yesterdayWet: [],
   hours: { PNN: null, ARL: null, PNS: null },
+  plantCounts: { PNN: null, ARL: null, PNS: null },
 };
 
 describe("THE CONSOLE DAY (canon 0.30.152; owner: \"on the dashboard, can we do a universal date override?  It defaults to \\\"yesterday\\\" and I can change it to any other day?\")", () => {
