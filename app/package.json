@@ -10,6 +10,7 @@
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
     "typecheck": "wrangler types --no-strict-vars && tsc --noEmit",
+    "proofs:icons": "node --experimental-strip-types scripts/icon-proofs.mjs",
     "types": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply gripfactory-lite-local --local"
   },
