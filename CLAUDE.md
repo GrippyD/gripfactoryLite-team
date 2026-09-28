@@ -7,6 +7,8 @@ You are working in the Gripfactory Lite repo. A persistent Scribe session (Cowor
 1. `canon/_NOW.md` (the active line), then `canon/MEMORY.md`, then `canon/CANON.md`. Canon wins over chat, code, and this file. Never edit anything under `canon/` or `prompts/`; propose amendments in a session report instead.
 2. Guardrails that bind you: the repo has one remote, a private GitHub repository; Dennis's hands push to it, or the Scribe by his word in the conversation for that one push; a build session never pushes, never adds a remote, never makes a branch and never runs git on the tree at all (G-1 as amended 2026-09-27, canon 0.30.261). No em dashes or en dashes in anything you write (G-8). Migrations are append-only (never edit 0001 through the current head; new numbered files only). Ship-clean: no personnel or meeting content in anything that leaves this repo (G-9). Every substantive session writes `SESSION_REPORTS/YYYY-MM-DD_<slug>.md` with a sealed final check (byte size, sha256, tail, tsc, tests) pasted verbatim (G-10).
 
+A build session for the branch opens in `branches/GFLiteOpsDashboard` and its `app/`. `npm run deploy:grip` is never run from `branches/`, the worker deploys from `main` alone, by the workflow.
+
 ## Deploy (the usual voice command: "deploy")
 
 All commands run from `app/`. Wrangler is already authorized on this machine.
