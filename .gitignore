@@ -31,3 +31,6 @@ SESSION_REPORTS/db_dumps_*/
 
 # THE ROLL'S TOML BACKUPS (canon 0.30.53)
 app/wrangler.toml.bak-*
+
+# THE BRANCH FOLDER (canon 0.30.277): the worktree of GFLiteOpsDashboard, a second checkout beside main, never committed
+branches/

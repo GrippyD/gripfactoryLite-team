@@ -9,7 +9,7 @@
     "deploy:c10": "wrangler deploy --env c10",
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
-    "typecheck": "wrangler types && tsc --noEmit",
+    "typecheck": "wrangler types --no-strict-vars && tsc --noEmit",
     "types": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply gripfactory-lite-local --local"
   },
