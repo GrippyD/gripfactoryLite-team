@@ -115,6 +115,13 @@ export const LOOKUP_LANDING: LookupLandingSection[] = [
         description: "AU-Grow and AU-Processor labels on inventory and manifests.",
         lookupFieldName: "Licenses",
       },
+      {
+        key: "fulfillment_override",
+        title: "Fulfillment Override",
+        href: "/admin/lookups/fulfillment_override",
+        description: "The day's fulfillment figures, ten rows by three columns. The console reads this panel and nothing else.",
+        lookupFieldName: "Fulfillment Override",
+      },
     ],
   },
   {

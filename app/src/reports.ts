@@ -4,7 +4,7 @@
  */
 
 import { dayBefore } from "./farmday";
-import { isPotencyAnalyte } from "./compliance";
+import { formatLbs, gramsToLbs, isPotencyAnalyte } from "./compliance";
 import { formatGrams, ITEM_KIND_WET_TOTAL, round2, roundGrams } from "./config";
 import { t, type Locale } from "./i18n";
 import { agedDays } from "./marketplace";
@@ -136,6 +136,8 @@ export type ReportColumn = {
   key: string;
   label: string;
   grams?: boolean;
+  /** The row value is grams. Rendered as pounds at 448, two decimals. */
+  lbs?: boolean;
 };
 
 export type ReportView = {
@@ -177,7 +179,8 @@ export function groupedRowsHtml(
         }
       }
       const cells = cols.map((c) => cellHtml(c, row)).join("");
-      return `${header}<tr>${cells}</tr>${rowExtra(row, cols.length)}`;
+      const total = row._total === 1 || row._total === "1";
+      return `${header}<tr${total ? ' class="report-total"' : ""}>${cells}</tr>${rowExtra(row, cols.length)}`;
     })
     .join("");
 }
@@ -196,6 +199,14 @@ function csvCell(value: unknown): string {
   return s;
 }
 
+/** A cell as a person reads it: grams grouped, pounds at 448 with two decimals. */
+export function reportCellText(column: ReportColumn, raw: string | number | null | undefined): string {
+  if (raw == null || raw === "") return "";
+  if (column.grams) return formatGrams(raw);
+  if (column.lbs) return formatLbs(Number(raw));
+  return String(raw);
+}
+
 export function reportCsv(view: ReportView): string {
   const lines = [view.columns.map((c) => c.label).join(",")];
   for (const row of view.rows) {
@@ -203,9 +214,7 @@ export function reportCsv(view: ReportView): string {
       view.columns
         .map((c) => {
           if (c.key.startsWith("_")) return "";
-          const raw = row[c.key];
-          if (c.grams && raw != null && raw !== "") return csvCell(formatGrams(raw));
-          return csvCell(raw ?? "");
+          return csvCell(reportCellText(c, row[c.key] as string | number | null | undefined));
         })
         .join(",")
     );
@@ -220,10 +229,15 @@ export function reportXlsx(view: ReportView): Uint8Array {
     gramColumns,
     rows: view.rows.map((row) =>
       view.columns.map((c): XlsxCell => {
-        if (c.grams && row[c.key] != null && row[c.key] !== "") {
-          return { number: roundGrams(Number(row[c.key])), grams: true };
+        const raw = row[c.key];
+        if (c.key.startsWith("_")) return { text: "" };
+        if (c.grams && raw != null && raw !== "") {
+          return { number: roundGrams(Number(raw)), grams: true };
         }
-        return { text: String(row[c.key] ?? "") };
+        if (c.lbs && raw != null && raw !== "") {
+          return { number: gramsToLbs(Number(raw)), lbs: true };
+        }
+        return { text: String(raw ?? "") };
       })
     ),
   };
@@ -244,7 +258,7 @@ export function reportPdfHtml(
       ? `<tr><td colspan="${cols.length}">${esc(view.empty ?? t(locale, "No rows."))}</td></tr>`
       : groupedRowsHtml(view, (c, row) => {
           const raw = row[c.key];
-          const shown = c.grams ? formatGrams(raw) : String(raw ?? "");
+          const shown = reportCellText(c, raw as string | number | null | undefined);
           return `<td>${esc(shown)}</td>`;
         });
   const footnote = view.footnote ? `<p class="muted">${esc(view.footnote)}</p>` : "";
@@ -261,6 +275,7 @@ export function reportPdfHtml(
     th, td { border: 1px solid #bbb; padding: 0.35rem 0.5rem; text-align: left; }
     th { font-weight: 700; }
     tr.report-group th { background: #eee; text-align: left; font-size: 1.05rem; letter-spacing: 0.04em; }
+    tr.report-total td { font-weight: 700; border-top: 2px solid #1a1a1a; }
     .muted { color: #555; font-size: 0.9rem; }
     footer { margin-top: 1.2rem; font-size: 0.85rem; color: #555; }
     .print-bar { margin: 0 0 1rem; }
@@ -782,19 +797,31 @@ export function productMixView(
   year: number
 ): ReportView {
   const total = rows.reduce((s, r) => s + Number(r.total_grams), 0);
+  const body: ReportView["rows"] = rows.map((r) => ({
+    package_type: r.display_name ?? r.package_type_code,
+    grams: r.total_grams,
+    lbs: r.total_grams,
+    percent: total === 0 ? "0.00" : ((Number(r.total_grams) / total) * 100).toFixed(2),
+  }));
+  if (body.length > 0) {
+    body.push({
+      package_type: "Total",
+      grams: total,
+      lbs: total,
+      percent: "100.00",
+      _total: 1,
+    });
+  }
   return {
     key: "product_mix",
     title: "Product Mix by weight",
     columns: [
       { key: "package_type", label: "Package type" },
       { key: "grams", label: "Grams", grams: true },
+      { key: "lbs", label: "Lbs", lbs: true },
       { key: "percent", label: "Percent" },
     ],
-    rows: rows.map((r) => ({
-      package_type: r.display_name ?? r.package_type_code,
-      grams: r.total_grams,
-      percent: total === 0 ? "0.00" : ((Number(r.total_grams) / total) * 100).toFixed(2),
-    })),
+    rows: body,
     footnote: `Year ${year}.`,
   };
 }

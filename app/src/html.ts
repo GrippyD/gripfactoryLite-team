@@ -105,7 +105,7 @@ import type {
 import type { PendingLocationMoveRow } from "./locations";
 import { LEDGER_LOCATION_PATH, reconcileNotesSection, type ReconcileNoteRow } from "./ledgerloc";
 import type { ReportView } from "./reports";
-import { REPORT_CARDS, bodyColumns, groupedRowsHtml } from "./reports";
+import { REPORT_CARDS, bodyColumns, groupedRowsHtml, reportCellText } from "./reports";
 
 export function esc(s: unknown): string {
   return String(s ?? "")
@@ -757,7 +757,7 @@ export function reportPage(
           view,
           (c, row) => {
             const raw = row[c.key];
-            return `<td>${esc(c.grams ? formatGrams(raw) : String(raw ?? ""))}</td>`;
+            return `<td>${esc(reportCellText(c, raw as string | number | null | undefined))}</td>`;
           },
           (row, colspan) =>
             row._detail ? `<tr class="report-detail"><td colspan="${colspan}">${esc(String(row._detail))}</td></tr>` : ""

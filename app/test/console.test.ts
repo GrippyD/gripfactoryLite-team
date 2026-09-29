@@ -955,6 +955,15 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(withHours).toContain('data-hc="prepack_lbs_per_dlh">0.02<');
     expect(withHours).not.toContain("type the hours");
   });
+
+  it("the Fulfillment section follows Prepack and is the last section", () => {
+    const html = harvestConsolePage({ input, live, nowIso: "2026-09-22T16:00:00.000Z" });
+    expect(html.indexOf('data-hc-section="prepack"')).toBeLessThan(html.indexOf('data-hc-section="fulfillment"'));
+    const rest = html.slice(html.indexOf('data-hc-section="fulfillment"') + 'data-hc-section="fulfillment"'.length);
+    expect(rest).not.toContain("data-hc-section=");
+    expect(html).toContain('data-hc-section="fulfillment" open');
+    expect(html).toContain("No figures typed for this day.");
+  });
 });
 
 describe("THE METRC-BORN HBN STAYS OUT OF THE HARVEST (canon 0.30.196)", () => {

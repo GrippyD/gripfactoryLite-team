@@ -168,10 +168,10 @@ import {
 import { HttpError, nowIso, textOrNull } from "./audit";
 import { getConfigValue, insertLog, TRIM_SCHEDULED_SQL } from "./db";
 import { siloStrip } from "./drying";
-import { dryingTotalsMarkup, type DryingTotals } from "./silo";
+import { fulfillmentSection, emptyFulfillment, type FulfillmentDay } from "./fulfillmentboard";
 import { dayBefore, etClockMinutes, etDate, etDayBounds, FARM_TIME_ZONE, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHour } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
-import { type SiloLive } from "./silo";
+import { type SiloLive, dryingTotalsMarkup, type DryingTotals } from "./silo";
 import { latestSheetSync, sheetSyncLineText, type SheetSyncView } from "./sheetsync";
 import { outcomeOf } from "./intesting";
 import { consoleIconSvg, type ConsoleIconName } from "./consoleicons";
@@ -687,6 +687,8 @@ export type HarvestConsolePageInput = {
   testing?: TestingFigures;
   /** THE PREPACK (canon 0.30.188). Omitted reads as an empty day. */
   prepack?: PrepackConsole;
+  /** FULFILLMENT (canon 0.30.306). Omitted reads as a day with no cells. */
+  fulfillment?: FulfillmentDay;
 };
 
 function hoursBox(farm: ConsoleFarm, input: HarvestConsoleInput, locale: Locale): string {
@@ -1369,7 +1371,7 @@ export function testingSection(figures: TestingFigures, opts: { locale?: Locale;
     </details>`;
 }
 
-/** The console sections. Plants, Trimming, Testing and Prepack start open. Drying and the pasteurization stub start closed. */
+/** The console sections. Plants, Trimming, Testing, Prepack and Fulfillment start open. Drying and the pasteurization stub start closed. */
 /** THE CONSOLE DAY (canon 0.30.152): the date control, yesterday by default, any day up to today. */
 export function consoleDayControl(input: HarvestConsoleInput, locale: Locale): string {
   const yesterday = dayBefore(input.today);
@@ -1538,6 +1540,7 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
       year: page.input.year,
     })}
     ${prepackSection(page.prepack ?? emptyPrepack(page.input.yesterday), page.input, locale)}
+    ${fulfillmentSection(page.fulfillment ?? emptyFulfillment(), locale)}
     ${hoursScript()}${foldScript()}`;
 }
 
