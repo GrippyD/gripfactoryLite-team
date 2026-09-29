@@ -11,6 +11,7 @@ import { consoleIconSvg } from "./consoleicons";
 import { insertLog, requireActor } from "./db";
 import { etDate, etWallClock } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
+import { spaceTypeOf, type SpaceLike } from "./silo";
 import { esc } from "./ui";
 
 export const MAINTENANCE_PATH = "/maintenance";
@@ -332,15 +333,28 @@ export async function checksForLoads(db: D1Database, loads: readonly LoadForChec
   return out;
 }
 
-type SiloLike = { loads: LoadForCheck[] };
+type SiloLike = { loads: LoadForCheck[]; silo?: SpaceLike };
 
+/** THE SILOS ONLY (canon 0.30.299). The maintenance screen draws the spaces
+ * whose spaceTypeOf is silo. A dry room and a freezer stay off it. A new
+ * silo joins by that answer, not by its name. */
+export function maintenanceSpaces<T extends { silo: SpaceLike }>(live: readonly T[]): T[] {
+  return live.filter((row) => spaceTypeOf(row.silo) === "silo");
+}
+
+function spaceIsSilo(space: SpaceLike | undefined): boolean {
+  return spaceTypeOf(space ?? {}) === "silo";
+}
+
+/** Lines for silo loads only. A dry room or a freezer takes an empty list:
+ * no countdown and no siren on any page, and an empty checks array in live.json. */
 export async function attachLoadChecks<T extends SiloLike>(db: D1Database, live: readonly T[], atIso: string): Promise<(T & { loadChecks: LoadCheckView[] })[]> {
   await fulfillFromInstruments(db, atIso);
-  const loads = live.flatMap((space) => space.loads);
+  const loads = live.filter((space) => spaceIsSilo(space.silo)).flatMap((space) => space.loads);
   const byLoad = await checksForLoads(db, loads);
   return live.map((space) => ({
     ...space,
-    loadChecks: space.loads.flatMap((load) => byLoad.get(load.id) ?? []),
+    loadChecks: spaceIsSilo(space.silo) ? space.loads.flatMap((load) => byLoad.get(load.id) ?? []) : [],
   }));
 }
 
@@ -398,18 +412,18 @@ async function labRows(db: D1Database): Promise<LabRow[]> {
 async function dryingLoads(db: D1Database): Promise<Array<LoadForCheck & { space_name: string | null; strain_label: string | null; dry_space_id: string; wet_weight_entry_id: string }>> {
   const rows = await db
     .prepare(
-      `SELECT l.id, l.loaded_at, l.paused_at, l.dry_space_id, l.wet_weight_entry_id, d.name AS space_name, b.hbn,
+      `SELECT l.id, l.loaded_at, l.paused_at, l.dry_space_id, l.wet_weight_entry_id, d.name AS space_name, d.space_type, d.shape, b.hbn,
               COALESCE(b.market_strain, s.name) AS strain_label
        FROM silo_loads l
-       LEFT JOIN dry_spaces d ON d.id = l.dry_space_id
+       JOIN dry_spaces d ON d.id = l.dry_space_id AND d.deleted_at IS NULL
        JOIN wet_weight_entries w ON w.id = l.wet_weight_entry_id AND w.deleted_at IS NULL
        LEFT JOIN harvest_batches b ON b.id = w.harvest_batch_id
        LEFT JOIN strains s ON s.id = b.strain_id
        WHERE l.deleted_at IS NULL AND l.ended_at IS NULL
        ORDER BY d.name, l.loaded_at`
     )
-    .all<LoadForCheck & { space_name: string | null; strain_label: string | null; dry_space_id: string; wet_weight_entry_id: string }>();
-  return rows.results ?? [];
+    .all<LoadForCheck & { space_name: string | null; strain_label: string | null; dry_space_id: string; wet_weight_entry_id: string; space_type: string | null; shape: string | null }>();
+  return (rows.results ?? []).filter((row) => spaceTypeOf(row) === "silo");
 }
 
 function rowTitle(space: string | null, hbn: string | null, locale: Locale): string {
@@ -581,14 +595,26 @@ export async function scheduleLabSample(db: D1Database, form: FormData): Promise
   if (!loadId || !kind) throw new HttpError(400, "Pick a load and a check.");
   const load = await db
     .prepare(
-      `SELECT l.id, l.dry_space_id, l.wet_weight_entry_id, l.loaded_at, l.ended_at
+      `SELECT l.id, l.dry_space_id, l.wet_weight_entry_id, l.loaded_at, l.ended_at,
+              d.id AS space_id, d.space_type, d.shape
        FROM silo_loads l
        JOIN wet_weight_entries w ON w.id = l.wet_weight_entry_id AND w.deleted_at IS NULL
+       LEFT JOIN dry_spaces d ON d.id = l.dry_space_id AND d.deleted_at IS NULL
        WHERE l.id = ? AND l.deleted_at IS NULL`
     )
     .bind(loadId)
-    .first<{ id: string; dry_space_id: string; wet_weight_entry_id: string; loaded_at: string; ended_at: string | null }>();
+    .first<{
+      id: string;
+      dry_space_id: string;
+      wet_weight_entry_id: string;
+      loaded_at: string;
+      ended_at: string | null;
+      space_id: string | null;
+      space_type: string | null;
+      shape: string | null;
+    }>();
   if (!load || load.ended_at) throw new HttpError(400, "That load is not drying.");
+  if (!load.space_id || spaceTypeOf(load) !== "silo") throw new HttpError(400, "That load is not in a silo.");
   const hours = (await intervalLists(db))[kind];
   if (hours.length === 0) throw new HttpError(400, "That check has no interval.");
   const open = await db

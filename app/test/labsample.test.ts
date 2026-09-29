@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import { internalCheckKind } from "../src/compliance";
 import { etWallClock } from "../src/farmday";
 import {
+  attachLoadChecks,
   earliestByDue,
   fulfillFromInstruments,
   fulfillLabSample,
   intervalHours,
   intervalPage,
   labSamplePage,
+  maintenanceSpaces,
   nextCheckDue,
   requestLabSample,
   returnLabSample,
@@ -91,7 +93,7 @@ describe("THE MAINTENANCE NODE panes (canon 0.30.293)", () => {
     const person = seedPerson(m);
     seedBatch(m, { id: "hb-lab", hbn: "26260-PNN-GH-001-0-NA-26070", serial: 70, farm: "PNN" });
     seedLot(m, "lot-lab", "hb-lab", "drying");
-    const space = m.get(`SELECT id FROM dry_spaces WHERE deleted_at IS NULL ORDER BY name LIMIT 1`);
+    const space = m.get(`SELECT id FROM dry_spaces WHERE name = 'Silo 1' AND deleted_at IS NULL`);
     expect(space?.id).toBeTruthy();
     m.run(
       `INSERT INTO silo_loads (id, dry_space_id, wet_weight_entry_id, loaded_at, paused_seconds, created_at, updated_at)
@@ -148,7 +150,7 @@ describe("THE MAINTENANCE NODE panes (canon 0.30.293)", () => {
     const person = seedPerson(m);
     seedBatch(m, { id: "hb-lab2", hbn: "26261-PNN-GH-001-0-NA-26071", serial: 71, farm: "PNN" });
     seedLot(m, "lot-lab2", "hb-lab2", "drying");
-    const space = m.get(`SELECT id FROM dry_spaces WHERE deleted_at IS NULL ORDER BY name LIMIT 1`);
+    const space = m.get(`SELECT id FROM dry_spaces WHERE name = 'Silo 1' AND deleted_at IS NULL`);
     m.run(
       `INSERT INTO silo_loads (id, dry_space_id, wet_weight_entry_id, loaded_at, paused_seconds, created_at, updated_at)
        VALUES ('load-lab2', ?, 'lot-lab2', ?, 0, ?, ?)`,
@@ -196,5 +198,86 @@ describe("THE MAINTENANCE NODE panes (canon 0.30.293)", () => {
     expect(html).not.toContain('data-interval-hours>0<');
     const gone = m.get(`SELECT delete_reason FROM lookup_values WHERE id = ?`, first);
     expect(gone?.delete_reason).toBe("removed");
+  });
+});
+
+describe("THE SILOS ONLY (canon 0.30.299)", () => {
+  it("keeps a silo and leaves a dry room and a freezer", () => {
+    const live = [
+      { silo: { id: "s6", name: "Silo 6", space_type: "silo" } },
+      { silo: { id: "room", name: "Arlington Dry Room", shape: "box" } },
+      { silo: { id: "bf", name: "Blast Freezer(s)", space_type: "freezer", shape: "cube" } },
+    ];
+    expect(maintenanceSpaces(live).map((row) => row.silo.name)).toEqual(["Silo 6"]);
+  });
+
+  it("gives a freezer load no line while the silo's load beside it has one", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    await saveSiloCheckInterval(m.db, formOf({ person_id: person, action: "add", kind: "aw", hours: "0" }));
+    const checked = await attachLoadChecks(
+      m.db,
+      [
+        {
+          silo: { id: "s1", name: "Silo 1", space_type: "silo" },
+          loads: [{ id: "load-silo", loaded_at: LOADED, hbn: "26260-PNN-GH-001-0-NA-26070" }],
+        },
+        {
+          silo: { id: "bf", name: "Blast Freezer(s)", space_type: "freezer", shape: "cube" },
+          loads: [{ id: "load-bf", loaded_at: LOADED, hbn: "26261-PNN-GH-001-0-NA-26071" }],
+        },
+      ],
+      "2026-09-02T00:00:00.000Z"
+    );
+    expect(checked[0].loadChecks.map((row) => row.loadId)).toEqual(["load-silo"]);
+    expect(checked[1].loadChecks).toEqual([]);
+  });
+
+  it("lists a silo load on the Drying pane, keeps a dry room request, and refuses to schedule one", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    seedBatch(m, { id: "hb-silo-only", hbn: "26280-PNN-GH-001-0-NA-26090", serial: 90, farm: "PNN" });
+    seedBatch(m, { id: "hb-room-only", hbn: "26281-PNN-GH-001-0-NA-26091", serial: 91, farm: "PNN" });
+    seedLot(m, "lot-silo-only", "hb-silo-only", "drying");
+    seedLot(m, "lot-room-only", "hb-room-only", "drying");
+    const silo = m.get(`SELECT id FROM dry_spaces WHERE name = 'Silo 1' AND deleted_at IS NULL`);
+    const room = m.get(`SELECT id, space_type FROM dry_spaces WHERE name = 'Arlington Dry Room' AND deleted_at IS NULL`);
+    expect(silo?.id).toBeTruthy();
+    expect(room?.space_type).toBe("dry_room");
+    m.run(
+      `INSERT INTO silo_loads (id, dry_space_id, wet_weight_entry_id, loaded_at, paused_seconds, created_at, updated_at)
+       VALUES ('load-silo-only', ?, 'lot-silo-only', ?, 0, ?, ?)`,
+      String(silo?.id),
+      LOADED,
+      LOADED,
+      LOADED
+    );
+    m.run(
+      `INSERT INTO silo_loads (id, dry_space_id, wet_weight_entry_id, loaded_at, paused_seconds, created_at, updated_at)
+       VALUES ('load-room-only', ?, 'lot-room-only', ?, 0, ?, ?)`,
+      String(room?.id),
+      LOADED,
+      LOADED,
+      LOADED
+    );
+    m.run(
+      `INSERT INTO lab_sample_requests (
+         id, silo_load_id, dry_space_id, wet_weight_entry_id, kind, check_number, status, scheduled_at, created_at, updated_at
+       ) VALUES ('req-room-only', 'load-room-only', ?, 'lot-room-only', 'aw', 1, 'scheduled', ?, ?, ?)`,
+      String(room?.id),
+      LOADED,
+      LOADED,
+      LOADED
+    );
+    await saveSiloCheckInterval(m.db, formOf({ person_id: person, action: "add", kind: "aw", hours: "0" }));
+    const page = await labSamplePage(m.db, "2026-09-02T00:00:00.000Z");
+    expect(page).toContain('data-lab-row="drying" data-load="load-silo-only"');
+    expect(page).not.toContain('data-load="load-room-only"');
+    expect(page).toContain('data-lab-row="scheduled" data-request="req-room-only"');
+    expect(page).toContain("Arlington Dry Room");
+    await expect(scheduleLabSample(m.db, formOf({ person_id: person, silo_load_id: "load-room-only", kind: "aw" }))).rejects.toMatchObject({
+      status: 400,
+      message: "That load is not in a silo.",
+    });
   });
 });
