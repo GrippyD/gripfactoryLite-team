@@ -72,20 +72,23 @@ describe("THE HOURS PROVED AND THE LABOR HOURS REPORT (canon 0.30.288)", () => {
     await savePrepackHours(m.db, formOf({ work_date: DAY, hours: "2.25" }));
     const rows = await listLaborHours(m.db, PRIOR, DAY);
     expect(rows.map((row) => `${row.work_date}|${row.operation}|${row.value}|${row.unit}`)).toEqual([
-      "2026-09-15|Cutting and bucking, PNN|9|h",
+      "2026-09-15|Harvest hours, PNN|9|h",
       "2026-09-15|Prepack hours|2.25|h",
       "2026-09-15|Trim DLH, day|6.5|h",
       "2026-09-15|Trim input lbs, second|13|lb",
-      "2026-09-14|Cutting and bucking, ARL|4|h",
+      "2026-09-14|Harvest hours, ARL|4|h",
     ]);
     expect(rows.every((row) => typeof row.updated_at === "string" && row.updated_at.length > 0)).toBe(true);
     const view = laborHoursView(rows);
     expect(view.columns.map((c) => c.label)).toEqual(["Date", "Operation", "Value", "Unit", "Updated"]);
-    expect(view.rows[0]?.operation).toBe("Cutting and bucking, PNN");
+    expect(view.rows[0]?.operation).toBe("Harvest hours, PNN");
+    await saveHarvestHours(m.db, formOf({ farm: "ALL", work_date: DAY, hours: "6" }));
+    const named = await listLaborHours(m.db, DAY, DAY);
+    expect(named.some((row) => row.operation === "Harvest hours" && row.value === 6)).toBe(true);
     expect(laborHoursView([]).empty).toBe("No hours in this window.");
     const onlyToday = await listLaborHours(m.db, DAY, DAY);
     expect(onlyToday.every((row) => row.work_date === DAY)).toBe(true);
-    expect(onlyToday).toHaveLength(4);
+    expect(onlyToday).toHaveLength(5);
     let from = DAY;
     for (let i = 0; i < 29; i++) from = dayBefore(from);
     expect(laborHoursDefaultWindow(DAY)).toEqual({ from, to: DAY });

@@ -4880,9 +4880,11 @@ async function run() {
       assert(consolePage.body.includes(`data-hc-farm="${farm}"`), `the ${farm} box must render`);
     }
     assert(/data-hc-farm="Total" data-hc-pct="\d+">\s*<div class="hc-shade" style="opacity:\d\.\d{3}">/.test(consolePage.body), "the Total box must shade by its % complete");
-    for (const label of ["Plants Remaining/Total Plants", "Plants Harvested", "% Complete", "Wet Weight/plant AVG", "Dry Weight/plant AVG", "Cutting and Bucking Hours Yesterday", "Weight/DLH Yesterday"]) {
+    for (const label of ["Plants Remaining/Total Plants", "Plants Harvested", "% Complete", "Wet Weight/plant AVG", "Dry Weight/plant AVG", "Weight Harvested"]) {
       assert((consolePage.body.match(new RegExp(`<dt>${label.replace(/[/%]/g, (c) => "\\" + c)}`, "g")) || []).length === 4, `every box must carry the ${label} line`);
     }
+    assert((consolePage.body.match(/<dt>Harvest Hours Yesterday/g) || []).length === 1, "only the Total box carries Harvest Hours");
+    assert((consolePage.body.match(/<dt>Weight\/DLH Yesterday/g) || []).length === 1, "only the Total box carries Weight/DLH");
     // The counted lots (42 + 7 so far) roll into Plants Harvested for Total.
     const totalBox = consolePage.body.slice(consolePage.body.indexOf('data-hc-farm="Total"'), consolePage.body.indexOf('data-hc-section="drying"'));
     const harvestedTotal = totalBox.match(/data-hc="harvested">([^<]+)</);
@@ -4910,20 +4912,20 @@ async function run() {
     const thcDesc = await text(`/harvest?day=${pickedDay}&thc=desc`);
     assert(thcDesc.res.status === 200 && !thcDesc.body.includes("data-hc-thc-sort") && thcDesc.body.includes('data-hc="ready_packages">0<') && thcDesc.body.includes("picked; the panes below read this day"), "a thc query must keep the picked day and leave the gate alone");
     // Three farm hours forms, two DLH boxes, two input lbs boxes, and the prepack DLH box carry the day home.
-    assert((consolePicked.body.match(new RegExp(`name="work_date" value="${pickedDay}"`, "g")) || []).length === 8, "every hours and input lbs form must carry the picked day");
+    assert((consolePicked.body.match(new RegExp(`name="work_date" value="${pickedDay}"`, "g")) || []).length === 6, "the harvest hours box, the two DLH boxes, the two input lbs boxes and the prepack box must carry the picked day");
     assert(consolePicked.body.includes(`<span class="hc-date muted">${pickedDay}</span>`), "the date under the yesterday lines must be the picked day");
-    const pickedHours = await req("/harvest/hours", { method: "POST", body: form({ farm: "ARL", work_date: pickedDay, hours: "3", day_picked: "1" }) });
+    const pickedHours = await req("/harvest/hours", { method: "POST", body: form({ farm: "ALL", work_date: pickedDay, hours: "3", day_picked: "1" }) });
     assert(pickedHours.status === 303 && (pickedHours.headers.get("location") || "") === `/harvest?ok=hours&day=${pickedDay}`, `hours on a picked day must return to that day, got ${pickedHours.headers.get("location")}`);
     const consolePickedAfter = await text(`/harvest?ok=hours&day=${pickedDay}`);
-    assert(consolePickedAfter.body.includes('aria-label="Cutting and Bucking Hours Yesterday ARL" data-hc-hours-input>') && /value="3"[^>]*aria-label="Cutting and Bucking Hours Yesterday ARL"/.test(consolePickedAfter.body), "the picked day's ARL hours must read back on that day");
+    assert(/value="3"[^>]*aria-label="Harvest Hours Yesterday"/.test(consolePickedAfter.body), "the picked day's harvest hours must read back on the Total box");
     const consoleBackToYesterday = await text("/harvest");
-    assert(/value=""[^>]*aria-label="Cutting and Bucking Hours Yesterday ARL"/.test(consoleBackToYesterday.body), "yesterday's ARL box must stay blank: the hours landed on the picked day");
-    const clearPicked = await req("/harvest/hours", { method: "POST", body: form({ farm: "ARL", work_date: pickedDay, hours: "", day_picked: "1" }) });
+    assert(/value=""[^>]*aria-label="Harvest Hours Yesterday"/.test(consoleBackToYesterday.body) || /aria-label="Harvest Hours Yesterday"[^>]*value=""/.test(consoleBackToYesterday.body), "yesterday's harvest hours box must stay blank: the hours landed on the picked day");
+    const clearPicked = await req("/harvest/hours", { method: "POST", body: form({ farm: "ALL", work_date: pickedDay, hours: "", day_picked: "1" }) });
     assert(clearPicked.status === 303, "clearing the picked day's hours must save");
     const futureDay = await text("/harvest?day=2099-01-01");
     assert(futureDay.body.includes("yesterday, the default"), "a future day reads yesterday");
-    assert((consolePage.body.match(/class="hc-hours" data-hc-hours="/g) || []).length === 3, "one hours form per farm");
-    assert(consolePage.body.includes(`<input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="" placeholder="hours" aria-label="Cutting and Bucking Hours Yesterday PNN" data-hc-hours-input>`), "the PNN hours box starts blank");
+    assert((consolePage.body.match(/class="hc-hours" data-hc-hours="/g) || []).length === 1, "one harvest hours form, on the Total box");
+    assert(consolePage.body.includes(`<input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="" placeholder="hours" aria-label="Harvest Hours Yesterday" data-hc-hours-input>`), "the harvest hours box starts blank");
     assert(consolePage.body.includes("type hours"), "Weight/DLH must ask for hours until they are typed");
     const badHours = await req("/harvest/hours", { method: "POST", body: form({ farm: "PNN", work_date: consoleYesterday, hours: "eight" }) });
     assert(badHours.status === 400, `word hours expected 400 got ${badHours.status}`);
@@ -4931,25 +4933,24 @@ async function run() {
     const badFarm = await req("/harvest/hours", { method: "POST", body: form({ farm: "XYZ", work_date: consoleYesterday, hours: "8" }) });
     assert(badFarm.status === 400, `unknown farm expected 400 got ${badFarm.status}`);
     await badFarm.text();
-    const saveHours = await req("/harvest/hours", { method: "POST", body: form({ farm: "PNN", work_date: consoleYesterday, hours: "8" }) });
+    const saveHours = await req("/harvest/hours", { method: "POST", body: form({ farm: "ALL", work_date: consoleYesterday, hours: "8" }) });
     assert(saveHours.status === 303, `save hours expected 303 got ${saveHours.status}`);
     assert((saveHours.headers.get("location") || "").endsWith("/harvest?ok=hours"), `save hours must return to the console, got ${saveHours.headers.get("location")}`);
     const consoleSaved = await text("/harvest?ok=hours");
     assert(consoleSaved.body.includes('data-hc-flash>Hours saved.</p>'), "the save must flash");
-    assert(consoleSaved.body.includes('aria-label="Cutting and Bucking Hours Yesterday PNN" data-hc-hours-input') && /value="8"[^>]*aria-label="Cutting and Bucking Hours Yesterday PNN"/.test(consoleSaved.body), "the PNN box must keep its typed 8");
+    assert(/value="8"[^>]*aria-label="Harvest Hours Yesterday"/.test(consoleSaved.body), "the Total box must keep its typed 8");
+    const laborHoursReport = await text(`/reports/labor_hours?from=${consoleYesterday}&to=${consoleYesterday}`);
+    assert(laborHoursReport.body.includes("<td>Harvest hours</td>"), "the labor hours report names the one farm-wide row Harvest hours");
     const totalSaved = consoleSaved.body.slice(consoleSaved.body.indexOf('data-hc-farm="Total"'), consoleSaved.body.indexOf('data-hc-section="drying"'));
-    assert(totalSaved.includes('<span class="hc-value" data-hc="hours">8</span>'), "Total must sum the typed hours");
-    const pnnSaved = consoleSaved.body.slice(consoleSaved.body.indexOf('data-hc-farm="PNN"'), consoleSaved.body.indexOf('data-hc-farm="ARL"'));
-    assert(!pnnSaved.includes("type hours"), "PNN's Weight/DLH must divide once hours are typed");
-    assert(/data-hc="weight_per_dlh">[0-9,.]+ lb\/h</.test(pnnSaved), "PNN's Weight/DLH must read in lb/h");
-    const retype = await req("/harvest/hours", { method: "POST", body: form({ farm: "PNN", work_date: consoleYesterday, hours: "7.5" }) });
+    assert(/data-hc="weight_per_dlh">[0-9,.]+ lb\/h</.test(totalSaved), "Total's Weight/DLH must read in lb/h once hours are typed");
+    const retype = await req("/harvest/hours", { method: "POST", body: form({ farm: "ALL", work_date: consoleYesterday, hours: "7.5" }) });
     assert(retype.status === 303, `retype hours expected 303 got ${retype.status}`);
     const hoursLog = await text("/log");
     assert(hoursLog.body.includes("labor hours typed"), "the hours changes must land in the change log");
-    const clearHours = await req("/harvest/hours", { method: "POST", body: form({ farm: "PNN", work_date: consoleYesterday, hours: "" }) });
+    const clearHours = await req("/harvest/hours", { method: "POST", body: form({ farm: "ALL", work_date: consoleYesterday, hours: "" }) });
     assert(clearHours.status === 303, `clear hours expected 303 got ${clearHours.status}`);
     const consoleCleared = await text("/harvest");
-    assert(/value=""[^>]*aria-label="Cutting and Bucking Hours Yesterday PNN"/.test(consoleCleared.body), "a blank save must clear the day's hours");
+    assert(/value=""[^>]*aria-label="Harvest Hours Yesterday"/.test(consoleCleared.body), "a blank save must clear the day's harvest hours");
     // THE LINE RUNS ON THE CLOCK (canon 0.30.163): read the Unloaded Queue's state at the same moment as this console.
     const trimQueueBefore = await text("/station/trim_packages");
     const queueEmptyBefore = trimQueueBefore.body.includes("No rows waiting.");
@@ -4970,11 +4971,19 @@ async function run() {
     const trimBefore = consoleCleared.body.slice(consoleCleared.body.indexOf('data-hc-section="trimming"'), consoleCleared.body.indexOf('data-hc-section="pasteurization"'));
     assert(trimBefore.includes('data-hc-shift="day"') && trimBefore.includes('data-hc-shift="second"'), "the Trimming section must carry the two shift cards");
     assert(trimBefore.indexOf('data-hc-shift="day"') < trimBefore.indexOf('data-hc-shift="second"'), "Day shift stands before Second Shift");
-    // THE TRIM LINE PICTURE (canon 0.30.154): the waffle gave way to his machine
-    // picture; with nothing dated yesterday both pictures hang a zero total and
-    // stand still (no shift operator weighed lately), while Les's over-trim a
-    // minute ago lights the section's RUNNING note for an operator on neither shift.
-    assert((trimBefore.match(/data-hc-trimline-total="0"/g) || []).length === 2, "with nothing dated yesterday both pictures hang a zero total");
+    // THE RIGHT NOW PANE (canon 0.30.310): one machine picture for today's live
+    // line, above the cards. Nothing is dated today, so the picture hangs zero
+    // and the bar is empty, while Les's weigh in this walk (within 30 minutes,
+    // on neither shift) turns the pane RUNNING.
+    assert(trimBefore.indexOf("data-hc-trim-rightnow") < trimBefore.indexOf('data-hc-shift="day"'), "Right now stands above the shift cards");
+    assert(trimBefore.includes("data-hc-btr-bar"), "Right now carries the BTR bar");
+    assert(trimBefore.includes("data-hc-trim-totals"), "the day's totals sit under the cards");
+    const rightNowBefore = trimBefore.slice(trimBefore.indexOf("data-hc-trim-rightnow"), trimBefore.indexOf('data-hc-shift="day"'));
+    const shiftCardsBefore = trimBefore.slice(trimBefore.indexOf('data-hc-shift="day"'), trimBefore.indexOf("data-hc-trim-totals"));
+    assert(!shiftCardsBefore.includes("hc-trimline"), "the shift cards carry no machine picture");
+    assert((rightNowBefore.match(/data-hc-trimline-total="0"/g) || []).length === 1, "with nothing dated today the live picture hangs a zero total");
+    assert(rightNowBefore.includes("no packages today"), "the BTR bar is an empty outline when nothing ran today");
+    assert(rightNowBefore.includes('data-hc-trimline-running="1"') && rightNowBefore.includes("data-hc-running"), "a package weighed in this walk turns the live pane RUNNING");
     assert((trimBefore.match(/data-hc-bud-consumed="0"/g) || []).length === 2, "with nothing dated yesterday both buds carry consumed 0");
     // THE PROGRESSION BUD (canon 0.30.273): 100 cells on a 13 by 19 lattice. Nothing ran: every cell is an outline. No permanent stem.
     assert((trimBefore.match(/class="hc-bud-cell hc-bud-empty"/g) || []).length === 200, "with nothing dated yesterday every cell of both buds is an outline");
@@ -4986,22 +4995,24 @@ async function run() {
     const onDutyKey = (() => { const h = etHourSmoke(new Date().toISOString()); return h >= 6 && h < 18 ? "day" : "second"; })();
     const offDutyKey = onDutyKey === "day" ? "second" : "day";
     if (queueEmptyBefore) {
-      assert((trimBefore.match(/data-hc-trimline-running="0"/g) || []).length === 2, "an empty queue and no recent weighing: both pictures stand still");
-      assert(!trimBefore.includes("<animate "), "still stripes while the line is idle");
-      assert(!trimBefore.includes("data-hc-running>"), "no RUNNING word on an idle card");
+      assert(trimBefore.includes('data-hc-shift="day" data-hc-shift-grams="0" data-hc-shift-running="0"'), "an empty queue: the Day card stands still");
+      assert(trimBefore.includes('data-hc-shift="second" data-hc-shift-grams="0" data-hc-shift-running="0"'), "an empty queue: the Second card stands still");
+      assert(!shiftCardsBefore.includes("data-hc-running>"), "no RUNNING word on an idle card");
     } else {
       assert(trimBefore.includes(`data-hc-shift="${onDutyKey}" data-hc-shift-grams="0" data-hc-shift-running="1"`), "a lot in the queue lights the shift on duty by the clock");
       assert(trimBefore.includes(`data-hc-shift="${offDutyKey}" data-hc-shift-grams="0" data-hc-shift-running="0"`), "the shift off duty stands still");
     }
+    assert(rightNowBefore.includes("<animate "), "RUNNING stripes move on the live picture");
     assert(trimBefore.includes('data-hc-trim-running-unassigned><span class="hc-running">RUNNING</span> a package was weighed in the last 30 minutes by an operator on neither shift.</p>'), "Les weighed within 30 minutes on neither shift: the section must say RUNNING there");
     for (const node of ["trim", "t0", "sorter", "marvel", "bio", "bud", "retrim"]) {
-      assert((trimBefore.match(new RegExp(`data-hc-node="${node}"`, "g")) || []).length === 2, `each card's picture must carry the ${node} machine`);
+      assert((rightNowBefore.match(new RegExp(`data-hc-node="${node}"`, "g")) || []).length === 1, `the live picture must carry the ${node} machine`);
     }
-    assert((trimBefore.match(/data-hc-flow=/g) || []).length === 12, "six flow bars per picture");
-    assert((trimBefore.match(/data-hc-flow="t0-trim" x="828" y="144" width="44" height="78" fill="url\(#hc-flow-up-(day|second)\)"/g) || []).length === 2, "the T-0 to TRIM bar keeps his width, 44 of 1000, and flows up out of T-0 (his correction)");
-    assert((trimBefore.match(/<text class="hc-total-label" x="520" y="662">Shift total<\/text>/g) || []).length === 2, "the converging lines hang the shift total under each picture");
+    assert((rightNowBefore.match(/data-hc-flow=/g) || []).length === 6, "six flow bars on the one live picture");
+    assert((rightNowBefore.match(/data-hc-flow="t0-trim" x="828" y="144" width="44" height="78" fill="url\(#hc-flow-up-now\)"/g) || []).length === 1, "the T-0 to TRIM bar keeps his width, 44 of 1000, and flows up out of T-0");
+    assert((rightNowBefore.match(/<text class="hc-total-label" x="520" y="662">Line total<\/text>/g) || []).length === 1, "the converging lines hang the line total under the live picture");
+    assert(!rightNowBefore.includes('data-hc-node-value="t0-input"'), "the live picture does not draw the typed input pounds");
     assert(!trimBefore.includes('data-hc-node-value="retrim"'), "RETRIM carries no figure yet (his word)");
-    assert((trimBefore.match(/data-hc-metric="trim_sheet_hours"/g) || []).length === 2 && (trimBefore.match(/data-hc-sheet-hours="PNN"/g) || []).length === 2, "each card lists the day's hours from the sheet per farm");
+    assert(!trimBefore.includes('data-hc-metric="trim_sheet_hours"') && !trimBefore.includes("Cutting and bucking hours from the sheet"), "the sheet hours line has left the shift cards");
     assert((trimBefore.match(/data-hc-trim-input="(day|second)"/g) || []).length === 2, "each card carries its input lbs box");
     assert(trimBefore.includes("data-hc-shift-operators>Olga</span>") && trimBefore.includes("data-hc-shift-operators>Victor</span>"), "the seeded operators name their shifts (migration 0052)");
     for (const label of ["Other", "Bulk Bud", "Prepack Bud", "Total Bud", "BTR", "Lbs Produced Yesterday", "DLH Yesterday", "Lbs/DLH"]) {
@@ -5053,17 +5064,9 @@ async function run() {
     assert(dayCard.includes('data-hc="trim_bulk">0.07 lb</span><span class="hc-sub muted">30 g · SHAKE + BUD</span>'), "Day shift Bulk Bud must be the SHAKE 30 g");
     assert(dayCard.includes('data-hc="trim_prepack">0.00 lb</span><span class="hc-sub muted">0 g · WPR</span>'), "Day shift Prepack Bud must read zero (no SMALLS)");
     assert(dayCard.includes('data-hc="trim_other">0.04 lb</span><span class="hc-sub muted">20 g · TRIM 20 + BIO 0 + WIP left 0</span>'), "Day shift Other must be the TRIM 20 g, named by stream");
-    // The picture: the total hangs 50 g, BUD carries the 30 g, RETRIM the TRIM 20 g; Olga weighed a minute ago, so the card runs and its stripes move.
-    assert(dayCard.includes('data-hc-trimline-running="1" data-hc-trimline-total="50"'), "the Day picture must run and hang the 50 g total");
     assert(dayCard.includes('data-hc-bud-consumed="40"'), "Day BTR 60.0% must grey 40 cells of the bud");
     assert(dayCard.includes('hc-bud-bud" data-hc-bud-order="100" data-hc-bud-n="1"'), "at 60% the heart, cell 1, is still bud");
     assert(dayCard.includes('hc-bud-consumed" data-hc-bud-order="1" data-hc-bud-n="100"'), "at 60% the foot, cell 100, is the first consumed");
-    assert(dayCard.includes('data-hc-node-value="bud" x="262" y="530">30 g</text>'), "the BUD endpoint must carry the Total Bud 30 g");
-    assert(dayCard.includes("bulk 30 · prepack 0</text>"), "the BUD endpoint must name bulk and prepack");
-    assert(dayCard.includes('<text class="hc-node-value" data-hc-node-value="trim" x="850" y="112">20 g</text>'), "the TRIM circle must carry the rest of Other, the TRIM 20 g (his correction)");
-    assert(dayCard.includes('data-hc-node-value="bio" x="105" y="496">0 g</text>'), "the BIO endpoint must read zero");
-    assert(dayCard.includes('data-hc-trimline-total-text x="520" y="692">0.11 lb · 50 g</text>'), "the converging lines must hang the shift total");
-    assert(dayCard.includes('<animate attributeName="x" from="0" to="-20" dur="900ms" repeatCount="indefinite"/>') && dayCard.includes('<animate attributeName="y" from="0" to="20" dur="900ms" repeatCount="indefinite"/>') && dayCard.includes('<animate attributeName="y" from="0" to="-20" dur="900ms" repeatCount="indefinite"/>'), "a running line moves its stripes at the drying cadence, 900 ms a tile, up out of T-0 for the TRIM circle");
     assert(dayCard.includes('data-hc-shift-running="1"') && dayCard.includes('<span class="hc-running" data-hc-running>RUNNING</span>'), "Olga weighed within 30 minutes: the Day card flashes RUNNING");
     // THE LINE RUNS ON THE CLOCK: the extra lot now stands in the Unloaded Queue for trim, so the shift on duty runs by the clock too.
     const trimQueueNow = await text("/station/trim_packages");
@@ -5076,7 +5079,6 @@ async function run() {
     assert(secondCard.includes('data-hc="trim_prepack">0.02 lb</span><span class="hc-sub muted">9 g · WPR</span>'), "Second Shift Prepack Bud must be the SMALLS 9 g (his WPR)");
     assert(secondCard.includes('data-hc="trim_bulk">0.00 lb</span><span class="hc-sub muted">0 g · SHAKE + BUD</span>'), "Second Shift Bulk Bud must read zero");
     assert(secondCard.includes('data-hc="trim_other">0.04 lb</span><span class="hc-sub muted">20 g · TRIM 0 + BIO 0 + WIP left 0 + other types 20</span>'), "Second Shift Other must gather the WASTE 20 g as another type");
-    assert(secondCard.includes('data-hc-trimline-running="1" data-hc-trimline-total="29"'), "the Second picture must run (victor weighed a minute ago) and hang the 29 g total");
     assert(secondCard.includes('data-hc-bud-consumed="69"'), "Second BTR 31.0% must grey 69 cells of the bud");
     // THE TRIM BOGEY (canon 0.30.249): 40 until saved; at 35 the 69 consumed reach four product cells, from the 66th.
     const wasteOf = (card) => {
@@ -5101,7 +5103,6 @@ async function run() {
     const bogeyBack = await req("/admin/lookups/trim_bogey", { method: "POST", body: form({ trim_bogey_pct: "40", reason: "smoke: back to the default" }) });
     assert(bogeyBack.status === 303, `restoring the bogey expected 303 got ${bogeyBack.status}`);
     await bogeyBack.text();
-    assert(secondCard.includes('<text class="hc-node-value" data-hc-node-value="trim" x="850" y="112">20 g</text>'), "the TRIM circle must carry the WASTE 20 g as the rest of Other");
     assert(trimSection.includes("data-hc-trim-unassigned>1 g yesterday by operators on neither shift: Les. Name the shifts' operators in Admin, Lookups, app_config.</p>"), "grams by an operator on neither shift must be named, never dropped");
     const badShift = await req("/harvest/trim-hours", { method: "POST", body: form({ shift: "night", work_date: consoleYesterday, hours: "5" }) });
     assert(badShift.status === 400, `an unknown shift expected 400 got ${badShift.status}`);
@@ -5141,10 +5142,9 @@ async function run() {
     assert(consoleInput.body.includes('data-hc-flash>Input lbs saved.</p>'), "the input lbs save must flash");
     const dayInput = consoleInput.body.slice(consoleInput.body.indexOf('data-hc-shift="day"'), consoleInput.body.indexOf('data-hc-shift="second"'));
     assert(/value="12.50"[^>]*aria-label="Input lbs Day shift" data-hc-input-lbs>/.test(dayInput), "the Day input box must keep its typed 12.50");
-    assert(dayInput.includes('<text class="hc-node-sub" data-hc-node-value="t0-input" x="849" y="362">input 12.50 lb</text>'), "T-0 must carry the typed input pounds (the total run through it)");
+    assert(!dayInput.includes("hc-trimline"), "the Day card keeps the input box and not the machine picture");
     const secondInput = consoleInput.body.slice(consoleInput.body.indexOf('data-hc-shift="second"'), consoleInput.body.indexOf('data-hc-section="pasteurization"'));
     assert(/value=""[^>]*aria-label="Input lbs Second Shift" data-hc-input-lbs>/.test(secondInput), "the Second input box stays blank");
-    assert(secondInput.includes('<text class="hc-node-sub hc-node-muted" data-hc-node-value="t0-input" x="849" y="362">input lbs</text>'), "an untyped T-0 asks for the input lbs");
     const inputLog = await text("/log");
     assert(inputLog.body.includes("<td>trim_line_inputs</td>"), "the input lbs must land in the change log under trim_line_inputs");
     const clearInputLbs = await req("/harvest/trim-input", { method: "POST", body: form({ shift: "day", work_date: consoleYesterday, lbs: "" }) });
@@ -5156,7 +5156,7 @@ async function run() {
     await toEsTrim.text();
     const consoleTrimEs = await text("/harvest");
     assert(consoleTrimEs.body.includes("Turno de dia") && consoleTrimEs.body.includes("Segundo turno") && consoleTrimEs.body.includes("Libras producidas ayer"), "the Trimming section must speak Spanish");
-    assert(consoleTrimEs.body.includes("<dt>Flor total</dt>") && consoleTrimEs.body.includes(">Total del turno</text>") && consoleTrimEs.body.includes("EN MARCHA"), "the picture and his lines must speak Spanish");
+    assert(consoleTrimEs.body.includes("<dt>Flor total</dt>") && consoleTrimEs.body.includes(">Total de la linea</text>") && consoleTrimEs.body.includes("EN MARCHA"), "the live picture and his lines must speak Spanish");
     // THE CONTRAST (canon 0.30.245): the legend reads bud, byproduct, waste.
     assert(consoleTrimEs.body.includes("subproducto") && consoleTrimEs.body.includes("desperdicio"), "the bud legend must speak Spanish");
     // THE DRYING TOTALS (canon 0.30.183) speak Spanish too.
@@ -6647,7 +6647,7 @@ async function run() {
     // number taken as typed (his pick); the second run skips an unchanged sheet; Run now
     // flashes in words.
     const syncNever = await text("/harvest");
-    assert(syncNever.body.includes('data-hc-metric="trim_sheet_hours" data-hc-sheet-sync="never"'), "before any run the sheet hours line must say never");
+    assert(syncNever.body.includes('data-hc-sheet-sync="never"'), "before any run the sheet status line must say never");
     assert(syncNever.body.includes("data-hc-sheet-sync-line>sheet never read</dd>"), "before any run the console must say the sheet was never read");
     const adminSyncTiles = await text("/admin");
     assert(adminSyncTiles.body.includes('href="/admin/sheet-sync"'), "Admin must carry the [Sheet sync] tile");
@@ -6694,10 +6694,9 @@ async function run() {
     assert(syncRead.body.includes('data-hc-sheet-sync="ok"'), "after the cron the sheet hours line must say ok");
     assert(/data-hc-sheet-sync-line>read from the sheet at \d{4}-\d{2}-\d{2} \d{1,2}:\d{2} (AM|PM) ET \(8 rows, \d+ changed\)<\/dd>/.test(syncRead.body), "the console must say when the sheet was read, with the rows seen and changed");
     assert(syncRead.body.includes(`<span class="hc-date muted">${syncYesterday}</span>`), "the console's day must still be yesterday");
-    assert(syncRead.body.includes('data-hc-sheet-hours="PNN">PNN 8.25</span>') && syncRead.body.includes('data-hc-sheet-hours="ARL">ARL 12.5</span>') && syncRead.body.includes('data-hc-sheet-hours="PNS">PNS 4</span>'), "yesterday's hours must land from the sheet per farm");
-    assert(/value="8.25"[^>]*aria-label="Cutting and Bucking Hours Yesterday PNN"/.test(syncRead.body), "the Plants numbox must show the landed hours");
+    assert(/value="24.75"[^>]*aria-label="Harvest Hours Yesterday"/.test(syncRead.body), "the Total box shows the sum of the farm rows the sheet landed");
     const syncOlderPage = await text(`/harvest?day=${syncOlder}`);
-    assert(syncOlderPage.body.includes('data-hc-sheet-hours="PNN">PNN 2753</span>'), "a large number lands as typed (his pick: no cap)");
+    assert(/value="2753"[^>]*aria-label="Harvest Hours Yesterday"/.test(syncOlderPage.body), "a large number lands as typed (his pick: no cap)");
     const syncPageRead = await text("/admin/sheet-sync");
     assert(syncPageRead.body.includes('data-sheet-sync-latest="ok"') && /data-sheet-sync-seen="8"/.test(syncPageRead.body), "the Admin page must list the ok run with 8 rows seen");
     assert(syncPageRead.body.includes('data-harvest-seen="4"') && syncPageRead.body.includes('data-harvest-landed="3"') && syncPageRead.body.includes('data-harvest-skipped="1"'), "Harvest Details must count 4 seen, 3 landed, 1 skipped");
@@ -6721,7 +6720,7 @@ async function run() {
     await cronSecond.text();
     const syncSkipped = await text("/harvest");
     assert(syncSkipped.body.includes('data-hc-sheet-sync="skipped"') && /data-hc-sheet-sync-line>sheet unchanged since \d{4}-\d{2}-\d{2} \d{1,2}:\d{2} (AM|PM) ET<\/dd>/.test(syncSkipped.body), "an unchanged sheet must skip and say since when");
-    assert(syncSkipped.body.includes('data-hc-sheet-hours="PNN">PNN 8.25</span>'), "a skipped run leaves the hours standing");
+    assert(/value="24.75"[^>]*aria-label="Harvest Hours Yesterday"/.test(syncSkipped.body), "a skipped run leaves the summed hours standing");
     const runNow = await req("/admin/sheet-sync/run", { method: "POST", body: form({}) });
     assert(runNow.status === 303 && (runNow.headers.get("location") || "") === "/admin/sheet-sync?ok=ran", `Run now expected 303 to ?ok=ran got ${runNow.status} ${runNow.headers.get("location")}`);
     const syncPageRan = await text("/admin/sheet-sync?ok=ran");
@@ -6770,7 +6769,7 @@ async function run() {
     const uploadPage = await text(uploadLoc);
     assert(uploadPage.body.includes("In testing sheet: 2 seen,"), "the import page must say the counts in words");
     const syncTrimNote = syncSkipped.body.slice(syncSkipped.body.indexOf('data-hc-section="trimming"'), syncSkipped.body.indexOf('data-hc-section="pasteurization"'));
-    assert(syncTrimNote.includes("Cutting and bucking hours from the sheet") && !syncTrimNote.includes("The day's packages from Trim Packages Entry"), "the Trimming section keeps the sheet hours and drops the long footnote");
+    assert(!syncTrimNote.includes("Cutting and bucking hours from the sheet") && !syncTrimNote.includes("The day's packages from Trim Packages Entry"), "the Trimming section drops the sheet hours line and the long footnote");
     const dropsPath = join(appRoot, "..", "DROPS", "In Testing (2026).xlsb");
     if (existsSync(dropsPath)) {
       const dropped = readFileSync(dropsPath);

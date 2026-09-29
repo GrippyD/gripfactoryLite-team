@@ -4647,7 +4647,7 @@ export async function listLaborHours(
   const result = await db
     .prepare(
       `SELECT work_date, operation, value, unit, updated_at FROM (
-         SELECT work_date, 'Cutting and bucking, ' || farm_code AS operation, hours AS value, 'h' AS unit, updated_at
+         SELECT work_date, CASE WHEN farm_code = 'ALL' THEN 'Harvest hours' ELSE 'Harvest hours, ' || farm_code END AS operation, hours AS value, 'h' AS unit, updated_at
          FROM harvest_labor_hours WHERE work_date >= ? AND work_date <= ?
          UNION ALL
          SELECT work_date, 'Trim DLH, ' || shift AS operation, hours AS value, 'h' AS unit, updated_at
