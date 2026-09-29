@@ -153,29 +153,28 @@ import {
   NON_TRIM_SOURCE_SQL,
   parseBtrTypeCodes,
   parseCryoTypeCategories,
+  parseGateTypeCodes,
+  parseGateUnitGrams,
   parseNameList,
   parseShiftWindow,
   parseTrimBogey,
-  isMetrcTag,
   roundGrams,
   shiftWindowHolds,
-  shortLotId,
   SYSTEM_REASON,
   TEST_CONSOLE_SCHEDULED,
   TEST_OPEN_STATUSES,
-  TEST_TYPE_LABELS,
   TRIM_SHIFT_HOURS_DEFAULT,
-  type TestType,
 } from "./config";
 import { HttpError, nowIso, textOrNull } from "./audit";
 import { getConfigValue, insertLog, TRIM_SCHEDULED_SQL } from "./db";
 import { siloStrip } from "./drying";
 import { dryingTotalsMarkup, type DryingTotals } from "./silo";
 import { dayBefore, etClockMinutes, etDate, etDayBounds, FARM_TIME_ZONE, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHour } from "./farmday";
-import { t, type Locale } from "./i18n";
+import { t, tFill, type Locale } from "./i18n";
 import { type SiloLive } from "./silo";
 import { latestSheetSync, sheetSyncLineText, type SheetSyncView } from "./sheetsync";
-import { farmFromHbn } from "./intesting";
+import { outcomeOf } from "./intesting";
+import { consoleIconSvg, type ConsoleIconName } from "./consoleicons";
 import { esc } from "./ui";
 
 export const CONSOLE_FARMS = ["PNN", "ARL", "PNS"] as const;
@@ -684,10 +683,8 @@ export type HarvestConsolePageInput = {
   envFlags?: Record<string, string[]>;
   /** THE DRYING TOTALS (canon 0.30.183): in dry spaces (loaded only, with the dry estimate), in cure spaces, dry queued; omitted draws no line. */
   dryingTotals?: DryingTotals;
-  /** THE TESTING DESK (canon 0.30.164), part 2. Omitted reads as an empty season. */
+  /** THE TESTING GATE (canon 0.30.293). Omitted reads as an empty gate. */
   testing?: TestingFigures;
-  /** THC table order. Null keeps newest first, the same order as the COA list. */
-  thcSort?: "asc" | "desc" | null;
   /** THE PREPACK (canon 0.30.188). Omitted reads as an empty day. */
   prepack?: PrepackConsole;
 };
@@ -922,357 +919,453 @@ export function trimmingSection(input: HarvestConsoleInput, locale: Locale = "en
 
 /* ---------------------------------------------------- the testing section */
 
-export type TestingRate = { passed: number; all: number; passedGrams: number; allGrams: number };
-export type TestingFailure = { test_type: string; grams: number; count: number };
-export type TestingLabRate = TestingRate & { lab: string; failures: TestingFailure[] };
-export type TestingFarmRate = TestingRate & { farm: string };
-export type TestingStrainRate = TestingRate & { strain: string; farms: TestingFarmRate[] };
-export type TestingTagRow = {
-  source_tag: string | null;
-  package_code: string | null;
-  hbn: string;
-  lab: string;
-  results_at: string;
-  attempt: number;
-  coa_url: string | null;
-  thc_total_pct: number | null;
-};
-/** One parent package in the rate: the batch the sample represents. */
-export type TestingParentRow = {
-  parentKey: string;
-  grams: number;
-  passedFirst: number;
-  lab: string;
-  strain: string;
-  farm: string;
-  failed_types: string[];
-};
-/** One order in a parent package's testing history, before the first full panel is chosen. */
-export type TestingHistoryRow = {
-  id: string;
-  parentKey: string;
-  created_at: string;
-  panel: string;
-  grams: number;
-  overall_passed: number | null;
-  lab: string;
-  strain: string;
-  farm: string;
-  failed_types: string[];
-};
-export type TestingFigures = {
-  ready: number;
-  scheduled: number;
-  waiting: number;
-  first: TestingRate;
-  labs: TestingLabRate[];
-  strains: TestingStrainRate[];
-  tags: TestingTagRow[];
-};
+/** Live cryo outputs. THE RAD run (V9) is the second way to be pasteurized
+ * and lands beside this query, in isPasteurizedTag. */
+export const PASTEURIZED_CRYO_SQL = `SELECT UPPER(package_code) AS tag, UPPER(COALESCE(package_type_code, '')) AS type,
+            cryo_weight_grams, weight_grams
+     FROM wip_packages
+     WHERE deleted_at IS NULL AND source = 'cryo' AND TRIM(COALESCE(package_code, '')) <> ''`;
 
-const EMPTY_RATE: TestingRate = { passed: 0, all: 0, passedGrams: 0, allGrams: 0 };
-
-export function emptyTestingFigures(): TestingFigures {
-  return { ready: 0, scheduled: 0, waiting: 0, first: { ...EMPTY_RATE }, labs: [], strains: [], tags: [] };
+/** A tag is pasteurized when a live cryo output carries it.
+ * THE RAD run (V9) is the second way and lands in this function. */
+export function isPasteurizedTag(tag: string | null | undefined, cryoTags: ReadonlySet<string>): boolean {
+  const key = String(tag ?? "").trim().toUpperCase();
+  return key.length > 0 && cryoTags.has(key);
 }
 
-function rateOf(rows: Array<{ passedFirst: number; grams: number }>): TestingRate {
-  const passed = rows.filter((row) => Number(row.passedFirst) === 1);
-  return {
-    passed: passed.length,
-    all: rows.length,
-    passedGrams: passed.reduce((sum, row) => sum + Number(row.grams), 0),
-    allGrams: rows.reduce((sum, row) => sum + Number(row.grams), 0),
-  };
+/** The item's first token before " - ", upper-cased. */
+export function gateItemType(item: string | null | undefined): string {
+  const text = String(item ?? "").trim();
+  const at = text.indexOf(" - ");
+  return (at < 0 ? text : text.slice(0, at)).trim().toUpperCase();
 }
 
-function failuresOf(rows: TestingParentRow[]): TestingFailure[] {
-  const buckets = new Map<string, { grams: number; count: number }>();
-  for (const row of rows) {
-    if (Number(row.passedFirst) === 1) continue;
-    const seen = new Set<string>();
-    for (const type of row.failed_types) {
-      if (seen.has(type)) continue;
-      seen.add(type);
-      const cur = buckets.get(type) ?? { grams: 0, count: 0 };
-      cur.grams += Number(row.grams);
-      cur.count += 1;
-      buckets.set(type, cur);
-    }
+/** Grams of one gate package. `g` is the quantity. `ea` is the quantity times
+ * the type's unit grams. Anything else, or an each with no unit grams, counts
+ * the package and adds no pounds. */
+export function gatePackageGrams(
+  uom: string | null | undefined,
+  quantity: number | string | null | undefined,
+  type: string,
+  units: Readonly<Record<string, number>>
+): number | null {
+  const qty = Number(quantity);
+  if (!Number.isFinite(qty)) return null;
+  const unit = String(uom ?? "").trim().toLowerCase();
+  if (unit === "g") return roundGrams(qty);
+  if (unit === "ea") {
+    const each = units[type];
+    if (each == null || !Number.isFinite(each)) return null;
+    return roundGrams(qty * each);
   }
-  return [...buckets.entries()]
-    .map(([test_type, value]) => ({ test_type, grams: value.grams, count: value.count }))
-    .sort((a, b) => b.grams - a.grams || a.test_type.localeCompare(b.test_type));
-}
-
-/** First-time pass rate by weight of the parent package, and the two breakdowns.
- * Counts of ready, scheduled, and waiting pass through. Tags stay in the order
- * they were given (newest first). */
-export function testingFigures(input: {
-  ready: number;
-  scheduled: number;
-  waiting: number;
-  parents: TestingParentRow[];
-  tags: TestingTagRow[];
-}): TestingFigures {
-  const parents = input.parents;
-  const labs = [...groupBy(parents, (row) => row.lab || "")].map(([lab, rows]) => ({
-    lab,
-    ...rateOf(rows),
-    failures: failuresOf(rows),
-  }));
-  labs.sort((a, b) => a.lab.localeCompare(b.lab));
-  const strains = [...groupBy(parents, (row) => row.strain || "")].map(([strain, rows]) => {
-    const farms = [...groupBy(rows, (row) => row.farm || "")].map(([farm, farmRows]) => ({ farm, ...rateOf(farmRows) }));
-    farms.sort((a, b) => a.farm.localeCompare(b.farm));
-    return { strain, ...rateOf(rows), farms };
-  });
-  strains.sort((a, b) => a.strain.localeCompare(b.strain));
-  return {
-    ready: input.ready,
-    scheduled: input.scheduled,
-    waiting: input.waiting,
-    first: rateOf(parents),
-    labs,
-    strains,
-    tags: input.tags,
-  };
-}
-
-/** The parent package: its METRC tag when tag-shaped, else the package code, else the lot. */
-export function testingParentKey(row: {
-  source_package_tag: string | null;
-  source_package_code: string | null;
-  lot_id: string;
-}): string {
-  if (isMetrcTag(row.source_package_tag)) return String(row.source_package_tag).trim().toUpperCase();
-  const code = String(row.source_package_code ?? "").trim();
-  if (code) return code;
-  return String(row.lot_id);
-}
-
-function asPass(value: unknown): 0 | 1 | null {
-  if (value === 0 || value === "0") return 0;
-  if (value === 1 || value === "1") return 1;
   return null;
 }
 
-/** Parents in the rate. The earliest full compliance order is the panel.
- * It enters only once that panel has a result. Passed means that one panel
- * passed. A later retest does not change it. Potency and R&D are not a panel. */
-export function testingParents(orders: TestingHistoryRow[]): TestingParentRow[] {
-  const parents: TestingParentRow[] = [];
-  for (const [, rows] of groupBy(orders, (row) => row.parentKey)) {
-    const full = rows
-      .filter((row) => row.panel === "full_compliance")
-      .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
-    const first = full[0];
-    if (!first) continue;
-    const passed = asPass(first.overall_passed);
-    if (passed === null) continue;
-    parents.push({
-      parentKey: first.parentKey,
-      grams: Number(first.grams),
-      passedFirst: passed === 1 ? 1 : 0,
-      lab: first.lab,
-      strain: first.strain,
-      farm: first.farm,
-      failed_types: passed === 1 ? [] : [...first.failed_types],
-    });
-  }
-  return parents;
+/** The sheet's hbn prefix names the harvest year. The entered date is the
+ * fallback when the hbn does not start with two digits. */
+export function sheetInSeason(row: { hbn: string | null; entered_testing: string | null }, year: number): boolean {
+  const hbn = String(row.hbn ?? "").trim();
+  const prefix = /^(\d{2})/.exec(hbn);
+  if (prefix) return Number(prefix[1]) === year % 100;
+  return String(row.entered_testing ?? "").trim().slice(0, 4) === String(year);
 }
 
-function groupBy<T>(rows: T[], keyOf: (row: T) => string): Map<string, T[]> {
-  const out = new Map<string, T[]>();
-  for (const row of rows) {
-    const key = keyOf(row);
-    const list = out.get(key) ?? [];
-    list.push(row);
-    out.set(key, list);
-  }
-  return out;
+export type TestingGatePane = {
+  gate: "ready" | "scheduled" | "in-testing" | "passed";
+  grams: number;
+  packages: number;
+  unweighed: number;
+};
+
+export type TestingPieStrain = { label: string; count: number; grams: number; pct: string };
+export type TestingPieSlice = {
+  mode: string;
+  count: number;
+  grams: number;
+  pct: string;
+  color: number;
+  dx: string;
+  dy: string;
+  d: string;
+  strains: TestingPieStrain[];
+};
+
+export type TestingFigures = {
+  panes: TestingGatePane[];
+  fails: number;
+  tests: number;
+  /** Null when the season has no first-time tests. Passed over all, one decimal. */
+  ftq: string | null;
+  slices: TestingPieSlice[];
+};
+
+export type TestingMirrorRow = {
+  tag: string;
+  item: string | null;
+  quantity: number | string | null;
+  uom: string | null;
+  lab_test_status: string | null;
+  farm: string | null;
+};
+
+export type TestingCryoRow = {
+  tag: string;
+  type: string;
+  cryo_weight_grams: number | string | null;
+  weight_grams: number | string | null;
+};
+
+export type TestingOrderRow = {
+  id: string;
+  tag: string;
+  status: string;
+  batch_grams: number | string | null;
+};
+
+export type TestingSheetRow = {
+  strain: string | null;
+  hbn: string | null;
+  entered_testing: string | null;
+  status: string | null;
+  failure_mode: string | null;
+  batch_weight_grams: number | string | null;
+  attempt: number | string | null;
+};
+
+const GATE_PANE_ORDER = ["ready", "scheduled", "in-testing", "passed"] as const;
+
+function blankPanes(): TestingGatePane[] {
+  return GATE_PANE_ORDER.map((gate) => ({ gate, grams: 0, packages: 0, unweighed: 0 }));
 }
 
-/** Null THC stays last either way. The COA list does not use this. */
-export function sortTestingTags(tags: TestingTagRow[], thc: "asc" | "desc" | null): TestingTagRow[] {
-  if (!thc) return tags;
-  return [...tags].sort((a, b) => {
-    const av = a.thc_total_pct;
-    const bv = b.thc_total_pct;
-    if (av == null && bv == null) return 0;
-    if (av == null) return 1;
-    if (bv == null) return -1;
-    return thc === "asc" ? av - bv : bv - av;
+function paneOf(panes: TestingGatePane[], gate: TestingGatePane["gate"]): TestingGatePane {
+  const found = panes.find((pane) => pane.gate === gate);
+  if (!found) throw new Error(`missing gate pane ${gate}`);
+  return found;
+}
+
+function addWeight(pane: TestingGatePane, grams: number | null): void {
+  pane.packages += 1;
+  if (grams == null) pane.unweighed += 1;
+  else pane.grams += grams;
+}
+
+function oneDecimal(n: number): string {
+  return (Math.round(n * 10) / 10).toFixed(1);
+}
+
+function fixed3(n: number): string {
+  const snapped = Math.abs(n) < 5e-4 ? 0 : n;
+  return snapped.toFixed(3);
+}
+
+function ringPoint(radius: number, angle: number): [number, number] {
+  const x = Math.round((50 + radius * Math.sin(angle)) * 100) / 100;
+  const y = Math.round((50 - radius * Math.cos(angle)) * 100) / 100;
+  return [x, y];
+}
+
+/** A donut segment in a 100 by 100 frame. One mode is a full ring. */
+export function testingPiePath(a0: number, a1: number): string {
+  const sweep = a1 - a0;
+  if (sweep >= Math.PI * 2 - 1e-4) return "M 50 8 A 42 42 0 1 1 49.99 8 Z M 50 24 A 26 26 0 1 0 50.01 24 Z";
+  const large = sweep > Math.PI ? 1 : 0;
+  const [ox0, oy0] = ringPoint(42, a0);
+  const [ox1, oy1] = ringPoint(42, a1);
+  const [ix1, iy1] = ringPoint(26, a1);
+  const [ix0, iy0] = ringPoint(26, a0);
+  return `M ${ox0} ${oy0} A 42 42 0 ${large} 1 ${ox1} ${oy1} L ${ix1} ${iy1} A 26 26 0 ${large} 0 ${ix0} ${iy0} Z`;
+}
+
+function strainLabel(sheet: string | null, market: string | null): string {
+  const a = String(sheet ?? "").trim();
+  const b = String(market ?? "").trim();
+  if (a && b && a !== b) return `${a} / ${b}`;
+  return a || b || "unnamed";
+}
+
+function sheetGrams(value: number | string | null | undefined): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? roundGrams(n) : 0;
+}
+
+const MOVED_LAB = new Set(["SubmittedForTesting", "TestPassed", "RetestPassed"]);
+const SCHEDULED_STATUS = new Set<string>(TEST_CONSOLE_SCHEDULED);
+const OPEN_STATUS = new Set<string>(TEST_OPEN_STATUSES);
+
+/** The four panes, the season's first-time stats, and the failure pie.
+ * The panes are live. The stats and the pie are the harvest year. */
+export function buildTestingFigures(input: {
+  year: number;
+  gateTypes: readonly string[];
+  unitGrams: Readonly<Record<string, number>>;
+  mirror: TestingMirrorRow[];
+  cryo: TestingCryoRow[];
+  orders: TestingOrderRow[];
+  sheet: TestingSheetRow[];
+  marketByHbn: ReadonlyMap<string, string>;
+}): TestingFigures {
+  const types = new Set(input.gateTypes);
+  const farms = new Set<string>(CONSOLE_FARMS);
+  const panes = blankPanes();
+  const ready = paneOf(panes, "ready");
+  const scheduled = paneOf(panes, "scheduled");
+  const inTesting = paneOf(panes, "in-testing");
+  const passed = paneOf(panes, "passed");
+
+  const cryoTags = new Set<string>();
+  for (const row of input.cryo) {
+    const tag = String(row.tag ?? "").trim().toUpperCase();
+    if (tag) cryoTags.add(tag);
+  }
+
+  const liveTags = new Set<string>();
+  const gateByTag = new Map<string, { status: string; grams: number | null }>();
+  for (const row of input.mirror) {
+    const tag = String(row.tag ?? "").trim().toUpperCase();
+    if (!tag) continue;
+    liveTags.add(tag);
+    const type = gateItemType(row.item);
+    const farm = String(row.farm ?? "").trim();
+    if (!types.has(type) || !farms.has(farm)) continue;
+    const status = String(row.lab_test_status ?? "").trim();
+    const grams = gatePackageGrams(row.uom, row.quantity, type, input.unitGrams);
+    gateByTag.set(tag, { status, grams });
+    if (status === "SubmittedForTesting") addWeight(inTesting, grams);
+    else if (status === "TestPassed" || status === "RetestPassed") addWeight(passed, grams);
+  }
+
+  const openTags = new Set<string>();
+  for (const order of input.orders) {
+    if (!OPEN_STATUS.has(order.status)) continue;
+    const tag = String(order.tag ?? "").trim().toUpperCase();
+    if (tag) openTags.add(tag);
+  }
+
+  for (const [tag, pkg] of gateByTag) {
+    if (pkg.status !== "NotSubmitted") continue;
+    if (!isPasteurizedTag(tag, cryoTags)) continue;
+    if (openTags.has(tag)) continue;
+    addWeight(ready, pkg.grams);
+  }
+
+  for (const row of input.cryo) {
+    const tag = String(row.tag ?? "").trim().toUpperCase();
+    const type = String(row.type ?? "").trim().toUpperCase();
+    if (!tag || !types.has(type) || liveTags.has(tag) || openTags.has(tag)) continue;
+    const raw = row.cryo_weight_grams != null && row.cryo_weight_grams !== "" ? Number(row.cryo_weight_grams) : Number(row.weight_grams);
+    addWeight(ready, Number.isFinite(raw) ? roundGrams(raw) : null);
+  }
+
+  const seenScheduled = new Set<string>();
+  for (const order of input.orders) {
+    if (!SCHEDULED_STATUS.has(order.status)) continue;
+    const tag = String(order.tag ?? "").trim().toUpperCase();
+    const key = tag || order.id;
+    if (seenScheduled.has(key)) continue;
+    seenScheduled.add(key);
+    if (tag && liveTags.has(tag) && !gateByTag.has(tag)) continue;
+    if (tag && gateByTag.has(tag)) {
+      const pkg = gateByTag.get(tag)!;
+      if (MOVED_LAB.has(pkg.status)) continue;
+      addWeight(scheduled, pkg.grams);
+      continue;
+    }
+    const grams = Number(order.batch_grams);
+    addWeight(scheduled, Number.isFinite(grams) ? roundGrams(grams) : null);
+  }
+
+  const first = input.sheet.filter((row) => {
+    if (Number(row.attempt) !== 1) return false;
+    const outcome = outcomeOf(row.status);
+    if (outcome !== "passed" && outcome !== "failed") return false;
+    return sheetInSeason(row, input.year);
   });
-}
+  const failed = first.filter((row) => outcomeOf(row.status) === "failed");
+  const passedCount = first.length - failed.length;
+  const modes = new Map<string, { count: number; grams: number; strains: Map<string, { count: number; grams: number }> }>();
+  for (const row of failed) {
+    const mode = String(row.failure_mode ?? "").trim() || "unnamed";
+    const label = strainLabel(row.strain, input.marketByHbn.get(String(row.hbn ?? "").trim()) ?? null);
+    const grams = sheetGrams(row.batch_weight_grams);
+    const bucket = modes.get(mode) ?? { count: 0, grams: 0, strains: new Map() };
+    bucket.count += 1;
+    bucket.grams += grams;
+    const strain = bucket.strains.get(label) ?? { count: 0, grams: 0 };
+    strain.count += 1;
+    strain.grams += grams;
+    bucket.strains.set(label, strain);
+    modes.set(mode, bucket);
+  }
+  const ordered = [...modes.entries()].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]));
+  let angle = 0;
+  const failCount = failed.length;
+  const slices: TestingPieSlice[] = ordered.map(([mode, bucket], index) => {
+    const sweep = failCount === 0 ? 0 : (bucket.count / failCount) * Math.PI * 2;
+    const a0 = angle;
+    const a1 = angle + sweep;
+    angle = a1;
+    const mid = (a0 + a1) / 2;
+    const strains = [...bucket.strains.entries()]
+      .map(([label, value]) => ({
+        label,
+        count: value.count,
+        grams: value.grams,
+        pct: oneDecimal(bucket.count === 0 ? 0 : (value.count / bucket.count) * 100),
+      }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    return {
+      mode,
+      count: bucket.count,
+      grams: bucket.grams,
+      pct: oneDecimal(failCount === 0 ? 0 : (bucket.count / failCount) * 100),
+      color: (index % 8) + 1,
+      dx: fixed3(6 * Math.sin(mid)),
+      dy: fixed3(-6 * Math.cos(mid)),
+      d: testingPiePath(a0, a1),
+      strains,
+    };
+  });
 
-export function testingThcSort(raw: string | null | undefined): "asc" | "desc" | null {
-  return raw === "asc" || raw === "desc" ? raw : null;
-}
-
-function fillCount(key: string, passed: string, all: string, locale: Locale): string {
-  return t(locale, key).replace("{passed}", passed).replace("{all}", all);
-}
-
-function rateText(rate: TestingRate, locale: Locale): { value: string; pounds: string; packages: string } {
-  if (rate.all === 0) return { value: t(locale, "no results"), pounds: "", packages: "" };
-  const pct = rate.allGrams > 0 ? ((rate.passedGrams / rate.allGrams) * 100).toFixed(1) : "0.0";
   return {
-    value: `${pct}%`,
-    pounds: fillCount("{passed} of {all} lb", formatLbs(rate.passedGrams), formatLbs(rate.allGrams), locale),
-    packages: fillCount("{passed} of {all} packages", String(rate.passed), String(rate.all), locale),
+    panes,
+    fails: failed.length,
+    tests: first.length,
+    ftq: first.length === 0 ? null : oneDecimal((passedCount / first.length) * 100),
+    slices,
   };
 }
 
-function rateSubs(key: string, rate: { pounds: string; packages: string }): string {
-  return [rate.pounds, rate.packages]
-    .filter(Boolean)
-    .map(
-      (line, i) =>
-        `<span class="hc-sub muted" data-hc="${esc(key)}_${i === 0 ? "lb" : "packages"}">${esc(line)}</span>`
-    )
-    .join("");
+export function emptyTestingFigures(): TestingFigures {
+  return buildTestingFigures({
+    year: 0,
+    gateTypes: [],
+    unitGrams: {},
+    mirror: [],
+    cryo: [],
+    orders: [],
+    sheet: [],
+    marketByHbn: new Map(),
+  });
 }
 
-function testingHref(thc: "asc" | "desc" | null, day: string | undefined, dayPicked: boolean | undefined): string {
-  const q = new URLSearchParams();
-  if (dayPicked && day) q.set("day", day);
-  if (thc) q.set("thc", thc);
-  const text = q.toString();
-  return text ? `${HARVEST_PATH}?${text}` : HARVEST_PATH;
+const GATE_DISPLAY: ReadonlyArray<{ gate: TestingGatePane["gate"]; key: string; icon: ConsoleIconName; label: string }> = [
+  { gate: "ready", key: "ready", icon: "ready", label: "Ready for Testing" },
+  { gate: "scheduled", key: "scheduled", icon: "scheduled", label: "Scheduled for Testing" },
+  { gate: "in-testing", key: "in_testing", icon: "in-testing", label: "In Testing" },
+  { gate: "passed", key: "passed", icon: "passed", label: "Passed Testing" },
+];
+
+function pieScript(): string {
+  return `<script>
+(function () {
+  var root = document.querySelector("[data-hc-pie]");
+  if (!root) return;
+  var open = null;
+  function apply(mode) {
+    open = mode;
+    root.querySelectorAll("[data-hc-pie-seg]").forEach(function (seg) {
+      var on = mode && seg.getAttribute("data-hc-pie-mode") === mode;
+      if (on) seg.setAttribute("transform", "translate(" + seg.getAttribute("data-hc-pie-dx") + " " + seg.getAttribute("data-hc-pie-dy") + ")");
+      else seg.removeAttribute("transform");
+    });
+    root.querySelectorAll("[data-hc-pie-strains]").forEach(function (list) {
+      if (mode && list.getAttribute("data-hc-pie-strains") === mode) list.removeAttribute("hidden");
+      else list.setAttribute("hidden", "");
+    });
+    root.querySelectorAll("[data-hc-pie-pick]").forEach(function (btn) {
+      btn.setAttribute("aria-pressed", mode && btn.getAttribute("data-hc-pie-pick") === mode ? "true" : "false");
+    });
+  }
+  root.addEventListener("click", function (ev) {
+    var el = ev.target && ev.target.closest ? ev.target.closest("[data-hc-pie-mode], [data-hc-pie-pick]") : null;
+    if (!el || !root.contains(el)) return;
+    var mode = el.getAttribute("data-hc-pie-mode") || el.getAttribute("data-hc-pie-pick");
+    if (!mode) return;
+    apply(open === mode ? null : mode);
+  });
+})();
+</script>`;
 }
 
-function parentTagText(row: TestingTagRow, locale: Locale): string {
-  if (isMetrcTag(row.source_tag)) return String(row.source_tag).toUpperCase();
-  const code = String(row.package_code ?? "").trim();
-  const gap = t(locale, "no METRC tag yet");
-  return code ? `${code} (${gap})` : gap;
+function modeText(mode: string, locale: Locale): string {
+  return mode === "unnamed" ? t(locale, "unnamed") : mode;
 }
 
-function resultDate(row: TestingTagRow): string {
-  return String(row.results_at ?? "").slice(0, 10);
-}
-
-function attemptLabel(row: TestingTagRow, locale: Locale): string {
-  const n = Number(row.attempt);
-  return t(locale, "attempt {n}").replace("{n}", String(Number.isFinite(n) && n > 0 ? n : 1));
-}
-
-function thcText(value: number | null): string {
-  if (value == null || !Number.isFinite(Number(value))) return "";
-  return String(Math.round(Number(value) * 100) / 100);
-}
-
-/** THE TESTING DESK (canon 0.30.164), part 2b. The season is the harvest year.
- * The first-time rate is the weight of parent packages whose first full panel
- * passed, over every parent package with a full-panel result. The console day
- * control does not change these numbers. */
-export function testingSection(
-  figures: TestingFigures,
-  opts: { locale?: Locale; year: number; thcSort?: "asc" | "desc" | null; day?: string; dayPicked?: boolean }
-): string {
+/** THE TESTING GATE (canon 0.30.293). Four panes, live. The stats and the pie
+ * are the harvest year. The console day does not change them. */
+export function testingSection(figures: TestingFigures, opts: { locale?: Locale; year: number }): string {
   const locale = opts.locale ?? "en";
-  const sort = opts.thcSort ?? null;
-  const first = rateText(figures.first, locale);
-  const metric = (key: string, label: string, value: string, subs: string[] = []) =>
-    `<div class="hc-metric" data-hc-metric="${esc(key)}"><dt>${esc(t(locale, label))}</dt><dd><span class="hc-value" data-hc="${esc(key)}">${esc(value)}</span>${rateSubs(
-      key,
-      { pounds: subs[0] ?? "", packages: subs[1] ?? "" }
-    )}</dd></div>`;
-  const labBlocks = figures.labs
-    .map((lab) => {
-      const rate = rateText(lab, locale);
-      const name = lab.lab || t(locale, "Lab");
-      const failures = lab.failures
-        .map((row) => {
-          const label = TEST_TYPE_LABELS[row.test_type as TestType] ?? row.test_type;
-          return `<li data-hc-failure="${esc(row.test_type)}">${esc(t(locale, label))} <span data-hc="failure_lb">${esc(formatLbs(row.grams))} lb</span> <span data-hc="failure_n">${esc(String(row.count))}</span></li>`;
-        })
-        .join("");
-      return `<div data-hc-lab="${esc(name)}">
-        <p><strong>${esc(name)}</strong> <span data-hc="lab_pass">${esc(rate.value)}</span></p>
-        ${rateSubs("lab", rate)}
-        ${failures ? `<ul>${failures}</ul>` : ""}
+  const byGate = new Map(figures.panes.map((pane) => [pane.gate, pane]));
+  const gates = GATE_DISPLAY.map((spec) => {
+    const pane = byGate.get(spec.gate) ?? { gate: spec.gate, grams: 0, packages: 0, unweighed: 0 };
+    const weight = weightPair(pane.grams);
+    const word = pane.packages === 1 ? t(locale, "package") : t(locale, "packages");
+    const unweighed =
+      pane.unweighed > 0
+        ? `<span class="hc-sub muted" data-hc="${esc(spec.key)}_unweighed">${esc(tFill(locale, "{n} packages without a unit weight", { n: String(pane.unweighed) }))}</span>`
+        : "";
+    return `<div class="hc-gate-pane" data-hc-gate="${esc(spec.gate)}">
+        <div class="hc-gate-name">${esc(t(locale, spec.label))}</div>
+        ${consoleIconSvg(spec.icon, { label: t(locale, spec.label) })}
+        <span class="hc-value" data-hc="${esc(spec.key)}_lb">${esc(weight.value)}</span>
+        <span class="hc-sub muted" data-hc="${esc(spec.key)}_g">${esc(weight.sub)}</span>
+        <span class="hc-gate-count"><span data-hc="${esc(spec.key)}_packages">${esc(String(pane.packages))}</span> ${esc(word)}</span>
+        ${unweighed}
       </div>`;
-    })
-    .join("");
-  const strainBlocks = figures.strains
-    .map((strain) => {
-      const rate = rateText(strain, locale);
-      const name = strain.strain || t(locale, "no strain");
-      const farms = strain.farms
-        .map((farm) => {
-          const farmRate = rateText(farm, locale);
-          const farmName = farm.farm || t(locale, "no farm");
-          return `<li data-hc-farm="${esc(farm.farm)}">${esc(farmName)} <span data-hc="farm_pass">${esc(farmRate.value)}</span>${rateSubs("farm", farmRate)}</li>`;
-        })
-        .join("");
-      return `<div data-hc-strain="${esc(strain.strain)}">
-        <p><strong>${esc(name)}</strong> <span data-hc="strain_pass">${esc(rate.value)}</span></p>
-        ${rateSubs("strain", rate)}
-        <ul>${farms}</ul>
-      </div>`;
-    })
-    .join("");
-  const coaRows = figures.tags
-    .map((row) => {
-      const link = row.coa_url
-        ? `<a href="${esc(row.coa_url)}">${esc(t(locale, "COA"))}</a>`
-        : `<span class="muted">${esc(t(locale, "no COA"))}</span>`;
-      return `<tr data-hc-coa>
-        <td>${esc(parentTagText(row, locale))}</td>
-        <td>${esc(shortLotId(row.hbn, null))}</td>
-        <td>${esc(row.lab)}</td>
-        <td>${esc(resultDate(row))} <span data-hc="attempt">${esc(attemptLabel(row, locale))}</span></td>
-        <td>${link}</td>
-      </tr>`;
-    })
-    .join("");
-  const thcRows = sortTestingTags(figures.tags, sort)
+  }).join("");
+  const season = `<span class="hc-sub muted" data-hc-season>${esc(t(locale, "this season"))}</span>`;
+  const stat = (key: string, label: string, value: string, extra = "") =>
+    `<div class="hc-stat" data-hc-stat="${esc(key)}"><div class="hc-gate-name">${esc(t(locale, label))}</div><span class="hc-value" data-hc="${esc(key)}">${esc(value)}</span>${season}${extra}</div>`;
+  const rateExtra = `<span class="hc-sub muted" data-hc="ftq_n">${esc(tFill(locale, "{n} first-time tests", { n: String(figures.tests) }))}</span>`;
+  const sheetEmpty =
+    figures.tests === 0 ? `<p class="muted hc-note" data-hc-sheet-empty>${esc(t(locale, "No first-time tests on the sheet this season."))}</p>` : "";
+  const paths = figures.slices
     .map(
-      (row) => `<tr data-hc-thc-row>
-        <td>${esc(parentTagText(row, locale))}</td>
-        <td>${esc(shortLotId(row.hbn, null))}</td>
-        <td>${esc(row.lab)}</td>
-        <td>${esc(resultDate(row))} <span data-hc="attempt">${esc(attemptLabel(row, locale))}</span></td>
-        <td data-hc="thc">${esc(thcText(row.thc_total_pct))}</td>
-      </tr>`
+      (slice) =>
+        `<path class="hc-pie-seg hc-pie-${slice.color}" fill="currentColor" fill-rule="evenodd" data-hc-pie-seg data-hc-pie-mode="${esc(slice.mode)}" data-hc-pie-dx="${esc(slice.dx)}" data-hc-pie-dy="${esc(slice.dy)}" d="${esc(slice.d)}"/>`
     )
     .join("");
-  const nextSort = sort === "asc" ? "desc" : "asc";
-  const thcHref = testingHref(nextSort, opts.day, opts.dayPicked);
-  const note = t(locale, "The season is harvest year {year}. The day above does not change these numbers.").replace("{year}", String(opts.year));
+  const legend = figures.slices
+    .map(
+      (slice) => `<li><button type="button" class="hc-pie-pick" data-hc-pie-pick="${esc(slice.mode)}" aria-pressed="false"><span class="hc-pie-swatch hc-pie-${slice.color}"></span><span>${esc(modeText(slice.mode, locale))}</span><span data-hc-pie-count>${esc(String(slice.count))}</span><span data-hc-pie-pct>${esc(slice.pct)}%</span></button></li>`
+    )
+    .join("");
+  const lists = figures.slices
+    .map((slice) => {
+      const items = slice.strains
+        .map((strain) => {
+          const name = strain.label === "unnamed" ? t(locale, "unnamed") : strain.label;
+          return `<li data-hc-pie-strain="${esc(strain.label)}">${esc(name)} <span data-hc-pie-strain-pct>${esc(strain.pct)}%</span> <span class="hc-sub muted" data-hc-pie-strain-g>${esc(formatGrams(strain.grams))} g</span></li>`;
+        })
+        .join("");
+      return `<div class="hc-pie-strains" data-hc-pie-strains="${esc(slice.mode)}" hidden><ul>${items}</ul></div>`;
+    })
+    .join("");
+  const pie =
+    figures.slices.length === 0
+      ? `<p class="muted hc-note" data-hc-pie-empty>${esc(t(locale, "No failed first-time tests on the sheet this season."))}</p>`
+      : `<div class="hc-pie-block" data-hc-pie>
+          <svg class="hc-pie" viewBox="0 0 100 100" role="img" aria-label="${esc(t(locale, "Failure Mode Analysis"))}">${paths}</svg>
+          <div class="hc-pie-side">
+            <ul class="hc-pie-legend">${legend}</ul>
+            ${lists}
+          </div>
+        </div>`;
+  const year = tFill(locale, "Harvest year {year}", { year: String(opts.year) });
   return `<details class="hc-section" data-hc-section="testing" data-hc-testing-year="${esc(String(opts.year))}" open>
-      <summary>${esc(t(locale, "Testing"))}</summary>
-      <dl class="hc-metrics">
-        ${metric("lots_ready", "Lots ready", String(figures.ready))}
-        ${metric("lots_scheduled", "Lots scheduled", String(figures.scheduled))}
-        ${metric("first_pass", "First time pass rate", first.value, [first.pounds, first.packages])}
-        ${metric("lots_retest", "Lots waiting for retest", String(figures.waiting))}
-      </dl>
-      <div class="hc-testing-groups">
-        <div>
-          <h3>${esc(t(locale, "By lab"))}</h3>
-          ${labBlocks || `<p class="muted">${esc(t(locale, "no results"))}</p>`}
-        </div>
-        <div>
-          <h3>${esc(t(locale, "By strain"))}</h3>
-          ${strainBlocks || `<p class="muted">${esc(t(locale, "no results"))}</p>`}
-        </div>
+      <summary>${esc(t(locale, "Testing"))} <span class="muted hc-year">${esc(year)}</span></summary>
+      <div class="hc-gate" data-hc-inventory-gate>${gates}</div>
+      <h3>${esc(t(locale, "Quality Stats"))}</h3>
+      <div class="hc-stats">
+        ${stat("first_fails", "First Time Fails", String(figures.fails))}
+        ${stat("first_tests", "First Time Tests", String(figures.tests))}
+        ${stat("ftq", "FTQ Rate", figures.ftq == null ? "NA" : `${figures.ftq}%`, rateExtra)}
       </div>
-      <h3>${esc(t(locale, "COAs by parent tag"))}</h3>
-      ${
-        coaRows
-          ? `<table class="data" data-hc-coas><thead><tr><th>${esc(t(locale, "Parent tag"))}</th><th>${esc(t(locale, "Lot"))}</th><th>${esc(t(locale, "Lab"))}</th><th>${esc(t(locale, "Date"))}</th><th>${esc(t(locale, "COA"))}</th></tr></thead><tbody>${coaRows}</tbody></table>`
-          : `<p class="muted">${esc(t(locale, "No COAs yet."))}</p>`
-      }
-      <h3>${esc(t(locale, "THC by parent tag"))}</h3>
-      <table class="data" data-hc-thc data-hc-thc-sort="${esc(sort ?? "newest")}">
-        <thead><tr><th>${esc(t(locale, "Parent tag"))}</th><th>${esc(t(locale, "Lot"))}</th><th>${esc(t(locale, "Lab"))}</th><th>${esc(t(locale, "Date"))}</th><th><a href="${esc(thcHref)}" data-hc-thc-sort-link>${esc(t(locale, "THC"))}</a></th></tr></thead>
-        <tbody>${thcRows}</tbody>
-      </table>
-      <p class="muted hc-note">${esc(note)}</p>
+      ${sheetEmpty}
+      <h3>${esc(t(locale, "Failure Mode Analysis"))}</h3>
+      ${pie}
+      ${pieScript()}
     </details>`;
 }
 
@@ -1443,9 +1536,6 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
     ${testingSection(page.testing ?? emptyTestingFigures(), {
       locale,
       year: page.input.year,
-      thcSort: page.thcSort,
-      day: page.input.yesterday,
-      dayPicked: page.input.dayPicked,
     })}
     ${prepackSection(page.prepack ?? emptyPrepack(page.input.yesterday), page.input, locale)}
     ${hoursScript()}${foldScript()}`;
@@ -1463,171 +1553,72 @@ export function consoleDayOf(picked: string | null | undefined, today: string): 
   return { day: value, dayPicked: true };
 }
 
-const SCHEDULED_SQL = TEST_CONSOLE_SCHEDULED.map((status) => `'${status}'`).join(",");
 const OPEN_SQL = TEST_OPEN_STATUSES.map((status) => `'${status}'`).join(",");
 
-/** THE TESTING DESK (canon 0.30.164), part 2b. The harvest year's lots and orders.
- * The first full compliance panel per parent package is the rate. The console's
- * picked day is not an input. */
+/** THE TESTING GATE (canon 0.30.293). The four panes read the live mirror and
+ * the desk's open orders. The stats and the pie read the season's first-time
+ * rows on the In Testing sheet. The console's picked day is not an input. */
 export async function loadTestingSection(db: D1Database, year: number): Promise<TestingFigures> {
-  const [ready, scheduled, waiting, orders, failures, tags] = await Promise.all([
+  const [typesRaw, unitsRaw, mirror, cryo, orders, sheet, batches] = await Promise.all([
+    getConfigValue(db, CONFIG_KEYS.gate_type_codes),
+    getConfigValue(db, CONFIG_KEYS.gate_unit_grams),
     db
       .prepare(
-        `SELECT COUNT(*) AS n
-         FROM wet_weight_entries w
-         JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-         WHERE w.deleted_at IS NULL AND w.status = 'trimmed' AND b.harvest_year = ?
-           AND NOT EXISTS (
-             SELECT 1 FROM test_orders o
-             WHERE o.lot_id = w.id AND o.deleted_at IS NULL AND o.status IN (${OPEN_SQL})
-           )`
+        `SELECT UPPER(m.tag) AS tag, m.item, m.quantity, m.uom, m.lab_test_status, lv.farm_code AS farm
+         FROM metrc_packages m
+         LEFT JOIN lookup_values lv
+           ON lv.category = 'license' AND lv.value = m.license_value AND lv.deleted_at IS NULL
+         WHERE m.gone_at IS NULL`
       )
-      .bind(year)
-      .first<{ n: number }>(),
+      .all<{ tag: string; item: string | null; quantity: number | null; uom: string | null; lab_test_status: string | null; farm: string | null }>(),
+    db
+      .prepare(PASTEURIZED_CRYO_SQL)
+      .all<{ tag: string; type: string; cryo_weight_grams: number | null; weight_grams: number | null }>(),
     db
       .prepare(
-        `SELECT COUNT(DISTINCT o.lot_id) AS n
-         FROM test_orders o
-         JOIN wet_weight_entries w ON w.id = o.lot_id AND w.deleted_at IS NULL
-         JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-         WHERE o.deleted_at IS NULL AND b.harvest_year = ? AND o.status IN (${SCHEDULED_SQL})`
+        `SELECT id, UPPER(COALESCE(source_package_tag, '')) AS tag, status, batch_grams
+         FROM test_orders
+         WHERE deleted_at IS NULL AND status IN (${OPEN_SQL})`
       )
-      .bind(year)
-      .first<{ n: number }>(),
+      .all<{ id: string; tag: string; status: string; batch_grams: number | null }>(),
     db
       .prepare(
-        `SELECT COUNT(DISTINCT o.lot_id) AS n
-         FROM test_orders o
-         JOIN wet_weight_entries w ON w.id = o.lot_id AND w.deleted_at IS NULL
-         JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-         WHERE o.deleted_at IS NULL AND b.harvest_year = ? AND o.status IN ('failed', 'remediated')
-           AND NOT EXISTS (
-             SELECT 1 FROM test_orders later
-             WHERE later.lot_id = o.lot_id AND later.deleted_at IS NULL AND later.id <> o.id
-               AND later.created_at > o.created_at
-           )`
+        `SELECT strain, hbn, entered_testing, status, failure_mode, batch_weight_grams, attempt
+         FROM external_test_results
+         WHERE deleted_at IS NULL AND attempt = 1`
       )
-      .bind(year)
-      .first<{ n: number }>(),
-    db
-      .prepare(
-        `SELECT o.id, o.created_at, o.batch_grams, o.panel, o.lot_id,
-                o.source_package_tag, o.source_package_code,
-                l.name AS lab_name,
-                COALESCE(st.name, e.strain, '') AS strain_name,
-                COALESCE(b.farm_code, '') AS farm_code,
-                COALESCE(b.hbn, e.hbn, '') AS hbn,
-                s.id AS sample_id, s.overall_passed
-         FROM test_orders o
-         JOIN testing_labs l ON l.id = o.lab_id
-         LEFT JOIN external_test_results e ON e.sheet_key = o.sheet_key AND e.deleted_at IS NULL
-         LEFT JOIN wet_weight_entries w ON w.id = o.lot_id AND w.deleted_at IS NULL
-         LEFT JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-         LEFT JOIN strains st ON st.id = b.strain_id
-         LEFT JOIN test_samples s ON s.order_id = o.id AND s.deleted_at IS NULL
-         WHERE o.deleted_at IS NULL AND (b.harvest_year = ? OR (o.lot_id IS NULL AND substr(o.created_at, 1, 4) = ?))
-         ORDER BY o.created_at ASC, o.id ASC, s.created_at ASC, s.id ASC`
-      )
-      .bind(year, String(year))
       .all<{
-        id: string;
-        created_at: string;
-        batch_grams: number;
-        panel: string;
-        lot_id: string | null;
-        source_package_tag: string | null;
-        source_package_code: string | null;
-        lab_name: string;
-        strain_name: string;
-        farm_code: string;
-        hbn: string;
-        sample_id: string | null;
-        overall_passed: number | null;
+        strain: string | null;
+        hbn: string | null;
+        entered_testing: string | null;
+        status: string | null;
+        failure_mode: string | null;
+        batch_weight_grams: number | null;
+        attempt: number | null;
       }>(),
     db
       .prepare(
-        `SELECT r.sample_id, r.test_type
-         FROM test_results r
-         JOIN test_samples s ON s.id = r.sample_id AND s.deleted_at IS NULL
-         JOIN test_orders o ON o.id = s.order_id AND o.deleted_at IS NULL
-         LEFT JOIN wet_weight_entries w ON w.id = o.lot_id AND w.deleted_at IS NULL
-         LEFT JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-         WHERE r.deleted_at IS NULL AND r.passed = 0
-           AND (b.harvest_year = ? OR (o.lot_id IS NULL AND substr(o.created_at, 1, 4) = ?))`
+        `SELECT hbn, market_strain FROM harvest_batches
+         WHERE deleted_at IS NULL AND hbn IS NOT NULL AND TRIM(hbn) <> ''`
       )
-      .bind(year, String(year))
-      .all<{ sample_id: string; test_type: string }>(),
-    db
-      .prepare(
-        `SELECT o.source_package_tag, o.source_package_code, COALESCE(b.hbn, e.hbn, '') AS hbn, l.name AS lab_name,
-                s.results_at, s.attempt, s.coa_url, s.thc_total_pct
-         FROM test_samples s
-         JOIN test_orders o ON o.id = s.order_id AND o.deleted_at IS NULL
-         JOIN testing_labs l ON l.id = o.lab_id
-         LEFT JOIN external_test_results e ON e.sheet_key = o.sheet_key AND e.deleted_at IS NULL
-         LEFT JOIN wet_weight_entries w ON w.id = o.lot_id AND w.deleted_at IS NULL
-         LEFT JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-         WHERE s.deleted_at IS NULL AND s.results_at IS NOT NULL
-           AND (b.harvest_year = ? OR (o.lot_id IS NULL AND substr(o.created_at, 1, 4) = ?))
-         ORDER BY s.results_at DESC, s.id DESC`
-      )
-      .bind(year, String(year))
-      .all<{
-        source_package_tag: string | null;
-        source_package_code: string | null;
-        hbn: string;
-        lab_name: string;
-        results_at: string;
-        attempt: number;
-        coa_url: string | null;
-        thc_total_pct: number | null;
-      }>(),
+      .all<{ hbn: string; market_strain: string | null }>(),
   ]);
-  const failed = new Map<string, string[]>();
-  for (const row of failures.results ?? []) {
-    const list = failed.get(row.sample_id) ?? [];
-    if (!list.includes(row.test_type)) list.push(row.test_type);
-    failed.set(row.sample_id, list);
+  const marketByHbn = new Map<string, string>();
+  for (const row of batches.results ?? []) {
+    const hbn = String(row.hbn ?? "").trim();
+    const market = String(row.market_strain ?? "").trim();
+    if (!hbn || !market || marketByHbn.has(hbn)) continue;
+    marketByHbn.set(hbn, market);
   }
-  const history = new Map<string, TestingHistoryRow>();
-  for (const row of orders.results ?? []) {
-    let cur = history.get(row.id);
-    if (!cur) {
-      cur = {
-        id: row.id,
-        parentKey: testingParentKey({ ...row, lot_id: row.lot_id ?? "" }),
-        created_at: row.created_at,
-        panel: row.panel,
-        grams: Number(row.batch_grams),
-        overall_passed: null,
-        lab: row.lab_name,
-        strain: row.strain_name,
-        farm: row.farm_code || farmFromHbn(row.hbn),
-        failed_types: [],
-      };
-      history.set(row.id, cur);
-    }
-    const passed = asPass(row.overall_passed);
-    if (passed !== null && cur.overall_passed === null && row.sample_id) {
-      cur.overall_passed = passed;
-      cur.failed_types = failed.get(row.sample_id) ?? [];
-    }
-  }
-  return testingFigures({
-    ready: Number(ready?.n ?? 0),
-    scheduled: Number(scheduled?.n ?? 0),
-    waiting: Number(waiting?.n ?? 0),
-    parents: testingParents([...history.values()]),
-    tags: (tags.results ?? []).map((row) => ({
-      source_tag: row.source_package_tag,
-      package_code: row.source_package_code,
-      hbn: row.hbn,
-      lab: row.lab_name,
-      results_at: row.results_at,
-      attempt: Number(row.attempt),
-      coa_url: row.coa_url,
-      thc_total_pct: row.thc_total_pct == null ? null : Number(row.thc_total_pct),
-    })),
+  return buildTestingFigures({
+    year,
+    gateTypes: parseGateTypeCodes(typesRaw),
+    unitGrams: parseGateUnitGrams(unitsRaw),
+    mirror: mirror.results ?? [],
+    cryo: cryo.results ?? [],
+    orders: orders.results ?? [],
+    sheet: sheet.results ?? [],
+    marketByHbn,
   });
 }
 

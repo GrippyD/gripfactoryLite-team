@@ -20,7 +20,6 @@ import {
   TRIM_RUNNING_MINUTES,
   TRIM_SHIFTS,
   trimFigures,
-  testingFigures,
   trimLinePicture,
   trimmingSection,
   BUD_ROWS,
@@ -160,8 +159,14 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(html).toContain(`<details class="hc-section hc-stub" data-hc-section="pasteurization">`);
     expect(html).toContain(`<summary>Pasteurization</summary>`);
     expect(html).toContain(`<details class="hc-section" data-hc-section="testing" data-hc-testing-year="`);
-    expect(html).toContain(`<summary>Testing</summary>`);
-    expect(html).toContain('data-hc="lots_ready">0<');
+    expect(html).toContain(`<summary>Testing <span class="muted hc-year">Harvest year 2026</span></summary>`);
+    expect(html).toContain('data-hc-gate="ready"');
+    expect(html).toContain('data-hc-icon="ready"');
+    expect(html).toContain('data-hc="ready_packages">0<');
+    expect(html).toContain('data-hc="ftq">NA<');
+    expect(html).toContain("No first-time tests on the sheet this season.");
+    expect(html).not.toContain("data-hc-thc");
+    expect(html).not.toContain("Lots ready");
     expect(html.match(/data-hc-stub>/g)).toHaveLength(1);
     expect(html).toContain("Stub: this section waits on the owner's definition.");
     expect(html).toContain('gf_hc_fold');
@@ -342,7 +347,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(es).toContain("<summary>Secado</summary>");
     expect(es).toContain("<summary>Recorte</summary>");
     expect(es).toContain("<summary>Pasteurizacion</summary>");
-    expect(es).toContain("<summary>Pruebas</summary>");
+    expect(es).toContain("<summary>Pruebas <span class=\"muted hc-year\">Año de cosecha 2026</span></summary>");
     expect(es).toContain("<dt>Plantas restantes/Plantas totales</dt>");
     expect(es).toContain("Horas de corte y deshoje de ayer");
     expect(es).not.toContain("Inventario FFZ");
@@ -878,31 +883,6 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(lbsSaved).toContain("data-hc-flash>Input lbs saved.</p>");
     expect(html.indexOf('data-hc-section="drying"')).toBeLessThan(html.indexOf('data-hc-section="trimming"'));
     expect(html.indexOf('data-hc-section="trimming"')).toBeLessThan(html.indexOf('data-hc-section="pasteurization"'));
-  });
-
-  it("keeps an order without a lot in the rate and out of lots ready", () => {
-    const figures = testingFigures({
-      ready: 0,
-      scheduled: 0,
-      waiting: 0,
-      parents: [
-        {
-          parentKey: "1A40503000311FB0000SEED1",
-          grams: 4480,
-          passedFirst: 1,
-          lab: "SC Labs Michigan",
-          strain: "Seed Pass",
-          farm: "ARL",
-          failed_types: [],
-        },
-      ],
-      tags: [],
-    });
-    expect(figures.ready).toBe(0);
-    expect(figures.scheduled).toBe(0);
-    expect(figures.first).toMatchObject({ passed: 1, all: 1, passedGrams: 4480, allGrams: 4480 });
-    expect(figures.strains[0]).toMatchObject({ strain: "Seed Pass" });
-    expect(figures.strains[0].farms[0]).toMatchObject({ farm: "ARL" });
   });
 
   it("the Prepack section lists bags by size and one DLH box", () => {

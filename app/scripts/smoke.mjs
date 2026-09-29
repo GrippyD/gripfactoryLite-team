@@ -402,8 +402,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 78 migration(s)")) {
-      throw new Error(`from-zero apply must say 78 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 79 migration(s)")) {
+      throw new Error(`from-zero apply must say 79 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -4845,21 +4845,20 @@ async function run() {
     assert(consolePage.body.includes('data-hc-section="plants" open') && consolePage.body.includes('data-hc-section="drying">') && !consolePage.body.includes('data-hc-section="drying" open'), "Plants open and Drying closed on a first visit");
     assert((consolePage.body.match(/data-hc-stub>/g) || []).length === 1, "Pasteurization is the remaining stub; Testing is built");
     assert(consolePage.body.includes('data-hc-section="testing"') && !consolePage.body.includes('hc-stub" data-hc-section="testing"'), "Testing must be a section, not a stub");
-    assert(consolePage.body.includes('data-hc="lots_ready">1<'), "the season must count the trimmed lot as ready");
-    assert(consolePage.body.includes('data-hc="lots_scheduled">0<'), "no order is still on the way to the lab");
-    assert(consolePage.body.includes('data-hc="lots_retest">0<'), "the failed order was remediated and already has a later attempt");
-    const testingSection = consolePage.body.slice(consolePage.body.indexOf('data-hc-section="testing"'));
+    const testingSection = consolePage.body.slice(consolePage.body.indexOf('data-hc-section="testing"'), consolePage.body.indexOf('data-hc-section="prepack"'));
+    assert(testingSection.includes('data-hc-gate="ready"') && testingSection.includes('data-hc-icon="ready"'), "Ready for Testing must carry its line-art icon");
+    assert(testingSection.includes('data-hc-gate="scheduled"') && testingSection.includes('data-hc-icon="scheduled"'), "Scheduled for Testing must carry its line-art icon");
+    assert(testingSection.includes('data-hc-gate="in-testing"') && testingSection.includes('data-hc-icon="in-testing"'), "In Testing must carry its line-art icon");
+    assert(testingSection.includes('data-hc-gate="passed"') && testingSection.includes('data-hc-icon="passed"'), "Passed Testing must carry its line-art icon");
+    const gateRead = (key) => (testingSection.match(new RegExp(`data-hc="${key}">([^<]*)<`)) || [])[1];
     assert(
-      testingSection.includes('data-hc="first_pass">0.0%<') &&
-        testingSection.includes('data-hc="first_pass_lb">0.00 of 1.68 lb<') &&
-        testingSection.includes('data-hc="first_pass_packages">0 of 1 packages<'),
-      "the first full panel failed, so the rate is that parent package's weight over itself"
+      gateRead("ready_packages") === "0" && gateRead("ready_lb") === "0.00 lb" && gateRead("scheduled_packages") === "0" && gateRead("in_testing_packages") === "0" && gateRead("passed_packages") === "0",
+      `the four panes are empty here: the cryo output was voided and the mirror has not been mounted, got ready ${gateRead("ready_packages")} ${gateRead("ready_lb")} scheduled ${gateRead("scheduled_packages")} in ${gateRead("in_testing_packages")} passed ${gateRead("passed_packages")}`
     );
-    assert(testingSection.includes('data-hc-lab="SC Labs Michigan"') && testingSection.includes('data-hc-failure="microbials"') && testingSection.includes('data-hc="failure_lb">1.68 lb<'), "the first failure must sit under its lab with the package weight");
-    assert(testingSection.includes('data-hc-strain="Fruity Pebbles"') && testingSection.includes('data-hc-farm="ARL"'), "the first-time rate must break out by strain and farm");
-    assert(testingSection.includes("https://lims.tagleaf.com/coa_/smoke"), "the COA list must link the sample's COA");
-    assert(testingSection.includes('data-hc="thc">20.1<'), "THC by parent tag must show the recorded percent");
-    assert(testingSection.includes('data-hc="attempt">attempt 1<') && testingSection.includes('data-hc="attempt">attempt 2<'), "the COA and THC lists show the attempt beside the date");
+    assert(testingSection.includes('data-hc="first_fails">1<') && testingSection.includes('data-hc="first_tests">1<') && testingSection.includes('data-hc="ftq">0.0%<'), "the manual external failure is the season's one first-time test, and it failed");
+    assert(testingSection.includes("Coliforms") && testingSection.includes('data-hc-pie-strain="unnamed"'), "that failure is Coliforms, with no strain named");
+    assert(!testingSection.includes("No first-time tests on the sheet this season."), "the manual row means the season is not empty");
+    assert(!testingSection.includes("COAs by parent tag") && !testingSection.includes("Lots ready") && !testingSection.includes("data-hc-thc") && !testingSection.includes("https://lims.tagleaf.com/coa_/smoke"), "the old Testing section is gone");
     assert(!testingSection.includes(sampleTag) && !testingSection.includes(retestTag), "the sample tag never shows in the Testing section");
     assert(consolePage.body.includes('data-hc-section="trimming" open'), "Trimming opens by default");
     assert((consolePage.body.match(/<div class="hc-farm( hc-total)?" data-hc-farm=/g) || []).length === 4, "four small boxes: PNN, ARL, PNS and Total");
@@ -4889,15 +4888,13 @@ async function run() {
     const consolePicked = await text(`/harvest?day=${pickedDay}`);
     assert(consolePicked.res.status === 200 && consolePicked.body.includes("picked; the panes below read this day") && consolePicked.body.includes('data-hc-day-reset'), "a picked day must read as picked with a way back");
     assert(
-      consolePicked.body.includes('data-hc="lots_ready">1<') &&
-        consolePicked.body.includes('data-hc="first_pass">0.0%<') &&
-        consolePicked.body.includes('data-hc="first_pass_lb">0.00 of 1.68 lb<'),
-      "a picked day must not change the Testing season"
+      consolePicked.body.includes('data-hc="ready_packages">0<') && consolePicked.body.includes('data-hc="ftq">0.0%<'),
+      "a picked day must not change the Testing gate"
     );
     const thcAsc = await text("/harvest?thc=asc");
-    assert(thcAsc.res.status === 200 && thcAsc.body.includes('data-hc-thc-sort="asc"'), "THC by parent tag must sort ascending");
+    assert(thcAsc.res.status === 200 && !thcAsc.body.includes("data-hc-thc-sort") && thcAsc.body.includes('data-hc="ready_packages">0<'), "a thc query is ignored and the gate still reads the live packages");
     const thcDesc = await text(`/harvest?day=${pickedDay}&thc=desc`);
-    assert(thcDesc.res.status === 200 && thcDesc.body.includes('data-hc-thc-sort="desc"') && thcDesc.body.includes('data-hc="lots_ready">1<'), "THC sort must keep the picked day and the season counts");
+    assert(thcDesc.res.status === 200 && !thcDesc.body.includes("data-hc-thc-sort") && thcDesc.body.includes('data-hc="ready_packages">0<') && thcDesc.body.includes("picked; the panes below read this day"), "a thc query must keep the picked day and leave the gate alone");
     // Three farm hours forms, two DLH boxes, two input lbs boxes, and the prepack DLH box carry the day home.
     assert((consolePicked.body.match(new RegExp(`name="work_date" value="${pickedDay}"`, "g")) || []).length === 8, "every hours and input lbs form must carry the picked day");
     assert(consolePicked.body.includes(`<span class="hc-date muted">${pickedDay}</span>`), "the date under the yesterday lines must be the picked day");
@@ -6741,7 +6738,10 @@ async function run() {
     const capPosted = await req("/admin/imports", { method: "POST", body: capUp });
     assert(capPosted.status === 400 && (await capPosted.text()).includes("That file is over the cap."), `an xlsm over the cap must refuse, got ${capPosted.status}`);
     const seededConsole = await text("/harvest");
-    assert(seededConsole.body.includes("Seed Pass") && seededConsole.body.includes("1A40503000311FB0000000A1"), "the console Testing section must read the seeded sheet history");
+    assert(
+      seededConsole.body.includes("Seed Fail") && seededConsole.body.includes("Coliforms") && seededConsole.body.includes('data-hc="first_tests">3<') && seededConsole.body.includes('data-hc="first_fails">2<') && seededConsole.body.includes('data-hc="ftq">33.3%<'),
+      "the console Testing section must read the seeded sheet history"
+    );
     const complianceSeed = await text("/compliance/testing?tab=external");
     assert(complianceSeed.body.includes("1A40503000311FB0000000A2") && complianceSeed.body.includes("BUD Seed"), "the compliance page must list the seeded sample");
     const fixtureBook = await req("/__sheet-fixture?book=in_testing");
@@ -6997,9 +6997,9 @@ async function run() {
     // the package stands in Available under it, and the harvest figures do not move.
     const NEW_HBN = "46258-PNN-ID-062-0-NA-26007";
     const MB105 = MB("000105");
-    const hcFigures = (body) => [...body.matchAll(/data-hc="(remaining_total|harvested|pct|wet_per_plant|dry_per_plant|lots_ready|lots_scheduled|lots_retest)">([^<]*)</g)].map((m) => `${m[1]}=${m[2]}`).join("|");
+    const hcFigures = (body) => [...body.matchAll(/data-hc="(remaining_total|harvested|pct|wet_per_plant|dry_per_plant|ready_packages|scheduled_packages|in_testing_packages|passed_packages|first_fails|first_tests|ftq)">([^<]*)</g)].map((m) => `${m[1]}=${m[2]}`).join("|");
     const hcBefore = hcFigures((await text("/harvest")).body);
-    assert(hcBefore.includes("harvested=") && hcBefore.includes("lots_ready="), `the console must read its harvest figures, got ${hcBefore}`);
+    assert(hcBefore.includes("harvested=") && hcBefore.includes("ready_packages="), `the console must read its harvest figures, got ${hcBefore}`);
     const beforeNew = await text("/production/scheduling/prepack");
     const indoorStart = beforeNew.body.indexOf('data-fold="grow:Indoor"');
     const indoorNext = beforeNew.body.indexOf("<details", indoorStart + 10);
