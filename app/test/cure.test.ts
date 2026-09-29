@@ -58,14 +58,17 @@ function dbOf(input: {
 }
 
 describe("THE CURE PANES (canon 0.30.164)", () => {
-  it("puts an unloaded lot with no trim row in CSA, a trim-scheduled lot in CSB, and drops a cryo run, a frozen lot, and a voided lot", () => {
-    expect(cureMembership({ status: "unloaded", deleted: false, trimLive: false, cryoLive: false })).toBe("CSA");
-    expect(cureMembership({ status: "unloaded", deleted: false, trimLive: true, cryoLive: false })).toBe("CSB");
-    expect(cureMembership({ status: "trimmed", deleted: false, trimLive: true, cryoLive: false })).toBe("CSB");
-    expect(cureMembership({ status: "trimmed", deleted: false, trimLive: true, cryoLive: true })).toBeNull();
-    expect(cureMembership({ status: "unloaded", deleted: false, trimLive: true, cryoLive: true })).toBeNull();
-    expect(cureMembership({ status: "frozen", deleted: false, trimLive: false, cryoLive: false })).toBeNull();
-    expect(cureMembership({ status: "unloaded", deleted: true, trimLive: false, cryoLive: false })).toBeNull();
+  it("puts a scheduled trim row on CSB, a complete row on neither pane, a deleted row back on CSA, and a trimmed, frozen, or voided lot on neither", () => {
+    expect(cureMembership({ status: "unloaded", deleted: false, trimStatus: "scheduled" })).toBe("CSB");
+    expect(cureMembership({ status: "unloaded", deleted: false, trimStatus: "complete" })).toBeNull();
+    expect(cureMembership({ status: "trimmed", deleted: false, trimStatus: "scheduled" })).toBeNull();
+    expect(cureMembership({ status: "trimmed", deleted: false, trimStatus: "complete" })).toBeNull();
+    expect(cureMembership({ status: "trimmed", deleted: false, trimStatus: null })).toBeNull();
+    expect(cureMembership({ status: "unloaded", deleted: false, trimStatus: null })).toBe("CSA");
+    expect(cureMembership({ status: "unloaded", deleted: false, trimStatus: "" })).toBe("CSA");
+    expect(cureMembership({ status: "frozen", deleted: false, trimStatus: "scheduled" })).toBeNull();
+    expect(cureMembership({ status: "unloaded", deleted: true, trimStatus: null })).toBeNull();
+    expect(cureMembership({ status: "unloaded", deleted: true, trimStatus: "scheduled" })).toBeNull();
   });
 
   it("takes the unload finish as CSA's in-time, and the change log when the session has none", () => {
@@ -102,31 +105,31 @@ describe("THE CURE PANES (canon 0.30.164)", () => {
           unload_finished_at: "2026-09-21T12:00:00.000Z",
           unloaded_logged_at: null,
           trim_scheduled_at: null,
-          in_cryo: null,
+          trim_status: null,
           live_grams: 400,
         },
         {
           id: "lot-csb",
-          status: "trimmed",
+          status: "unloaded",
           dry_weight_grams: 896,
           hbn: "26264-PNN-GL-070-0-NA-26022",
           metrc_harvest_tag: null,
           unload_finished_at: "2026-09-20T12:00:00.000Z",
           unloaded_logged_at: null,
           trim_scheduled_at: "2026-09-21T13:00:00.000Z",
-          in_cryo: null,
+          trim_status: "scheduled",
           live_grams: 800,
         },
         {
-          id: "lot-cryo",
-          status: "trimmed",
+          id: "lot-done",
+          status: "unloaded",
           dry_weight_grams: 100,
           hbn: "26264-PNN-GL-070-0-NA-26023",
           metrc_harvest_tag: null,
           unload_finished_at: null,
           unloaded_logged_at: null,
-          trim_scheduled_at: "2026-09-21T13:00:00.000Z",
-          in_cryo: 1,
+          trim_scheduled_at: "2026-09-21T14:00:00.000Z",
+          trim_status: "complete",
           live_grams: null,
         },
         {
@@ -138,7 +141,7 @@ describe("THE CURE PANES (canon 0.30.164)", () => {
           unload_finished_at: null,
           unloaded_logged_at: null,
           trim_scheduled_at: null,
-          in_cryo: null,
+          trim_status: null,
           live_grams: null,
         },
       ],
@@ -151,6 +154,7 @@ describe("THE CURE PANES (canon 0.30.164)", () => {
     const data = await listCurePanes(db as unknown as D1Database, NOW);
     expect(data.csa.map((l) => l.id)).toEqual(["lot-csa"]);
     expect(data.csb.map((l) => l.id)).toEqual(["lot-csb"]);
+    expect([...data.csa, ...data.csb].some((l) => l.id === "lot-done")).toBe(false);
     expect(data.csa[0].inTime).toBe("2026-09-21T12:00:00.000Z");
     expect(data.csb[0].inTime).toBe("2026-09-21T13:00:00.000Z");
     expect(data.csa[0].moistureAt?.text).toBe("11.4 %");
