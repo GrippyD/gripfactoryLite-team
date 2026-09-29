@@ -63,6 +63,7 @@ import {
 } from "./db";
 import { CONFIG_KEYS } from "./config";
 import { t, type Locale } from "./i18n";
+import type { LoadCheckView } from "./labsample";
 import { esc } from "./ui";
 
 export const SILO_CAPACITY_WET_LBS_DEFAULT = 15000;
@@ -475,6 +476,8 @@ export type SiloLiveEntry = {
   flags: string[];
   /** THE EMPTY CLOCK (canon 0.30.270): the origin's ISO, or null while a load is open, on a freezer, or when no load has ever left. */
   emptySince: string | null;
+  /** THE MAINTENANCE NODE (canon 0.30.293): the next check on each open load. */
+  checks: Array<{ kind: "aw" | "mc"; lot: string; checkNumber: number; dueAt: string; loadId: string }>;
 };
 
 export function siloLiveEntry(
@@ -484,7 +487,8 @@ export function siloLiveEntry(
   locale: Locale = "en",
   shape: SiloShape | string | null = "cylinder",
   flags: string[] = [],
-  emptySince: string | null = null
+  emptySince: string | null = null,
+  checks: SiloLiveEntry["checks"] = []
 ): SiloLiveEntry {
   return {
     id,
@@ -506,6 +510,7 @@ export function siloLiveEntry(
     spaceType: v.freezer ? "freezer" : siloShapeOf(shape) === "box" ? "dry_room" : "silo",
     flags,
     emptySince: v.freezer ? null : emptySince,
+    checks,
   };
 }
 
@@ -565,6 +570,18 @@ export function siloLiveScript(): string {
         if (uPct && entry.unloadPct != null) uPct.textContent = entry.unloadPct + "%";
       }
       paintWet(tile, entry.wetLb, entry.wetG);
+      if (Array.isArray(entry.checks)) {
+        entry.checks.forEach(function (check) {
+          var loadAttr = "data-" + "load";
+          var lineSel = "[data-check-line][data-kind='" + check.kind + "'][" + loadAttr + "='" + check.loadId + "']";
+          tile.querySelectorAll(lineSel).forEach(function (line) {
+            var due = Date.parse(check.dueAt);
+            if (!isFinite(due)) return;
+            line.setAttribute("data-due", String(due));
+            line.querySelectorAll("[data-check-n]").forEach(function (n) { n.textContent = String(check.checkNumber); });
+          });
+        });
+      }
       var flags = tile.querySelector("[data-silo-flags]");
       if (flags) flags.textContent = Array.isArray(entry.flags) ? entry.flags.join(" ") : "";
       var empty = tile.querySelector("[data-silo-empty]");
@@ -629,7 +646,15 @@ export type SiloWaitingLot = {
   strain_label?: string | null;
 };
 
-export type SiloLive = { silo: SiloRow; visual: SiloVisual; loads: SiloLoadRow[]; waiting: SiloWaitingLot[]; emptySince: string | null };
+export type SiloLive = {
+  silo: SiloRow;
+  visual: SiloVisual;
+  loads: SiloLoadRow[];
+  waiting: SiloWaitingLot[];
+  emptySince: string | null;
+  /** THE MAINTENANCE NODE (canon 0.30.293): next aW and MC checks on the open loads. */
+  loadChecks?: LoadCheckView[];
+};
 
 /** Pure assembly: silos, their open loads, and the weighing / awaiting grams per silo.
  * THE UNLOADING SILO (canon 0.30.77): the loads' dry grams weighed out so far

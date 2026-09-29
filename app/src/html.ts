@@ -323,6 +323,7 @@ export function layout(opts: {
       // is untouched; the nav still carries Home and Log only.
       ""
     }<div class="bar-actions">
+      <a class="maintenance-link" href="/maintenance">${esc(t(locale, "Maintenance"))}</a>
       <a class="reports-link" href="/reports">${esc(t(locale, "Reports"))}</a>
       <a class="admin-link" href="/admin">${esc(t(locale, "Admin"))}</a>
     </div>

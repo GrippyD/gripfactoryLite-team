@@ -1,5 +1,5 @@
 /**
- * THE ICONS AS LINE ART (canon 0.30.282). Fourteen console pictures, one
+ * THE ICONS AS LINE ART (canon 0.30.282). Fifteen console pictures, one
  * stroke, the view's ink. Nothing in the served worker imports this module.
  * The panes that draw them come in later slices.
  */
@@ -19,6 +19,7 @@ export const CONSOLE_ICON_NAMES = [
   "shipping",
   "submitted",
   "accepted",
+  "siren",
 ] as const;
 
 export type ConsoleIconName = (typeof CONSOLE_ICON_NAMES)[number];
@@ -38,6 +39,7 @@ export const CONSOLE_ICON_LABELS: Readonly<Record<ConsoleIconName, string>> = {
   shipping: "Shipping today",
   submitted: "Submitted",
   accepted: "Accepted",
+  siren: "Siren",
 };
 
 /** One stroke weight for every icon's root. A detail line may use 2. */
@@ -256,6 +258,17 @@ function submitted(): string {
   ].join("");
 }
 
+function siren(): string {
+  return [
+    `<path d="M28 78 H72 L66 90 H34 Z"/>`,
+    `<path d="M50 78 V56"/>`,
+    `<path data-icon-siren-lamp d="M36 56 H64 L58 40 H42 Z" fill="currentColor"/>`,
+    `<path d="M32 34 L18 20"/>`,
+    `<path d="M50 30 V14"/>`,
+    `<path d="M68 34 L82 20"/>`,
+  ].join("");
+}
+
 function accepted(): string {
   return [
     `<path d="M6 40 H38 C48 40 52 48 46 56"/>`,
@@ -283,6 +296,7 @@ const BODIES: Record<ConsoleIconName, () => string> = {
   shipping,
   submitted,
   accepted,
+  siren,
 };
 
 export function consoleIconSvg(name: ConsoleIconName, options?: ConsoleIconOptions): string {

@@ -177,6 +177,42 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(html).not.toContain("data-hc-drying-totals");
   });
 
+  it("the drying tiles carry the next aW and MC lines", () => {
+    const withCheck: SiloLive[] = [
+      {
+        ...live[0],
+        visual: siloVisual({ ...base, loadedGrams: 1000, clock: "running" }),
+        loads: [
+          {
+            id: "load-1",
+            dry_space_id: "s1",
+            silo_name: "Silo 1",
+            wet_weight_entry_id: "lot-1",
+            hbn: "26260-PNN-GH-001-0-NA-26070",
+            metrc_harvest_tag: null,
+            strain_label: "Papaya",
+            farm_code: "PNN",
+            weight_grams: 1000,
+            loaded_at: "2026-09-28T12:00:00.000Z",
+            started_at: "2026-09-28T12:00:00.000Z",
+            paused_at: null,
+            paused_seconds: 0,
+            ended_at: null,
+            notes: null,
+          },
+        ],
+        loadChecks: [{ loadId: "load-1", kind: "aw", lot: "26070", checkNumber: 2, dueAt: "2026-09-29T18:00:00.000Z" }],
+      },
+    ];
+    const html = harvestConsolePage({ input, live: withCheck, nowIso: "2026-09-29T12:00:00.000Z" });
+    const drying = html.slice(html.indexOf('data-hc-section="drying"'), html.indexOf('data-hc-section="trimming"'));
+    expect(drying).toContain('data-load="load-1"');
+    expect(drying).toContain("Next aW check in");
+    expect(drying).toContain('data-kind="aw"');
+    expect(drying).toContain("data-icon-siren-lamp");
+    expect(drying).toContain('data-check-n>2<');
+  });
+
   it("THE DRYING TOTALS (canon 0.30.183): the three totals ride under the dry space tiles in the Drying section", () => {
     const totals = { loadedGrams: 15421282, loadedLots: 2, estimateGrams: 3392682, dryYieldPct: 22, cureGrams: 1280080, cureLots: 1, queuedGrams: 0, queuedLots: 0 };
     const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z", dryingTotals: totals });

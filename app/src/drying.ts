@@ -33,6 +33,7 @@ import { effectiveDateField } from "./effective";
 import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmDayBounds } from "./farmday";
 import { esc, lockOnSubmitScript, time24MaskScript } from "./html";
 import { t, tFill, type Locale } from "./i18n";
+import { checkCountdownScript, loadCheckLines, tileCheckSummary } from "./labsample";
 import { lotStrainLine, siloLiveScript, siloTile, siloWaitingLines, spaceShapeOf, spaceTypeOf, type SiloLive } from "./silo";
 
 export type ClockState = "not_started" | "running" | "paused";
@@ -140,9 +141,12 @@ export function clockMarkup(load: SiloLoadRow, nowIso: string, locale: Locale): 
  * the live script keeps every tile current. */
 export function siloStrip(live: SiloLive[], nowIso: string, locale: Locale = "en", extraTiles = "", flags: Readonly<Record<string, string[]>> = {}): string {
   const tiles = live
-    .map(({ silo, visual, loads, waiting, emptySince }) => {
+    .map(({ silo, visual, loads, waiting, emptySince, loadChecks }) => {
+      const checks = loadChecks ?? [];
       // THE LOADING SILO (canon 0.30.81): the lots waiting in the barn for this silo ride under its word.
+      // THE MAINTENANCE NODE (canon 0.30.293): each load's next aW and MC check under its clock.
       const body =
+        tileCheckSummary(checks, nowIso, locale) +
         loads
           .map(
             (load) => `<div class="inv-lot" data-load="${esc(load.id)}">
@@ -151,6 +155,7 @@ export function siloStrip(live: SiloLive[], nowIso: string, locale: Locale = "en
             )} ${esc(shortLotId(load.hbn ?? "", load.metrc_harvest_tag))}</a></div>
             ${lotStrainLine(load.strain_label)}
             <div class="inv-lot-time">${clockMarkup(load, nowIso, locale)}</div>
+            ${loadCheckLines(checks, load.id, nowIso, locale)}
           </div>`
           )
           .join("") + siloWaitingLines(waiting ?? [], locale);
@@ -162,7 +167,7 @@ export function siloStrip(live: SiloLive[], nowIso: string, locale: Locale = "en
     .join("");
   return `<section class="silo-strip" data-silo-strip>
     <div class="inv-gauges">${tiles}${extraTiles}</div>
-  </section>${clockScript()}${siloLiveScript()}`;
+  </section>${clockScript()}${checkCountdownScript()}${siloLiveScript()}`;
 }
 
 /** Keeps every [data-clock] ticking once a second from its data attributes;

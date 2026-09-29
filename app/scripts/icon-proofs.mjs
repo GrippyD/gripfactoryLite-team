@@ -8,13 +8,13 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONSOLE_ICON_LABELS, CONSOLE_ICON_NAMES, TRAILER_CARGO, consoleIconSvg } from "../src/consoleicons.ts";
 
-const DATE = "2026-09-28";
+const DATE = "2026-09-29";
 const BRANCH = "GFLiteOpsDashboard";
 const here = dirname(fileURLToPath(import.meta.url));
 const modulePath = resolve(here, "../src/consoleicons.ts");
 const moduleBytes = readFileSync(modulePath);
 const moduleSha = createHash("sha256").update(moduleBytes).digest("hex");
-const outPath = resolve(here, "../../SESSION_REPORTS/2026-09-28_icon_proofs.html");
+const outPath = resolve(here, "../../SESSION_REPORTS/2026-09-29_icon_proofs.html");
 
 function esc(value) {
   return String(value)
@@ -69,6 +69,7 @@ const hooks = `<section class="view hooks" style="background:#0c0c0e;color:#f4f4
 <div class="row"><div class="meta"><span class="key">rad</span><span class="label">body in silo green</span></div><span class="slot s160">${consoleIconSvg("rad")}</span></div>
 <div class="row"><div class="meta"><span class="key">cryo</span><span class="label">bars in waste red</span></div><span class="slot s160">${consoleIconSvg("cryo")}</span></div>
 <div class="row"><div class="meta"><span class="key">shipping</span><span class="label">three bands in the trailer</span></div><span class="slot s160">${shippingPreview()}</span></div>
+<div class="row"><div class="meta"><span class="key">siren</span><span class="label">lamp in waste red</span></div><span class="slot s160">${consoleIconSvg("siren")}</span></div>
 </div>
 </section>`;
 
@@ -99,6 +100,7 @@ h2 { margin: 0 0 0.8rem; font-size: 1rem; letter-spacing: 0.04em; text-transform
 .hooks [data-proof-cargo] rect:nth-child(1) { fill: #4f6b4a; }
 .hooks [data-proof-cargo] rect:nth-child(2) { fill: #2e9e4f; }
 .hooks [data-proof-cargo] rect:nth-child(3) { fill: #2f6fd6; }
+.hooks [data-icon-siren-lamp] { fill: #7c1b1b; }
 </style>
 </head>
 <body>
