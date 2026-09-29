@@ -308,6 +308,7 @@ body.device-phone table.phone-table td[data-th]::before { content: attr(data-th)
 .pick-lines input[type="checkbox"] { appearance: auto; -webkit-appearance: checkbox; width: 1.15rem; height: 1.15rem; min-width: 1.15rem; accent-color: ${accent}; }
 /* Canon 0.30.23: a grouped report heads each run of rows with its site. */
 table.data tr.report-group th { text-align: left; font-size: 0.82rem; letter-spacing: 0.12em; text-transform: uppercase; padding-top: 0.9rem; background: color-mix(in srgb, ${accent} 10%, transparent); }
+table.data tr.report-total td { font-weight: 700; border-top: 2px solid var(--line, var(--border, #888)); }
 /* THE RECONCILE LEDGER LOCATION (canon 0.30.135): the editable ledger table. */
 .reconcile-table input[type="text"], .reconcile-table select { width: 100%; min-width: 6em; box-sizing: border-box; }
 .reconcile-table input.grams { min-width: 7em; text-align: right; }
@@ -715,7 +716,29 @@ table.data th { background: var(--panel-2); }
 .hc-pie-6 { color: #1aa6b7; }
 .hc-pie-7 { color: #d63384; }
 .hc-pie-8 { color: #c4a35a; }
-@media (max-width: 600px) { .hc-gate-pane .hc-icon { width: 4.5rem; } }
+/* FULFILLMENT (canon 0.30.306): ten fixed hues, the pie's eight and two more, one per row. */
+.hc-fill { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0 0.8rem; }
+.hc-fill-pane { flex: 1 1 16rem; text-align: center; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.7rem 0.45rem 0.6rem; }
+.hc-fill-beside { display: flex; align-items: center; gap: 0.45rem; }
+.hc-fill-beside .hc-icon { width: 7.5rem; flex: 0 0 auto; margin: 0; }
+.hc-fill-band { flex: 1 1 auto; width: 100%; height: 2.5rem; min-width: 3rem; }
+.hc-fill-legend { list-style: none; margin: 0.45rem 0 0; padding: 0; text-align: left; font-size: 0.78rem; }
+.hc-fill-legend li { margin: 0.12rem 0; }
+.hc-fill-swatch { width: 0.7rem; height: 0.7rem; border-radius: 0.12rem; background: currentColor; display: inline-block; margin-right: 0.35rem; vertical-align: -0.08rem; }
+.hc-fill-1 { color: #d6453d; }
+.hc-fill-2 { color: #e6a23c; }
+.hc-fill-3 { color: #2e9e4f; }
+.hc-fill-4 { color: #2f6fd6; }
+.hc-fill-5 { color: #7b4bdb; }
+.hc-fill-6 { color: #1aa6b7; }
+.hc-fill-7 { color: #d63384; }
+.hc-fill-8 { color: #c4a35a; }
+.hc-fill-9 { color: #2a9d8f; }
+.hc-fill-10 { color: #e07a3d; }
+.fulfill-grid { width: 100%; border-collapse: collapse; }
+.fulfill-grid th, .fulfill-grid td { padding: 0.25rem 0.4rem; vertical-align: middle; }
+.fulfill-grid input[type="number"] { width: 6.5rem; }
+@media (max-width: 600px) { .hc-gate-pane .hc-icon { width: 4.5rem; } .hc-fill-beside .hc-icon { width: 4.5rem; } .hc-fill-band { height: 1.5rem; } }
 /* THE TRIMMING SECTION (canon 0.30.88): two shift cards, each a waffle pictograph (100 cells, one per percent of the weight ran, BUD in the silo green, OTHER quiet) beside his six lines. */
 .hc-shifts { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0; }
 .hc-shift { flex: 1 1 22rem; min-width: 18rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.6rem 0.7rem; }
@@ -1427,7 +1450,29 @@ table.data tbody tr:hover td { background: var(--surface-2); }
 .hc-pie-6 { color: #1aa6b7; }
 .hc-pie-7 { color: #d63384; }
 .hc-pie-8 { color: #c4a35a; }
-@media (max-width: 600px) { .hc-gate-pane .hc-icon { width: 4.5rem; } }
+/* FULFILLMENT (canon 0.30.306): ten fixed hues, the pie's eight and two more, one per row. */
+.hc-fill { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0 0.8rem; }
+.hc-fill-pane { flex: 1 1 16rem; text-align: center; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.7rem 0.45rem 0.6rem; }
+.hc-fill-beside { display: flex; align-items: center; gap: 0.45rem; }
+.hc-fill-beside .hc-icon { width: 7.5rem; flex: 0 0 auto; margin: 0; }
+.hc-fill-band { flex: 1 1 auto; width: 100%; height: 2.5rem; min-width: 3rem; }
+.hc-fill-legend { list-style: none; margin: 0.45rem 0 0; padding: 0; text-align: left; font-size: 0.78rem; }
+.hc-fill-legend li { margin: 0.12rem 0; }
+.hc-fill-swatch { width: 0.7rem; height: 0.7rem; border-radius: 0.12rem; background: currentColor; display: inline-block; margin-right: 0.35rem; vertical-align: -0.08rem; }
+.hc-fill-1 { color: #d6453d; }
+.hc-fill-2 { color: #e6a23c; }
+.hc-fill-3 { color: #2e9e4f; }
+.hc-fill-4 { color: #2f6fd6; }
+.hc-fill-5 { color: #7b4bdb; }
+.hc-fill-6 { color: #1aa6b7; }
+.hc-fill-7 { color: #d63384; }
+.hc-fill-8 { color: #c4a35a; }
+.hc-fill-9 { color: #2a9d8f; }
+.hc-fill-10 { color: #e07a3d; }
+.fulfill-grid { width: 100%; border-collapse: collapse; }
+.fulfill-grid th, .fulfill-grid td { padding: 0.25rem 0.4rem; vertical-align: middle; }
+.fulfill-grid input[type="number"] { width: 6.5rem; }
+@media (max-width: 600px) { .hc-gate-pane .hc-icon { width: 4.5rem; } .hc-fill-beside .hc-icon { width: 4.5rem; } .hc-fill-band { height: 1.5rem; } }
 /* THE TRIMMING SECTION (canon 0.30.88): two shift cards, each a waffle pictograph (100 cells, one per percent of the weight ran, BUD in the silo green, OTHER quiet) beside his six lines. */
 .hc-shifts { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0; }
 .hc-shift { flex: 1 1 22rem; min-width: 18rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.6rem 0.7rem; }
@@ -2084,7 +2129,29 @@ legend { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; c
 .hc-pie-6 { color: #1aa6b7; }
 .hc-pie-7 { color: #d63384; }
 .hc-pie-8 { color: #c4a35a; }
-@media (max-width: 600px) { .hc-gate-pane .hc-icon { width: 4.5rem; } }
+/* FULFILLMENT (canon 0.30.306): ten fixed hues, the pie's eight and two more, one per row. */
+.hc-fill { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0 0.8rem; }
+.hc-fill-pane { flex: 1 1 16rem; text-align: center; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.7rem 0.45rem 0.6rem; }
+.hc-fill-beside { display: flex; align-items: center; gap: 0.45rem; }
+.hc-fill-beside .hc-icon { width: 7.5rem; flex: 0 0 auto; margin: 0; }
+.hc-fill-band { flex: 1 1 auto; width: 100%; height: 2.5rem; min-width: 3rem; }
+.hc-fill-legend { list-style: none; margin: 0.45rem 0 0; padding: 0; text-align: left; font-size: 0.78rem; }
+.hc-fill-legend li { margin: 0.12rem 0; }
+.hc-fill-swatch { width: 0.7rem; height: 0.7rem; border-radius: 0.12rem; background: currentColor; display: inline-block; margin-right: 0.35rem; vertical-align: -0.08rem; }
+.hc-fill-1 { color: #d6453d; }
+.hc-fill-2 { color: #e6a23c; }
+.hc-fill-3 { color: #2e9e4f; }
+.hc-fill-4 { color: #2f6fd6; }
+.hc-fill-5 { color: #7b4bdb; }
+.hc-fill-6 { color: #1aa6b7; }
+.hc-fill-7 { color: #d63384; }
+.hc-fill-8 { color: #c4a35a; }
+.hc-fill-9 { color: #2a9d8f; }
+.hc-fill-10 { color: #e07a3d; }
+.fulfill-grid { width: 100%; border-collapse: collapse; }
+.fulfill-grid th, .fulfill-grid td { padding: 0.25rem 0.4rem; vertical-align: middle; }
+.fulfill-grid input[type="number"] { width: 6.5rem; }
+@media (max-width: 600px) { .hc-gate-pane .hc-icon { width: 4.5rem; } .hc-fill-beside .hc-icon { width: 4.5rem; } .hc-fill-band { height: 1.5rem; } }
 /* THE TRIMMING SECTION (canon 0.30.88): two shift cards, each a waffle pictograph (100 cells, one per percent of the weight ran, BUD in the silo green, OTHER quiet) beside his six lines. */
 .hc-shifts { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0; }
 .hc-shift { flex: 1 1 22rem; min-width: 18rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.6rem 0.7rem; }

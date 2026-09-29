@@ -418,6 +418,7 @@ import {
 } from "./pipeline";
 import { anyPlantCount, queueRowsToCsv, toCsv, wetWeightsCsv, wetWeightsCsvWithCounts, wetWeightsCsvWithTags, wetWeightsFilename } from "./csv";
 import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePrepackHours, saveTrimHours, saveTrimInputLbs } from "./console";
+import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
 import { loadMetrcAdmin, metrcApiPage, runMetrcSweep, testMetrcConnection } from "./metrcapi";
 import { inTestingFixtureWorkbook, runInTestingSync } from "./intesting";
@@ -1429,11 +1430,12 @@ app.get(HARVEST_PATH, async (c) => {
   // THE CONSOLE DAY (canon 0.30.152): ?day=YYYY-MM-DD picks the day the yesterday panes read.
   // THE TESTING GATE (canon 0.30.293): the four panes are live. The stats and the pie read the harvest year. ?thc= is ignored.
   const input = await loadHarvestConsole(c.env.DB, now, c.req.query("day") ?? null);
-  const [silos, cure, testing, prepack] = await Promise.all([
+  const [silos, cure, testing, prepack, fulfillment] = await Promise.all([
     loadSiloVisuals(c.env.DB),
     listCurePanes(c.env.DB, now, s.locale),
     loadTestingSection(c.env.DB, input.year),
     loadPrepackSection(c.env.DB, input.yesterday),
+    loadFulfillmentSection(c.env.DB, input.yesterday),
   ]);
   const checkedLive = await attachLoadChecks(c.env.DB, silos.live, now);
   return html(
@@ -1458,6 +1460,7 @@ app.get(HARVEST_PATH, async (c) => {
       }),
       testing,
       prepack,
+      fulfillment,
     })
   );
 });
@@ -2878,6 +2881,12 @@ app.get("/admin/lookups/:section", async (c) => {
     const rows = (farms.results ?? []).map((farm) => ({ code: farm.code, name: farm.display_name, count: byFarm.has(farm.code) ? byFarm.get(farm.code)! : null }));
     return html(c, s, "Farm Plant Count", plantCountPage(year, rows, s.locale, c.req.query("ok") || undefined));
   }
+  if (section === "fulfillment_override") {
+    const today = await farmToday(c.env.DB, nowIso());
+    const date = fulfillmentDateOf(c.req.query("date"), today);
+    const cells = await listFulfillmentCells(c.env.DB, date);
+    return html(c, s, "Fulfillment Override", fulfillmentOverridePage(date, cells, s.locale, c.req.query("ok") || undefined));
+  }
   const tables = {
     people: await listAdminRows(c.env.DB, "people"),
     farms: await listAdminRows(c.env.DB, "farms"),
@@ -2901,6 +2910,7 @@ app.post("/admin/lookups/:table", async (c) => {
   else if (table === "trim_bogey") result = await saveTrimBogey(c.env.DB, form);
   else if (table === "plant_count") result = await saveFarmPlantCounts(c.env.DB, form);
   else if (table === "silo_check_intervals") result = await saveSiloCheckInterval(c.env.DB, form);
+  else if (table === "fulfillment_override") result = await saveFulfillmentOverride(c.env.DB, form);
   else if (table === "people" && action === "deactivate") result = await deactivatePerson(c.env.DB, form);
   else if (table === "people") result = await addPerson(c.env.DB, form);
   else if (table === "strains") result = await addStrain(c.env.DB, form);

@@ -402,8 +402,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 80 migration(s)")) {
-      throw new Error(`from-zero apply must say 80 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 81 migration(s)")) {
+      throw new Error(`from-zero apply must say 81 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -7879,6 +7879,53 @@ async function run() {
     );
     const freezerChecks = liveAfter.silos.find((row) => row.name === "Blast Freezer(s)");
     assert(freezerChecks && JSON.stringify(freezerChecks.checks) === "[]", `the freezer's checks in live.json are empty, got ${JSON.stringify(freezerChecks && freezerChecks.checks)}`);
+
+    // FULFILLMENT (canon 0.30.306).
+    const lookupsFulfill = await text("/admin/lookups");
+    assert(lookupsFulfill.body.includes('href="/admin/lookups/fulfillment_override"'), "Logistics must carry Fulfillment Override");
+    const grid = await text("/admin/lookups/fulfillment_override");
+    assert(grid.res.status === 200 && grid.body.includes("Fulfillment Override") && grid.body.includes("data-fulfill-grid"), "the override page must load the grid");
+    const fulfillToday = (grid.body.match(/name="date" value="(\d{4}-\d{2}-\d{2})"/) || [])[1];
+    assert(fulfillToday, "the grid must load the farm's today");
+    assert(grid.body.includes('data-fulfill-cell="bulk_bud:shipping_today"') && grid.body.includes('data-fulfill-cell="vapes:accepted"') && grid.body.includes('data-fulfill-cell="bulk_infused:shipping_today"'), "the grid must carry the ten rows by three columns");
+    const fulfillSave = await req("/admin/lookups/fulfillment_override", {
+      method: "POST",
+      body: form({ entry_date: fulfillToday, "bulk_bud:shipping_today": "1000", "prepack:shipping_today": "40" }),
+    });
+    assert(fulfillSave.status === 303, `saving the grid expected 303 got ${fulfillSave.status} ${await fulfillSave.text()}`);
+    const fulfillConsole = await text(`/harvest?day=${fulfillToday}`);
+    const fillPane = (html, name) => {
+      const at = html.indexOf(`data-hc-fill="${name}"`);
+      if (at < 0) return "";
+      const rest = html.slice(at);
+      const next = rest.indexOf('data-hc-fill="', 16);
+      return next < 0 ? rest : rest.slice(0, next);
+    };
+    const shippingPane = fillPane(fulfillConsole.body, "shipping_today");
+    assert(shippingPane.includes('data-fulfill-segment="bulk_bud"') && shippingPane.includes('data-fulfill-segment="prepack"'), "Shipping today must draw Bulk Bud and Prepack");
+    assert(!shippingPane.includes('data-fulfill-segment="vapes"'), "a blank Vapes cell must not draw a segment");
+    assert(fillPane(fulfillConsole.body, "submitted").includes("No figures typed for this day."), "Submitted must read the empty words");
+    assert(fillPane(fulfillConsole.body, "accepted").includes("No figures typed for this day."), "Accepted must read the empty words");
+    const fulfillChange = await req("/admin/lookups/fulfillment_override", {
+      method: "POST",
+      body: form({ entry_date: fulfillToday, "bulk_bud:shipping_today": "1000", "prepack:shipping_today": "50" }),
+    });
+    assert(fulfillChange.status === 303, `changing Prepack expected 303 got ${fulfillChange.status} ${await fulfillChange.text()}`);
+    const fulfillLog = await text("/log");
+    assert(
+      /fulfillment_overrides<\/td>\s*<td>[^<]*<\/td>\s*<td>value<\/td>\s*<td>40<\/td>\s*<td>50<\/td>/.test(fulfillLog.body),
+      "the change log must carry Prepack's old 40 and new 50"
+    );
+    const gridAgain = await text(`/admin/lookups/fulfillment_override?date=${fulfillToday}`);
+    assert(/data-fulfill-cell="prepack:shipping_today"[^>]*value="50"/.test(gridAgain.body), "the grid for that day must reload Prepack as 50");
+
+    // PRODUCT MIX TOTALS AND POUNDS (canon 0.30.307).
+    const mixPage = await text("/reports/product_mix");
+    assert(mixPage.res.status === 200 && mixPage.body.includes("<th>Lbs</th>"), "Product Mix must carry the Lbs column");
+    assert(mixPage.body.includes('class="report-total"'), "Product Mix must carry the totals row");
+    const mixCsv = await text("/reports/product_mix?format=csv");
+    const mixLines = mixCsv.body.replace(/\r\n$/, "").split("\r\n").filter((line) => line.length > 0);
+    assert(mixLines[mixLines.length - 1].startsWith("Total"), `the CSV's last line must begin with Total, got ${mixLines[mixLines.length - 1]}`);
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

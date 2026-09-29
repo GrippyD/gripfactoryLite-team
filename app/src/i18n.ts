@@ -2683,6 +2683,28 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Check {n}": { en: "Check {n}", es: "Chequeo {n}" },
   "aW": { en: "aW", es: "aW" },
   "MC": { en: "MC", es: "MC" },
+  // FULFILLMENT (canon 0.30.306). The row names and the pane words.
+  "Fulfillment Override": { en: "Fulfillment Override", es: "Ajuste de cumplimiento" },
+  "The day's fulfillment figures, ten rows by three columns. The console reads this panel and nothing else.": {
+    en: "The day's fulfillment figures, ten rows by three columns. The console reads this panel and nothing else.",
+    es: "Las cifras de cumplimiento del dia, diez filas por tres columnas. La consola lee solo este panel.",
+  },
+  "Shipping today": { en: "Shipping today", es: "Envio de hoy" },
+  "Biomass/Trim": { en: "Biomass/Trim", es: "Biomasa/recorte" },
+  "Prerolls": { en: "Prerolls", es: "Preenrolados" },
+  "Shake": { en: "Shake", es: "Picadillo" },
+  "Bulk Distillate": { en: "Bulk Distillate", es: "Destilado a granel" },
+  "Vapes": { en: "Vapes", es: "Vapes" },
+  "MOBs": { en: "MOBs", es: "MOBs" },
+  "Bulk Isolate (THCA)": { en: "Bulk Isolate (THCA)", es: "Aislado a granel (THCA)" },
+  "Bulk Infused": { en: "Bulk Infused", es: "Infusion a granel" },
+  "No figures typed for this day.": { en: "No figures typed for this day.", es: "No hay cifras escritas para este dia." },
+  "Each figure must be a whole number of zero or more.": {
+    en: "Each figure must be a whole number of zero or more.",
+    es: "Cada cifra debe ser un numero entero de cero o mas.",
+  },
+  "Figures saved.": { en: "Figures saved.", es: "Cifras guardadas." },
+  "Pick a day.": { en: "Pick a day.", es: "Elija un dia." },
 };
 
 /** Look a display string up by its English key; unknown keys render as-is. */

@@ -123,7 +123,7 @@ export function writeStoreZip(files: ZipFile[], stamped = new Date("2026-09-03T0
   return concatBytes([...locals, centralDir, end]);
 }
 
-export type XlsxCell = { text?: string; number?: number; grams?: boolean };
+export type XlsxCell = { text?: string; number?: number; grams?: boolean; lbs?: boolean };
 
 export type XlsxSheet = {
   headers: string[];
@@ -159,9 +159,10 @@ function colLetter(index: number): string {
 }
 
 function cellXml(cell: XlsxCell, ref: string, gramCol: boolean, plainNumbers = false): string {
-  if (cell.number != null || cell.grams) {
+  if (cell.number != null || cell.grams || cell.lbs) {
     const n = cell.number ?? 0;
     if (plainNumbers) return `<c r="${ref}" t="n"><v>${String(n)}</v></c>`;
+    if (cell.lbs) return `<c r="${ref}" t="n" s="3"><v>${String(n)}</v></c>`;
     if (gramCol || cell.grams) {
       const whole = Math.sign(n) * Math.round(Math.abs(n));
       return `<c r="${ref}" t="n" s="2"><v>${String(whole)}</v></c>`;
@@ -234,8 +235,9 @@ const WORKBOOK_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <numFmts count="1">
+  <numFmts count="2">
     <numFmt numFmtId="164" formatCode="#,##0"/>
+    <numFmt numFmtId="165" formatCode="#,##0.00"/>
   </numFmts>
   <fonts count="2">
     <font><sz val="11"/><name val="Calibri"/></font>
@@ -250,10 +252,11 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <cellStyleXfs count="1">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
   </cellStyleXfs>
-  <cellXfs count="3">
+  <cellXfs count="4">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
     <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
     <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+    <xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
   </cellXfs>
 </styleSheet>`;
 

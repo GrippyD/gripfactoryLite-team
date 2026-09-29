@@ -69,7 +69,7 @@ describe("THE CHANGE LOCATION SETUP: scope and seeds (canon 0.30.40)", () => {
   it("registers Field Locations in Admin beside Inventory Locations", () => {
     expect(LOOKUP_VALUE_SECTIONS.field_locations).toEqual({ category: "field_location", title: "Field Locations" });
     const logistics = LOOKUP_LANDING.find((s) => s.category === "Logistics")!;
-    expect(logistics.buttons.map((b) => b.key)).toEqual(["inventory_locations", "field_locations", "licenses"]);
+    expect(logistics.buttons.map((b) => b.key)).toEqual(["inventory_locations", "field_locations", "licenses", "fulfillment_override"]);
   });
 
   it("dates default to today and refuse other shapes; the plants file has its own shape", () => {

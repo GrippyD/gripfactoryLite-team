@@ -501,6 +501,9 @@ export const CONFIG_KEYS = {
   // seeded by migration 0079; editable in Admin, Lookups, app_config.
   gate_type_codes: "gate_type_codes",
   gate_unit_grams: "gate_unit_grams",
+  // FULFILLMENT (canon 0.30.306): grams in one each for the rows METRC counts
+  // as eaches. Seeded by migration 0081; editable in Admin, Lookups, app_config.
+  fulfillment_unit_grams: "fulfillment_unit_grams",
 } as const;
 
 /** Owner ruling 2026-09-14 (canon 0.30.55): the serial floor for one harvest
@@ -1371,6 +1374,33 @@ export function parseGateUnitGrams(raw: string | null | undefined): Record<strin
     if (out[code] == null) out[code] = grams;
   }
   return Object.keys(out).length > 0 ? out : { ...GATE_UNIT_GRAMS_DEFAULT };
+}
+
+/** Grams in one each for the fulfillment rows METRC counts as eaches.
+ * Blank falls back to prepack 28, mobs 70, prerolls 1, vapes 1. A pair whose
+ * number is not a positive amount is dropped; if nothing valid remains, the
+ * default stands. */
+export const FULFILLMENT_UNIT_GRAMS_DEFAULT: Readonly<Record<string, number>> = {
+  prepack: 28,
+  mobs: 70,
+  prerolls: 1,
+  vapes: 1,
+};
+export function parseFulfillmentUnitGrams(raw: string | null | undefined): Record<string, number> {
+  const text = String(raw ?? "").trim();
+  if (!text) return { ...FULFILLMENT_UNIT_GRAMS_DEFAULT };
+  const out: Record<string, number> = {};
+  for (const part of text.split(",")) {
+    const at = part.indexOf("=");
+    if (at < 1) continue;
+    const key = part.slice(0, at).trim().toLowerCase();
+    const gramsText = part.slice(at + 1).trim();
+    if (!key || !/^\d+(\.\d+)?$/.test(gramsText)) continue;
+    const grams = Number(gramsText);
+    if (!Number.isFinite(grams) || grams <= 0) continue;
+    if (out[key] == null) out[key] = grams;
+  }
+  return Object.keys(out).length > 0 ? out : { ...FULFILLMENT_UNIT_GRAMS_DEFAULT };
 }
 
 /** THE TRIM BOGEY (canon 0.30.249): the product line of 0.30.243, 40 percent,
