@@ -1,13 +1,16 @@
 /**
  * THE CURE PANES (canon 0.30.164). Owner, 2026-09-21: CSA and CSB on the
  * drying screens and the dashboard, next to FFZ inventory. CSA holds a lot
- * that has left the dryer until it is scheduled for trim. CSB holds a lot
- * scheduled for trim until one of its containers is taken into a cryo run.
+ * that has left the dryer until it is scheduled for trim. CSB holds that lot
+ * while its newest live trim row is still scheduled. CSB ENDS AT THE TRIM
+ * FINISH (canon 0.30.303): the lot leaves CSB the moment that row completes
+ * and sits on neither pane after. A trimmed lot is off both. A container
+ * taken into a cryo run no longer moves it.
  * Current conditions come through a push door we own (POST /sensors/readings).
  */
 
 import { HttpError } from "./audit";
-import { CONFIG_KEYS, formatGrams, shortLotId } from "./config";
+import { CONFIG_KEYS, formatGrams, SCHEDULE_STATUS, shortLotId } from "./config";
 import { formatLbs } from "./compliance";
 import { t, type Locale } from "./i18n";
 import { listEnvironmentFlags } from "./environment";
@@ -60,7 +63,7 @@ type LotSql = {
   unload_finished_at: string | null;
   unloaded_logged_at: string | null;
   trim_scheduled_at: string | null;
-  in_cryo: number | null;
+  trim_status: string | null;
   live_grams: number | null;
 };
 
@@ -72,17 +75,19 @@ type TestSql = {
   tested_at: string;
 };
 
-/** Which pane a lot belongs on. Frozen, voided, and a lot already in a cryo run sit on neither. */
+/** Which pane a lot belongs on. CSB is the trim queue: status unloaded, and the
+ * newest live trim row still scheduled. A complete row, a trimmed lot, a frozen
+ * lot, and a voided lot sit on neither. A deleted trim row (no live row) is CSA. */
 export function cureMembership(input: {
   status: string;
   deleted: boolean;
-  trimLive: boolean;
-  cryoLive: boolean;
+  trimStatus: string | null;
 }): CurePaneName | null {
   if (input.deleted || input.status === "frozen") return null;
-  if (input.cryoLive) return null;
-  if (input.status === "unloaded" && !input.trimLive) return "CSA";
-  if ((input.status === "unloaded" || input.status === "trimmed") && input.trimLive) return "CSB";
+  if (input.status !== "unloaded") return null;
+  const trim = (input.trimStatus ?? "").trim();
+  if (trim === SCHEDULE_STATUS.scheduled) return "CSB";
+  if (!trim) return "CSA";
   return null;
 }
 
@@ -162,13 +167,10 @@ const LOTS_SQL = `SELECT w.id, w.status, w.dry_weight_grams, b.hbn, b.metrc_harv
               ORDER BY l.changed_at DESC LIMIT 1) AS unloaded_logged_at,
             (SELECT ps.scheduled_at FROM production_schedules ps
               WHERE ps.wet_weight_entry_id = w.id AND ps.stage = 'trim' AND ps.deleted_at IS NULL
-              ORDER BY ps.scheduled_at DESC LIMIT 1) AS trim_scheduled_at,
-            (SELECT 1 FROM wip_packages p
-              JOIN cryo_run_inputs i ON i.wip_package_id = p.id
-              JOIN production_schedules cr ON cr.id = i.run_id AND cr.deleted_at IS NULL
-                AND cr.stage = 'cryo' AND cr.status IN ('scheduled', 'complete')
-              WHERE p.wet_weight_entry_id = w.id AND p.deleted_at IS NULL
-              LIMIT 1) AS in_cryo,
+              ORDER BY ps.scheduled_at DESC, ps.id DESC LIMIT 1) AS trim_scheduled_at,
+            (SELECT ps.status FROM production_schedules ps
+              WHERE ps.wet_weight_entry_id = w.id AND ps.stage = 'trim' AND ps.deleted_at IS NULL
+              ORDER BY ps.scheduled_at DESC, ps.id DESC LIMIT 1) AS trim_status,
             (SELECT li.qty FROM local_inventory_items li
               WHERE li.wet_weight_entry_id = w.id AND li.deleted_at IS NULL
               ORDER BY li.created_at ASC LIMIT 1) AS live_grams
@@ -197,8 +199,7 @@ export async function listCurePanes(db: D1Database, nowIso: string, locale: Loca
     const pane = cureMembership({
       status: row.status,
       deleted: false,
-      trimLive: Boolean((row.trim_scheduled_at ?? "").trim()),
-      cryoLive: Number(row.in_cryo ?? 0) === 1,
+      trimStatus: row.trim_status,
     });
     if (!pane) continue;
     const inTime = pane === "CSA" ? csaInTime(row.unload_finished_at, row.unloaded_logged_at) : (row.trim_scheduled_at ?? "").trim() || null;

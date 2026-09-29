@@ -2233,6 +2233,16 @@ async function run() {
     assert(workingId, "working pane missing a complete action after the backdated schedule");
     const schedCompleted = await req(`/production/scheduling/trim/complete/${workingId}`, { method: "POST", body: form({}) });
     assert(schedCompleted.status === 303, `manual complete expected 303 got ${schedCompleted.status}`);
+    const afterTrimFinish = await text("/harvest");
+    const curePane = (html, name) => {
+      const at = html.indexOf(`data-cure-pane="${name}"`);
+      if (at < 0) return "";
+      const rest = html.slice(at);
+      const cuts = [rest.indexOf('data-cure-pane="', 20), rest.indexOf("<script>")].filter((n) => n >= 0);
+      return rest.slice(0, cuts.length ? Math.min(...cuts) : rest.length);
+    };
+    assert(!curePane(afterTrimFinish.body, "CSB").includes(`data-cure-lot="${wetLotId}"`), "completing the trim row must take the lot off CSB");
+    assert(!curePane(afterTrimFinish.body, "CSA").includes(`data-cure-lot="${wetLotId}"`), "a finished trim row must not put the lot on CSA");
     const rightPane = await text("/production/scheduling/trim");
     assert(rightPane.body.includes(`data-schedule-id="${workingId}"`), "complete must move the item to the right pane");
     assert(rightPane.body.includes('data-local>'), "the right pane must carry the completion instant");
@@ -2558,7 +2568,11 @@ async function run() {
     assert(cryoSched.status === 303, `schedule cryo expected 303 got ${cryoSched.status}`);
     assert((cryoSched.headers.get("location") || "").includes("ok=scheduled&n=1"), "the cryo >> must flash ok=scheduled&n=1 (one container taken in)");
     const afterCryoPane = await text("/harvest");
-    assert(!afterCryoPane.body.slice(afterCryoPane.body.indexOf('data-cure-pane="CSB"')).includes(`data-cure-lot="${wetLotId}"`), "a container taken into a cryo run must empty the lot from CSB");
+    const cryoCsbAt = afterCryoPane.body.indexOf('data-cure-pane="CSB"');
+    const cryoCsbRest = cryoCsbAt < 0 ? "" : afterCryoPane.body.slice(cryoCsbAt);
+    const cryoCsbCut = [cryoCsbRest.indexOf('data-cure-pane="', 20), cryoCsbRest.indexOf("<script>")].filter((n) => n >= 0);
+    const cryoCsb = cryoCsbRest.slice(0, cryoCsbCut.length ? Math.min(...cryoCsbCut) : cryoCsbRest.length);
+    assert(cryoCsb.includes(`data-cure-lot="${wetLotId}"`), "a cryo run leaves the lot on CSB until its trim row completes");
     const cryoWorking = await text("/production/scheduling/cryo");
     const cryoWorkPane = schedPaneOf(cryoWorking.body, "working");
     assert(cryoWorkPane.includes("Pasteurizing") && cryoWorkPane.includes("1 container / 100 g in"), "the scheduled run must read Pasteurizing with its pool");
