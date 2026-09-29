@@ -7819,6 +7819,12 @@ async function run() {
     const maintenance = await text("/maintenance");
     assert(maintenance.res.status === 200, `maintenance landing expected 200 got ${maintenance.res.status}`);
     assert(maintenance.body.includes("<h1>Maintenance</h1>") && maintenance.body.includes("data-silo-strip"), "the landing must carry the drying pane");
+    assert(maintenance.body.includes('<div class="inv-gauge-name">Silo 1</div>'), "the landing must name Silo 1");
+    assert(!maintenance.body.includes("Blast Freezer"), "the landing must not name the Blast Freezer(s)");
+    assert(!maintenance.body.includes("data-cure-pane"), "the landing draws no cure tile");
+    // The shell's theme names the Arlington Dry Room in a comment (the Move To walk already notes this).
+    const maintenanceDrawn = maintenance.body.replace(/<style>[\s\S]*?<\/style>/, "");
+    assert(!maintenanceDrawn.includes("Arlington Dry Room"), "the landing must not name the Arlington Dry Room");
     assert(maintenance.body.includes('href="/station/load_silo"') && maintenance.body.includes(">Load Silo</a>"), "the landing must link Load Silo");
     assert(maintenance.body.includes('href="/maintenance/lab_sample"') && maintenance.body.includes(">Lab Sample</a>"), "the landing must link Lab Sample");
     assert(maintenance.body.includes('href="/maintenance/trouble_tickets"') && maintenance.body.includes(">Trouble Tickets</a>"), "the landing must link Trouble Tickets");
@@ -7851,6 +7857,14 @@ async function run() {
     assert(labDone.body.includes('data-lab-row="completed"') && labDone.body.includes("0.55"), "the completed pane must show the aW result");
     const liveAfter = await (await req("/silos/live.json")).json();
     assert(Array.isArray(liveAfter.silos) && liveAfter.silos.every((row) => Array.isArray(row.checks)), "live.json must carry checks on every space");
+    assert(
+      liveAfter.silos.some((row) => row.name === "Silo 1") &&
+        liveAfter.silos.some((row) => row.name === "Arlington Dry Room") &&
+        liveAfter.silos.some((row) => row.name === "Blast Freezer(s)"),
+      "live.json still carries every space"
+    );
+    const freezerChecks = liveAfter.silos.find((row) => row.name === "Blast Freezer(s)");
+    assert(freezerChecks && JSON.stringify(freezerChecks.checks) === "[]", `the freezer's checks in live.json are empty, got ${JSON.stringify(freezerChecks && freezerChecks.checks)}`);
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

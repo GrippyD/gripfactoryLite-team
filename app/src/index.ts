@@ -173,6 +173,7 @@ import {
   LAB_SAMPLE_PATH,
   liveChecksOf,
   maintenanceLanding,
+  maintenanceSpaces,
   MAINTENANCE_PATH,
   requestLabSample,
   returnLabSample,
@@ -1461,16 +1462,17 @@ app.get(HARVEST_PATH, async (c) => {
   );
 });
 
-// THE MAINTENANCE NODE (canon 0.30.293). No PIN. The drying pane is the console's strip.
+// THE SILOS ONLY (canon 0.30.299). No PIN. The landing draws the silos alone:
+// no dry room, no freezer, no cure tiles. The flags, the clock, the check
+// script and the live script ride with the strip.
 app.get(MAINTENANCE_PATH, async (c) => {
   const s = await shell(c);
   const now = nowIso();
-  const [{ live }, cure, flags] = await Promise.all([
+  const [{ live }, flags] = await Promise.all([
     loadSiloVisuals(c.env.DB),
-    listCurePanes(c.env.DB, now, s.locale),
     listEnvironmentFlags(c.env.DB, now, s.locale),
   ]);
-  const strip = siloStrip(await attachLoadChecks(c.env.DB, live, now), now, s.locale, curePanes(cure, s.locale), flags);
+  const strip = siloStrip(await attachLoadChecks(c.env.DB, maintenanceSpaces(live), now), now, s.locale, "", flags);
   return html(c, s, "Maintenance", maintenanceLanding(strip, s.locale));
 });
 app.get(LAB_SAMPLE_PATH, async (c) => {
