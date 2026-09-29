@@ -679,8 +679,33 @@ table.data th { background: var(--panel-2); }
 .hc-hours button { padding: 0.2rem 0.6rem; font-size: 0.8rem; }
 .hc-note { font-size: 0.8rem; }
 .hc-stub > summary { opacity: 0.75; }
-.hc-testing-groups { display: flex; flex-wrap: wrap; gap: 1.2rem; align-items: flex-start; }
-.hc-testing-groups > * { flex: 1 1 18rem; }
+/* THE TESTING GATE (canon 0.30.293): four panes, the stats row, the failure pie. Eight fixed hues, cycling. */
+.hc-gate { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0 0.8rem; }
+.hc-gate-pane, .hc-stat { flex: 1 1 10rem; text-align: center; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.7rem 0.45rem 0.6rem; }
+.hc-gate-name { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.25rem; }
+.hc-gate-pane .hc-icon { width: 7.5rem; height: auto; max-width: 100%; display: block; margin: 0 auto 0.35rem; }
+.hc-gate-count { display: block; font-size: 0.75rem; margin-top: 0.15rem; }
+.hc-stats { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0 0.6rem; }
+.hc-stat .hc-value { font-size: 1.35rem; }
+.hc-pie-block { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-start; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; padding: 0.7rem; }
+.hc-pie { width: 11rem; height: auto; flex: 0 0 auto; }
+.hc-pie-side { flex: 1 1 16rem; }
+.hc-pie-legend { list-style: none; margin: 0; padding: 0; }
+.hc-pie-legend li { margin: 0.15rem 0; }
+.hc-pie-pick { display: flex; gap: 0.45rem; align-items: baseline; width: 100%; background: transparent; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: 0.15rem 0; }
+.hc-pie-swatch { width: 0.7rem; height: 0.7rem; border-radius: 0.12rem; background: currentColor; display: inline-block; flex: 0 0 auto; }
+.hc-pie-strains { margin-top: 0.4rem; }
+.hc-pie-strains[hidden] { display: none; }
+.hc-pie-seg { cursor: pointer; stroke: var(--panel, var(--surface, #111111)); stroke-width: 0.4; }
+.hc-pie-1 { color: #d6453d; }
+.hc-pie-2 { color: #e6a23c; }
+.hc-pie-3 { color: #2e9e4f; }
+.hc-pie-4 { color: #2f6fd6; }
+.hc-pie-5 { color: #7b4bdb; }
+.hc-pie-6 { color: #1aa6b7; }
+.hc-pie-7 { color: #d63384; }
+.hc-pie-8 { color: #c4a35a; }
+@media (max-width: 600px) { .hc-gate-pane .hc-icon { width: 4.5rem; } }
 /* THE TRIMMING SECTION (canon 0.30.88): two shift cards, each a waffle pictograph (100 cells, one per percent of the weight ran, BUD in the silo green, OTHER quiet) beside his six lines. */
 .hc-shifts { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0; }
 .hc-shift { flex: 1 1 22rem; min-width: 18rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.6rem 0.7rem; }
@@ -1366,8 +1391,33 @@ table.data tbody tr:hover td { background: var(--surface-2); }
 .hc-hours button { padding: 0.2rem 0.6rem; font-size: 0.8rem; }
 .hc-note { font-size: 0.8rem; }
 .hc-stub > summary { opacity: 0.75; }
-.hc-testing-groups { display: flex; flex-wrap: wrap; gap: 1.2rem; align-items: flex-start; }
-.hc-testing-groups > * { flex: 1 1 18rem; }
+/* THE TESTING GATE (canon 0.30.293): four panes, the stats row, the failure pie. Eight fixed hues, cycling. */
+.hc-gate { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0 0.8rem; }
+.hc-gate-pane, .hc-stat { flex: 1 1 10rem; text-align: center; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.7rem 0.45rem 0.6rem; }
+.hc-gate-name { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.25rem; }
+.hc-gate-pane .hc-icon { width: 7.5rem; height: auto; max-width: 100%; display: block; margin: 0 auto 0.35rem; }
+.hc-gate-count { display: block; font-size: 0.75rem; margin-top: 0.15rem; }
+.hc-stats { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0 0.6rem; }
+.hc-stat .hc-value { font-size: 1.35rem; }
+.hc-pie-block { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-start; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; padding: 0.7rem; }
+.hc-pie { width: 11rem; height: auto; flex: 0 0 auto; }
+.hc-pie-side { flex: 1 1 16rem; }
+.hc-pie-legend { list-style: none; margin: 0; padding: 0; }
+.hc-pie-legend li { margin: 0.15rem 0; }
+.hc-pie-pick { display: flex; gap: 0.45rem; align-items: baseline; width: 100%; background: transparent; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: 0.15rem 0; }
+.hc-pie-swatch { width: 0.7rem; height: 0.7rem; border-radius: 0.12rem; background: currentColor; display: inline-block; flex: 0 0 auto; }
+.hc-pie-strains { margin-top: 0.4rem; }
+.hc-pie-strains[hidden] { display: none; }
+.hc-pie-seg { cursor: pointer; stroke: var(--panel, var(--surface, #111111)); stroke-width: 0.4; }
+.hc-pie-1 { color: #d6453d; }
+.hc-pie-2 { color: #e6a23c; }
+.hc-pie-3 { color: #2e9e4f; }
+.hc-pie-4 { color: #2f6fd6; }
+.hc-pie-5 { color: #7b4bdb; }
+.hc-pie-6 { color: #1aa6b7; }
+.hc-pie-7 { color: #d63384; }
+.hc-pie-8 { color: #c4a35a; }
+@media (max-width: 600px) { .hc-gate-pane .hc-icon { width: 4.5rem; } }
 /* THE TRIMMING SECTION (canon 0.30.88): two shift cards, each a waffle pictograph (100 cells, one per percent of the weight ran, BUD in the silo green, OTHER quiet) beside his six lines. */
 .hc-shifts { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0; }
 .hc-shift { flex: 1 1 22rem; min-width: 18rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.6rem 0.7rem; }
@@ -1998,8 +2048,33 @@ legend { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; c
 .hc-hours button { padding: 0.2rem 0.6rem; font-size: 0.8rem; }
 .hc-note { font-size: 0.8rem; }
 .hc-stub > summary { opacity: 0.75; }
-.hc-testing-groups { display: flex; flex-wrap: wrap; gap: 1.2rem; align-items: flex-start; }
-.hc-testing-groups > * { flex: 1 1 18rem; }
+/* THE TESTING GATE (canon 0.30.293): four panes, the stats row, the failure pie. Eight fixed hues, cycling. */
+.hc-gate { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0 0.8rem; }
+.hc-gate-pane, .hc-stat { flex: 1 1 10rem; text-align: center; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.7rem 0.45rem 0.6rem; }
+.hc-gate-name { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.25rem; }
+.hc-gate-pane .hc-icon { width: 7.5rem; height: auto; max-width: 100%; display: block; margin: 0 auto 0.35rem; }
+.hc-gate-count { display: block; font-size: 0.75rem; margin-top: 0.15rem; }
+.hc-stats { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0 0.6rem; }
+.hc-stat .hc-value { font-size: 1.35rem; }
+.hc-pie-block { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-start; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; padding: 0.7rem; }
+.hc-pie { width: 11rem; height: auto; flex: 0 0 auto; }
+.hc-pie-side { flex: 1 1 16rem; }
+.hc-pie-legend { list-style: none; margin: 0; padding: 0; }
+.hc-pie-legend li { margin: 0.15rem 0; }
+.hc-pie-pick { display: flex; gap: 0.45rem; align-items: baseline; width: 100%; background: transparent; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: 0.15rem 0; }
+.hc-pie-swatch { width: 0.7rem; height: 0.7rem; border-radius: 0.12rem; background: currentColor; display: inline-block; flex: 0 0 auto; }
+.hc-pie-strains { margin-top: 0.4rem; }
+.hc-pie-strains[hidden] { display: none; }
+.hc-pie-seg { cursor: pointer; stroke: var(--panel, var(--surface, #111111)); stroke-width: 0.4; }
+.hc-pie-1 { color: #d6453d; }
+.hc-pie-2 { color: #e6a23c; }
+.hc-pie-3 { color: #2e9e4f; }
+.hc-pie-4 { color: #2f6fd6; }
+.hc-pie-5 { color: #7b4bdb; }
+.hc-pie-6 { color: #1aa6b7; }
+.hc-pie-7 { color: #d63384; }
+.hc-pie-8 { color: #c4a35a; }
+@media (max-width: 600px) { .hc-gate-pane .hc-icon { width: 4.5rem; } }
 /* THE TRIMMING SECTION (canon 0.30.88): two shift cards, each a waffle pictograph (100 cells, one per percent of the weight ran, BUD in the silo green, OTHER quiet) beside his six lines. */
 .hc-shifts { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0; }
 .hc-shift { flex: 1 1 22rem; min-width: 18rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.6rem 0.7rem; }

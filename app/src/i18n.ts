@@ -2454,6 +2454,28 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "{passed} of {all} lb": { en: "{passed} of {all} lb", es: "{passed} de {all} lb" },
   "{passed} of {all} packages": { en: "{passed} of {all} packages", es: "{passed} de {all} paquetes" },
   "attempt {n}": { en: "attempt {n}", es: "intento {n}" },
+  // THE TESTING GATE (canon 0.30.293).
+  "Ready for Testing": { en: "Ready for Testing", es: "Listo para pruebas" },
+  "Scheduled for Testing": { en: "Scheduled for Testing", es: "Programado para pruebas" },
+  "Passed Testing": { en: "Passed Testing", es: "Pruebas aprobadas" },
+  "Quality Stats": { en: "Quality Stats", es: "Estadisticas de calidad" },
+  "First Time Fails": { en: "First Time Fails", es: "Fallos al primer intento" },
+  "First Time Tests": { en: "First Time Tests", es: "Pruebas al primer intento" },
+  "FTQ Rate": { en: "FTQ Rate", es: "Tasa FTQ" },
+  "this season": { en: "this season", es: "esta temporada" },
+  "{n} first-time tests": { en: "{n} first-time tests", es: "{n} pruebas al primer intento" },
+  "No first-time tests on the sheet this season.": {
+    en: "No first-time tests on the sheet this season.",
+    es: "No hay pruebas al primer intento en la hoja esta temporada.",
+  },
+  "Failure Mode Analysis": { en: "Failure Mode Analysis", es: "Analisis de modos de fallo" },
+  "No failed first-time tests on the sheet this season.": {
+    en: "No failed first-time tests on the sheet this season.",
+    es: "No hay pruebas fallidas al primer intento en la hoja esta temporada.",
+  },
+  "{n} packages without a unit weight": { en: "{n} packages without a unit weight", es: "{n} paquetes sin peso unitario" },
+  "unnamed": { en: "unnamed", es: "sin nombre" },
+  "Harvest year {year}": { en: "Harvest year {year}", es: "Año de cosecha {year}" },
   // THE DRYING TOTALS AND THE STRAIN ON THE LOT LINE (canon 0.30.183).
   "Total in Dry Spaces": { en: "Total in Dry Spaces", es: "Total en espacios de secado" },
   "Total in Cure Spaces": { en: "Total in Cure Spaces", es: "Total en espacios de curado" },

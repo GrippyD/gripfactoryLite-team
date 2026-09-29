@@ -399,7 +399,7 @@ import {
   type StationDef,
 } from "./pipeline";
 import { anyPlantCount, queueRowsToCsv, toCsv, wetWeightsCsv, wetWeightsCsvWithCounts, wetWeightsCsvWithTags, wetWeightsFilename } from "./csv";
-import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePrepackHours, saveTrimHours, saveTrimInputLbs, testingThcSort } from "./console";
+import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePrepackHours, saveTrimHours, saveTrimInputLbs } from "./console";
 import { fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
 import { loadMetrcAdmin, metrcApiPage, runMetrcSweep, testMetrcConnection } from "./metrcapi";
 import { inTestingFixtureWorkbook, runInTestingSync } from "./intesting";
@@ -1409,7 +1409,7 @@ app.get(HARVEST_PATH, async (c) => {
   const s = await shell(c);
   const now = nowIso();
   // THE CONSOLE DAY (canon 0.30.152): ?day=YYYY-MM-DD picks the day the yesterday panes read.
-  // The Testing section does not read that day; it reads the harvest year.
+  // THE TESTING GATE (canon 0.30.293): the four panes are live. The stats and the pie read the harvest year. ?thc= is ignored.
   const input = await loadHarvestConsole(c.env.DB, now, c.req.query("day") ?? null);
   const [silos, cure, testing, prepack] = await Promise.all([
     loadSiloVisuals(c.env.DB),
@@ -1438,7 +1438,6 @@ app.get(HARVEST_PATH, async (c) => {
         dryYieldPct: silos.dryYieldPct,
       }),
       testing,
-      thcSort: testingThcSort(c.req.query("thc")),
       prepack,
     })
   );

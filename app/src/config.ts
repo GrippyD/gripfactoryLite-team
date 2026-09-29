@@ -496,6 +496,11 @@ export const CONFIG_KEYS = {
   prepack_location: "prepack_location",
   // THE MIRROR RELEASES THE QUEUE (canon 0.30.193): METRC lab state to a test outcome.
   metrc_release_states: "metrc_release_states",
+  // THE TESTING GATE (canon 0.30.293): the package types on the four panes,
+  // and the grams of one each (PRE 28, MOB 70). Values in data (canon L-4),
+  // seeded by migration 0079; editable in Admin, Lookups, app_config.
+  gate_type_codes: "gate_type_codes",
+  gate_unit_grams: "gate_unit_grams",
 } as const;
 
 /** Owner ruling 2026-09-14 (canon 0.30.55): the serial floor for one harvest
@@ -1337,6 +1342,35 @@ export function shiftWindowHolds(window: ShiftWindow, clockMinutes: number): boo
 export function parseBtrTypeCodes(raw: string | null | undefined): string[] {
   const codes = parseUpperList(raw);
   return codes.length > 0 ? codes : ["BUD", "SMALLS", "SHAKE"];
+}
+
+/** THE TESTING GATE (canon 0.30.293): the package types that stand on the four
+ * panes. Blank falls back to BUD, WPR, PRE, MOB. WBP and WIP are not in it. */
+export const GATE_TYPE_CODES_DEFAULT = ["BUD", "WPR", "PRE", "MOB"] as const;
+export function parseGateTypeCodes(raw: string | null | undefined): string[] {
+  const codes = parseUpperList(raw);
+  return codes.length > 0 ? codes : [...GATE_TYPE_CODES_DEFAULT];
+}
+
+/** Grams in one each, by package type. Blank falls back to PRE 28, MOB 70.
+ * A pair whose number is not a positive amount is dropped; if nothing valid
+ * remains, the default stands. */
+export const GATE_UNIT_GRAMS_DEFAULT: Readonly<Record<string, number>> = { PRE: 28, MOB: 70 };
+export function parseGateUnitGrams(raw: string | null | undefined): Record<string, number> {
+  const text = String(raw ?? "").trim();
+  if (!text) return { ...GATE_UNIT_GRAMS_DEFAULT };
+  const out: Record<string, number> = {};
+  for (const part of text.split(",")) {
+    const at = part.indexOf("=");
+    if (at < 1) continue;
+    const code = part.slice(0, at).trim().toUpperCase();
+    const gramsText = part.slice(at + 1).trim();
+    if (!code || !/^\d+(\.\d+)?$/.test(gramsText)) continue;
+    const grams = Number(gramsText);
+    if (!Number.isFinite(grams) || grams <= 0) continue;
+    if (out[code] == null) out[code] = grams;
+  }
+  return Object.keys(out).length > 0 ? out : { ...GATE_UNIT_GRAMS_DEFAULT };
 }
 
 /** THE TRIM BOGEY (canon 0.30.249): the product line of 0.30.243, 40 percent,
