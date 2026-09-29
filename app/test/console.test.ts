@@ -22,6 +22,10 @@ import {
   trimFigures,
   trimLinePicture,
   trimmingSection,
+  liveTrimLine,
+  trimDuty,
+  btrBar,
+  emptyTrimInput,
   BUD_ROWS,
   BUD_COLS,
   BUD_CELLS,
@@ -107,7 +111,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(boxes.map((b) => b.farm)).toEqual(["PNN", "ARL", "PNS", "Total"]);
     const pnn = boxes[0];
     expect(pnn.pct).toBeCloseTo(0.4, 9);
-    expect(pnn.metrics.map((m) => m.key)).toEqual(["remaining_total", "harvested", "pct", "wet_per_plant", "dry_per_plant", "weight_harvested", "hours", "weight_per_dlh"]);
+    expect(pnn.metrics.map((m) => m.key)).toEqual(["remaining_total", "harvested", "pct", "wet_per_plant", "dry_per_plant", "weight_harvested"]);
     const by = (farm: string, key: string) => {
       const box = boxes.find((b) => b.farm === farm)!;
       return box.metrics.find((m) => m.key === key)!;
@@ -117,34 +121,35 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(by("PNN", "pct").value).toBe("40.0%");
     expect(by("PNN", "wet_per_plant")).toEqual({ key: "wet_per_plant", label: "Wet Weight/plant AVG", value: "1.12 lb", sub: "500 g" });
     expect(by("PNN", "dry_per_plant")).toEqual({ key: "dry_per_plant", label: "Dry Weight/plant AVG", value: "0.25 lb", sub: "110 g" });
-    expect(by("PNN", "hours").value).toBe("8");
-    // 90,718.474 g over 8 h at 448 g/lb: 25.31 lb/h, 11,340 g/h.
-    expect(by("PNN", "weight_per_dlh")).toEqual({ key: "weight_per_dlh", label: "Weight/DLH Yesterday", value: "25.31 lb/h", sub: "11,340 g/h" });
+    expect(by("PNN", "weight_harvested").value).toContain("lb");
+    expect(by("PNN", "hours")).toBeUndefined();
+    expect(by("PNN", "weight_per_dlh")).toBeUndefined();
     // ARL: nothing harvested, no hours typed: the DLH line asks for hours and shows yesterday's pounds.
     expect(by("ARL", "remaining_total").value).toBe("300 / 300");
     expect(by("ARL", "pct").value).toBe("0.0%");
     expect(by("ARL", "wet_per_plant").value).toBe("");
-    expect(by("ARL", "hours").value).toBe("");
-    expect(by("ARL", "weight_per_dlh")).toEqual({ key: "weight_per_dlh", label: "Weight/DLH Yesterday", value: "type hours" });
+    expect(by("ARL", "hours")).toBeUndefined();
+    expect(by("ARL", "weight_per_dlh")).toBeUndefined();
     // PNS: all harvested; zero hours typed divides nothing.
     expect(boxes[2].pct).toBe(1);
     expect(by("PNS", "pct").value).toBe("100.0%");
     expect(by("PNS", "dry_per_plant").value).toBe("");
-    expect(by("PNS", "weight_per_dlh").value).toBe("");
+    expect(by("PNS", "weight_per_dlh")).toBeUndefined();
     // Total: every farm plus the plants under a license with no farm (the 9).
     const total = boxes[3];
     expect(by("Total", "remaining_total").value).toBe("1,500 / 2,350");
     expect(by("Total", "harvested").value).toBe("850");
     expect(total.pct).toBeCloseTo(850 / 2350, 9);
     expect(by("Total", "pct").value).toBe("36.2%");
-    expect(by("Total", "hours").value).toBe("8");
+    expect(by("Total", "hours")).toEqual({ key: "hours", label: "Harvest Hours Yesterday", value: "8" });
     expect(by("Total", "weight_per_dlh")).toEqual({ key: "weight_per_dlh", label: "Weight/DLH Yesterday", value: "26.58 lb/h", sub: "11,907 g/h" });
+    const allHours = consoleBoxes({ ...input, harvestHoursAll: 4 });
+    expect(allHours.find((b) => b.farm === "Total")!.metrics.find((m) => m.key === "hours")!.value).toBe("4");
     // No plants known at all: no percent, not a division by zero.
     const blank = consoleBoxes({ ...input, remaining: [], seasonHarvested: [] });
     expect(blank[3].pct).toBeNull();
     expect(blank[3].metrics.find((m) => m.key === "pct")!.value).toBe("");
-    // Spanish display text.
-    expect(consoleBoxes(input, "es").find((b) => b.farm === "ARL")!.metrics.find((m) => m.key === "weight_per_dlh")!.value).toBe("escriba las horas");
+    expect(consoleBoxes({ ...input, hours: { PNN: null, ARL: null, PNS: null } }, "es").find((b) => b.farm === "Total")!.metrics.find((m) => m.key === "weight_per_dlh")!.value).toBe("escriba las horas");
   });
 
   it("renders the collapsible sections: Plants, Drying and Trimming open, the two stubs closed (Trimming built by canon 0.30.88)", () => {
@@ -250,33 +255,34 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
       "Wet Weight/plant AVG",
       "Dry Weight/plant AVG",
       "Weight Harvested",
-      "Cutting and Bucking Hours Yesterday",
-      "Weight/DLH Yesterday",
     ];
     for (const label of labels) expect(html.match(new RegExp(`<dt>${label.replace(/[%/]/g, (c) => (c === "%" ? "%" : "\\/"))}`, "g"))).toHaveLength(4);
+    expect(html.match(/<dt>Harvest Hours Yesterday/g)).toHaveLength(1);
+    expect(html.match(/<dt>Weight\/DLH Yesterday/g)).toHaveLength(1);
     expect(html).toContain('<span class="hc-value" data-hc="remaining_total">1,200 / 2,000</span>');
-    expect(html).toContain('<span class="hc-value" data-hc="weight_per_dlh">25.31 lb/h</span><span class="hc-sub muted">11,340 g/h</span>');
+    expect(html).toContain('<span class="hc-value" data-hc="weight_per_dlh">26.58 lb/h</span><span class="hc-sub muted">11,907 g/h</span>');
   });
 
   it("the open numbox: one hours form per farm for yesterday, saving on change; Total shows the sum", () => {
     const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z", ok: "hours" });
-    expect(html.match(/<form method="post" action="\/harvest\/hours" class="hc-hours"/g)).toHaveLength(3);
-    expect(html).toContain('data-hc-hours="PNN"');
-    expect(html).toContain('<input type="hidden" name="farm" value="ARL">');
+    expect(html.match(/<form method="post" action="\/harvest\/hours" class="hc-hours"/g)).toHaveLength(1);
+    expect(html).toContain('data-hc-hours="ALL"');
+    expect(html).toContain('<input type="hidden" name="farm" value="ALL">');
     expect(html).toContain('<input type="hidden" name="work_date" value="2026-09-14">');
-    expect(html).toContain('<input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="8" placeholder="hours" aria-label="Cutting and Bucking Hours Yesterday PNN" data-hc-hours-input>');
-    expect(html).toContain('<input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="" placeholder="hours" aria-label="Cutting and Bucking Hours Yesterday ARL" data-hc-hours-input>');
+    expect(html).toContain('<input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="8" placeholder="hours" aria-label="Harvest Hours Yesterday" data-hc-hours-input>');
+    expect(html).not.toContain('data-hc-hours="PNN"');
+    expect(html).not.toContain('data-hc-hours="ARL"');
     expect(html).toContain('<button type="submit" class="secondary">Save</button>');
     expect(html).toContain('box.addEventListener("change"');
     expect(html).toContain("box.form.requestSubmit()");
     // Total carries no box, only the sum.
     const total = html.slice(html.indexOf('data-hc-farm="Total"'), html.indexOf('data-hc-section="drying"'));
-    expect(total).not.toContain("hc-hours");
-    expect(total).toContain('<span class="hc-value" data-hc="hours">8</span>');
+    expect(total).toContain('data-hc-hours="ALL"');
+    expect(total).toContain('value="8"');
     // The date under the yesterday lines, and the flash after a save.
     // Twelve on the Plants boxes (hours, Weight Harvested and Weight/DLH per box), one per shift card
     // (canon 0.30.88) and one on each card's sheet-hours line (canon 0.30.154).
-    expect(html.match(/<span class="hc-date muted">2026-09-14<\/span>/g)).toHaveLength(16);
+    expect(html.match(/<span class="hc-date muted">2026-09-14<\/span>/g)).toHaveLength(8);
     expect(html).toContain('<p class="banner ok" data-hc-flash>Hours saved.</p>');
     expect(harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" })).not.toContain("data-hc-flash");
   });
@@ -385,7 +391,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(es).toContain("<summary>Pasteurizacion</summary>");
     expect(es).toContain("<summary>Pruebas <span class=\"muted hc-year\">Año de cosecha 2026</span></summary>");
     expect(es).toContain("<dt>Plantas restantes/Plantas totales</dt>");
-    expect(es).toContain("Horas de corte y deshoje de ayer");
+    expect(es).toContain("Horas de cosecha de ayer");
     expect(es).not.toContain("Inventario FFZ");
   });
 });
@@ -810,13 +816,12 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
       expect(day).toContain(`<dt>${label}</dt>`);
     }
     // The picture stands before the bud, the bud before the lines, and the lines keep his order.
-    expect(day.indexOf("data-hc-trimline")).toBeLessThan(day.indexOf("data-hc-bud"));
-    expect(day.indexOf("data-hc-bud")).toBeLessThan(day.indexOf('data-hc-metric="trim_other"'));
+    expect(day).not.toContain("data-hc-trimline");
     expect(day).toContain('class="hc-visuals"');
     expect(day).toContain('data-hc-bud-consumed="40"');
     expect(day).toContain('data-hc-btr-read><strong>60.0%</strong> BTR</div>');
     expect(day).toContain('<div class="hc-legend"><span class="hc-swatch hc-swatch-bud"></span>bud <span class="hc-swatch hc-swatch-consumed"></span>byproduct <span class="hc-swatch hc-swatch-waste"></span>waste</div>');
-    const order = ["trim_other", "trim_bulk", "trim_prepack", "trim_bud", "trim_btr", "trim_lbs", "trim_dlh", "trim_lbs_per_dlh", "trim_sheet_hours", "trim_input"];
+    const order = ["trim_other", "trim_bulk", "trim_prepack", "trim_bud", "trim_btr", "trim_lbs", "trim_dlh", "trim_lbs_per_dlh", "trim_input"];
     const positions = order.map((k) => day.indexOf(`data-hc-metric="${k}"`));
     expect(positions.every((p, i) => p >= 0 && (i === 0 || p > positions[i - 1]))).toBe(true);
     // 750 g = 1.65 lb; 450 g = 0.99 lb; 350 g = 0.77 lb; 100 g = 0.22 lb; 300 g = 0.66 lb; 150 g/h = 0.33 lb/h.
@@ -831,14 +836,11 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(day).toContain('<input type="hidden" name="shift" value="day">');
     expect(day).toContain('<input type="hidden" name="work_date" value="2026-09-14">');
     expect(day).toContain('value="5" placeholder="hours" aria-label="DLH Yesterday Day shift" data-hc-hours-input>');
-    // The day's hours from the sheet, per farm, PNN ARL PNS.
-    expect(day).toContain('<dt>Cutting and bucking hours from the sheet <span class="hc-date muted">2026-09-14</span></dt>');
-    expect(day).toContain('<span data-hc-sheet-hours="PNN">PNN 8</span> · <span data-hc-sheet-hours="ARL">ARL <span class="muted">none</span></span> · <span data-hc-sheet-hours="PNS">PNS 0</span>');
-    // The input lbs box, under the hours, per shift.
+    expect(day).not.toContain("Cutting and bucking hours from the sheet");
+    expect(day).not.toContain("data-hc-trimline");
     expect(day).toContain(`<form method="post" action="${HARVEST_TRIM_INPUT_PATH}" class="hc-hours" data-hc-trim-input="day">`);
     expect(day).toContain('value="12.50" placeholder="lbs" aria-label="Input lbs Day shift" data-hc-input-lbs>');
-    expect(day).toContain('<text class="hc-node-sub" data-hc-node-value="t0-input" x="849" y="362">input 12.50 lb</text>');
-    expect(day).toContain('data-hc-trimline-running="1"');
+    expect(day).not.toContain('data-hc-node-value="t0-input"');
     const second = html.slice(html.indexOf('data-hc-shift="second"'));
     expect(second).toContain('<span class="hc-shift-name">Second Shift</span>');
     expect(second).toContain('data-hc-shift-running="0"');
@@ -846,51 +848,111 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(second).toContain('<span class="hc-value" data-hc="trim_lbs_per_dlh">type hours</span>');
     expect(second).toContain('value="" placeholder="hours" aria-label="DLH Yesterday Second Shift" data-hc-hours-input>');
     expect(second).toContain('value="" placeholder="lbs" aria-label="Input lbs Second Shift" data-hc-input-lbs>');
-    expect(second).toContain('data-hc-trimline-total="300"');
-    expect(second.indexOf("data-hc-trimline")).toBeLessThan(second.indexOf("data-hc-bud"));
-    expect(second.indexOf("data-hc-bud")).toBeLessThan(second.indexOf('data-hc-metric="trim_other"'));
+    expect(second).not.toContain("data-hc-trimline");
     expect(second).toContain('data-hc-bud-consumed="70"');
     expect(second).toContain('data-hc-btr-read><strong>30.0%</strong> BTR</div>');
     expect(second).toContain('<div class="hc-legend"><span class="hc-swatch hc-swatch-bud"></span>bud <span class="hc-swatch hc-swatch-consumed"></span>byproduct <span class="hc-swatch hc-swatch-waste"></span>waste</div>');
     expect(html).toContain("data-hc-trim-unassigned>10 g yesterday by operators on neither shift: Les. Name the shifts' operators in Admin, Lookups, app_config.</p>");
     expect(html).toContain('data-hc-trim-running-unassigned><span class="hc-running">RUNNING</span> a package was weighed in the last 30 minutes by an operator on neither shift.</p>');
-    expect(html).toContain('.hc-trimline animate');
+    const rightNow = html.slice(html.indexOf("data-hc-trim-rightnow"), html.indexOf('data-hc-shift="day"'));
+    expect(html.indexOf("data-hc-trim-rightnow")).toBeLessThan(html.indexOf('data-hc-shift="day"'));
+    expect(rightNow).toContain("data-hc-btr-bar");
+    expect(rightNow).toContain("no packages today");
+    expect(html).toContain('data-hc-trim-totals');
     expect(html).toContain('setAttribute("dur","1800ms")');
+  });
+
+  it("THE RIGHT NOW PANE (canon 0.30.310): the live line, the bar, RUNNING and DOWN, and the day's totals", () => {
+    const live = {
+      ...trim,
+      packages: [
+        { type_code: "BUD", weight_grams: 200, trim_operator: "Olga" },
+        { type_code: "TRIM", weight_grams: 100, trim_operator: "Victor" },
+        { type_code: "WASTE", weight_grams: 10, trim_operator: "Les" },
+      ],
+      nowIso: "2026-09-21T14:30:00.000Z",
+      recent: [{ trim_operator: "Olga" }],
+      queueLots: 0,
+      bogeyPct: 40,
+    };
+    const line = liveTrimLine(live);
+    expect(line.grams).toBe(310);
+    expect(line.budGrams).toBe(200);
+    expect(line.running).toBe(true);
+    expect(trimDuty(live)).toBe("day");
+    const queued = liveTrimLine({ ...live, recent: [], queueLots: 1 });
+    expect(queued.running).toBe(true);
+    const idle = liveTrimLine({ ...live, recent: [], queueLots: 0 });
+    expect(idle.running).toBe(false);
+    const html = trimmingSection({ ...withTrim, today: "2026-09-21", trimLive: live, lastWeighedAt: "2026-09-21T14:00:00.000Z" });
+    expect(html.indexOf("data-hc-trim-rightnow")).toBeLessThan(html.indexOf('data-hc-shift="day"'));
+    const pane = html.slice(html.indexOf("data-hc-trim-rightnow"), html.indexOf('data-hc-shift="day"'));
+    expect(pane).toContain("data-hc-running");
+    expect(pane).toContain("data-hc-btr-bar");
+    expect(pane).toContain("data-hc-btr-tick");
+    expect(pane).toContain("BTR ");
+    expect(pane).toContain("Line total");
+    expect(pane).not.toContain('data-hc-node-value="t0-input"');
+    expect(html.slice(html.indexOf('data-hc-shift="day"'), html.indexOf('data-hc-shift="second"'))).not.toContain("hc-trimline");
+    const down = trimmingSection({
+      ...withTrim,
+      today: "2026-09-21",
+      trimLive: { ...live, recent: [], queueLots: 0 },
+      lastWeighedAt: "2026-09-21T12:00:00.000Z",
+    });
+    expect(down).toContain("data-hc-trim-down");
+    expect(down).toContain('data-state="running"');
+    const silent = trimmingSection({ ...withTrim, trimLive: { ...emptyTrimInput(), nowIso: "2026-09-21T14:30:00.000Z", queueLots: 0 } });
+    const silentPane = silent.slice(silent.indexOf("data-hc-trim-rightnow"), silent.indexOf('data-hc-shift="day"'));
+    expect(silentPane).toContain("data-hc-trim-down");
+    expect(silentPane).not.toContain("data-clock");
+    expect(btrBar(0.612, 40)).toContain("BTR 61.2%");
+    expect(btrBar(0.612, 40)).toContain("width:61.2%");
+    expect(btrBar(0.612, 40)).toContain('data-hc-btr-tick');
+    expect(btrBar(null, 40)).toContain("no packages today");
+    const both = trimmingSection({ ...withTrim, trim: { ...trim, hours: { day: 5, second: 3 } } });
+    expect(both).toContain('data-hc-trim-total="hours">');
+    expect(both).toContain(">8<");
+    const one = trimmingSection({ ...withTrim, trim: { ...trim, hours: { day: 5, second: null } } });
+    expect(one).toContain('data-hc-trim-total="hours"');
+    expect(one).toMatch(/data-hc-trim-total="hours"[\s\S]*?>5</);
+    const none = trimmingSection({ ...withTrim, trim: { ...trim, hours: { day: null, second: null } } });
+    expect(none).toContain('data-hc-trim-total="hours"');
+    expect(none).toContain("type hours");
   });
 
   it("THE SHEET SYNC (canon 0.30.162): the line under the sheet hours says when the sheet was last read; never read before a run; Spanish speaks, footnotes included", () => {
     // No run yet: the status is never and the line says so.
-    const never = trimmingSection(withTrim);
-    expect(never).toContain('data-hc-metric="trim_sheet_hours" data-hc-sheet-sync="never"');
-    expect(never).toContain('<dd class="hc-sheet-sync muted" data-hc-sheet-sync-line>sheet never read</dd>');
-    const neverEs = trimmingSection(withTrim, "es");
+    const pageOf = (over: Partial<typeof withTrim> = {}, locale: "en" | "es" = "en") =>
+      harvestConsolePage({ input: { ...withTrim, ...over }, live: [], nowIso: "2026-09-15T12:00:00.000Z", locale });
+    const never = pageOf();
+    expect(never).toContain('data-hc-sheet-sync="never"');
+    expect(never).toContain('data-hc-sheet-sync-line>sheet never read</dd>');
+    const neverEs = pageOf({}, "es");
     expect(neverEs).toContain("data-hc-sheet-sync-line>la hoja nunca se leyo</dd>");
-    // The long Trimming footnote is gone (canon 0.30.288). The sheet-hours line stays.
     expect(never).not.toContain("RUNNING means the clock is inside the shift's hours");
-    expect(never).toContain("Cutting and bucking hours from the sheet");
+    expect(never).not.toContain("Cutting and bucking hours from the sheet");
     expect(neverEs).not.toContain("EN MARCHA significa que el reloj esta dentro de las horas del turno");
-    expect(neverEs).toContain("Horas de corte y desrame de la hoja");
-    // A run that read the sheet: the Eastern stamp, rows seen and rows changed (2026-09-21T14:15:00Z is 10:15 AM ET).
+    expect(neverEs).not.toContain("Horas de corte y desrame de la hoja");
     const okView = { status: "ok" as const, at: "2026-09-21T14:15:00Z", rowsSeen: 44, rowsChanged: 3, message: null };
-    const ok = trimmingSection({ ...withTrim, sheetSync: okView });
+    const ok = pageOf({ sheetSync: okView });
     expect(ok).toContain('data-hc-sheet-sync="ok"');
     expect(ok).toContain("data-hc-sheet-sync-line>read from the sheet at 2026-09-21 10:15 AM ET (44 rows, 3 changed)</dd>");
-    expect(trimmingSection({ ...withTrim, sheetSync: okView }, "es")).toContain(
+    expect(pageOf({ sheetSync: okView }, "es")).toContain(
       "data-hc-sheet-sync-line>leido de la hoja a las 2026-09-21 10:15 AM ET (44 filas, 3 cambiadas)</dd>"
     );
-    // An unchanged sheet and a failed read, each with its time; the failure carries its message.
-    const skipped = trimmingSection({ ...withTrim, sheetSync: { status: "skipped", at: "2026-09-21T15:15:00Z", rowsSeen: null, rowsChanged: null, message: null } });
+    const skipped = pageOf({ sheetSync: { status: "skipped", at: "2026-09-21T15:15:00Z", rowsSeen: null, rowsChanged: null, message: null } });
     expect(skipped).toContain('data-hc-sheet-sync="skipped"');
     expect(skipped).toContain("data-hc-sheet-sync-line>sheet unchanged since 2026-09-21 11:15 AM ET</dd>");
-    const failed = trimmingSection({ ...withTrim, sheetSync: { status: "failed", at: "2026-09-21T16:15:00Z", rowsSeen: null, rowsChanged: null, message: "401 token" } });
+    const failed = pageOf({ sheetSync: { status: "failed", at: "2026-09-21T16:15:00Z", rowsSeen: null, rowsChanged: null, message: "401 token" } });
     expect(failed).toContain('data-hc-sheet-sync="failed"');
     expect(failed).toContain("data-hc-sheet-sync-line>sheet read failed at 2026-09-21 12:15 PM ET: 401 token</dd>");
   });
 
   it("without the trim input the section renders empty, never throws; no unassigned or running line; Spanish speaks", () => {
     const html = trimmingSection(input);
-    expect(html.match(/data-hc-trimline-total="0"/g)).toHaveLength(2);
-    expect(html.match(/data-hc-trimline-running="0"/g)).toHaveLength(2);
+    expect(html.match(/data-hc-trimline-total="0"/g)).toHaveLength(1);
+    expect(html.match(/data-hc-trimline-running="0"/g)).toHaveLength(1);
     expect(html.match(/data-hc-bud-consumed="0"/g)).toHaveLength(2);
     expect((html.match(/class="hc-bud-cell hc-bud-empty"/g) || []).length).toBe(200);
     expect(html).not.toContain("data-hc-bud-stem");

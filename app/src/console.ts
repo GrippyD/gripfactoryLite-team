@@ -167,7 +167,7 @@ import {
 } from "./config";
 import { HttpError, nowIso, textOrNull } from "./audit";
 import { getConfigValue, insertLog, TRIM_SCHEDULED_SQL } from "./db";
-import { siloStrip } from "./drying";
+import { formatClock, siloStrip } from "./drying";
 import { fulfillmentSection, emptyFulfillment, type FulfillmentDay } from "./fulfillmentboard";
 import { dayBefore, etClockMinutes, etDate, etDayBounds, FARM_TIME_ZONE, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHour } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
@@ -211,12 +211,19 @@ export type HarvestConsoleInput = {
   seasonLots: ConsoleLot[];
   /** Wet grams weighed yesterday (the farm's day), by farm. */
   yesterdayWet: FarmGrams[];
-  /** Yesterday's Cutting and Bucking hours typed per farm; null when none typed. */
+  /** Yesterday's Cutting and Bucking hours typed per farm; null when none typed.
+   * The Total pane reads harvestHoursAll when that row stands, else the sum of these. */
   hours: Record<ConsoleFarm, number | null>;
+  /** THE HARVEST HOURS (canon 0.30.310): the one typed row, farm_code ALL, for the day under view. */
+  harvestHoursAll?: number | null;
   /** Farm Plant Count for the harvest year: the constant denominator, null when none is saved. */
   plantCounts: Record<ConsoleFarm, number | null>;
   /** THE TRIMMING SECTION (canon 0.30.88): yesterday's trim room, by shift; absent renders the section empty. */
   trim?: TrimInput;
+  /** THE RIGHT NOW PANE (canon 0.30.310): today's farm day so far, every operator. Absent reads as nothing today. */
+  trimLive?: TrimInput;
+  /** The instant of the last package weighed at the trim node, any day. Null when none was ever weighed. */
+  lastWeighedAt?: string | null;
   /** THE SHEET SYNC (canon 0.30.162): the last run of the sheet sync (ok, skipped or failed), null before any run;
    * the second line under the sheet hours reads it. */
   sheetSync?: SheetSyncView | null;
@@ -467,6 +474,87 @@ export function trimFigures(input: TrimInput): TrimFigures {
   return { shifts, unassignedGrams: roundGrams(unassignedGrams), unassignedOperators: [...unassigned].sort(), unassignedRunning };
 }
 
+/** THE RIGHT NOW PANE (canon 0.30.310): today's packages and finished lots, every
+ * operator in one line. RUNNING is a package weighed in the last 30 minutes, or
+ * a shift on duty with a lot in the Unloaded Queue. */
+export function liveTrimLine(input: TrimInput): TrimShiftFigures {
+  const bud = new Set(input.budCodes.map((c) => c.trim().toUpperCase()));
+  const prepack = new Set((input.prepackCodes ?? prepackCodesOf(parseCryoTypeCategories(null))).map((c) => c.trim().toUpperCase()));
+  let packages = 0;
+  let grams = 0;
+  let bulk = 0;
+  let prepackG = 0;
+  let bio = 0;
+  let trim = 0;
+  let rest = 0;
+  let wip = 0;
+  let finished = 0;
+  for (const p of input.packages) {
+    const g = Number(p.weight_grams ?? 0);
+    packages += 1;
+    grams += g;
+    const type = String(p.type_code ?? "").trim().toUpperCase();
+    if (bud.has(type)) {
+      if (prepack.has(type)) prepackG += g;
+      else bulk += g;
+    } else if (type === "BIO") bio += g;
+    else if (type === "TRIM") trim += g;
+    else rest += g;
+  }
+  for (const lot of input.finishedLots ?? []) {
+    finished += 1;
+    const left = Number(lot.dry_grams ?? 0) - Number(lot.recorded_grams ?? 0);
+    if (left > 0) wip += left;
+  }
+  const clock = input.nowIso ? etClockMinutes(input.nowIso) : null;
+  const windows: Record<TrimShiftKey, string> = {
+    day: String(input.shiftHours?.day ?? "").trim() || TRIM_SHIFT_HOURS_DEFAULT.day,
+    second: String(input.shiftHours?.second ?? "").trim() || TRIM_SHIFT_HOURS_DEFAULT.second,
+  };
+  const dutyDay = clock != null && shiftWindowHolds(parseShiftWindow(windows.day, TRIM_SHIFT_HOURS_DEFAULT.day), clock);
+  const dutySecond = clock != null && shiftWindowHolds(parseShiftWindow(windows.second, TRIM_SHIFT_HOURS_DEFAULT.second), clock);
+  const queueLots = Number(input.queueLots ?? 0);
+  const recent = (input.recent ?? []).length > 0;
+  const running = recent || ((dutyDay || dutySecond) && queueLots > 0);
+  const total = grams + wip;
+  const duty: TrimShiftKey | null = dutyDay ? "day" : dutySecond ? "second" : null;
+  return {
+    key: duty ?? "day",
+    label: duty === "second" ? "Second Shift" : duty === "day" ? "Day shift" : "",
+    operators: [],
+    packages,
+    grams: roundGrams(grams),
+    budGrams: roundGrams(bulk + prepackG),
+    otherGrams: roundGrams(trim + bio + rest + wip),
+    btr: total > 0 ? (bulk + prepackG) / total : null,
+    hours: null,
+    gramsPerDlh: null,
+    bulkGrams: roundGrams(bulk),
+    prepackGrams: roundGrams(prepackG),
+    bioGrams: roundGrams(bio),
+    trimGrams: roundGrams(trim),
+    restGrams: roundGrams(rest),
+    wipLeftGrams: roundGrams(wip),
+    finishedLots: finished,
+    totalGrams: roundGrams(total),
+    inputLbs: null,
+    running,
+    onDuty: duty != null,
+    hours_window: duty ? windows[duty] : "",
+  };
+}
+
+/** Which shift the clock is inside, or null in a gap. Day wins when both windows hold. */
+export function trimDuty(input: TrimInput): TrimShiftKey | null {
+  const clock = input.nowIso ? etClockMinutes(input.nowIso) : null;
+  if (clock == null) return null;
+  const dayWindow = String(input.shiftHours?.day ?? "").trim() || TRIM_SHIFT_HOURS_DEFAULT.day;
+  const secondWindow = String(input.shiftHours?.second ?? "").trim() || TRIM_SHIFT_HOURS_DEFAULT.second;
+  if (shiftWindowHolds(parseShiftWindow(dayWindow, TRIM_SHIFT_HOURS_DEFAULT.day), clock)) return "day";
+  if (shiftWindowHolds(parseShiftWindow(secondWindow, TRIM_SHIFT_HOURS_DEFAULT.second), clock)) return "second";
+  return null;
+}
+
 /** THE TRIM LINE PICTURE (canon 0.30.154): his machine picture as the shift's
  * visual. A circle TRIM over the box T-0; T-0 joined left to SORTER and SORTER
  * to MARVEL by flow bars; MARVEL fanning down to BIO (the tilted square), BUD
@@ -495,10 +583,12 @@ function trimLineFlowPattern(id: string, axis: "x" | "y", to: number, running: b
   return `<pattern id="${id}" patternUnits="userSpaceOnUse" width="20" height="20"><rect class="hc-flow-b" width="20" height="20"/><polygon class="hc-flow-a" points="0,0 10,0 0,10"/><polygon class="hc-flow-a" points="20,0 20,10 10,20 0,20"/>${anim}</pattern>`;
 }
 
-export function trimLinePicture(shift: TrimShiftFigures, locale: Locale = "en"): string {
+export function trimLinePicture(shift: TrimShiftFigures, locale: Locale = "en", opts?: { showInput?: boolean; totalLabel?: string; flowId?: string }): string {
   const lb = (grams: number) => `${formatLbs(grams)} lb`;
   const g = (grams: number) => `${formatGrams(roundGrams(grams))} g`;
-  const k = esc(shift.key);
+  const k = esc(opts?.flowId ?? shift.key);
+  const showInput = opts?.showInput !== false;
+  const totalWord = opts?.totalLabel ?? "Shift total";
   const down = `hc-flow-down-${k}`;
   const left = `hc-flow-left-${k}`;
   const up = `hc-flow-up-${k}`;
@@ -507,7 +597,10 @@ export function trimLinePicture(shift: TrimShiftFigures, locale: Locale = "en"):
   const trimGrams = roundGrams(shift.trimGrams + shift.restGrams + shift.wipLeftGrams);
   const input = shift.inputLbs == null ? t(locale, "input lbs") : `${t(locale, "input")} ${shift.inputLbs.toFixed(2)} lb`;
   const total = `${lb(shift.totalGrams)} · ${g(shift.totalGrams)}`;
-  const label = `${t(locale, "Shift total")} ${total}`;
+  const label = `${t(locale, totalWord)} ${total}`;
+  const inputLine = showInput
+    ? `<text class="hc-node-sub${shift.inputLbs == null ? " hc-node-muted" : ""}" data-hc-node-value="t0-input" x="849" y="362">${esc(input)}</text>`
+    : "";
   return `<svg class="hc-trimline" viewBox="0 0 1000 704" role="img" aria-label="${esc(label)}" data-hc-trimline data-hc-trimline-running="${shift.running ? "1" : "0"}" data-hc-trimline-total="${esc(String(shift.totalGrams))}">
       <defs>${trimLineFlowPattern(down, "y", 20, shift.running)}${trimLineFlowPattern(left, "x", -20, shift.running)}${trimLineFlowPattern(up, "y", -20, shift.running)}</defs>
       <g class="hc-flows" data-hc-flows>
@@ -533,7 +626,7 @@ export function trimLinePicture(shift: TrimShiftFigures, locale: Locale = "en"):
         <text class="hc-node-label hc-node-label-big" x="849" y="272">T-0</text>
         <text class="hc-node-value" data-hc-node-value="t0" x="849" y="308">${esc(lb(shift.grams))}</text>
         <text class="hc-node-sub" x="849" y="334">${esc(`${g(shift.grams)} · ${shift.packages} ${t(locale, "packages")}`)}</text>
-        <text class="hc-node-sub${shift.inputLbs == null ? " hc-node-muted" : ""}" data-hc-node-value="t0-input" x="849" y="362">${esc(input)}</text>
+        ${inputLine}
         <rect class="hc-node" data-hc-node="sorter" x="394" y="258" width="252" height="86"/>
         <text class="hc-node-label hc-node-label-big" x="520" y="316">SORTER</text>
         <rect class="hc-node" data-hc-node="marvel" x="162" y="220" width="156" height="142"/>
@@ -550,7 +643,7 @@ export function trimLinePicture(shift: TrimShiftFigures, locale: Locale = "en"):
         <rect class="hc-node" data-hc-node="retrim" x="372" y="422" width="300" height="56"/>
         <text class="hc-node-label" x="522" y="461">RETRIM</text>
       </g>
-      <text class="hc-total-label" x="520" y="662">${esc(t(locale, "Shift total"))}</text>
+      <text class="hc-total-label" x="520" y="662">${esc(t(locale, totalWord))}</text>
       <text class="hc-total-value" data-hc-trimline-total-text x="520" y="692">${esc(total)}</text>
     </svg>`;
 }
@@ -608,6 +701,26 @@ export function budWaffle(btr: number | null, locale: Locale = "en", bogeyPct: n
   return `<svg class="hc-bud" viewBox="0 0 ${BUD_COLS * 10} ${BUD_ROWS * 10}" role="img" aria-label="${esc(label)}" data-hc-bud data-hc-bud-consumed="${consumed}" data-hc-bud-product="${product}">${cells}</svg>`;
 }
 
+/** THE BTR BAR (canon 0.30.310): today's live BTR across the pane. The bogey is a tick.
+ * Nothing run today is an empty outline. */
+export function btrBar(btr: number | null, bogeyPct: number, locale: Locale = "en"): string {
+  const bogey = Number.isFinite(bogeyPct) ? Math.max(0, Math.min(100, Math.round(bogeyPct))) : BUD_PRODUCT_CELLS;
+  if (btr == null) {
+    return `<div class="hc-btr-bar hc-btr-bar-empty" data-hc-btr-bar data-hc-btr-empty="1"><div class="hc-btr-track"></div><span class="hc-btr-read" data-hc-btr-bar-text>${esc(t(locale, "no packages today"))}</span></div>`;
+  }
+  const pct = Math.max(0, Math.min(1, btr));
+  const width = (pct * 100).toFixed(1);
+  return `<div class="hc-btr-bar" data-hc-btr-bar data-hc-btr="${esc(String(pct))}">
+      <div class="hc-btr-track">
+        <div class="hc-btr-fill" style="width:${width}%"></div>
+        <div class="hc-btr-rest"></div>
+        <span class="hc-btr-tick" data-hc-btr-tick style="left:${bogey}%"></span>
+      </div>
+      <span class="hc-btr-bogey" data-hc-btr-bogey style="left:${bogey}%">${esc(String(bogey))}%</span>
+      <span class="hc-btr-read" data-hc-btr-bar-text>${esc(`BTR ${fmtPct(btr)}`)}</span>
+    </div>`;
+}
+
 /** Pounds first, grams under (his numbers are pounds; the floor's are grams). */
 function weightPair(grams: number, suffix = ""): { value: string; sub: string } {
   return { value: `${formatLbs(grams)} lb${suffix}`, sub: `${formatGrams(roundGrams(grams))} g${suffix}` };
@@ -634,23 +747,7 @@ export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"):
     const dried = counted.filter((l) => l.dry_grams != null && Number(l.dry_grams) > 0);
     const dryPlants = plantsIn(dried);
     const dryPerPlant = dryPlants > 0 ? dried.reduce((n, l) => n + Number(l.dry_grams ?? 0), 0) / dryPlants : null;
-    let hours: number | null;
-    if (f != null) {
-      hours = input.hours[f];
-    } else {
-      let sum = 0;
-      let any = false;
-      for (const farm of CONSOLE_FARMS) {
-        const h = input.hours[farm];
-        if (h != null) {
-          sum += h;
-          any = true;
-        }
-      }
-      hours = any ? sum : null;
-    }
     const wetYesterday = sumBy(input.yesterdayWet, f, (r) => r.wet_grams, (r) => r.farm);
-    const perDlh = hours != null && hours > 0 ? wetYesterday / hours : null;
     const metrics: ConsoleMetric[] = [
       { key: "remaining_total", label: "Plants Remaining/Total Plants", value: `${fmtCount(remaining)} / ${fmtCount(total)}` },
       { key: "harvested", label: "Plants Harvested", value: fmtCount(harvested) },
@@ -658,13 +755,32 @@ export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"):
       { key: "wet_per_plant", label: "Wet Weight/plant AVG", ...(wetPerPlant == null ? { value: NA } : weightPair(wetPerPlant)) },
       { key: "dry_per_plant", label: "Dry Weight/plant AVG", ...(dryPerPlant == null ? { value: NA } : weightPair(dryPerPlant)) },
       { key: "weight_harvested", label: "Weight Harvested", ...weightPair(wetYesterday) },
-      { key: "hours", label: "Cutting and Bucking Hours Yesterday", value: hours == null ? NA : String(hours) },
-      {
-        key: "weight_per_dlh",
-        label: "Weight/DLH Yesterday",
-        ...(perDlh == null ? { value: hours == null ? t(locale, "type hours") : NA } : weightPair(perDlh, "/h")),
-      },
     ];
+    if (f == null) {
+      let hours: number | null;
+      if (input.harvestHoursAll != null) hours = input.harvestHoursAll;
+      else {
+        let sum = 0;
+        let any = false;
+        for (const farm of CONSOLE_FARMS) {
+          const h = input.hours[farm];
+          if (h != null) {
+            sum += h;
+            any = true;
+          }
+        }
+        hours = any ? sum : null;
+      }
+      const perDlh = hours != null && hours > 0 ? wetYesterday / hours : null;
+      metrics.push(
+        { key: "hours", label: "Harvest Hours Yesterday", value: hours == null ? NA : String(hours) },
+        {
+          key: "weight_per_dlh",
+          label: "Weight/DLH Yesterday",
+          ...(perDlh == null ? { value: hours == null ? t(locale, "type hours") : NA } : weightPair(perDlh, "/h")),
+        }
+      );
+    }
     return { farm: f ?? "Total", pct, metrics };
   });
 }
@@ -691,17 +807,22 @@ export type HarvestConsolePageInput = {
   fulfillment?: FulfillmentDay;
 };
 
-function hoursBox(farm: ConsoleFarm, input: HarvestConsoleInput, locale: Locale): string {
-  const value = input.hours[farm];
-  return `<form method="post" action="${esc(HARVEST_HOURS_PATH)}" class="hc-hours" data-hc-hours="${esc(farm)}">
-              <input type="hidden" name="farm" value="${esc(farm)}">
+function hoursBox(input: HarvestConsoleInput, locale: Locale, value: number | null): string {
+  return `<form method="post" action="${esc(HARVEST_HOURS_PATH)}" class="hc-hours" data-hc-hours="ALL">
+              <input type="hidden" name="farm" value="ALL">
               <input type="hidden" name="work_date" value="${esc(input.yesterday)}">
               <input type="hidden" name="day_picked" value="${input.dayPicked ? "1" : ""}">
               <input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="${value == null ? "" : esc(String(value))}" placeholder="${esc(
                 t(locale, "hours")
-              )}" aria-label="${esc(`${t(locale, "Cutting and Bucking Hours Yesterday")} ${farm}`)}" data-hc-hours-input>
+              )}" aria-label="${esc(t(locale, "Harvest Hours Yesterday"))}" data-hc-hours-input>
               <button type="submit" class="secondary">${esc(t(locale, "Save"))}</button>
             </form>`;
+}
+
+function sheetSyncLine(input: HarvestConsoleInput, locale: Locale): string {
+  const view = input.sheetSync ?? null;
+  const status = view?.status ?? "never";
+  return `<dd class="hc-sheet-sync muted" data-hc-sheet-sync="${esc(status)}" data-hc-sheet-sync-line>${esc(sheetSyncLineText(view, locale))}</dd>`;
 }
 
 function farmBox(box: ConsoleBox, input: HarvestConsoleInput, locale: Locale): string {
@@ -709,11 +830,12 @@ function farmBox(box: ConsoleBox, input: HarvestConsoleInput, locale: Locale): s
   const metrics = box.metrics
     .map((m) => {
       const value =
-        m.key === "hours" && box.farm !== "Total"
-          ? hoursBox(box.farm, input, locale)
+        m.key === "hours" && box.farm === "Total"
+          ? hoursBox(input, locale, m.value === "" ? null : Number(m.value))
           : `<span class="hc-value" data-hc="${esc(m.key)}">${esc(m.value)}</span>${m.sub ? `<span class="hc-sub muted">${esc(m.sub)}</span>` : ""}`;
       const dateNote = m.key === "hours" || m.key === "weight_per_dlh" || m.key === "weight_harvested" ? ` <span class="hc-date muted">${esc(input.yesterday)}</span>` : "";
-      return `<div class="hc-metric" data-hc-metric="${esc(m.key)}"><dt>${esc(t(locale, m.label))}${dateNote}</dt><dd>${value}</dd></div>`;
+      const sync = m.key === "hours" && box.farm === "Total" ? sheetSyncLine(input, locale) : "";
+      return `<div class="hc-metric" data-hc-metric="${esc(m.key)}"><dt>${esc(t(locale, m.label))}${dateNote}</dt><dd>${value}</dd>${sync}</div>`;
     })
     .join("");
   return `<div class="hc-farm${box.farm === "Total" ? " hc-total" : ""}" data-hc-farm="${esc(box.farm)}" data-hc-pct="${Math.round(pct * 100)}">
@@ -798,25 +920,6 @@ function trimInputBox(shift: TrimShiftFigures, input: HarvestConsoleInput, local
             </form>`;
 }
 
-/** "Under that we can list the hours from the sheet for that same date": the
- * day's Cutting and Bucking hours per farm (harvest_labor_hours, the sheet's
- * CUT/BCK # HRS by farm and date), PNN, ARL, PNS. */
-function trimSheetHoursLine(input: HarvestConsoleInput, locale: Locale): string {
-  const parts = CONSOLE_FARMS.map((farm) => {
-    const hours = input.hours[farm];
-    return `<span data-hc-sheet-hours="${esc(farm)}">${esc(farm)} ${hours == null ? `<span class="muted">${esc(t(locale, "none"))}</span>` : esc(String(hours))}</span>`;
-  });
-  // THE SHEET SYNC (canon 0.30.162): the second line says when the sheet was last read
-  // (read from the sheet at, unchanged since, failed at, never read).
-  const view = input.sheetSync ?? null;
-  const status = view?.status ?? "never";
-  return `<div class="hc-metric hc-sheet-hours" data-hc-metric="trim_sheet_hours" data-hc-sheet-sync="${esc(status)}"><dt>${esc(
-    t(locale, "Cutting and bucking hours from the sheet")
-  )} <span class="hc-date muted">${esc(input.yesterday)}</span></dt><dd>${parts.join(" · ")}</dd><dd class="hc-sheet-sync muted" data-hc-sheet-sync-line>${esc(
-    sheetSyncLineText(view, locale)
-  )}</dd></div>`;
-}
-
 /** One shift's card: the trim line picture beside the bud waffle, then his
  * lines (Other, Bulk Bud, Prepack Bud, Total Bud, BTR, the weight ran, the
  * DLH box, Lbs/DLH), the day's hours from the sheet, and the input lbs box
@@ -875,14 +978,13 @@ function trimShiftCard(shift: TrimShiftFigures, input: HarvestConsoleInput, loca
           </div>
           <div class="hc-shift-body hc-shift-stack">
             <div class="hc-visuals">
-            ${trimLinePicture(shift, locale)}
             <div class="hc-bud-col">
             ${budWaffle(shift.btr, locale, input.trim?.bogeyPct)}
             <div class="hc-btr-read" data-hc-btr-read>${btrRead}</div>
             <div class="hc-legend"><span class="hc-swatch hc-swatch-bud"></span>${esc(t(locale, "bud"))} <span class="hc-swatch hc-swatch-consumed"></span>${esc(t(locale, "byproduct"))} <span class="hc-swatch hc-swatch-waste"></span>${esc(t(locale, "waste"))}</div>
             </div>
             </div>
-            <dl class="hc-metrics">${lines}${trimSheetHoursLine(input, locale)}${inputLine}</dl>
+            <dl class="hc-metrics">${lines}${inputLine}</dl>
           </div>
         </div>`;
 }
@@ -893,8 +995,51 @@ function trimLineScript(): string {
   return `<script>(function(){try{if(!(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches))return;document.querySelectorAll(".hc-trimline animate").forEach(function(a){a.setAttribute("dur","${TRIM_LINE_FLOW_MS * 2}ms");});}catch(e){}})();</script>`;
 }
 
-/** THE TRIMMING SECTION (canon 0.30.88): the two shift cards, then the line
- * that names any grams by operators on neither shift. */
+function trimTotalsLine(figures: TrimFigures, locale: Locale): string {
+  const grams = figures.shifts.reduce((n, shift) => n + shift.grams, 0) + figures.unassignedGrams;
+  const typed = figures.shifts.map((shift) => shift.hours).filter((h): h is number => h != null);
+  const hours = typed.length === 0 ? null : typed.reduce((n, h) => n + h, 0);
+  const per = hours != null && hours > 0 ? grams / hours : null;
+  const lbs = weightPair(grams);
+  const cell = (key: string, label: string, value: string, sub = "") =>
+    `<div class="hc-trim-total" data-hc-trim-total="${esc(key)}"><div class="hc-gate-name">${esc(t(locale, label))}</div><span class="hc-value">${esc(value)}</span>${sub ? `<span class="hc-sub muted">${esc(sub)}</span>` : ""}</div>`;
+  return `<div class="hc-trim-totals" data-hc-trim-totals>
+      ${cell("lbs", "Total Lbs", lbs.value, lbs.sub)}
+      ${cell("hours", "Total Hours", hours == null ? t(locale, "type hours") : String(hours))}
+      ${cell("per", "Lbs/DLH", per == null ? (hours == null ? t(locale, "type hours") : NA) : `${formatLbs(per)} lb/h`, per == null ? "" : `${formatGrams(roundGrams(per))} g/h`)}
+    </div>`;
+}
+
+function trimRightNow(input: HarvestConsoleInput, locale: Locale): string {
+  const liveInput = input.trimLive ?? emptyTrimInput();
+  const line = liveTrimLine(liveInput);
+  const duty = trimDuty(liveInput);
+  const dutyText = duty == null ? t(locale, "no shift on duty") : t(locale, duty === "day" ? "Day shift" : "Second Shift");
+  const bogey = liveInput.bogeyPct ?? input.trim?.bogeyPct ?? BUD_PRODUCT_CELLS;
+  const nowMs = Date.parse(liveInput.nowIso ?? input.trim?.nowIso ?? "");
+  const weighedMs = input.lastWeighedAt ? Date.parse(input.lastWeighedAt) : NaN;
+  let status: string;
+  if (line.running) {
+    status = `<span class="hc-running" data-hc-running>${esc(t(locale, "RUNNING"))}</span>`;
+  } else if (Number.isFinite(weighedMs)) {
+    const seconds = Number.isFinite(nowMs) ? Math.max(0, Math.floor((nowMs - weighedMs) / 1000)) : 0;
+    status = `<span class="hc-trim-down" data-hc-trim-down>${esc(t(locale, "DOWN"))}</span> <span class="silo-clock" data-clock data-state="running" data-started="${weighedMs}" data-paused-at="" data-paused-seconds="0">${esc(formatClock(seconds))}</span>`;
+  } else {
+    status = `<span class="hc-trim-down" data-hc-trim-down>${esc(t(locale, "DOWN"))}</span>`;
+  }
+  return `<div class="hc-trim-rightnow" data-hc-trim-rightnow>
+      <div class="hc-shift-head">
+        <span class="hc-shift-name">${esc(t(locale, "Right now"))}</span>
+        <span class="hc-date muted">${esc(input.today)}</span>
+        <span class="muted" data-hc-trim-duty>${esc(dutyText)}</span>
+        ${status}
+      </div>
+      ${trimLinePicture(line, locale, { showInput: false, totalLabel: "Line total", flowId: "now" })}
+      ${btrBar(line.btr, bogey, locale)}
+    </div>`;
+}
+
+/** THE TRIMMING SECTION (canon 0.30.310): Right now, then the two shift cards for the day picked, then the day's totals. */
 export function trimmingSection(input: HarvestConsoleInput, locale: Locale = "en", open = true): string {
   const figures = trimFigures(input.trim ?? emptyTrimInput());
   const cards = figures.shifts.map((shift) => trimShiftCard(shift, input, locale)).join("");
@@ -913,7 +1058,9 @@ export function trimmingSection(input: HarvestConsoleInput, locale: Locale = "en
     : "";
   return `<details class="hc-section" data-hc-section="trimming"${open ? " open" : ""}>
       <summary>${esc(t(locale, "Trimming"))}</summary>
+      ${trimRightNow(input, locale)}
       <div class="hc-shifts">${cards}</div>
+      ${trimTotalsLine(figures, locale)}
       ${unassigned}${unassignedRunning}
       ${trimLineScript()}
     </details>`;
@@ -1632,6 +1779,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
   const { day: yesterday, dayPicked } = consoleDayOf(pickedDay, today);
   const year = Number(today.slice(0, 4));
   const bounds = farmDayBounds(yesterday, startHour);
+  const todayBounds = farmDayBounds(today, startHour);
   // THE TRIM LINE PICTURE (canon 0.30.154): RUNNING is a package weighed in the last 30 minutes.
   const recentSince = new Date(Date.parse(atIso) - TRIM_RUNNING_MINUTES * 60_000).toISOString();
   const [
@@ -1655,6 +1803,9 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     syncView,
     bogeyRaw,
     plantCountRows,
+    livePackages,
+    liveFinished,
+    lastWeighed,
   ] = await Promise.all([
     db
       .prepare(
@@ -1762,6 +1913,36 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
       .prepare(`SELECT farm_code, plant_count FROM farm_plant_counts WHERE harvest_year = ? AND deleted_at IS NULL`)
       .bind(year)
       .all<{ farm_code: string; plant_count: number }>(),
+    db
+      .prepare(
+        `SELECT p.package_type_code AS type_code, p.weight_grams, p.trim_operator
+         FROM wip_packages p
+         WHERE p.deleted_at IS NULL AND ${NON_TRIM_SOURCE_SQL}
+           AND (p.trim_date = ? OR (p.trim_date IS NULL AND p.created_at >= ? AND p.created_at < ?))`
+      )
+      .bind(today, todayBounds.startIso, atIso)
+      .all<TrimPackageRow>(),
+    db
+      .prepare(
+        `SELECT w.id AS lot_id, w.dry_weight_grams AS dry_grams,
+                (SELECT COALESCE(SUM(p.weight_grams), 0) FROM wip_packages p
+                  WHERE p.wet_weight_entry_id = w.id AND p.deleted_at IS NULL AND ${NON_TRIM_SOURCE_SQL}) AS recorded_grams,
+                (SELECT p2.trim_operator FROM wip_packages p2
+                  WHERE p2.wet_weight_entry_id = w.id AND p2.deleted_at IS NULL AND ${NON_TRIM_SOURCE_SQL.replaceAll("p.source", "p2.source").replaceAll("p.deleted_at", "p2.deleted_at")}
+                  ORDER BY p2.created_at DESC LIMIT 1) AS last_operator
+         FROM wet_weight_entries w
+         WHERE w.deleted_at IS NULL AND w.status = 'trimmed'
+           AND EXISTS (
+             SELECT 1 FROM record_change_log l
+             WHERE l.record_table = 'wet_weight_entries' AND l.record_id = w.id AND l.field = 'status' AND l.new_value = 'trimmed'
+               AND l.changed_at >= ? AND l.changed_at < ?
+           )`
+      )
+      .bind(todayBounds.startIso, atIso)
+      .all<TrimFinishedLot>(),
+    db
+      .prepare(`SELECT MAX(p.created_at) AS weighed_at FROM wip_packages p WHERE p.deleted_at IS NULL AND ${NON_TRIM_SOURCE_SQL}`)
+      .first<{ weighed_at: string | null }>(),
   ]);
   const trimHours: Record<TrimShiftKey, number | null> = { day: null, second: null };
   for (const row of trimHoursRows.results ?? []) {
@@ -1795,11 +1976,38 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     shiftHours: { day: dayHoursRaw, second: secondHoursRaw },
     bogeyPct: parseTrimBogey(bogeyRaw),
   };
+  const trimLive: TrimInput = {
+    packages: (livePackages.results ?? []).map((r) => ({
+      type_code: r.type_code,
+      weight_grams: Number(r.weight_grams ?? 0),
+      trim_operator: r.trim_operator,
+    })),
+    budCodes: trim.budCodes,
+    operators: trim.operators,
+    hours: { day: null, second: null },
+    prepackCodes: trim.prepackCodes,
+    finishedLots: (liveFinished.results ?? []).map((r) => ({
+      lot_id: r.lot_id,
+      dry_grams: r.dry_grams == null ? null : Number(r.dry_grams),
+      recorded_grams: Number(r.recorded_grams ?? 0),
+      last_operator: r.last_operator,
+    })),
+    recent: trim.recent,
+    queueLots: trim.queueLots,
+    queueGrams: trim.queueGrams,
+    nowIso: atIso,
+    shiftHours: trim.shiftHours,
+    bogeyPct: trim.bogeyPct,
+  };
   const hours = {} as Record<ConsoleFarm, number | null>;
   for (const farm of CONSOLE_FARMS) hours[farm] = null;
+  let harvestHoursAll: number | null = null;
   for (const row of hoursRows.results ?? []) {
-    const farm = farmOf(row.farm_code);
-    if (farm) hours[farm] = Number(row.hours);
+    if (row.farm_code === "ALL") harvestHoursAll = Number(row.hours);
+    else {
+      const farm = farmOf(row.farm_code);
+      if (farm) hours[farm] = Number(row.hours);
+    }
   }
   const plantCounts = {} as Record<ConsoleFarm, number | null>;
   for (const farm of CONSOLE_FARMS) plantCounts[farm] = null;
@@ -1822,8 +2030,11 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     })),
     yesterdayWet: (yesterdayWet.results ?? []).map((r) => ({ farm: r.farm, wet_grams: Number(r.wet_grams ?? 0) })),
     hours,
+    harvestHoursAll,
     plantCounts,
     trim,
+    trimLive,
+    lastWeighedAt: lastWeighed?.weighed_at ?? null,
     sheetSync: syncView,
   };
 }
@@ -1843,7 +2054,8 @@ export function parseHours(raw: string | null): number | null {
  * lands in record_change_log under harvest_labor_hours. */
 export async function saveHarvestHours(db: D1Database, form: FormData): Promise<{ redirect: string }> {
   const actorId = textOrNull(form.get("person_id"));
-  const farm = farmOf(textOrNull(form.get("farm")));
+  const rawFarm = textOrNull(form.get("farm"));
+  const farm = rawFarm === "ALL" ? "ALL" : farmOf(rawFarm);
   if (!farm) throw new HttpError(400, "Pick a farm.");
   const workDate = textOrNull(form.get("work_date")) ?? "";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(workDate) || !Number.isFinite(Date.parse(`${workDate}T00:00:00.000Z`))) {
