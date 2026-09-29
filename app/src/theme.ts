@@ -347,6 +347,16 @@ select option[data-occupied] { color: var(--text-dim, #888); }
 .testing-desk h2 { margin-top: 1.4rem; }
 .testing-desk form.stack { max-width: 36rem; }
 .testing-warn { color: var(--danger, #8b2e2e); font-weight: 700; }
+/* THE MAINTENANCE NODE (canon 0.30.293): check lines, the siren, the interval lists. */
+.check-line { font-size: 0.78rem; font-variant-numeric: tabular-nums; margin-top: 0.15rem; }
+.hc-siren { color: var(--danger, var(--alert, #8b2e2e)); font-weight: 800; }
+.hc-siren .hc-icon { width: 1.9rem; height: auto; vertical-align: middle; margin-right: 0.25rem; }
+.hc-siren [data-icon-siren-lamp] { animation: hc-waste-throb 1.6s ease-in-out infinite; }
+.hc-siren[hidden], [data-countdown][hidden] { display: none !important; }
+.maintenance-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0.8rem 0; }
+.maintenance-btn { display: inline-flex; align-items: center; min-height: 2.4rem; padding: 0.3rem 0.8rem; border: 2px solid var(--line, #888); border-radius: 0.4rem; font-weight: 700; text-decoration: none; }
+.interval-pair { display: flex; flex-wrap: wrap; gap: 1.2rem; align-items: flex-start; }
+.interval-pair > * { flex: 1 1 16rem; }
 ${tones}
 `;
 }
@@ -913,7 +923,7 @@ body.device-phone .ops-map-phone .ops-node { width: 100%; max-width: 18rem; }
    the bottom right is reversed: the two ride at the end of the app bar, Reports
    left of Admin, and main keeps no clearance for them. */
 .bar-actions { display: flex; align-items: center; gap: 0.55rem; margin-left: auto; }
-.admin-link, .reports-link {
+.maintenance-link, .admin-link, .reports-link {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 2.5rem; padding: 0.35rem 1rem;
   background: var(--accent); color: var(--accent-text);
@@ -930,7 +940,7 @@ ${walkSliceChrome("lite")}
 *, *::before, *::after { transition: none !important; animation: none !important; }
 html, body { background-image: none !important; }
 body::before, body::after { display: none !important; }
-.ops-node, .ops-node-stub, button, .btn, .admin-link, .reports-link,
+.ops-node, .ops-node-stub, button, .btn, .maintenance-link, .admin-link, .reports-link,
 .locale-pill, .locale-pill button, .view-pill, .view-pill button, .device-opt {
   box-shadow: none !important; background-image: none !important;
   text-shadow: none !important; border-radius: 6px;
@@ -1609,7 +1619,7 @@ body.device-phone .ops-map-phone .ops-node { width: 100%; max-width: 18rem; }
    the bottom right is reversed; the two ride at the end of the app bar in her
    header-cta idiom, amber pill, shadow, lift on hover. */
 .bar-actions { display: flex; align-items: center; gap: 0.55rem; margin-left: auto; }
-.admin-link, .reports-link {
+.maintenance-link, .admin-link, .reports-link {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 2.5rem; padding: 0.35rem 1.1rem;
   background: var(--primary); color: #fff;
@@ -1621,7 +1631,7 @@ body.device-phone .ops-map-phone .ops-node { width: 100%; max-width: 18rem; }
 .admin-link:hover, .reports-link:hover { background: var(--primary-strong); transform: translateY(-1px); color: #fff; }
 .admin-link:focus-visible, .reports-link:focus-visible { outline: 3px solid var(--primary-strong); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
-  .tile, button, .btn, .queue-pane a.queue-pane-item, .admin-link, .reports-link, .ops-node { transition: none; }
+  .tile, button, .btn, .queue-pane a.queue-pane-item, .maintenance-link, .admin-link, .reports-link, .ops-node { transition: none; }
   .tile:focus, .tile:hover, button:hover, .btn:hover, .admin-link:hover, .reports-link:hover, .ops-node:hover { transform: none; }
 }
 ${walkSliceChrome("co")}`;
@@ -2382,7 +2392,7 @@ ${walkSliceChrome("cerberus")}
    the bottom right is reversed; the two ride at the end of the app bar.
    Cerberus discipline: steel plate, gold ink, all caps letterspaced. */
 .bar-actions { display: flex; align-items: center; gap: 0.55rem; margin-left: auto; }
-.admin-link, .reports-link {
+.maintenance-link, .admin-link, .reports-link {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 2.5rem; padding: 0.35rem 1rem;
   background: var(--panel); color: var(--gold);

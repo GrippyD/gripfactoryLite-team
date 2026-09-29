@@ -402,8 +402,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 79 migration(s)")) {
-      throw new Error(`from-zero apply must say 79 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 80 migration(s)")) {
+      throw new Error(`from-zero apply must say 80 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -7812,6 +7812,45 @@ async function run() {
     assert(freezerRange.status === 303, `the freezer range expected 303 got ${freezerRange.status}`);
     const freezerPage = await text("/ops/drying_ops");
     assert(freezerPage.body.includes("Room 20 F, above 10 F"), "the freezer tile must flag a temperature-only reading");
+
+    // THE MAINTENANCE NODE (canon 0.30.293).
+    assert(freezerPage.body.includes('<a class="maintenance-link" href="/maintenance">Maintenance</a>'), "the bar must carry Maintenance before Reports");
+    assert(freezerPage.body.indexOf('class="maintenance-link"') < freezerPage.body.indexOf('class="reports-link"'), "Maintenance stands to the left of Reports");
+    const maintenance = await text("/maintenance");
+    assert(maintenance.res.status === 200, `maintenance landing expected 200 got ${maintenance.res.status}`);
+    assert(maintenance.body.includes("<h1>Maintenance</h1>") && maintenance.body.includes("data-silo-strip"), "the landing must carry the drying pane");
+    assert(maintenance.body.includes('href="/station/load_silo"') && maintenance.body.includes(">Load Silo</a>"), "the landing must link Load Silo");
+    assert(maintenance.body.includes('href="/maintenance/lab_sample"') && maintenance.body.includes(">Lab Sample</a>"), "the landing must link Lab Sample");
+    assert(maintenance.body.includes('href="/maintenance/trouble_tickets"') && maintenance.body.includes(">Trouble Tickets</a>"), "the landing must link Trouble Tickets");
+    const tickets = await text("/maintenance/trouble_tickets");
+    assert(tickets.res.status === 200 && tickets.body.includes("Stub: this section waits on the owner's definition."), "Trouble Tickets is the stub");
+    const intervals = await text("/admin/lookups/silo_check_intervals");
+    assert(intervals.res.status === 200 && intervals.body.includes("Internal Silo Testing Interval") && intervals.body.includes("Hours from last check"), "Admin must carry the two interval lists");
+    const addAw = await req("/admin/lookups/silo_check_intervals", { method: "POST", body: form({ action: "add", kind: "aw", hours: "24" }) });
+    assert(addAw.status === 303, `adding an aW interval expected 303 got ${addAw.status}`);
+    const intervalsAdded = await text("/admin/lookups/silo_check_intervals");
+    assert(intervalsAdded.body.includes("from the start of the silo") && intervalsAdded.body.includes('data-interval-hours>24<'), "the first aW row is 24 hours from the start of the silo");
+    const maintenanceDue = await text("/maintenance");
+    const loadMatch = maintenanceDue.body.match(/data-load="([^"]+)"/);
+    assert(loadMatch, "an open load must be on the drying pane to schedule a check");
+    const loadForCheck = loadMatch[1];
+    assert(maintenanceDue.body.includes("Next aW check in") || maintenanceDue.body.includes("aW check due"), "the tile must carry the aW line once an interval exists");
+    const scheduleCheck = await req("/maintenance/lab_sample/schedule", { method: "POST", body: form({ silo_load_id: loadForCheck, kind: "aw" }) });
+    assert(scheduleCheck.status === 303, `scheduling a check expected 303 got ${scheduleCheck.status} ${await scheduleCheck.text()}`);
+    const labScheduled = await text("/maintenance/lab_sample");
+    assert(labScheduled.body.includes('data-lab-pane="schedule"') && labScheduled.body.includes('data-lab-row="scheduled"'), "the middle pane must hold the scheduled check");
+    const requestId = (labScheduled.body.match(/data-lab-row="scheduled" data-request="([^"]+)"/) || [])[1];
+    assert(requestId, "the scheduled row must carry its id");
+    const requested = await req("/maintenance/lab_sample/request", { method: "POST", body: form({ id: requestId }) });
+    assert(requested.status === 303, `sample requested expected 303 got ${requested.status}`);
+    const labRequested = await text("/maintenance/lab_sample");
+    assert(labRequested.body.includes('data-lab-row="requested"') && labRequested.body.includes("requested at"), "a request stamps the time and leaves the scheduled list");
+    const fulfillCheck = await req("/maintenance/lab_sample/fulfill", { method: "POST", body: form({ id: requestId, result_value: "0.55" }) });
+    assert(fulfillCheck.status === 303, `fulfilling a check expected 303 got ${fulfillCheck.status}`);
+    const labDone = await text("/maintenance/lab_sample");
+    assert(labDone.body.includes('data-lab-row="completed"') && labDone.body.includes("0.55"), "the completed pane must show the aW result");
+    const liveAfter = await (await req("/silos/live.json")).json();
+    assert(Array.isArray(liveAfter.silos) && liveAfter.silos.every((row) => Array.isArray(row.checks)), "live.json must carry checks on every space");
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

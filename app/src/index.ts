@@ -166,6 +166,23 @@ import { buildLiveSalesHelperMenu, decorateSalesHelperPage } from "./saleshelper
 import { parseSendBody, sendSalesOrderMail, SH_MAIL_TO_DEFAULT, SH_SEND_GATE_KEY, type ShSendBody } from "./sendmail";
 import { dryingTotals, loadSiloVisuals, siloLiveEntry, spaceShapeOf, SILO_LIVE_PATH } from "./silo";
 import {
+  attachLoadChecks,
+  fulfillLabSample,
+  intervalPage,
+  labSamplePage,
+  LAB_SAMPLE_PATH,
+  liveChecksOf,
+  maintenanceLanding,
+  MAINTENANCE_PATH,
+  requestLabSample,
+  returnLabSample,
+  saveSiloCheckInterval,
+  scheduleLabSample,
+  troubleTicketsPage,
+  TROUBLE_TICKETS_PATH,
+  unscheduleLabSample,
+} from "./labsample";
+import {
   findMetrcRecord,
   isMountRound,
   listInternalFieldDefs,
@@ -1417,13 +1434,14 @@ app.get(HARVEST_PATH, async (c) => {
     loadTestingSection(c.env.DB, input.year),
     loadPrepackSection(c.env.DB, input.yesterday),
   ]);
+  const checkedLive = await attachLoadChecks(c.env.DB, silos.live, now);
   return html(
     c,
     s,
     "Harvest Console",
     harvestConsolePage({
       input,
-      live: silos.live,
+      live: checkedLive,
       nowIso: now,
       locale: s.locale,
       ok: c.req.query("ok") ?? undefined,
@@ -1441,6 +1459,47 @@ app.get(HARVEST_PATH, async (c) => {
       prepack,
     })
   );
+});
+
+// THE MAINTENANCE NODE (canon 0.30.293). No PIN. The drying pane is the console's strip.
+app.get(MAINTENANCE_PATH, async (c) => {
+  const s = await shell(c);
+  const now = nowIso();
+  const [{ live }, cure, flags] = await Promise.all([
+    loadSiloVisuals(c.env.DB),
+    listCurePanes(c.env.DB, now, s.locale),
+    listEnvironmentFlags(c.env.DB, now, s.locale),
+  ]);
+  const strip = siloStrip(await attachLoadChecks(c.env.DB, live, now), now, s.locale, curePanes(cure, s.locale), flags);
+  return html(c, s, "Maintenance", maintenanceLanding(strip, s.locale));
+});
+app.get(LAB_SAMPLE_PATH, async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Lab Sample", await labSamplePage(c.env.DB, nowIso(), s.locale));
+});
+app.post(`${LAB_SAMPLE_PATH}/schedule`, async (c) => {
+  const result = await scheduleLabSample(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+app.post(`${LAB_SAMPLE_PATH}/request`, async (c) => {
+  const result = await requestLabSample(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+app.post(`${LAB_SAMPLE_PATH}/unschedule`, async (c) => {
+  const result = await unscheduleLabSample(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+app.post(`${LAB_SAMPLE_PATH}/fulfill`, async (c) => {
+  const result = await fulfillLabSample(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+app.post(`${LAB_SAMPLE_PATH}/return`, async (c) => {
+  const result = await returnLabSample(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+app.get(TROUBLE_TICKETS_PATH, async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Trouble Tickets", troubleTicketsPage(s.locale));
 });
 
 // The "[open numbox]": one farm's Cutting and Bucking hours for one day.
@@ -2064,7 +2123,7 @@ async function siloStripFor(c: AppContext): Promise<string> {
     listCurePanes(c.env.DB, now, s.locale),
     listEnvironmentFlags(c.env.DB, now, s.locale),
   ]);
-  return siloStrip(live, now, s.locale, curePanes(cure, s.locale), flags);
+  return siloStrip(await attachLoadChecks(c.env.DB, live, now), now, s.locale, curePanes(cure, s.locale), flags);
 }
 
 app.post(SENSOR_PATH, async (c) => {
@@ -2089,13 +2148,17 @@ app.post(SENSOR_PATH, async (c) => {
  * the same facts on ungated pages. */
 app.get(SILO_LIVE_PATH, async (c) => {
   const s = await shell(c);
+  const now = nowIso();
   const { live, capacityGrams } = await loadSiloVisuals(c.env.DB);
-  const flags = await listEnvironmentFlags(c.env.DB, nowIso(), s.locale);
+  const flags = await listEnvironmentFlags(c.env.DB, now, s.locale);
+  const checked = await attachLoadChecks(c.env.DB, live, now);
   return c.json(
     {
       capacityGrams,
-      at: nowIso(),
-      silos: live.map((l) => siloLiveEntry(l.silo.id, l.silo.name, l.visual, s.locale, spaceShapeOf(l.silo), flags[l.silo.name] ?? [], l.emptySince)),
+      at: now,
+      silos: checked.map((l) =>
+        siloLiveEntry(l.silo.id, l.silo.name, l.visual, s.locale, spaceShapeOf(l.silo), flags[l.silo.name] ?? [], l.emptySince, liveChecksOf(l.loadChecks))
+      ),
     },
     200,
     { "cache-control": "no-store" }
@@ -2131,7 +2194,7 @@ app.get("/station/load_silo", async (c) => {
     c,
     s,
     "Load Silo",
-    siloStrip(siloVisuals.live, now, s.locale, "", flags) +
+    siloStrip(await attachLoadChecks(c.env.DB, siloVisuals.live, now), now, s.locale, "", flags) +
       loadSiloPage({
         barnLots,
         silos,
@@ -2190,7 +2253,7 @@ app.get(`${PRODUCTION_SCHEDULING_PATH}/:stage`, async (c) => {
       c,
       s,
       SCHEDULE_STAGE_TITLES[drying],
-      siloStrip(visuals.live, now, s.locale, curePanes(cure, s.locale), flags) +
+      siloStrip(await attachLoadChecks(c.env.DB, visuals.live, now), now, s.locale, curePanes(cure, s.locale), flags) +
         dryingSchedulingPage({
           stage: drying,
           lots,
@@ -2798,6 +2861,9 @@ app.get("/admin/lookups/:section", async (c) => {
     const raw = await getConfigValue(c.env.DB, CONFIG_KEYS.trim_bogey_pct);
     return html(c, s, "Trim Bogey", trimBogeyPage(parseTrimBogey(raw), trimBogeyOf(raw) != null, s.locale, c.req.query("ok") || undefined));
   }
+  if (section === "silo_check_intervals") {
+    return html(c, s, "Internal Silo Testing Interval", await intervalPage(c.env.DB, s.locale));
+  }
   if (section === "plant_count") {
     const today = await farmToday(c.env.DB, nowIso());
     const year = plantCountYear(c.req.query("year"), today);
@@ -2832,6 +2898,7 @@ app.post("/admin/lookups/:table", async (c) => {
   if (table === "testing_labs") result = await saveTestingLab(c.env.DB, form);
   else if (table === "trim_bogey") result = await saveTrimBogey(c.env.DB, form);
   else if (table === "plant_count") result = await saveFarmPlantCounts(c.env.DB, form);
+  else if (table === "silo_check_intervals") result = await saveSiloCheckInterval(c.env.DB, form);
   else if (table === "people" && action === "deactivate") result = await deactivatePerson(c.env.DB, form);
   else if (table === "people") result = await addPerson(c.env.DB, form);
   else if (table === "strains") result = await addStrain(c.env.DB, form);

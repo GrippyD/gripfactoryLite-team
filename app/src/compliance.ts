@@ -47,6 +47,17 @@ export const AQUALAB_VALUE_ALIASES = [
   "aw results",
 ] as const;
 
+/** THE MAINTENANCE NODE (canon 0.30.293): moisture content on an instrument file. */
+export const MOISTURE_ANALYTE_ALIASES = ["mc", "moisture", "moisture content", "mc%"] as const;
+
+/** water activity or moisture content, the two silo checks. Null for anything else. */
+export function internalCheckKind(analyte: string | null | undefined): "aw" | "mc" | null {
+  const name = normHeader(analyte ?? "");
+  if (AQUALAB_VALUE_ALIASES.some((alias) => normHeader(alias) === name)) return "aw";
+  if (MOISTURE_ANALYTE_ALIASES.some((alias) => normHeader(alias) === name)) return "mc";
+  return null;
+}
+
 export const POTENCY_ANALYTE_ALIASES = [
   "thc",
   "total_thc",

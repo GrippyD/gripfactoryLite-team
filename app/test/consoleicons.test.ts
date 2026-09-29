@@ -59,7 +59,7 @@ function assertBalanced(svg: string): void {
 }
 
 describe("THE ICONS AS LINE ART (canon 0.30.282)", () => {
-  it("names the fourteen in the doc's order, each with a label", () => {
+  it("names the fifteen in the doc's order, each with a label", () => {
     expect(CONSOLE_ICON_NAMES).toEqual([
       "rad",
       "cryo",
@@ -75,6 +75,7 @@ describe("THE ICONS AS LINE ART (canon 0.30.282)", () => {
       "shipping",
       "submitted",
       "accepted",
+      "siren",
     ]);
     for (const name of CONSOLE_ICON_NAMES) {
       expect(CONSOLE_ICON_LABELS[name].length).toBeGreaterThan(0);
@@ -125,6 +126,9 @@ describe("THE ICONS AS LINE ART (canon 0.30.282)", () => {
     expect(cryo).toContain(`data-icon-cryo-flow="meter-cryo"`);
     expect(cryo).toContain(`data-icon-cryo-flow="meter-amaps"`);
     expect(cryo).toContain(`data-icon-cryo-flow="cryo-uv"`);
+    const siren = consoleIconSvg("siren");
+    expect(siren.match(/data-icon-siren-lamp/g)).toHaveLength(1);
+    expect(siren).toContain('fill="currentColor"');
     const shipping = consoleIconSvg("shipping");
     expect(shipping.match(/data-icon-trailer-cargo/g)).toHaveLength(1);
     expect(shipping).toContain(
@@ -135,6 +139,7 @@ describe("THE ICONS AS LINE ART (canon 0.30.282)", () => {
       if (name !== "rad") expect(svg).not.toContain("data-icon-rad-body");
       if (name !== "cryo") expect(svg).not.toContain("data-icon-cryo-flow");
       if (name !== "shipping") expect(svg).not.toContain("data-icon-trailer-cargo");
+      if (name !== "siren") expect(svg).not.toContain("data-icon-siren-lamp");
     }
   });
 

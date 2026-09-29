@@ -2664,6 +2664,25 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "Bags and pounds are the prepack lines saved on this day. Jobs finished are the packs finished this day. DLH is typed here, one number for the day. The sheet does not replace this box.",
     es: "Las bolsas y las libras son las lineas de preempacado guardadas este dia. Los trabajos terminados son los empaques terminados este dia. Las horas directas se escriben aqui, un numero por dia. La hoja no reemplaza esta casilla.",
   },
+  // THE MAINTENANCE NODE (canon 0.30.293).
+  "Maintenance": { en: "Maintenance", es: "Mantenimiento" },
+  "Lab Sample": { en: "Lab Sample", es: "Muestra de laboratorio" },
+  "Trouble Tickets": { en: "Trouble Tickets", es: "Tickets de problemas" },
+  "Internal Silo Testing Interval": { en: "Internal Silo Testing Interval", es: "Intervalo de pruebas internas del silo" },
+  "Add a Time": { en: "Add a Time", es: "Agregar un tiempo" },
+  "Hours from last check": { en: "Hours from last check", es: "Horas desde el ultimo chequeo" },
+  "from the start of the silo": { en: "from the start of the silo", es: "desde el inicio del silo" },
+  "from the last check": { en: "from the last check", es: "desde el ultimo chequeo" },
+  "Next aW check in": { en: "Next aW check in", es: "Proximo chequeo de aW en" },
+  "Next MC check in": { en: "Next MC check in", es: "Proximo chequeo de MC en" },
+  "aW check due": { en: "aW check due", es: "Chequeo de aW vencido" },
+  "MC check due": { en: "MC check due", es: "Chequeo de MC vencido" },
+  "Schedule Silo/Lot Check #": { en: "Schedule Silo/Lot Check #", es: "Programar chequeo de silo/lote #" },
+  "Sample requested": { en: "Sample requested", es: "Muestra pedida" },
+  "requested at {time}": { en: "requested at {time}", es: "pedida a las {time}" },
+  "Check {n}": { en: "Check {n}", es: "Chequeo {n}" },
+  "aW": { en: "aW", es: "aW" },
+  "MC": { en: "MC", es: "MC" },
 };
 
 /** Look a display string up by its English key; unknown keys render as-is. */

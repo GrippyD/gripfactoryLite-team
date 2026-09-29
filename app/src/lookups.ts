@@ -60,6 +60,13 @@ export const LOOKUP_LANDING: LookupLandingSection[] = [
         description: "One number per farm per harvest year: the denominator of Plants Remaining/Total on the console, never overridden by METRC.",
         lookupFieldName: "Farm Plant Count",
       },
+      {
+        key: "silo_check_intervals",
+        title: "Internal Silo Testing Interval",
+        href: "/admin/lookups/silo_check_intervals",
+        description: "Hours between aW checks and between MC checks. The first row is from the start of the silo. Later rows are from the last check.",
+        lookupFieldName: "Internal Silo Testing Interval",
+      },
     ],
   },
   {

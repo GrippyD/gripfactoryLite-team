@@ -164,6 +164,7 @@ describe("THE SILO SHAPE AND THE LIVE WET WEIGHT (canon 0.30.69)", () => {
       spaceType: "silo",
       flags: [],
       emptySince: null,
+      checks: [],
     });
     const es = siloLiveEntry("s2", "Silo 2", siloVisual({ ...base, loadedGrams: 10, clock: "running" }), "es");
     expect(es.label).toBe("secando");
@@ -507,6 +508,8 @@ describe("THE EMPTY CLOCK (canon 0.30.270)", () => {
     expect(siloLiveEntry("bf", "Blast Freezer(s)", freezer, "en", "cube", [], ended).emptySince).toBeNull();
     const script = siloLiveScript();
     expect(script).toContain("entry.emptySince");
+    expect(script).toContain("entry.checks");
+    expect(script).toContain("data-check-line");
     expect(script).toContain("[data-silo-empty]");
     expect(script).toContain('clock.setAttribute("data-state", "running")');
     expect(script).toContain('clock.setAttribute("data-state", "not_started")');
