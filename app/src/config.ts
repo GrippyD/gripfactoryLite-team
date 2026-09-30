@@ -203,6 +203,14 @@ export const SYSTEM_REASON = {
   cryo_weight: "cryo weight entry",
   release: "release",
   finish_lot: "finish lot",
+  // THE TWO HARVEST NODES (canon 0.30.317): a field load's start, send, reopen,
+  // and a tote moved from one HBN to another.
+  field_load_started: "field load started",
+  field_load_sent: "field load sent",
+  field_load_reopened: "field load reopened",
+  field_load_received: "field load received",
+  field_hbn_closed: "field hbn closed",
+  field_tote_hbn: "field tote hbn",
   finish_unload: "finish unload",
   // THE BLAST FREEZER(S) (canon 0.30.106): the freezer line removed, the lot frozen; nothing moved.
   freezer_unload: "freezer line removed; the packages stand as FFZ in METRC",
@@ -1268,6 +1276,13 @@ export const SCHEDULE_STATUS = { scheduled: "scheduled", complete: "complete" } 
 /** THE LOAD AND THE LOT (canon 0.30.241): a pass of an HBN onto Load Silo.
  * One production_schedules row, entry and package null. Not a line stage. */
 export const INTERNAL_LOGISTICS_STAGE = "internal_logistics";
+
+/** THE TWO HARVEST NODES (canon 0.30.317): a field load is open while the crew
+ * adds totes, then in transit once Finish Load sends it. THE IN-TRANSIT RULE
+ * (canon 0.30.320): received once the scheduler's pass has taken every HBN on
+ * it. A received load stays received. */
+export const FIELD_LOAD_STATUS = { open: "open", in_transit: "in_transit", received: "received" } as const;
+export const FIELD_HARVEST_PATH = "/station/field_harvest";
 export const LOGISTICS_OPS_PATH = "/ops/interco_logistics";
 export const INTERNAL_LOGISTICS_PATH = "/logistics/internal";
 export const PROCESSING_PARTNERS_PATH = "/logistics/partners";

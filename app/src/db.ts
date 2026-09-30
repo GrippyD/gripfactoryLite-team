@@ -239,11 +239,12 @@ export const CRYO_SCHEDULED_SQL =
 export async function listPaneRows(
   db: D1Database,
   def: QueueDef,
-  paneFilter?: "no_finished_lot" | "trim_scheduled" | "cryo_scheduled"
+  paneFilter?: "no_finished_lot" | "trim_scheduled" | "cryo_scheduled",
+  farmCodes?: readonly string[]
 ): Promise<QueueRow[]> {
   if (paneFilter === "no_finished_lot" && def.entity === "harvest_batches") {
     const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour)) || FARM_DAY_START_HOUR_DEFAULT;
-    return listHarvestQueueRows(db, def, NO_FINISHED_LOT_SQL, [farmDay(nowIso(), startHour)]);
+    return listHarvestQueueRows(db, def, NO_FINISHED_LOT_SQL, [farmDay(nowIso(), startHour)], farmCodes);
   }
   if (paneFilter === "trim_scheduled" && def.entity === "wet_weight_entries") {
     return listLotQueueRows(db, def, TRIM_SCHEDULED_SQL);
@@ -258,17 +259,20 @@ async function listHarvestQueueRows(
   db: D1Database,
   def: QueueDef,
   filterSql: string,
-  extraBinds: unknown[] = []
+  extraBinds: unknown[] = [],
+  farmCodes?: readonly string[]
 ): Promise<QueueRow[]> {
+  const farms = (farmCodes ?? []).filter((code) => code.length > 0);
+  const farmSql = farms.length > 0 ? ` AND b.farm_code IN (${farms.map(() => "?").join(", ")})` : "";
   const result = await db
     .prepare(
       `SELECT b.id, b.hbn, b.entry_date, b.farm_code, s.name AS strain_name, b.created_at
        FROM harvest_batches b
        LEFT JOIN strains s ON s.id = b.strain_id
-       WHERE b.deleted_at IS NULL AND b.status = ? AND ${farmHarvestSql("b")} ${filterSql}
+       WHERE b.deleted_at IS NULL AND b.status = ? AND ${farmHarvestSql("b")} ${filterSql}${farmSql}
        ORDER BY b.created_at DESC`
     )
-    .bind(def.predicate.value, ...extraBinds)
+    .bind(def.predicate.value, ...extraBinds, ...farms)
     .all<Record<string, unknown>>();
   return toQueueRows(result.results ?? []);
 }
@@ -1207,6 +1211,176 @@ export async function listOpenFarmHbns(db: D1Database, farmCode: string, headerI
     hbn: row.hbn,
     label: [row.farm_code, row.strain_name, row.entry_date].filter(Boolean).join(" / "),
   }));
+}
+
+function hbnOptionLabel(row: { farm_code: string; strain_name: string; entry_date: string }): string {
+  return [row.farm_code, row.strain_name, row.entry_date].filter(Boolean).join(" / ");
+}
+
+/** THE IN-TRANSIT RULE (canon 0.30.320), the gate's fix (canon 0.30.322): the
+ * field select lists an open ARL or PNS batch while Finish Load YES has not
+ * closed it AND under the farm-day rule of NO_FINISHED_LOT_SQL: no lot yet, a
+ * weighing lot open, or a lot finished within the farm's today (a pass earlier
+ * today keeps the HBN for the day's later loads; a finish before today, the
+ * truck flow's or the pass's, leaves it, so last week's HBNs never crowd the
+ * select). The Demote of that HBN's lot back to weighing clears the close and
+ * opens a weighing lot. The bound value is the farm's today. */
+export const FIELD_OPEN_HBN_SQL = `AND b.field_closed_at IS NULL ${NO_FINISHED_LOT_SQL}`;
+
+export async function listFieldHbns(db: D1Database): Promise<OpenHbnOption[]> {
+  const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour)) || FARM_DAY_START_HOUR_DEFAULT;
+  const result = await db
+    .prepare(
+      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, COALESCE(s.name, '') AS strain_name
+       FROM harvest_batches b
+       LEFT JOIN strains s ON s.id = b.strain_id
+       WHERE b.deleted_at IS NULL AND b.status = 'open' AND b.farm_code IN ('ARL', 'PNS') AND ${farmHarvestSql("b")}
+       ${FIELD_OPEN_HBN_SQL}
+       ORDER BY b.entry_date DESC, b.created_at DESC`
+    )
+    .bind(farmDay(nowIso(), startHour))
+    .all<{ id: string; hbn: string; entry_date: string; farm_code: string; strain_name: string }>();
+  return (result.results ?? []).map((row) => ({
+    id: row.id,
+    hbn: row.hbn,
+    label: hbnOptionLabel(row),
+  }));
+}
+
+export type FieldDestination = { code: string; display_name: string };
+
+/** Farms that have a dry space of their own. Penn South has none, so it is not a destination. */
+export async function listFieldDestinations(db: D1Database): Promise<FieldDestination[]> {
+  const result = await db
+    .prepare(
+      `SELECT DISTINCT f.code, f.display_name
+       FROM farms f
+       JOIN dry_spaces d ON d.farm_code = f.code AND d.deleted_at IS NULL AND d.kind <> 'truck'
+       WHERE f.deleted_at IS NULL
+       ORDER BY f.display_name`
+    )
+    .all<FieldDestination>();
+  return result.results ?? [];
+}
+
+/** Hang in Place at Penn North, the Arlington Dry Room at Arlington. */
+export async function fieldHoldingSpaceId(db: D1Database, farmCode: string): Promise<string | null> {
+  const name = farmCode === "PNN" ? "Hang in Place" : farmCode === "ARL" ? "Arlington Dry Room" : null;
+  if (!name) return null;
+  const row = await db
+    .prepare(`SELECT id FROM dry_spaces WHERE deleted_at IS NULL AND farm_code = ? AND name = ?`)
+    .bind(farmCode, name)
+    .first<{ id: string }>();
+  return row?.id ?? null;
+}
+
+export type FieldLoadRow = {
+  id: string;
+  operator_name: string | null;
+  destination_farm_code: string;
+  destination_name: string;
+  status: string;
+  started_at: string;
+  sent_at: string | null;
+  effective_date: string;
+};
+
+const FIELD_LOAD_SELECT = `SELECT l.id, l.operator_name, l.destination_farm_code, f.display_name AS destination_name,
+            l.status, l.started_at, l.sent_at, l.effective_date
+     FROM field_loads l
+     JOIN farms f ON f.code = l.destination_farm_code`;
+
+export async function listOpenFieldLoads(db: D1Database): Promise<FieldLoadRow[]> {
+  const result = await db
+    .prepare(`${FIELD_LOAD_SELECT} WHERE l.deleted_at IS NULL AND l.status = 'open' ORDER BY l.started_at DESC`)
+    .all<FieldLoadRow>();
+  return result.results ?? [];
+}
+
+export async function getFieldLoad(db: D1Database, id: string): Promise<FieldLoadRow | null> {
+  return (
+    (await db
+      .prepare(`${FIELD_LOAD_SELECT} WHERE l.id = ? AND l.deleted_at IS NULL`)
+      .bind(id)
+      .first<FieldLoadRow>()) ?? null
+  );
+}
+
+export type FieldToteRow = {
+  id: string;
+  weight_grams: number;
+  created_at: string;
+  harvest_batch_id: string;
+  hbn: string;
+  lot_id: string;
+  lot_grams: number;
+  lot_status: string;
+};
+
+/** Live totes on one load, newest first. */
+export async function listFieldLoadTotes(db: D1Database, loadId: string): Promise<FieldToteRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT t.id, t.weight_grams, t.created_at, t.harvest_batch_id, b.hbn,
+              w.id AS lot_id, w.weight_grams AS lot_grams, w.status AS lot_status
+       FROM wet_weights t
+       JOIN wet_weight_entries w ON w.id = t.wet_weight_entry_id AND w.deleted_at IS NULL
+       JOIN harvest_batches b ON b.id = t.harvest_batch_id
+       WHERE t.field_load_id = ? AND t.deleted_at IS NULL
+       ORDER BY t.created_at DESC, t.id DESC`
+    )
+    .bind(loadId)
+    .all<FieldToteRow>();
+  return result.results ?? [];
+}
+
+export type FieldSentHbn = { hbn: string; grams: number };
+
+export type FieldSentLoad = FieldLoadRow & {
+  tote_count: number;
+  grams: number;
+  hbns: FieldSentHbn[];
+};
+
+/** THE IN-TRANSIT RULE (canon 0.30.320): every load still in transit, newest
+ * first, however old. A received load stays in the record and is not listed. */
+export async function listInTransitFieldLoads(db: D1Database): Promise<FieldSentLoad[]> {
+  const loads = await db
+    .prepare(
+      `${FIELD_LOAD_SELECT}
+       WHERE l.deleted_at IS NULL AND l.status = 'in_transit' AND l.sent_at IS NOT NULL
+       ORDER BY l.sent_at DESC`
+    )
+    .all<FieldLoadRow>();
+  const recent = loads.results ?? [];
+  if (recent.length === 0) return [];
+  const ids = recent.map((row) => row.id);
+  const totes = await db
+    .prepare(
+      `SELECT t.field_load_id, t.weight_grams, b.hbn
+       FROM wet_weights t
+       JOIN harvest_batches b ON b.id = t.harvest_batch_id
+       WHERE t.deleted_at IS NULL AND t.field_load_id IN (${ids.map(() => "?").join(", ")})`
+    )
+    .bind(...ids)
+    .all<{ field_load_id: string; weight_grams: number; hbn: string }>();
+  const byLoad = new Map<string, { grams: number; n: number; hbns: Map<string, number> }>();
+  for (const tote of totes.results ?? []) {
+    const cur = byLoad.get(tote.field_load_id) ?? { grams: 0, n: 0, hbns: new Map<string, number>() };
+    cur.n += 1;
+    cur.grams += Number(tote.weight_grams);
+    cur.hbns.set(tote.hbn, (cur.hbns.get(tote.hbn) ?? 0) + Number(tote.weight_grams));
+    byLoad.set(tote.field_load_id, cur);
+  }
+  return recent.map((row) => {
+    const cur = byLoad.get(row.id);
+    return {
+      ...row,
+      tote_count: cur?.n ?? 0,
+      grams: cur?.grams ?? 0,
+      hbns: [...(cur?.hbns.entries() ?? [])].map(([hbn, grams]) => ({ hbn, grams })),
+    };
+  });
 }
 
 export type LotSummary = {
@@ -3883,8 +4057,11 @@ export type BarnWetLotRow = {
   plant_count: number | null;
   /** THE LOAD AND THE LOT (canon 0.30.241): the HBN this part belongs to. */
   harvest_batch_id?: string | null;
-  /** When Finish load moved the part to drying. */
+  /** When Finish load moved the part to drying. On a weighing lot exposed by
+   * a sent field load, the earliest sent_at of the loads its totes ride. */
   finished_at?: string | null;
+  /** THE IN-TRANSIT RULE (canon 0.30.320): in-transit loads whose live totes sit on this weighing lot. */
+  in_transit_loads?: number;
   planned_silo_name?: string | null;
   planned_dryspc?: string | null;
 };
@@ -3943,10 +4120,65 @@ export async function getBarnWetLot(db: D1Database, lotId: string, barnLocation?
   return rows.find((r) => r.id === lotId) ?? null;
 }
 
+/** THE IN-TRANSIT RULE (canon 0.30.320): a weighing lot of an ARL or PNS HBN
+ * with a live tote on an in-transit load. truck_number is null. finished_at
+ * is the earliest send. The loads count is those in-transit loads. */
+const WEIGHING_IN_TRANSIT_SELECT = `SELECT w.id, w.status, li.location AS barn_location, b.id AS harvest_batch_id, b.hbn, b.metrc_harvest_tag, b.farm_code,
+              NULL AS truck_number,
+              COALESCE(b.market_strain, s.name) AS strain_label, b.entry_date,
+              w.weight_grams, w.material_form, w.actual_dryspc,
+              (
+                SELECT MIN(l.sent_at) FROM wet_weights tw
+                JOIN field_loads l ON l.id = tw.field_load_id AND l.deleted_at IS NULL AND l.status = 'in_transit'
+                WHERE tw.wet_weight_entry_id = w.id AND tw.deleted_at IS NULL
+              ) AS finished_at,
+              d.name AS planned_space_name, d.kind AS planned_space_kind,
+              ps.id AS planned_silo_id, ps.name AS planned_silo_name, b.planned_dryspc,
+              li.package_code, li.id AS item_id, COALESCE(w.team_lead, p.display_name) AS lead_name,
+              COALESCE(c.email, c.display_name) AS supervisor_name, w.notes, w.plant_count,
+              (
+                SELECT COUNT(DISTINCT l.id) FROM wet_weights tw
+                JOIN field_loads l ON l.id = tw.field_load_id AND l.deleted_at IS NULL AND l.status = 'in_transit'
+                WHERE tw.wet_weight_entry_id = w.id AND tw.deleted_at IS NULL
+              ) AS in_transit_loads
+       FROM wet_weight_entries w
+       JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
+       LEFT JOIN local_inventory_items li ON li.id = (
+         SELECT i.id FROM local_inventory_items i
+         WHERE i.wet_weight_entry_id = w.id AND i.deleted_at IS NULL
+         ORDER BY i.created_at ASC, i.id ASC LIMIT 1)
+       LEFT JOIN strains s ON s.id = b.strain_id
+       LEFT JOIN dry_spaces d ON d.id = w.actual_dryspc
+       LEFT JOIN dry_spaces ps ON ps.kind = 'silo' AND ps.deleted_at IS NULL AND ps.name = 'Silo ' || COALESCE(b.planned_dryspc, '')
+       LEFT JOIN people p ON p.id = w.lead_person_id
+       LEFT JOIN people c ON c.id = w.created_by
+       WHERE w.deleted_at IS NULL AND w.status = ?
+         AND b.farm_code IN ('ARL', 'PNS')
+         AND EXISTS (
+           SELECT 1 FROM wet_weights tw
+           JOIN field_loads l ON l.id = tw.field_load_id AND l.deleted_at IS NULL AND l.status = 'in_transit'
+           WHERE tw.wet_weight_entry_id = w.id AND tw.deleted_at IS NULL)`;
+
+/** The Dry Queue: the finished lots Load Silo may load, plus the weighing
+ * lots a sent field load has exposed. Load Silo keeps listBarnWetLots. */
+export async function listDryQueueLots(db: D1Database): Promise<BarnWetLotRow[]> {
+  const [finished, weighing] = await Promise.all([
+    listBarnWetLots(db),
+    db.prepare(WEIGHING_IN_TRANSIT_SELECT).bind(LOT_STATUS.weighing).all<BarnWetLotRow>(),
+  ]);
+  const exposed = (weighing.results ?? []).map((row) => ({
+    ...row,
+    truck_number: null,
+    in_transit_loads: Number(row.in_transit_loads ?? 0),
+  }));
+  return [...finished, ...exposed];
+}
+
 /** THE LOAD AND THE LOT (canon 0.30.241): the parts of one HBN still waiting
- * for a space (drying or a truck-era in_transit, no open load). */
+ * for a space (drying or a truck-era in_transit, no open load), plus a
+ * weighing lot a sent field load has exposed (canon 0.30.320). */
 export async function listLotParts(db: D1Database, harvestBatchId: string): Promise<BarnWetLotRow[]> {
-  const rows = await listBarnWetLots(db);
+  const rows = await listDryQueueLots(db);
   return rows.filter((row) => row.harvest_batch_id === harvestBatchId);
 }
 

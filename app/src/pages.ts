@@ -428,7 +428,8 @@ export function editPage(
   table: string,
   id: string,
   row: Record<string, unknown>,
-  lookups: Record<string, LookupOption[]>
+  lookups: Record<string, LookupOption[]>,
+  back = ""
 ): string {
   const fields = EDITABLE_FIELDS[table];
   if (!fields) {
@@ -436,8 +437,11 @@ export function editPage(
   }
   const inputs = fields.map((f) => editInput(f, row, lookups)).join("\n");
   const licenseScript = fields.some((f) => f.lookup === "license") ? licenseChromeScript() : "";
+  const backInput =
+    back.startsWith("/") && !back.startsWith("//") ? `<input type="hidden" name="back" value="${esc(back)}">` : "";
   return `<h1>Edit ${esc(table)}</h1>
     <form class="stack" method="post" action="/record/${esc(table)}/${esc(id)}/edit">
+      ${backInput}
       ${inputs}
       <label class="field">Reason <input type="text" name="reason" required></label>
       <button type="submit">Save</button>

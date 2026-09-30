@@ -131,6 +131,8 @@ export type StationDef = {
     pickField: string;
     groupBy?: string;
     paneFilter?: "no_finished_lot" | "trim_scheduled" | "cryo_scheduled";
+    /** Farm codes the pane and its queue pick list keep. Penn North Harvest is PNN. */
+    farmCodes?: string[];
   };
   /** Weights ledger (owner ruling 2026-08-28): the station form is a header that starts a
    * lot in status weighing; weights collect on /station/<key>?lot=<id> as rows in ledger.table
@@ -580,7 +582,7 @@ export const PIPELINE: PipelineEntry[] = [
     key: "wet_weight",
     kind: "station",
     surface: "home",
-    title: "Wet Weight Entry",
+    title: "Penn North Harvest",
     entity: "wet_weight_entries",
     // THE SUPERVISOR AND THE TEAM LEAD (canon 0.30.67). Owner, 2026-09-14,
     // verbatim: "Minted HBNs are passing the Team Lead definition from the
@@ -679,6 +681,7 @@ export const PIPELINE: PipelineEntry[] = [
       pickField: "harvest_batch_id",
       groupBy: "farm_code",
       paneFilter: "no_finished_lot",
+      farmCodes: ["PNN"],
     },
     ledger: {
       table: "wet_weights",
@@ -686,6 +689,16 @@ export const PIPELINE: PipelineEntry[] = [
       totalField: "weight_grams",
       lotStatus: "weighing",
     },
+  },
+  {
+    // THE TWO HARVEST NODES (canon 0.30.317). The page is fieldharvest.ts.
+    // ARL and PNS batches, loads instead of the Penn North header.
+    key: "field_harvest",
+    kind: "station",
+    surface: "home",
+    title: "Penn South/Arlington Harvest",
+    entity: "field_loads",
+    fields: [],
   },
   {
     key: "dry_space_queue",
@@ -1048,7 +1061,8 @@ export const OPS_GROUPS: OpsGroup[] = [
     href: "/ops/harvest_ops",
     members: [
       { key: "acquire_hbn", title: "Acquire HBN", href: "/station/acquire_hbn" },
-      { key: "wet_weight", title: "Wet Weight Entry", href: "/station/wet_weight" },
+      { key: "wet_weight", title: "Penn North Harvest", href: "/station/wet_weight" },
+      { key: "field_harvest", title: "Penn South/Arlington Harvest", href: "/station/field_harvest" },
     ],
   },
   {
@@ -1153,6 +1167,7 @@ export const OPS_PHONE_ORDER = [
 export const HOME_SURFACE_KEYS = [
   "acquire_hbn",
   "wet_weight",
+  "field_harvest",
   "unload_dry_space",
   "trim_packages",
   "cryo_weight",

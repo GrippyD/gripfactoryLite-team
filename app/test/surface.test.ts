@@ -49,7 +49,7 @@ describe("surfaces (owner ruling 2026-08-27)", () => {
     for (const q of queues()) expect(q.surface).toBe("admin");
     for (const e of homeEntries()) expect(e.kind).toBe("station");
     // Unload Dry Space joins the operator tiles (owner ruling 2026-08-31).
-    expect(homeEntries()).toHaveLength(5);
+    expect(homeEntries()).toHaveLength(6);
   });
 
   it("the Admin landing lists Data Queues first", () => {
@@ -465,13 +465,14 @@ describe("station left pane (owner ruling 2026-08-28)", () => {
       pickField: "harvest_batch_id",
       groupBy: "farm_code",
       paneFilter: "no_finished_lot",
+      farmCodes: ["PNN"],
     });
     // Owner ruling 2026-08-31: the two-pane theme is the station law for
     // everything; Acquire HBN is the source station with no feeding queue and
     // stays a plain form, every other station declares its pane.
     for (const entry of PIPELINE) {
       if (entry.kind !== "station") continue;
-      if (entry.key === "acquire_hbn") expect(entry.leftPane).toBeUndefined();
+      if (entry.key === "acquire_hbn" || entry.key === "field_harvest") expect(entry.leftPane).toBeUndefined();
       else expect(entry.leftPane).toBeDefined();
     }
   });
@@ -1053,6 +1054,7 @@ describe("unload dry space station (owner ruling 2026-08-31)", () => {
     expect(homeEntries().map((e) => e.key)).toEqual([
       "acquire_hbn",
       "wet_weight",
+      "field_harvest",
       "unload_dry_space",
       "trim_packages",
       "cryo_weight",
@@ -1335,7 +1337,7 @@ describe("wet lot two-pane view (owner ruling 2026-08-31)", () => {
 
   it("carries the hbn pane and the lot panel together, the batch row marked picked", () => {
     const html = page("hb1");
-    expect(html).toContain("<h1>Wet Weight Entry</h1>");
+    expect(html).toContain("<h1>Penn North Harvest</h1>");
     expect(html).toContain('class="station-split"');
     expect(html).toContain('class="queue-pane"');
     expect(html).toContain(
@@ -1399,7 +1401,7 @@ describe("wet lot two-pane view (owner ruling 2026-08-31)", () => {
 
   it("lotPage stays the thin standalone wrapper: the station heading over the same panel", () => {
     const html = lotPage(wet(), lot, weights, "Arlington", 1000.06);
-    expect(html).toContain("<h1>Wet Weight Entry</h1>");
+    expect(html).toContain("<h1>Penn North Harvest</h1>");
     expect(html).toContain(panel());
   });
 
