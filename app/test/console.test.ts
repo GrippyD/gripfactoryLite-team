@@ -880,8 +880,19 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(line.budGrams).toBe(200);
     expect(line.running).toBe(true);
     expect(trimDuty(live)).toBe("day");
+    // THE TRIMMING TIDIES (canon 0.30.313): the pane's DOWN follows the scale alone; a queued lot lights the cards, not the pane.
     const queued = liveTrimLine({ ...live, recent: [], queueLots: 1 });
-    expect(queued.running).toBe(true);
+    expect(queued.running).toBe(false);
+    const queuedDown = trimmingSection({
+      ...withTrim,
+      today: "2026-09-21",
+      trimLive: { ...live, recent: [], queueLots: 1 },
+      lastWeighedAt: "2026-09-21T12:00:00.000Z",
+    });
+    const queuedPane = queuedDown.slice(queuedDown.indexOf("data-hc-trim-rightnow"), queuedDown.indexOf('data-hc-shift="day"'));
+    expect(queuedPane).toContain("data-hc-trim-down");
+    expect(queuedPane).toContain('data-hc-trimline-running="0"');
+    expect(queuedPane).not.toContain("<animate ");
     const idle = liveTrimLine({ ...live, recent: [], queueLots: 0 });
     expect(idle.running).toBe(false);
     const html = trimmingSection({ ...withTrim, today: "2026-09-21", trimLive: live, lastWeighedAt: "2026-09-21T14:00:00.000Z" });
