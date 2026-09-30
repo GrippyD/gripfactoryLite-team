@@ -475,8 +475,9 @@ export function trimFigures(input: TrimInput): TrimFigures {
 }
 
 /** THE RIGHT NOW PANE (canon 0.30.310): today's packages and finished lots, every
- * operator in one line. RUNNING is a package weighed in the last 30 minutes, or
- * a shift on duty with a lot in the Unloaded Queue. */
+ * operator in one line. RUNNING is a package weighed in the last 30 minutes and
+ * nothing else (canon 0.30.313; the doc: no weight for thirty minutes says DOWN);
+ * the queue clause of canon 0.30.163 stays on the shift cards. */
 export function liveTrimLine(input: TrimInput): TrimShiftFigures {
   const bud = new Set(input.budCodes.map((c) => c.trim().toUpperCase()));
   const prepack = new Set((input.prepackCodes ?? prepackCodesOf(parseCryoTypeCategories(null))).map((c) => c.trim().toUpperCase()));
@@ -513,9 +514,7 @@ export function liveTrimLine(input: TrimInput): TrimShiftFigures {
   };
   const dutyDay = clock != null && shiftWindowHolds(parseShiftWindow(windows.day, TRIM_SHIFT_HOURS_DEFAULT.day), clock);
   const dutySecond = clock != null && shiftWindowHolds(parseShiftWindow(windows.second, TRIM_SHIFT_HOURS_DEFAULT.second), clock);
-  const queueLots = Number(input.queueLots ?? 0);
-  const recent = (input.recent ?? []).length > 0;
-  const running = recent || ((dutyDay || dutySecond) && queueLots > 0);
+  const running = (input.recent ?? []).length > 0;
   const total = grams + wip;
   const duty: TrimShiftKey | null = dutyDay ? "day" : dutySecond ? "second" : null;
   return {
