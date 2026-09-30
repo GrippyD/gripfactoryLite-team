@@ -51,6 +51,7 @@ describe("OPS_GROUPS registry (owner ruling 2026-09-02)", () => {
     expect([...HOME_SURFACE_KEYS]).toEqual([
       "acquire_hbn",
       "wet_weight",
+      "field_harvest",
       "unload_dry_space",
       "trim_packages",
       "cryo_weight",

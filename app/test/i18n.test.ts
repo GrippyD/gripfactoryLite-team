@@ -358,7 +358,7 @@ describe("station page in Spanish (owner ruling 2026-08-28)", () => {
       "es"
     );
     expect(html).toContain("Iniciar lote");
-    expect(html).toContain("Entrada de peso húmedo");
+    expect(html).toContain("Cosecha Penn North");
     expect(html).toContain("Mover a");
     expect(html).toContain("Agregar camión");
     expect(html).toContain('<option value="truck-1">Camión 1</option>');

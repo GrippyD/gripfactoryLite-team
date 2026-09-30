@@ -358,6 +358,34 @@ select option[data-occupied] { color: var(--text-dim, #888); }
 .maintenance-btn { display: inline-flex; align-items: center; min-height: 2.4rem; padding: 0.3rem 0.8rem; border: 2px solid var(--line, #888); border-radius: 0.4rem; font-weight: 700; text-decoration: none; }
 .interval-pair { display: flex; flex-wrap: wrap; gap: 1.2rem; align-items: flex-start; }
 .interval-pair > * { flex: 1 1 16rem; }
+/* THE TWO HARVEST NODES (canon 0.30.317): the field station's entry row, shared by the three sheets. */
+.field-entry { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
+.field-entry .field { margin: 0; }
+.field-entry input[type="number"] { width: 8rem; }
+.field-finish { margin-top: 0.8rem; }
+.field-finish > summary { list-style: none; display: inline-block; cursor: pointer; }
+.field-finish > summary::-webkit-details-marker { display: none; }
+.field-finish > p { margin-top: 0.8rem; }
+.field-finish-item { display: block; margin: 0.3rem 0; }
+.field-warn { margin: 0.6rem 0; padding: 0.6rem 0.8rem; border: 2px solid var(--line, #888); border-radius: 8px; }
+.station-triple.field-triple > .working-pane { flex: 3 1 0; }
+.station-triple.field-triple > .queue-pane { min-width: 15rem; }
+body.device-phone .station-triple.field-triple > *, body.device-phone .station-triple.field-triple > .working-pane { flex: 1 1 auto; min-width: 0; }
+@media (max-width: 480px) { .station-triple.field-triple > *, .station-triple.field-triple > .working-pane { flex: 1 1 auto; min-width: 0; } }
+.station-triple.field-triple .queue-pane a.queue-pane-item { overflow-wrap: normal; word-break: normal; }
+.field-reopen { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.field-reopen input[type="password"] { width: 5rem; min-width: 0; }
+.field-table { overflow-x: auto; }
+.field-working .weights-numbered { width: 100%; }
+.field-working .weights-numbered th, .field-working .weights-numbered td { padding: 0.45rem 0.4rem; }
+.field-working .weights-numbered .weight-seq { width: 2.6rem; }
+.field-working .weights-numbered td.field-hbn-cell { width: 11rem; }
+.field-working .weights-numbered td.row-actions { min-width: 7.5rem; flex-wrap: nowrap; }
+.field-tote-hbn { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.field-tote-hbn select { flex: 1 1 100%; min-width: 7rem; max-width: 100%; }
+.field-tote-pin { display: inline-flex; gap: 0.35rem; align-items: center; }
+.field-tote-hbn.js:not(.changed) .field-tote-pin { display: none; }
+.field-tote-pin input[type="password"] { width: 4.5rem; }
 ${tones}
 `;
 }

@@ -402,8 +402,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 81 migration(s)")) {
-      throw new Error(`from-zero apply must say 81 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 83 migration(s)")) {
+      throw new Error(`from-zero apply must say 83 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -781,7 +781,10 @@ async function run() {
     assert(harvestOps.res.status === 200, `GET /ops/harvest_ops expected 200 got ${harvestOps.res.status}`);
     assert(harvestOps.body.includes("Harvest Operations</h1>"), "harvest ops missing its heading");
     assert(harvestOps.body.includes('data-pipeline-key="acquire_hbn"'), "harvest ops missing Acquire");
-    assert(harvestOps.body.includes('data-pipeline-key="wet_weight"'), "harvest ops missing Wet Weight");
+    assert(harvestOps.body.includes('data-pipeline-key="wet_weight"'), "harvest ops missing Penn North Harvest");
+    assert(harvestOps.body.includes("Penn North Harvest"), "harvest ops must title the wet station Penn North Harvest");
+    assert(harvestOps.body.includes('data-pipeline-key="field_harvest"'), "harvest ops missing Penn South/Arlington Harvest");
+    assert(harvestOps.body.includes("Penn South/Arlington Harvest"), "harvest ops must title the field station");
     assert(!harvestOps.body.includes("Enter PIN"), "ops group pages must not sit behind the PIN");
     const gatedFulfillment = await text("/fulfillment");
     assert(
@@ -853,6 +856,7 @@ async function run() {
     const crumbCases = [
       ["/ops/harvest_ops", "/", "Home"],
       ["/station/wet_weight", "/ops/harvest_ops", "Harvest Operations"],
+      ["/station/field_harvest", "/ops/harvest_ops", "Harvest Operations"],
       ["/station/load_silo", "/ops/drying_ops", "Drying Operations"],
       ["/station/cryo_weight", "/ops/production_ops", "Production Operations"],
       ["/production/scheduling", "/ops/production_ops", "Production Operations"],
@@ -1559,11 +1563,28 @@ async function run() {
     counts = await homeCounts();
     assert(counts.hbn === 2, `hbn after second mint expected 2 got ${counts.hbn}`);
 
+    // Penn North Harvest takes PNN batches only. Two PNN mints feed the pane;
+    // the ARL batches minted above stay off it.
+    const mintPnn = async () => {
+      const mk = await req("/station/acquire_hbn", {
+        method: "POST",
+        body: form({ entry_date: "2026-09-01", farm_code: "PNN", grow_method_code: "GH", strain_id: strainId }),
+      });
+      assert(mk.status === 303, `PNN acquire expected 303 got ${mk.status} ${await mk.text()}`);
+      return new URL(mk.headers.get("location") || "", base).searchParams.get("minted");
+    };
+    const mintedPnn = await mintPnn();
+    const mintedPnn2 = await mintPnn();
+    assert(mintedPnn === "26244-PNN-GH-027-0-NA-26012", `unexpected PNN HBN ${mintedPnn}`);
+    assert(mintedPnn2 === "26244-PNN-GH-027-0-NA-26013", `unexpected second PNN HBN ${mintedPnn2}`);
+
     const wetPage = await text("/station/wet_weight");
     if (wetPage.res.status !== 200) fail("GET /station/wet_weight", `status ${wetPage.res.status}`);
     // One station page renders under Cerberus with its chrome intact (owner ruling 2026-09-01).
     assert(wetPage.body.includes("--gold:#f1c232"), "the wet weight page must render under Cerberus");
+    assert(wetPage.body.includes("Penn North Harvest"), "the wet station must be titled Penn North Harvest");
     assert(wetPage.body.includes("Pick from the left"), "wet weight page missing left pane prompt");
+    assert(!wetPage.body.includes(">ARL <"), "an ARL batch must not appear on Penn North Harvest");
     const paneLink = wetPage.body.match(/href="\/station\/wet_weight\?pick=([^"]+)">([^<]+)</);
     if (!paneLink) fail("wet weight pane", "missing pane pick link");
     const batchId = paneLink[1];
@@ -1575,7 +1596,7 @@ async function run() {
     const mutedHbn = pickedPage.body.match(/<p class="muted">(2\d{4}-[A-Z]{3}-[^<]+)<\/p>/);
     if (!mutedHbn) fail("picked wet weight", "missing the muted HBN line");
     const pickedHbn = mutedHbn[1];
-    assert(pickedHbn === minted || pickedHbn === minted2, `muted HBN ${pickedHbn} is neither minted serial`);
+    assert(pickedHbn === mintedPnn || pickedHbn === mintedPnn2, `muted HBN ${pickedHbn} is not a Penn North batch`);
     const hiddenBatch = firstInputValue(pickedPage.body, "harvest_batch_id");
     assert(hiddenBatch === batchId, `hidden batch id expected ${batchId} got ${hiddenBatch}`);
     // Canon 0.22.0: the heading is the simple Farm/Strain/Date form.
@@ -1779,12 +1800,29 @@ async function run() {
       method: "POST",
       body: form({}),
     });
-    if (finish.status !== 303) fail("finish lot", `status ${finish.status}`);
+    if (finish.status !== 303) fail("finish lot", `status ${finish.status} ${await finish.text()}`);
+    const logisticsAfterFinish = await text("/logistics/internal");
+    const logisticsWorking = logisticsAfterFinish.body.slice(
+      logisticsAfterFinish.body.indexOf('data-schedule-pane="working"'),
+      logisticsAfterFinish.body.indexOf('data-schedule-pane="complete"')
+    );
+    const logisticsAvailable = logisticsAfterFinish.body.slice(
+      logisticsAfterFinish.body.indexOf('data-schedule-pane="available"'),
+      logisticsAfterFinish.body.indexOf('data-schedule-pane="working"')
+    );
+    assert(
+      logisticsWorking.includes(`data-logistics-lot="${batchId}"`),
+      "a Penn North finish must land Scheduled on Internal Logistics"
+    );
+    assert(
+      !logisticsAvailable.includes(`data-logistics-lot="${batchId}"`),
+      "a Penn North finish must leave the Dry Queue"
+    );
 
     // THE TRUCK RECORD (canon 0.30.226): a batch finished today stays on the pane
     // for its next truck. The HBN Queue table keeps it until Mark complete.
     // The pane still never prints the HBN itself (canon 0.22.0).
-    const otherHbn = pickedHbn === minted ? minted2 : minted;
+    const otherHbn = pickedHbn === mintedPnn ? mintedPnn2 : mintedPnn;
     const wetAfterFinish = await text("/station/wet_weight");
     if (wetAfterFinish.res.status !== 200) {
       fail("GET wet weight after finish", `status ${wetAfterFinish.res.status}`);
@@ -1795,7 +1833,7 @@ async function run() {
     assert(panePicks.includes(batchId) && panePicks.some((id) => id !== batchId), `pane must keep today's finished batch and the open batch (${otherHbn})`);
 
     counts = await homeCounts();
-    assert(counts.hbn === 2, `hbn after wet expected 2 got ${counts.hbn}`);
+    assert(counts.hbn === 4, `hbn after wet expected 4 got ${counts.hbn}`);
     assert(counts.dry === 1, `dry after finish expected 1 got ${counts.dry}`);
     // THE BLANK SLATE (canon 0.30.108): no truck rides the Inbound Queue any more.
     assert(counts.inbound === 0, `inbound after a silo finish expected 0 got ${counts.inbound}`);
@@ -2471,8 +2509,8 @@ async function run() {
     assert(enteredIds.includes(feedBud.id) && enteredIds.includes(feedTrim.id), "the feed's ids must be the station's row ids");
     assert(feedBud.stream === "BUD" && feedBud.weight_grams === 100 && feedBud.operator === "Les" && feedBud.trim_date === "2026-09-08", `the BUD weigh must read its stream, grams, operator and date, got ${JSON.stringify(feedBud)}`);
     assert(feedTrim.stream === "TRIM" && feedTrim.weight_grams === 21 && feedTrim.metrc_tag === null, "the TRIM weigh must read 21 g with no METRC tag (an internal code)");
-    // The lot is the ARL HBN's (its farm rides as the HBN's farm, the origin, not the landing site).
-    assert(feedBud.lot && feedBud.lot.id === lotId && feedBud.lot.short_id === shortId && feedBud.lot.strain === "Fruity Pebbles" && feedBud.lot.farm === "ARL", `the weigh must name its lot, got ${JSON.stringify(feedBud.lot)}`);
+    // The lot is the Penn North HBN's (its farm rides as the HBN's farm).
+    assert(feedBud.lot && feedBud.lot.id === lotId && feedBud.lot.short_id === shortId && feedBud.lot.strain === "Fruity Pebbles" && feedBud.lot.farm === "PNN", `the weigh must name its lot, got ${JSON.stringify(feedBud.lot)}`);
     // THE FEED NAMES THE REAL STRAIN (canon 0.30.149): the market label rides beside the strain, the strain's own name when none was typed.
     assert(feedBud.lot.market_strain === "Fruity Pebbles", `the lot must carry its market label beside the strain, got ${JSON.stringify(feedBud.lot.market_strain)}`);
     assert(feedBud.voided_at === null && typeof feedBud.created_at === "string" && feedBud.changed_at === feedBud.updated_at, "a live weigh carries no voided_at and changes at its last edit");
@@ -2507,15 +2545,15 @@ async function run() {
     assert(feedBud.station === "trim_packages", `station must name the trim packages station, got ${feedBud.station}`);
     assert(feedBud.stream_label === "BUD", `the stream label must ride beside the code, got ${feedBud.stream_label}`);
     const hbnParts = feedBud.lot.hbn_parts;
-    assert(hbnParts && hbnParts.farm === "ARL" && hbnParts.serial === shortId && typeof hbnParts.harvest_day === "string", `the HBN must read back with its farm and serial, got ${JSON.stringify(hbnParts)}`);
-    assert(feedBud.site === "ARL", `the site must be the HBN's farm, got ${feedBud.site}`);
+    assert(hbnParts && hbnParts.farm === "PNN" && hbnParts.serial === shortId && typeof hbnParts.harvest_day === "string", `the HBN must read back with its farm and serial, got ${JSON.stringify(hbnParts)}`);
+    assert(feedBud.site === "PNN", `the site must be the HBN's farm, got ${feedBud.site}`);
     assert(feedBud.dry_method === (hbnParts.silo ? "silo" : "hang"), `the dry method must follow the HBN dry space segment, got ${feedBud.dry_method} for ${JSON.stringify(hbnParts.silo)}`);
     assert(typeof feedBud.license === "string" && /^(AU|GR)-/.test(feedBud.license), `the facility line must be a license, got ${feedBud.license}`);
     assert("metrc_harvest_tag" in feedBud.lot, "the lot must carry its METRC harvest tag field");
-    const feedArl = await (await req("/feeds/trim-weighs.json?site=arl")).json();
-    assert(feedArl.site === "ARL" && feedArl.rows.some((r) => r.id === feedBud.id) && feedArl.rows.every((r) => r.site === "ARL"), "site=arl must echo ARL and return the ARL weighs alone");
+    const feedPnn = await (await req("/feeds/trim-weighs.json?site=pnn")).json();
+    assert(feedPnn.site === "PNN" && feedPnn.rows.some((r) => r.id === feedBud.id) && feedPnn.rows.every((r) => r.site === "PNN"), "site=pnn must echo PNN and return the Penn North weighs alone");
     const feedElse = await (await req("/feeds/trim-weighs.json?site=PNS")).json();
-    assert(feedElse.rows.every((r) => r.site === "PNS") && !feedElse.rows.some((r) => r.id === feedBud.id), "site=PNS must leave the ARL weighs out");
+    assert(feedElse.rows.every((r) => r.site === "PNS") && !feedElse.rows.some((r) => r.id === feedBud.id), "site=PNS must leave the Penn North weighs out");
     const feedBadSite = await req("/feeds/trim-weighs.json?site=Penn%20North");
     assert(feedBadSite.status === 400 && (await feedBadSite.json()).error.startsWith("site must be a farm code"), "a bad site must answer 400 in words as JSON");
 
@@ -2772,7 +2810,7 @@ async function run() {
       sheet.body.includes("of wet, editable in Admin, Lookups"),
       "the yield note must point at Admin, Lookups"
     );
-    assert(sheet.body.includes("26011"), "drying gauge must show the extra lot serial");
+    assert(sheet.body.includes(otherHbn.slice(-5)), "drying gauge must show the extra lot serial");
     assert(sheet.body.includes('data-inv-block="wet-drying"'), "wet drying details must be present to expand");
     // FG INVENTORY IN METRC (canon 0.30.43): before any packages export is
     // mounted the pane says so and points at the mirror; the Zoho static is gone.
@@ -3266,7 +3304,7 @@ async function run() {
     });
     if (recallMint.status !== 303) fail("recall mint", `status ${recallMint.status}`);
     const minted3 = new URL(recallMint.headers.get("location") || "", base).searchParams.get("minted");
-    assert(minted3 && minted3.endsWith("-26012"), `recall mint expected serial 26012 got ${minted3}`);
+    assert(minted3 && minted3.endsWith("-26014"), `recall mint expected serial 26014 got ${minted3}`);
     const acquirePane = await text("/station/acquire_hbn");
     assert(acquirePane.body.includes(minted3), "recall pane must list the new weightless HBN");
     assert(acquirePane.body.includes('id="acquire-hbn-form"'), "acquire must carry the confirm-guard form id");
@@ -3307,7 +3345,7 @@ async function run() {
     });
     if (remint.status !== 303) fail("remint after recall", `status ${remint.status}`);
     const minted4 = new URL(remint.headers.get("location") || "", base).searchParams.get("minted");
-    assert(minted4 && minted4.endsWith("-26013"), `remint must skip the recalled serial, got ${minted4}`);
+    assert(minted4 && minted4.endsWith("-26015"), `remint must skip the recalled serial, got ${minted4}`);
 
     // Duplicate-lot guard (owner report 2026-09-01): an in-progress lot must never
     // hide behind a blank header form. Exactly one weighing lot: the pick 302s onto
@@ -3320,13 +3358,13 @@ async function run() {
     if (!guardLink) fail("guard pane", "missing the reminted batch link");
     const guardBatchId = guardLink[1];
     assert(
-      /^\d+\. ARL \/ /.test(guardLink[2]),
+      /^\d+\. PNN \/ /.test(guardLink[2]),
       `guard pane rows read 'N. Farm / Strain / Date', got ${guardLink[2]}`
     );
     const guardFresh = await text(`/station/wet_weight?pick=${guardBatchId}`);
     assert(
-      guardFresh.body.includes(`<p class="muted">${minted4}</p>`),
-      "guard pick must be the reminted batch (muted HBN)"
+      guardFresh.body.includes(`<p class="muted">${mintedPnn}</p>`) || guardFresh.body.includes(`<p class="muted">${mintedPnn2}</p>`),
+      "guard pick must be a Penn North batch (muted HBN)"
     );
     assert(guardFresh.res.status === 200, `fresh guard pick expected 200 got ${guardFresh.res.status}`);
     assert(
@@ -3588,11 +3626,11 @@ async function run() {
     const invRoomCsv = await text("/reports/inventory_by_location?format=csv");
     // Canon 0.30.23: the CSV reads Site,Location,Origin farm,Product type,Total,UOM;
     // the origin farm stays the HBN's (ARL) while the material sits at PNN.
-    assert(invRoomCsv.body.includes("PNN,Silo 2,ARL,WIP,200,g"), `the loaded lot must sit under Silo 2 at PNN with its ARL origin, got\n${invRoomCsv.body}`);
+    assert(invRoomCsv.body.includes("PNN,Silo 2,PNN,WIP,200,g"), `the loaded lot must sit under Silo 2 at PNN with its Penn North origin, got\n${invRoomCsv.body}`);
     assert(invRoomCsv.body.includes("PNN,Silo 2,,Wet total,200,g"), "Silo 2 must close with its Wet total row");
     assert(!/^ARL,ARL BARN,/m.test(invRoomCsv.body), "nothing lands in the ARL barn any more");
     const pnnBarnWip = (csv) => {
-      const m = csv.match(/^PNN,BARN,ARL,WIP,"?([0-9.,]+)"?,g/m);
+      const m = csv.match(/^PNN,BARN,PNN,WIP,"?([0-9.,]+)"?,g/m);
       return m ? Number(String(m[1]).replace(/,/g, "")) : 0;
     };
     const pnnBarnBefore = pnnBarnWip(invRoomCsv.body);
@@ -3668,7 +3706,7 @@ async function run() {
       Math.abs(pnnBarnWip(invAfterRoomCsv.body) - (pnnBarnBefore + 80)) < 0.005,
       `the unloaded material must return to PNN's barn at its dry weight (80 g more than ${pnnBarnBefore}), got\n${invAfterRoomCsv.body}`
     );
-    assert(!invAfterRoomCsv.body.includes("Silo 2,ARL,WIP"), "nothing may linger under the emptied Silo 2");
+    assert(!invAfterRoomCsv.body.includes("Silo 2,PNN,WIP"), "nothing may linger under the emptied Silo 2");
 
     const guardWeight2 = await req(`/station/wet_weight/lot/${guardLotId}/weights`, {
       method: "POST",
@@ -4365,7 +4403,7 @@ async function run() {
       method: "POST",
       body: form({
         entry_date: "2026-09-04",
-        farm_code: "ARL",
+        farm_code: "PNN",
         grow_method_code: "GH",
         strain_id: optionValue(acquire220.body, "Fruity Pebbles"),
         market_strain: "Rainbow Candies",
@@ -4376,12 +4414,12 @@ async function run() {
     const mkBatch = new URL(mk.headers.get("location") || "", base).searchParams.get("minted");
     assert(mkBatch, "no minted HBN for the market-strain batch");
     const wet220 = await text("/station/wet_weight");
-    assert(/\d+\. ARL \/ /.test(wet220.body), "wet queue rows must read 'N. Farm / Strain / Date'");
+    assert(/\d+\. PNN \/ /.test(wet220.body), "wet queue rows must read 'N. Farm / Strain / Date'");
     assert(!wet220.body.includes(`>${mkBatch}</a>`), "wet queue rows must not read the raw HBN");
     // The pane reads Farm / Strain / Date; walk the ARL rows to the minted HBN
     // (its picked page names the HBN muted).
     let pick220 = null;
-    for (const m of wet220.body.matchAll(/\?pick=([a-f0-9-]{36})">\d+\. ARL \//g)) {
+    for (const m of wet220.body.matchAll(/\?pick=([a-f0-9-]{36})">\d+\. PNN \//g)) {
       const page = await text(`/station/wet_weight?pick=${m[1]}&new=1`);
       if (page.body.includes(`<p class="muted">${mkBatch}</p>`)) {
         pick220 = page;
@@ -4439,8 +4477,8 @@ async function run() {
       return m ? Number(String(m[1]).replace(/,/g, "")) : 0;
     };
     const invBefore220 = await text("/reports/inventory_by_location?format=csv");
-    const barnArlBefore = csvRowTotal(invBefore220.body, "PNN,BARN,ARL,WIP");
-    assert(/^PNN,Silo 5,ARL,WET,"1,500",g/m.test(invBefore220.body), `the weighing lot must read WET under Silo 5 with its ARL origin, got\n${invBefore220.body}`);
+    const barnArlBefore = csvRowTotal(invBefore220.body, "PNN,BARN,PNN,WIP");
+    assert(/^PNN,Silo 5,PNN,WET,"1,500",g/m.test(invBefore220.body), `the weighing lot must read WET under Silo 5 with its Penn North origin, got\n${invBefore220.body}`);
     const fin220 = await req(`/station/wet_weight/lot/${lotId220}/finish`, { method: "POST", body: form({}) });
     assert(fin220.status === 303, `0.22.0 finish expected 303 got ${fin220.status}`);
     // THE BLANK SLATE (canon 0.30.108): born in PNN's barn under 832 (the silo
@@ -4448,10 +4486,10 @@ async function run() {
     // ARL barn, nothing on the road, no manifest.
     const inv220 = await text("/reports/inventory_by_location?format=csv");
     assert(
-      Math.abs(csvRowTotal(inv220.body, "PNN,BARN,ARL,WIP") - (barnArlBefore + 1500)) < 0.005,
+      Math.abs(csvRowTotal(inv220.body, "PNN,BARN,PNN,WIP") - (barnArlBefore + 1500)) < 0.005,
       `the ARL HBN's package must be born in PNN's barn with its ARL origin (1,500 g more than ${barnArlBefore}), got\n${inv220.body}`
     );
-    assert(!/Silo 5,ARL,WET/.test(inv220.body), "the finished lot no longer reads WET under Silo 5");
+    assert(!/Silo 5,PNN,WET/.test(inv220.body), "the finished lot no longer reads WET under Silo 5");
     assert(!/,ARL BARN,/.test(inv220.body), "nothing is born at the ARL barn any more");
     assert(!inv220.body.includes("IN-TRANSIT"), "no lot rides the road any more");
     const uploads220 = await text("/admin/uploads");
@@ -4522,11 +4560,11 @@ async function run() {
     );
     const invAfterMove = await text("/reports/inventory_by_location?format=csv");
     assert(
-      /^PNN,Silo 4,ARL,WIP,"1,500",g/m.test(invAfterMove.body),
+      /^PNN,Silo 4,PNN,WIP,"1,500",g/m.test(invAfterMove.body),
       `the location change must carry the born item to the space, under PNN with its ARL origin, got\n${invAfterMove.body}`
     );
     assert(
-      Math.abs(csvRowTotal(invAfterMove.body, "PNN,BARN,ARL,WIP") - barnArlBefore) < 0.005,
+      Math.abs(csvRowTotal(invAfterMove.body, "PNN,BARN,PNN,WIP") - barnArlBefore) < 0.005,
       `the moved item must leave the barn row (back to ${barnArlBefore}), got\n${invAfterMove.body}`
     );
 
@@ -4565,7 +4603,7 @@ async function run() {
     assert(!invByLoc.body.includes("IN-TRANSIT"), "no lot rides the road any more");
     assert(!invByLoc.body.includes("<td>ARL BARN</td>"), "nothing is born at the ARL barn any more");
     assert(
-      invByLoc.body.includes("<td>BARN</td><td>ARL</td><td>WIP</td>"),
+      invByLoc.body.includes("<td>BARN</td><td>PNN</td><td>WIP</td>"),
       "the ARL origin's material must count at PNN's barn with ARL as its origin column"
     );
     const acquirePns = await text("/station/acquire_hbn");
@@ -4573,15 +4611,23 @@ async function run() {
       method: "POST",
       body: form({
         entry_date: "2026-09-06",
-        farm_code: "PNS",
+        farm_code: "PNN",
         grow_method_code: "GH",
         strain_id: optionValue(acquirePns.body, "Fruity Pebbles"),
       }),
     });
     assert(mkPns.status === 303, `PNS acquire expected 303 got ${mkPns.status}`);
+    const pnsMinted = new URL(mkPns.headers.get("location") || "", base).searchParams.get("minted");
     const wetPanePns = await text("/station/wet_weight");
-    const pnsPick = (wetPanePns.body.match(/\?pick=([a-f0-9-]{36})">\d+\. PNS \//) || [])[1];
-    assert(pnsPick, "wet pane missing the PNS batch");
+    let pnsPick = "";
+    for (const m of wetPanePns.body.matchAll(/\?pick=([a-f0-9-]{36})">\d+\. PNN \//g)) {
+      const page = await text(`/station/wet_weight?pick=${m[1]}&new=1`);
+      if (page.body.includes(`<p class="muted">${pnsMinted}</p>`)) {
+        pnsPick = m[1];
+        break;
+      }
+    }
+    assert(pnsPick, "wet pane missing the Penn North batch for the filling walk");
     const pnsPicked = await text(`/station/wet_weight?pick=${pnsPick}`);
     const startPns = await req("/station/wet_weight", {
       method: "POST",
@@ -4615,7 +4661,7 @@ async function run() {
     // silo closes with its Wet total row; the PNS barn stays clean.
     assert(invWet.body.includes('data-report-group="PNN"'), "the report must head the PNN run with its site");
     assert(
-      invWet.body.includes("<td>Silo 3</td><td>PNS</td><td>WET</td><td>777</td><td>g</td>"),
+      invWet.body.includes("<td>Silo 3</td><td>PNN</td><td>WET</td><td>777</td><td>g</td>"),
       "a lot weighing into a silo must count as WET under that silo, its origin farm the column"
     );
     assert(
@@ -4627,7 +4673,7 @@ async function run() {
     // IN-TRANSIT and no barn but PNN's holds born material.
     assert(!invWet.body.includes("IN-TRANSIT"), "no lot rides the road any more");
     assert(!invWet.body.includes("<td>ARL BARN</td>"), "nothing sits at the ARL barn any more");
-    const pnnBarnWipRow = invWet.body.match(/<td>BARN<\/td><td>ARL<\/td><td>WIP<\/td><td>([0-9,.]+)<\/td><td>g<\/td>/);
+    const pnnBarnWipRow = invWet.body.match(/<td>BARN<\/td><td>PNN<\/td><td>WIP<\/td><td>([0-9,.]+)<\/td><td>g<\/td>/);
     assert(
       pnnBarnWipRow && Number(pnnBarnWipRow[1].replace(/,/g, "")) >= 80,
       `the ARL origin's unloaded material must show at PNN's barn (at least 80 g), got ${pnnBarnWipRow && pnnBarnWipRow[1]}`
@@ -4755,8 +4801,7 @@ async function run() {
     });
     assert(pencilOut.status === 303, `the Move To pencil on the finished lot expected 303 got ${pencilOut.status}`);
     const invPencil = await text("/reports/inventory_by_location?format=csv");
-    assert(invPencil.body.includes("PNN,Silo 3,PNN,WIP"), "the pencil must carry the package to Silo 3 (canon 0.28.6)");
-    assert(!invPencil.body.includes("PNN,BARN,PNN,WIP"), "the package has left the barn");
+    assert(/PNN,Silo 3,PNN,WIP,"?1,?132"?,g/.test(invPencil.body), `the pencil must carry the 1,132 g package to Silo 3, got\n${invPencil.body}`);
     const paneSevered = await text("/station/load_silo");
     assert(paneSevered.body.includes(`href="/station/load_silo?pick=${lot1132Batch}"`), "a finished lot stays on the pane wherever its package sits (canon 0.30.130)");
     const pickSevered = await text(`/station/load_silo?pick=${lot1132}`);
@@ -6550,8 +6595,8 @@ async function run() {
     // ARL lot's (26014), whose Move To pencil carried it there; the walk edits
     // the med lot's alone, so its row is found by its code.
     assert(reconcileSilo4.body.includes('data-reconcile-count>2<'), `Silo 4 must hold two packages, got ${(reconcileSilo4.body.match(/data-reconcile-count>(\d+)</) || [])[1]}`);
-    const reconcileItemId = (reconcileSilo4.body.match(/data-reconcile-item="([a-f0-9-]{36})"[\s\S]*?name="package_code__\1" value="26016"/) || [])[1];
-    assert(reconcileItemId, "the Silo 4 row for package 26016 must carry its item id");
+    const reconcileItemId = (reconcileSilo4.body.match(/data-reconcile-item="([a-f0-9-]{36})"[\s\S]*?name="package_code__\1" value="26018"/) || [])[1];
+    assert(reconcileItemId, "the Silo 4 row for package 26018 must carry its item id");
     assert(reconcileSilo4.body.includes(`name="qty__${reconcileItemId}" value="1132"`), "the grams box must carry the package's grams");
     assert(reconcileSilo4.body.includes(`<select name="location__${reconcileItemId}">`), "the row must carry the location select");
     assert(reconcileSilo4.body.includes('<form class="stack" method="post" action="/admin/reconcile-location/purge" data-reconcile-purge-form>'), "the purge form must stand");
@@ -6705,9 +6750,9 @@ async function run() {
     const aliasLine = sheetExport.find((line) => line.includes(aliasMetrc)) || "";
     const agreeLine = sheetExport.find((line) => line.includes(agreeHbn)) || "";
     const knownLine = sheetExport.find((line) => line.includes("26244-ARL-GH-027-0-NA-26010")) || "";
-    assert(aliasLine.endsWith(",sheet") && !sheetExport.some((line) => line.includes(aliasSheet)), `serial 80 must be minted under METRC's text, got ${aliasLine}`);
-    assert(agreeLine.endsWith(",sheet"), `the agreeing lot must keep the sheet's text, got ${agreeLine}`);
-    assert(knownLine.includes("Smoke Cream") && knownLine.endsWith(",app"), `the app batch must take the sheet's market strain and stay app-born, got ${knownLine}`);
+    assert(aliasLine.endsWith(",sheet,,") && !sheetExport.some((line) => line.includes(aliasSheet)), `serial 80 must be minted under METRC's text, got ${aliasLine}`);
+    assert(agreeLine.endsWith(",sheet,,"), `the agreeing lot must keep the sheet's text, got ${agreeLine}`);
+    assert(knownLine.includes("Smoke Cream") && knownLine.endsWith(",app,,"), `the app batch must take the sheet's market strain and stay app-born, got ${knownLine}`);
     const sheetLog = await text("/log");
     assert(sheetLog.body.includes("<td>harvest details (sync)</td>") && sheetLog.body.includes("<td>Smoke Cream</td>"), "the market strain change must be logged under harvest details (sync)");
     const sheetId = aliasLine.split(",")[0];
@@ -7032,14 +7077,14 @@ async function run() {
       schedPaneOf(byNewHbn.body, "working").includes(`data-schedule-tag="${MB105}" data-schedule-hbn="${NEW_HBN}">`) && byNewHbn.body.includes(`data-schedule-tag="${TAG_Q}" data-schedule-hbn="${pickedHbn}" hidden>`),
       "?q= by the minted HBN must keep its package and hide the others"
     );
-    // born_from is harvest_batches' last column, so each export line ends with it.
+    // born_from is followed by the in-transit close columns (0083), empty until YES.
     const batchesCsv = (await text("/export/harvest_batches.csv")).body.split(/\r?\n/);
     const newLine = batchesCsv.find((line) => line.includes(NEW_HBN)) || "";
-    assert(batchesCsv[0].endsWith(",born_from") && newLine.endsWith(",metrc"), `the minted batch must be born from METRC, got ${newLine}`);
+    assert(batchesCsv[0].endsWith(",born_from,field_closed_at,field_closed_by") && newLine.endsWith(",metrc,,"), `the minted batch must be born from METRC, got ${newLine}`);
     assert(newLine.includes(",2026,open,") || newLine.includes(",7,2026,"), `the minted batch must carry 2026 serial 7, got ${newLine}`);
     const newBatchId = newLine.split(",")[0];
     const appLines = batchesCsv.filter((line) => line.includes(pickedHbn));
-    assert(appLines.length === 1 && appLines[0].endsWith(",app"), "the app's own batch must stay born from the app");
+    assert(appLines.length === 1 && appLines[0].endsWith(",app,,"), "the app's own batch must stay born from the app");
     const queuesNew = await text("/admin/queues");
     assert(!queuesNew.body.includes(NEW_HBN), "the HBN Queue must leave the METRC-born batch out");
     const wetNew = await text("/station/wet_weight");
@@ -7081,7 +7126,7 @@ async function run() {
     assert(histWork.includes(`data-schedule-tag="${HIST}" data-schedule-hbn="${aliasMetrc}">`) && histWork.includes("Sheet Apple - 33 g"), "the adopted package must read the sheet's market strain");
     const batchesAfterHist = (await text("/export/harvest_batches.csv")).body;
     assert(batchesAfterHist.split(aliasMetrc).length === batchesBeforeHist.split(aliasMetrc).length, ">> on a known lot must mint nothing");
-    assert((batchesAfterHist.split(/\r?\n/).find((line) => line.includes(aliasMetrc)) || "").endsWith(",sheet"), "the historical lot stays sheet-born");
+    assert((batchesAfterHist.split(/\r?\n/).find((line) => line.includes(aliasMetrc)) || "").endsWith(",sheet,,"), "the historical lot stays sheet-born");
 
     const queuesFold = await text("/admin/queues");
     assert(queuesFold.body.includes('data-fold="hbn_queue" open') && queuesFold.body.includes('data-fold="logistics_moves" open'), "Data Queues folds must render open");
@@ -7241,15 +7286,9 @@ async function run() {
     assert(truckFinishLoc.includes("ok=truck_split") && truckFinishLoc.includes("truck=1"), `the flash must name Truck 1, got ${truckFinishLoc}`);
     const dryQueue = await text("/logistics/internal");
     const dryAvail = dryQueue.body.slice(dryQueue.body.indexOf('data-schedule-pane="available"'), dryQueue.body.indexOf('data-schedule-pane="working"'));
-    assert(dryAvail.includes(headerHbn) && dryAvail.includes(otherHbnFull), "Finish load puts both lots in the Dry Queue");
-    const beforePass = await text("/station/load_silo");
-    assert(!beforePass.body.includes(`Truck 1 - ${headerHbn}`), "Finish load must not put a lot on Load Silo");
-    for (const hbn of [headerHbn, otherHbnFull]) {
-      const row = dryAvail.match(new RegExp(`data-logistics-lot="([^"]+)" data-logistics-parts="[^"]*" data-logistics-hbn="${hbn}"`));
-      assert(row, `the Dry Queue must carry ${hbn}`);
-      const passed = await req("/logistics/internal/schedule", { method: "POST", body: form({ harvest_batch_id: row[1] }) });
-      assert(passed.status === 303, `passing ${hbn} expected 303 got ${passed.status} ${await passed.text()}`);
-    }
+    const dryWork = dryQueue.body.slice(dryQueue.body.indexOf('data-schedule-pane="working"'), dryQueue.body.indexOf('data-schedule-pane="complete"'));
+    assert(dryWork.includes(headerHbn) && dryWork.includes(otherHbnFull), "a Penn North finish schedules both lots");
+    assert(!dryAvail.includes(headerHbn) && !dryAvail.includes(otherHbnFull), "a Penn North finish leaves both lots off the Dry Queue");
     const loadPane = await text("/station/load_silo");
     assert(loadPane.body.includes(`Truck 1 - ${headerHbn}`), `Load Silo must label Truck 1 - ${headerHbn}`);
     assert(loadPane.body.includes(`Truck 1 - ${otherHbnFull}`), `Load Silo must label Truck 1 - ${otherHbnFull}`);
@@ -7385,13 +7424,9 @@ async function run() {
     assert(!logisticsNode.includes(">Truck</span>"), "the on-site two-part lot is off the Logistics line");
     assert(!mapBefore.body.slice(mapBefore.body.indexOf('data-ops-key="marketplace"'), mapBefore.body.indexOf('data-ops-key="marketplace"') + 800).includes("ops-menu-line"), "Marketplace carries no menu line");
     const twoQueue = await text("/logistics/internal");
-    const twoAvail = twoQueue.body.slice(twoQueue.body.indexOf('data-schedule-pane="available"'), twoQueue.body.indexOf('data-schedule-pane="working"'));
-    const twoRow = twoAvail.match(new RegExp(`data-logistics-lot="${twoBatch}" data-logistics-parts="([^"]*)"`));
-    assert(twoRow && twoParts.every((id) => twoRow[1].split(/\s+/).includes(id)), "both parts must sit on one Dry Queue lot");
-    const twoPass = await req("/logistics/internal/schedule", { method: "POST", body: form({ harvest_batch_id: twoBatch }) });
-    assert(twoPass.status === 303, `passing the two-part lot expected 303 got ${twoPass.status} ${await twoPass.text()}`);
-    const twoDesk = await text("/logistics/internal");
-    const twoSched = twoDesk.body.slice(twoDesk.body.indexOf('data-schedule-pane="working"'), twoDesk.body.indexOf('data-schedule-pane="complete"'));
+    const twoSched = twoQueue.body.slice(twoQueue.body.indexOf('data-schedule-pane="working"'), twoQueue.body.indexOf('data-schedule-pane="complete"'));
+    const twoRow = twoSched.match(new RegExp(`data-logistics-lot="${twoBatch}" data-logistics-parts="([^"]*)"`));
+    assert(twoRow && twoParts.every((id) => twoRow[1].split(/\s+/).includes(id)), "both parts ride the open Penn North pass");
     const twoHref = (twoSched.match(new RegExp(`href="(/station/load_silo\\?pick=${twoBatch})"`)) || [])[1];
     assert(twoHref, "the Scheduled > must open Load Silo on the harvest batch");
     const twoPick = await text(twoHref);
@@ -7681,7 +7716,7 @@ async function run() {
     const pairStrain = optionValue(pairAcquire.body, "Fruity Pebbles");
     const pairMint = await req("/station/acquire_hbn", {
       method: "POST",
-      body: form({ entry_date: "2026-09-01", farm_code: "ARL", grow_method_code: "GH", strain_id: pairStrain }),
+      body: form({ entry_date: "2026-09-01", farm_code: "PNN", grow_method_code: "GH", strain_id: pairStrain }),
     });
     assert(pairMint.status === 303, `pair mint expected 303 got ${pairMint.status} ${await pairMint.text()}`);
     const pairHbn = new URL(pairMint.headers.get("location") || "", base).searchParams.get("minted");
@@ -7925,6 +7960,249 @@ async function run() {
     const mixCsv = await text("/reports/product_mix?format=csv");
     const mixLines = mixCsv.body.replace(/\r\n$/, "").split("\r\n").filter((line) => line.length > 0);
     assert(mixLines[mixLines.length - 1].startsWith("Total"), `the CSV's last line must begin with Total, got ${mixLines[mixLines.length - 1]}`);
+
+    // THE TWO HARVEST NODES, part two, and THE IN-TRANSIT RULE. A load for Penn
+    // North, Finish Load NO, the Dry Queue lines, a second load that merges,
+    // the passes that receive the loads, YES closing the HBN, the Demote, then
+    // reopen, an HBN change, a pencil, and a void.
+    const fieldEmpty = await text("/station/field_harvest");
+    assert(fieldEmpty.res.status === 200, `GET field harvest expected 200 got ${fieldEmpty.res.status}`);
+    assert(fieldEmpty.body.includes("Penn South/Arlington Harvest"), "the field station must carry its title");
+    assert(fieldEmpty.body.includes("Start a new load"), "the left pane must offer Start a new load");
+    assert(fieldEmpty.body.includes('name="operator_name"'), "the empty header must carry Operator");
+    assert(fieldEmpty.body.includes('name="destination_farm_code"'), "the empty header must carry Destination");
+    assert(fieldEmpty.body.includes(">START<"), "the empty header must carry START");
+    assert(fieldEmpty.body.includes(">Penn North<") && fieldEmpty.body.includes(">Arlington<"), "Destination must list Penn North and Arlington");
+    assert(!fieldEmpty.body.includes(">Penn South<"), "Penn South is not a destination");
+    const esFieldOn = await req("/locale", { method: "POST", body: form({ locale: "es" }) });
+    assert(esFieldOn.status === 303, `locale switch expected 303 got ${esFieldOn.status}`);
+    await esFieldOn.text();
+    const esField = await text("/station/field_harvest");
+    assert(esField.body.includes("Cosecha Penn South/Arlington"), "the Spanish shell must title the field station");
+    assert(esField.body.includes("Iniciar una carga nueva"), "the Spanish shell must translate Start a new load");
+    const esFieldBack = await req("/locale", { method: "POST", body: form({ locale: "en" }) });
+    assert(esFieldBack.status === 303, `locale switch back expected 303 got ${esFieldBack.status}`);
+    await esFieldBack.text();
+    const fieldNoDest = await req("/station/field_harvest/start", { method: "POST", body: form({ operator_name: "Field Hand" }) });
+    assert(fieldNoDest.status === 400 && (await fieldNoDest.text()).includes("Destination is required."), "a start without a destination must refuse in words");
+    const acquireField = await text("/station/acquire_hbn");
+    const fieldStrain = optionValue(acquireField.body, "Fruity Pebbles");
+    const mintField = async (farm) => {
+      const mk = await req("/station/acquire_hbn", {
+        method: "POST",
+        body: form({ entry_date: "2026-09-18", farm_code: farm, grow_method_code: "GH", strain_id: fieldStrain }),
+      });
+      assert(mk.status === 303, `field HBN acquire ${farm} expected 303 got ${mk.status} ${await mk.text()}`);
+      const hbn = new URL(mk.headers.get("location") || "", base).searchParams.get("minted");
+      const id = new URL(mk.headers.get("location") || "", base).searchParams.get("id") || "";
+      return { hbn, id };
+    };
+    const fieldArl = await mintField("ARL");
+    const fieldPns = await mintField("PNS");
+    const fieldPns2 = await mintField("PNS");
+    assert(fieldArl.hbn && fieldArl.hbn.includes("-ARL-"), `field ARL HBN missing, got ${fieldArl.hbn}`);
+    assert(fieldPns.hbn && fieldPns.hbn.includes("-PNS-"), `field PNS HBN missing, got ${fieldPns.hbn}`);
+    const optionId = (body, hbn) => {
+      const match = [...body.matchAll(/<option value="([^"]+)">[^<]*\(([^)]+)\)<\/option>/g)].find((row) => row[2] === hbn);
+      assert(match, `the field select must offer ${hbn}`);
+      return match[1];
+    };
+    const fieldStart = await req("/station/field_harvest/start", {
+      method: "POST",
+      body: form({ operator_name: "Field Hand", destination_farm_code: "PNN" }),
+    });
+    assert(fieldStart.status === 303, `field start expected 303 got ${fieldStart.status} ${await fieldStart.text()}`);
+    const fieldLoad1 = new URL(fieldStart.headers.get("location") || "", base).searchParams.get("load");
+    assert(fieldLoad1, "field start must redirect to the load");
+    const fieldOpened = await text(`/station/field_harvest?load=${fieldLoad1}`);
+    assert(fieldOpened.body.includes("<dt>Operator</dt><dd>Field Hand</dd>"), "an open load must read its operator");
+    assert(fieldOpened.body.includes("<dt>Destination</dt><dd>Penn North</dd>"), "an open load must read Penn North");
+    assert(fieldOpened.body.includes('<details class="field-finish" data-finish-load>'), "the Finish Load block starts closed");
+    assert(fieldOpened.body.includes('<summary class="btn" data-finish-open>Finish Load</summary>'), "the Finish Load button must stand under the totes");
+    const fieldSelect = (fieldOpened.body.match(/<select name="harvest_batch_id">([\s\S]*?)<\/select>/) || [])[1] || "";
+    assert(fieldSelect.includes('value="" selected'), "the HBN select is null on load");
+    const fieldArlId = optionId(fieldOpened.body, fieldArl.hbn);
+    const fieldPnsId = optionId(fieldOpened.body, fieldPns.hbn);
+    const fieldPns2Id = optionId(fieldOpened.body, fieldPns2.hbn);
+    const fieldBadGram = await req(`/station/field_harvest/load/${fieldLoad1}/weights`, {
+      method: "POST",
+      body: form({ weight_grams: "1.5", harvest_batch_id: fieldArlId }),
+    });
+    assert(fieldBadGram.status === 400 && (await fieldBadGram.text()).includes("Weight must be a whole gram, zero or more."), "a fractional gram must refuse");
+    const addFieldTote = async (loadId, hbnId, grams) => {
+      const res = await req(`/station/field_harvest/load/${loadId}/weights`, {
+        method: "POST",
+        body: form({ weight_grams: grams, harvest_batch_id: hbnId }),
+      });
+      assert(res.status === 303, `field weight expected 303 got ${res.status} ${await res.text()}`);
+      return new URL(res.headers.get("location") || "", base);
+    };
+    const afterFirst = await addFieldTote(fieldLoad1, fieldArlId, "100");
+    assert(afterFirst.searchParams.get("carry") === "1", "a + must carry the last pick");
+    const carried = await text(afterFirst.pathname + afterFirst.search);
+    const carriedSelect = (carried.body.match(/data-field-entry[\s\S]*?<select name="harvest_batch_id">([\s\S]*?)<\/select>/) || [])[1] || "";
+    assert(carriedSelect.includes(`value="${fieldArlId}" selected`), "the select must keep the ARL HBN after +");
+    await addFieldTote(fieldLoad1, fieldArlId, "40");
+    const afterPns = await addFieldTote(fieldLoad1, fieldPnsId, "15");
+    const carriedPns = await text(afterPns.pathname + afterPns.search);
+    const pnsSelect = (carriedPns.body.match(/data-field-entry[\s\S]*?<select name="harvest_batch_id">([\s\S]*?)<\/select>/) || [])[1] || "";
+    assert(pnsSelect.includes(`value="${fieldPnsId}" selected`), "the select must carry the PNS HBN, the last pick");
+    assert((carriedPns.body.match(/data-field-tote=/g) || []).length === 3, "the load must list three totes");
+    const fieldNo = await req(`/station/field_harvest/load/${fieldLoad1}/send`, { method: "POST", body: form({}) });
+    assert(fieldNo.status === 303, `Finish Load NO expected 303 got ${fieldNo.status} ${await fieldNo.text()}`);
+    const sentPane = await text("/station/field_harvest");
+    assert(sentPane.body.includes(`data-sent-load="${fieldLoad1}"`), "the sent load must stand on Loads sent");
+    assert(sentPane.body.includes("IN-TRANSIT"), "a sent load must read IN-TRANSIT");
+    assert(sentPane.body.includes('name="pin"'), "the reopen control must carry the PIN");
+    const logisticsPanes = (body) => ({
+      available: body.slice(body.indexOf('data-schedule-pane="available"'), body.indexOf('data-schedule-pane="working"')),
+      working: body.slice(body.indexOf('data-schedule-pane="working"'), body.indexOf('data-schedule-pane="complete"')),
+    });
+    const logisticsLi = (pane, hbn) => pane.match(new RegExp(`<li class="schedule-item"[^>]*data-logistics-hbn="${hbn}"[\\s\\S]*?</li>`))?.[0] || "";
+    const logisticsParts = (body, hbn) =>
+      [...body.matchAll(new RegExp(`data-logistics-parts="([^"]*)"[^>]*data-logistics-hbn="${hbn}"`, "g"))].flatMap((row) =>
+        row[1].split(" ").filter(Boolean)
+      );
+    const sentLoadsPane = (body) => body.slice(body.indexOf("data-loads-sent"));
+    const queueAfterNo = await text("/logistics/internal");
+    const exposed = logisticsPanes(queueAfterNo.body);
+    const arlExposed = logisticsLi(exposed.available, fieldArl.hbn);
+    const pnsExposed = logisticsLi(exposed.available, fieldPns.hbn);
+    assert(arlExposed.includes("data-logistics-in-transit"), "the ARL HBN must be an in-transit Dry Queue line");
+    assert(pnsExposed.includes("data-logistics-in-transit"), "the PNS HBN must be an in-transit Dry Queue line");
+    assert(arlExposed.includes("in transit, 1 load"), "one sent load reads 1 load");
+    assert(pnsExposed.includes("in transit, 1 load"), "the PNS line reads 1 load");
+    assert(arlExposed.includes('data-wet-grams="140"'), "the ARL line must carry the lot's grams");
+    const siloBefore = await text("/station/load_silo");
+    assert(!siloBefore.body.includes(fieldArl.hbn), "Load Silo must not list a weighing ARL lot");
+    assert(!siloBefore.body.includes(fieldPns.hbn), "Load Silo must not list a weighing PNS lot");
+    const fieldStart2 = await req("/station/field_harvest/start", {
+      method: "POST",
+      body: form({ operator_name: "Field Hand", destination_farm_code: "PNN" }),
+    });
+    assert(fieldStart2.status === 303, `second field start expected 303 got ${fieldStart2.status} ${await fieldStart2.text()}`);
+    const fieldLoad2 = new URL(fieldStart2.headers.get("location") || "", base).searchParams.get("load");
+    assert(fieldLoad2, "the second load must redirect");
+    const fieldOpened2 = await text(`/station/field_harvest?load=${fieldLoad2}`);
+    assert(optionId(fieldOpened2.body, fieldArl.hbn) === fieldArlId, "Finish Load NO must leave the ARL HBN on the select");
+    assert(optionId(fieldOpened2.body, fieldPns.hbn) === fieldPnsId, "Finish Load NO must leave the PNS HBN on the select");
+    const secondArl = await addFieldTote(fieldLoad2, fieldArlId, "6");
+    assert(secondArl.searchParams.get("carry") === "1", "the second load's last + must carry");
+    const yesPage = await text(`/station/field_harvest?load=${fieldLoad2}&finish=ask`);
+    assert(yesPage.body.includes('<details class="field-finish" data-finish-load open>'), "YES must open the Finish Load block");
+    assert(yesPage.body.includes("Would you like to finish any HBNs on this load?"), "YES must show the first warning");
+    assert(yesPage.body.includes('<label class="field-finish-item">'), "the checkbox list is one HBN per line");
+    assert(yesPage.body.includes("Are you sure you want to finish adding weights to HBN(s): {list}?"), "the second warning must be in the markup");
+    const fieldNo2 = await req(`/station/field_harvest/load/${fieldLoad2}/send`, { method: "POST", body: form({}) });
+    assert(fieldNo2.status === 303, `the second Finish Load NO expected 303 got ${fieldNo2.status} ${await fieldNo2.text()}`);
+    const mergedQueue = await text("/logistics/internal");
+    const merged = logisticsLi(logisticsPanes(mergedQueue.body).available, fieldArl.hbn);
+    assert(merged.includes("data-logistics-in-transit"), "the merged ARL line stays one in-transit row");
+    assert(merged.includes("in transit, 2 loads"), "the second load must raise the loads count");
+    assert(merged.includes('data-wet-grams="146"'), "the ARL line must carry both loads' grams");
+    assert((logisticsPanes(mergedQueue.body).available.match(new RegExp(`data-logistics-hbn="${fieldArl.hbn}"`, "g")) || []).length === 1, "the ARL HBN is one Dry Queue line");
+    const passArl = await req("/logistics/internal/schedule", { method: "POST", body: form({ harvest_batch_id: fieldArlId }) });
+    assert(passArl.status === 303, `>> on the ARL HBN expected 303 got ${passArl.status} ${await passArl.text()}`);
+    const afterArl = await text("/logistics/internal");
+    const afterArlPanes = logisticsPanes(afterArl.body);
+    assert(afterArlPanes.working.includes(`data-logistics-hbn="${fieldArl.hbn}"`), "the pass must schedule the ARL HBN");
+    assert(!afterArlPanes.available.includes(fieldArl.hbn), "the passed ARL line must leave the Dry Queue");
+    assert(afterArlPanes.available.includes(`data-logistics-hbn="${fieldPns.hbn}"`), "the PNS line stays in transit");
+    const arlPartId = (logisticsLi(afterArlPanes.working, fieldArl.hbn).match(/data-logistics-parts="([^"]+)"/) || [])[1] || "";
+    assert(arlPartId && !arlPartId.includes(" "), "the pass finishes the one weighing lot");
+    const dryAfterPass = queueSectionHtml((await text("/admin/queues")).body, "dry_space_queue");
+    assert(dryAfterPass.includes(arlPartId), "the passed lot must be drying");
+    const siloPick = await text(`/station/load_silo?pick=${fieldArlId}`);
+    assert(siloPick.body.includes(`<dt>Package</dt><dd>${fieldArl.hbn.slice(-5)}</dd>`), "the pass must mint the born package");
+    const sentAfterArl = await text("/station/field_harvest");
+    assert(!sentLoadsPane(sentAfterArl.body).includes(`data-sent-load="${fieldLoad2}"`), "the ARL-only load must leave Loads sent");
+    assert(sentLoadsPane(sentAfterArl.body).includes(`data-sent-load="${fieldLoad1}"`), "the load with an open PNS HBN stays in transit");
+    const passPns = await req("/logistics/internal/schedule", { method: "POST", body: form({ harvest_batch_id: fieldPnsId }) });
+    assert(passPns.status === 303, `>> on the PNS HBN expected 303 got ${passPns.status} ${await passPns.text()}`);
+    const sentAfterBoth = await text("/station/field_harvest");
+    assert(!sentLoadsPane(sentAfterBoth.body).includes("data-sent-load"), "both passes must empty Loads sent");
+    const reopenReceived = await req(`/station/field_harvest/load/${fieldLoad1}/reopen`, { method: "POST", body: form({ pin: ADMIN_PIN }) });
+    assert(reopenReceived.status === 400, `a received load must refuse <<, got ${reopenReceived.status}`);
+    const fieldStart3 = await req("/station/field_harvest/start", {
+      method: "POST",
+      body: form({ operator_name: "Field Hand", destination_farm_code: "PNN" }),
+    });
+    assert(fieldStart3.status === 303, `third field start expected 303 got ${fieldStart3.status} ${await fieldStart3.text()}`);
+    const fieldLoad3 = new URL(fieldStart3.headers.get("location") || "", base).searchParams.get("load");
+    assert(fieldLoad3, "the third load must redirect");
+    const fieldOpened3 = await text(`/station/field_harvest?load=${fieldLoad3}`);
+    assert(optionId(fieldOpened3.body, fieldArl.hbn) === fieldArlId, "a pass must leave the HBN on the select");
+    const partsBeforeYes = logisticsParts((await text("/logistics/internal")).body, fieldArl.hbn);
+    await addFieldTote(fieldLoad3, fieldArlId, "20");
+    const fieldYes = await req(`/station/field_harvest/load/${fieldLoad3}/send`, { method: "POST", body: form({ hbn: fieldArlId }) });
+    assert(fieldYes.status === 303, `Finish Load YES expected 303 got ${fieldYes.status} ${await fieldYes.text()}`);
+    const fieldStart4 = await req("/station/field_harvest/start", {
+      method: "POST",
+      body: form({ operator_name: "Field Hand", destination_farm_code: "PNN" }),
+    });
+    assert(fieldStart4.status === 303, `fourth field start expected 303 got ${fieldStart4.status} ${await fieldStart4.text()}`);
+    const fieldLoad4 = new URL(fieldStart4.headers.get("location") || "", base).searchParams.get("load");
+    assert(fieldLoad4, "the fourth load must redirect");
+    const fieldOpened4 = await text(`/station/field_harvest?load=${fieldLoad4}`);
+    assert(!fieldOpened4.body.includes(`(${fieldArl.hbn})`), "YES must take the HBN off the select");
+    const plusClosed = await req(`/station/field_harvest/load/${fieldLoad4}/weights`, {
+      method: "POST",
+      body: form({ weight_grams: "2", harvest_batch_id: fieldArlId }),
+    });
+    assert(plusClosed.status === 400 && (await plusClosed.text()).includes("That HBN is not on this list."), "+ on a closed HBN must refuse");
+    await addFieldTote(fieldLoad4, fieldPns2Id, "8");
+    const closedPage = await text(`/station/field_harvest?load=${fieldLoad4}`);
+    const toteHref = (closedPage.body.match(/action="(\/station\/field_harvest\/weights\/[^"]+\/hbn)"/) || [])[1];
+    assert(toteHref, "the content pane must post an HBN change");
+    const changeToClosed = await req(toteHref, { method: "POST", body: form({ harvest_batch_id: fieldArlId, pin: ADMIN_PIN }) });
+    assert(changeToClosed.status === 400 && (await changeToClosed.text()).includes("That HBN is not on this list."), "a change onto a closed HBN must refuse");
+    const partsAfterYes = logisticsParts((await text("/logistics/internal")).body, fieldArl.hbn);
+    const freshParts = partsAfterYes.filter((id) => !partsBeforeYes.includes(id));
+    assert(freshParts.length === 1, `YES must finish a new lot, saw ${freshParts.join(" ")} against ${partsBeforeYes.join(" ")}`);
+    const fieldDemote = await req("/queue/dry_space_queue/control", {
+      method: "POST",
+      body: form({ id: freshParts[0], control: "demote" }),
+    });
+    assert(fieldDemote.status === 303, `demote expected 303 got ${fieldDemote.status} ${await fieldDemote.text()}`);
+    const reopenedSelect = await text(`/station/field_harvest?load=${fieldLoad4}`);
+    assert(optionId(reopenedSelect.body, fieldArl.hbn) === fieldArlId, "the Demote must return the HBN to the select");
+    const fieldSend4 = await req(`/station/field_harvest/load/${fieldLoad4}/send`, { method: "POST", body: form({}) });
+    assert(fieldSend4.status === 303, `the fourth send expected 303 got ${fieldSend4.status} ${await fieldSend4.text()}`);
+    const reopenNo = await req(`/station/field_harvest/load/${fieldLoad4}/reopen`, { method: "POST", body: form({ pin: "00000" }) });
+    assert(reopenNo.status === 403, `reopen without the PIN expected 403 got ${reopenNo.status}`);
+    const reopenOk = await req(`/station/field_harvest/load/${fieldLoad4}/reopen`, { method: "POST", body: form({ pin: ADMIN_PIN }) });
+    assert(reopenOk.status === 303, `reopen with the PIN expected 303 got ${reopenOk.status} ${await reopenOk.text()}`);
+    const reopened = await text(`/station/field_harvest?load=${fieldLoad4}`);
+    assert(reopened.body.includes(`data-field-load="${fieldLoad4}"`), "the reopened load must stand in the middle");
+    const reopenedTote = (reopened.body.match(/action="(\/station\/field_harvest\/weights\/[^"]+\/hbn)"/) || [])[1];
+    assert(reopenedTote, "the reopened load must still post an HBN change");
+    const hbnChange = await req(reopenedTote, { method: "POST", body: form({ harvest_batch_id: fieldArlId, pin: ADMIN_PIN }) });
+    assert(hbnChange.status === 303, `HBN change expected 303 got ${hbnChange.status} ${await hbnChange.text()}`);
+    const fieldChanged = await text(`/station/field_harvest?load=${fieldLoad4}`);
+    assert(fieldChanged.body.includes(`(${fieldArl.hbn})`), "the tote must show the HBN the Demote returned");
+    const fieldPencil = (fieldChanged.body.match(/href="(\/record\/wet_weights\/[^"]+\/edit\?back=[^"]+)"/) || [])[1];
+    assert(fieldPencil, "the pencil must return to this load");
+    const fieldPencilPage = await text(fieldPencil.replaceAll("&amp;", "&"));
+    assert(fieldPencilPage.res.status === 200 && fieldPencilPage.body.includes('name="back"'), `the pencil page must carry back, got ${fieldPencilPage.res.status}`);
+    const fieldPencilBack = (fieldPencilPage.body.match(/name="back" value="([^"]+)"/) || [])[1];
+    const fieldPencilSave = await req(fieldPencil.split("?")[0], {
+      method: "POST",
+      body: form({ weight_grams: "9", reason: "smoke: field pencil", back: fieldPencilBack }),
+    });
+    assert(fieldPencilSave.status === 303, `the pencil save expected 303 got ${fieldPencilSave.status} ${await fieldPencilSave.text()}`);
+    assert((fieldPencilSave.headers.get("location") || "").includes(`/station/field_harvest?load=${fieldLoad4}`), "the pencil must return to the load");
+    const fieldAfterPencil = await text(`/station/field_harvest?load=${fieldLoad4}`);
+    assert(fieldAfterPencil.body.includes("<td>9</td>"), "the edited weight must show");
+    const fieldVoidHref = (fieldAfterPencil.body.match(/href="(\/record\/wet_weights\/[^"]+\/void\?back=[^"]+)"/) || [])[1];
+    assert(fieldVoidHref, "the X must return to this load");
+    const fieldVoidPage = await text(fieldVoidHref.replaceAll("&amp;", "&"));
+    const fieldVoidBack = (fieldVoidPage.body.match(/name="back" value="([^"]+)"/) || [])[1];
+    const fieldVoided = await req(fieldVoidHref.split("?")[0].replaceAll("&amp;", "&"), {
+      method: "POST",
+      body: form({ reason: "smoke: field void", back: fieldVoidBack }),
+    });
+    assert(fieldVoided.status === 303, `the void expected 303 got ${fieldVoided.status} ${await fieldVoided.text()}`);
+    assert((fieldVoided.headers.get("location") || "").includes(`/station/field_harvest?load=${fieldLoad4}`), "the void must return to the load");
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

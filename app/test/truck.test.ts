@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addLotWeight, editRecord, finishLot } from "../src/actions";
+import { addLotWeight, createWetWeight, editRecord, finishLot } from "../src/actions";
 import { nowIso } from "../src/audit";
 import { nextTruckNumber, shortLotId, SYSTEM_REASON } from "../src/config";
 import { listFarmDayTruckNumbers, listOpenFarmHbns, listPaneRows, listWetWeightUploadReads } from "../src/db";
@@ -111,11 +111,11 @@ describe("THE TRUCK RECORD (canon 0.30.226)", () => {
     expect(html).toContain("data-truck-number");
     expect(html).toContain("Truck 1 - 26244-ARL-GH-027-0-NA-26041");
     await expect(
-      addLotWeight(m.db, station, "lot-1", formOf({ person_id: person, weight_grams: "10", harvest_batch_id: "hb-pnn" }))
+      addLotWeight(m.db, station, "lot-1", formOf({ person_id: person, weight_grams: "10", harvest_batch_id: "hb-3" }))
     ).rejects.toMatchObject({ message: "That HBN is not on this lot's list." });
-    const kept = await addLotWeight(m.db, station, "lot-1", formOf({ person_id: person, weight_grams: "10", harvest_batch_id: "hb-3" }));
+    const kept = await addLotWeight(m.db, station, "lot-1", formOf({ person_id: person, weight_grams: "10", harvest_batch_id: "hb-pnn" }));
     expect(kept.redirect).toContain("lot-1");
-    expect(m.get(`SELECT harvest_batch_id FROM wet_weights WHERE weight_grams = 10`)?.harvest_batch_id).toBe("hb-3");
+    expect(m.get(`SELECT harvest_batch_id FROM wet_weights WHERE weight_grams = 10`)?.harvest_batch_id).toBe("hb-pnn");
   });
 
   it("Finish lot splits a truck into one lot per HBN, one package each", async () => {
@@ -265,5 +265,54 @@ describe("THE TRUCK RECORD (canon 0.30.226)", () => {
     expect(m.get(`SELECT harvest_batch_id FROM wet_weights WHERE id = 'w-null'`)?.harvest_batch_id).toBe("hb-3");
     expect(m.get(`SELECT harvest_batch_id FROM wet_weights WHERE id = 'w-own'`)?.harvest_batch_id).toBe("hb-3");
     expect(m.get(`SELECT harvest_batch_id FROM wet_weights WHERE id = 'w-other'`)?.harvest_batch_id).toBe("hb-2");
+  });
+});
+
+describe("Penn North Harvest (canon 0.30.317)", () => {
+  const HANG = "a1000001-0001-4000-8000-000000000007";
+
+  it("the pane lists PNN batches only, and an ARL batch cannot start a lot here", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26101", serial: 6101, farm: "ARL" });
+    seedBatch(m, { id: "hb-pns", hbn: "26244-PNS-GH-027-0-NA-26102", serial: 6102, farm: "PNS" });
+    seedBatch(m, { id: "hb-pnn", hbn: "26244-PNN-GH-027-0-NA-26103", serial: 6103, farm: "PNN" });
+    const queue = queueByKey("hbn_queue");
+    if (!queue) throw new Error("hbn queue missing");
+    const rows = await listPaneRows(m.db, queue, "no_finished_lot", ["PNN"]);
+    expect(rows.map((row) => row.id)).toEqual(["hb-pnn"]);
+    const station = stationByKey("wet_weight");
+    if (!station) throw new Error("wet station missing");
+    await expect(
+      createWetWeight(m.db, formOf({ person_id: person, team_lead: "Lead", harvest_batch_id: "hb-arl", actual_dryspc: HANG }))
+    ).rejects.toMatchObject({ message: "Penn North Harvest takes Penn North batches only." });
+    const started = await createWetWeight(
+      m.db,
+      formOf({ person_id: person, team_lead: "Lead", harvest_batch_id: "hb-pnn", actual_dryspc: HANG })
+    );
+    expect(started.redirect).toContain("lot=");
+  });
+
+  it("a finish writes one Internal Logistics pass, and a later part of that HBN writes none", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    const station = stationByKey("wet_weight");
+    if (!station) throw new Error("wet station missing");
+    seedBatch(m, { id: "hb-pnn", hbn: "26244-PNN-GH-027-0-NA-26111", serial: 6111, farm: "PNN" });
+    seedWeighing(m, "lot-1", "hb-pnn", null, "2026-09-24");
+    seedTote(m, "w1", "lot-1", 400, "hb-pnn", T0);
+    await finishLot(m.db, station, "lot-1", formOf({ person_id: person, plant_prompt: "skip" }));
+    const passes = m.all(
+      `SELECT harvest_batch_id, stage, status FROM production_schedules WHERE deleted_at IS NULL`
+    );
+    expect(passes).toEqual([{ harvest_batch_id: "hb-pnn", stage: "internal_logistics", status: "scheduled" }]);
+    expect(m.get(`SELECT reason FROM record_change_log WHERE record_table = 'production_schedules' AND field = 'status'`)?.reason).toBe(
+      "finish lot"
+    );
+    seedWeighing(m, "lot-2", "hb-pnn", null, "2026-09-24");
+    seedTote(m, "w2", "lot-2", 50, "hb-pnn", T0);
+    await finishLot(m.db, station, "lot-2", formOf({ person_id: person, plant_prompt: "skip" }));
+    expect(m.all(`SELECT id FROM production_schedules WHERE deleted_at IS NULL`)).toHaveLength(1);
+    expect(m.get(`SELECT status FROM wet_weight_entries WHERE id = 'lot-2'`)?.status).toBe("drying");
   });
 });

@@ -129,7 +129,7 @@ describe("THE MAINTENANCE NODE panes (canon 0.30.293)", () => {
     expect(done).toContain("0.55");
     const result = m.get(`SELECT source, analyte, value, hbn FROM internal_test_results WHERE source = 'lab_sample'`);
     expect(result).toMatchObject({ source: "lab_sample", analyte: "water activity", value: 0.55, hbn: "26260-PNN-GH-001-0-NA-26070" });
-    const log = m.all(`SELECT new_value, reason FROM record_change_log WHERE record_table = 'lab_sample_requests' ORDER BY changed_at, new_value`);
+    const log = m.all(`SELECT new_value, reason FROM record_change_log WHERE record_table = 'lab_sample_requests' ORDER BY rowid`);
     expect(log.map((row) => row.new_value)).toEqual(["scheduled", "requested", "fulfilled"]);
     await returnLabSample(m.db, formOf({ person_id: person, id: String(id) }));
     const back = await labSamplePage(m.db, "2026-09-03T00:00:00.000Z");

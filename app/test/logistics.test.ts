@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { loadSilo, scheduleLogisticsLot, unscheduleLogisticsLot } from "../src/actions";
-import { listLotParts, listOpenLogisticsSchedules, listScheduledLotsForLoad } from "../src/db";
+import { listBarnWetLots, listDryQueueLots, listLotParts, listOpenLogisticsSchedules, listScheduledLotsForLoad, type BarnWetLotRow } from "../src/db";
 import { app } from "../src/index";
 import { internalLogisticsPage, logisticsLotView, processingPartnersPage } from "../src/scheduling";
 import { formOf, migratedDb, seedBatch, seedPerson, type MigratedDb } from "./migrated";
@@ -43,6 +43,7 @@ describe("THE LOAD AND THE LOT (canon 0.30.241)", () => {
     seedPart(m, "part-a1", "hb-a", 1000, "4");
     seedPart(m, "part-a2", "hb-a", 500, "4");
     seedPart(m, "part-b", "hb-b", 800, "4");
+    expect((await listDryQueueLots(m.db)).map((row) => row.id).sort()).toEqual((await listBarnWetLots(m.db)).map((row) => row.id).sort());
     expect(await listScheduledLotsForLoad(m.db)).toEqual([]);
     const queue = [logisticsLotView(await listLotParts(m.db, "hb-a")), logisticsLotView(await listLotParts(m.db, "hb-b"))];
     const page = internalLogisticsPage({ queue: queue.filter((row) => row != null), scheduled: [], finished: [], nowIso: T0 });
@@ -174,5 +175,40 @@ describe("THE LOAD AND THE LOT (canon 0.30.241)", () => {
       return (await listScheduledLotsForLoad(m.db)).find((row) => row.id === "hb-c");
     })();
     expect(counted?.plant_count).toBe(10);
+  });
+
+  it("an in-transit row names its loads where the trucks read, in both locales", () => {
+    const weighing = {
+      id: "w1",
+      status: "weighing",
+      harvest_batch_id: "hb-a",
+      hbn: "26269-ARL-GH-001-0-NA-26081",
+      farm_code: "ARL",
+      strain_label: "Fruity",
+      metrc_harvest_tag: null,
+      package_code: null,
+      truck_number: null,
+      weight_grams: 146,
+      finished_at: T0,
+      in_transit_loads: 2,
+      planned_silo_name: null,
+      planned_dryspc: null,
+    } as BarnWetLotRow;
+    const view = logisticsLotView([weighing]);
+    expect(view?.in_transit).toBe(true);
+    expect(view?.oldest_finished_at).toBe(T0);
+    const page = internalLogisticsPage({ queue: view ? [view] : [], scheduled: [], finished: [], nowIso: T0 });
+    expect(page).toContain("data-logistics-in-transit");
+    expect(page).toContain("in transit, 2 loads");
+    expect(page).toContain('data-wet-grams="146"');
+    expect(page).toContain(`data-waited="${T0}"`);
+    expect(page).not.toContain("Trucks");
+    const one = logisticsLotView([{ ...weighing, in_transit_loads: 1 }]);
+    const es = internalLogisticsPage({ queue: one ? [one] : [], scheduled: [], finished: [], nowIso: T0, locale: "es" });
+    expect(es).toContain("en transito, 1 carga");
+    const drying = logisticsLotView([{ ...weighing, status: "drying", in_transit_loads: 0, truck_number: "4" }]);
+    const finishedPage = internalLogisticsPage({ queue: drying ? [drying] : [], scheduled: [], finished: [], nowIso: T0 });
+    expect(finishedPage).toContain("Trucks 4");
+    expect(finishedPage).not.toContain("data-logistics-in-transit");
   });
 });

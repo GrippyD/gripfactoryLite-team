@@ -114,7 +114,13 @@ import {
   addCryoOutput,
   finishCryoRun,
   buildNewPackagesXlsx,
+  startFieldLoad,
+  addFieldLoadWeight,
+  sendFieldLoad,
+  reopenFieldLoad,
+  changeFieldToteHbn,
 } from "./actions";
+import { fieldHarvestPage } from "./fieldharvest";
 import { cryoStationPage } from "./cryo";
 import {
   complianceTestingPage,
@@ -255,6 +261,13 @@ import {
   listBatchTruckNumbers,
   listFarmDayTruckNumbers,
   listOpenFarmHbns,
+  listFieldDestinations,
+  listOpenFieldLoads,
+  getFieldLoad,
+  listFieldLoadTotes,
+  listFieldHbns,
+  listInTransitFieldLoads,
+  listDryQueueLots,
   listChangeLog,
   listDrySpacesByKinds,
   listHarvestsByYear,
@@ -711,6 +724,10 @@ function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
     const skipped = url.searchParams.get("skipped") ?? "0";
     return { kind: "ok", text: `${t(locale, "Parsed")} ${parsed}, ${t(locale, "skipped")} ${skipped}.` };
   }
+  if (ok === "load_started") return { kind: "ok", text: t(locale, "Load started.") };
+  if (ok === "load_sent") return { kind: "ok", text: t(locale, "Load sent.") };
+  if (ok === "load_reopened") return { kind: "ok", text: t(locale, "Load reopened.") };
+  if (ok === "field_weight") return { kind: "ok", text: t(locale, "Weight added.") };
   if (ok === "truck_split") {
     const truck = url.searchParams.get("truck") ?? "";
     const parts = (url.searchParams.get("parts") ?? "")
@@ -896,7 +913,7 @@ app.get(INTERNAL_LOGISTICS_PATH, async (c) => {
   const s = await shell(c);
   const now = nowIso();
   const [parts, open, finished] = await Promise.all([
-    listBarnWetLots(c.env.DB),
+    listDryQueueLots(c.env.DB),
     listOpenLogisticsSchedules(c.env.DB),
     listFinishedLogistics(c.env.DB, dryingCompleteSince(now, s.farmDayStart)),
   ]);
@@ -911,15 +928,25 @@ app.get(INTERNAL_LOGISTICS_PATH, async (c) => {
   }
   const queue = [];
   const scheduled = [];
+  const scheduledBatches = new Set<string>();
   for (const [batch, group] of byBatch) {
     const pass = open.find((row) => row.harvest_batch_id === batch);
-    const view = logisticsLotView(group, pass?.id ?? null);
+    const weighing = group.filter((part) => part.status === LOT_STATUS.weighing);
+    const finishedParts = group.filter((part) => part.status !== LOT_STATUS.weighing);
+    if (weighing.length > 0) {
+      const exposed = logisticsLotView(weighing, null);
+      if (exposed) queue.push(exposed);
+    }
+    if (finishedParts.length === 0) continue;
+    const view = logisticsLotView(finishedParts, pass?.id ?? null);
     if (!view) continue;
-    if (covered.has(batch) && pass) scheduled.push(view);
-    else queue.push(view);
+    if (covered.has(batch) && pass) {
+      scheduled.push(view);
+      scheduledBatches.add(batch);
+    } else queue.push(view);
   }
   for (const pass of open) {
-    if (byBatch.has(pass.harvest_batch_id)) continue;
+    if (scheduledBatches.has(pass.harvest_batch_id)) continue;
     scheduled.push({
       harvest_batch_id: pass.harvest_batch_id,
       hbn: pass.hbn,
@@ -2432,6 +2459,59 @@ app.post("/station/cryo_weight/run/:id/finish", async (c) => {
   return c.redirect(result.redirect, 303);
 });
 
+app.get("/station/field_harvest", async (c) => {
+  const s = await shell(c);
+  const url = new URL(c.req.url);
+  const loadId = url.searchParams.get("load") ?? "";
+  const finishParam = url.searchParams.get("finish") ?? "";
+  const finish = finishParam === "ask" || finishParam === "warn" ? finishParam : "";
+  const [destinations, openLoads, sentLoads] = await Promise.all([
+    listFieldDestinations(c.env.DB),
+    listOpenFieldLoads(c.env.DB),
+    listInTransitFieldLoads(c.env.DB),
+  ]);
+  let picked: Parameters<typeof fieldHarvestPage>[0]["picked"] = null;
+  if (loadId) {
+    const load = await getFieldLoad(c.env.DB, loadId);
+    if (load && load.status === "open") {
+      const [totes, hbnOptions] = await Promise.all([listFieldLoadTotes(c.env.DB, load.id), listFieldHbns(c.env.DB)]);
+      const carry = url.searchParams.get("carry") === "1" ? totes[0]?.harvest_batch_id ?? null : null;
+      picked = { load, totes, hbnOptions, carryId: carry, finish, warnIds: url.searchParams.getAll("hbn") };
+    }
+  }
+  return html(c, s, "Penn South/Arlington Harvest", fieldHarvestPage({ locale: s.locale, destinations, openLoads, sentLoads, picked }));
+});
+
+app.post("/station/field_harvest/start", async (c) => {
+  const form = actorForm(c, await c.req.formData());
+  const result = await startFieldLoad(c.env.DB, form);
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/station/field_harvest/load/:id/weights", async (c) => {
+  const form = actorForm(c, await c.req.formData());
+  const result = await addFieldLoadWeight(c.env.DB, c.req.param("id"), form);
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/station/field_harvest/load/:id/send", async (c) => {
+  const form = actorForm(c, await c.req.formData());
+  const result = await sendFieldLoad(c.env.DB, c.req.param("id"), form);
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/station/field_harvest/load/:id/reopen", async (c) => {
+  const form = actorForm(c, await c.req.formData());
+  const result = await reopenFieldLoad(c.env.DB, c.req.param("id"), form);
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/station/field_harvest/weights/:id/hbn", async (c) => {
+  const form = actorForm(c, await c.req.formData());
+  const result = await changeFieldToteHbn(c.env.DB, c.req.param("id"), form);
+  return c.redirect(result.redirect, 303);
+});
+
 app.get("/station/:key", async (c) => {
   const station = stationByKey(c.req.param("key"));
   if (!station) return c.notFound();
@@ -2450,9 +2530,10 @@ app.get("/station/:key", async (c) => {
     const lot = await getLot(c.env.DB, lotId);
     if (!lot) return c.notFound();
     const weights = await listLotWeights(c.env.DB, ledger, lotId);
+    const toteFarm = station.key === "wet_weight" ? "PNN" : lot.farm_code ?? "";
     const toteHbns =
-      ledger.table === "wet_weights" && lot.farm_code && lot.harvest_batch_id
-        ? await listOpenFarmHbns(c.env.DB, lot.farm_code, lot.harvest_batch_id)
+      ledger.table === "wet_weights" && toteFarm && lot.harvest_batch_id
+        ? await listOpenFarmHbns(c.env.DB, toteFarm, lot.harvest_batch_id)
         : [];
     const farmName = await farmDisplayName(c.env.DB, lot.farm_code ?? "");
     const total = sumGrams(weights.map((w) => Number(w.weight_grams)));
@@ -2470,7 +2551,7 @@ app.get("/station/:key", async (c) => {
       const lotPaneRows = !paneQueue
         ? []
         : station.leftPane.paneFilter
-          ? await listPaneRows(c.env.DB, paneQueue, station.leftPane.paneFilter)
+          ? await listPaneRows(c.env.DB, paneQueue, station.leftPane.paneFilter, station.leftPane.farmCodes)
           : await listQueueRows(c.env.DB, paneQueue);
       const batchRow = lotPaneRows.find((row) => row.id === lot.harvest_batch_id);
       return html(
@@ -2519,7 +2600,7 @@ app.get("/station/:key", async (c) => {
     // The pane and its pick validation share the filtered rows; a hidden batch cannot be picked.
     paneRows =
       station.leftPane.paneFilter && paneQueue
-        ? await listPaneRows(c.env.DB, paneQueue, station.leftPane.paneFilter)
+        ? await listPaneRows(c.env.DB, paneQueue, station.leftPane.paneFilter, station.leftPane.farmCodes)
         : queueOptions[station.leftPane.queue] ?? [];
     const pick = c.req.query("pick") ?? "";
     if (pick && station.ledger?.mode === "direct") {
@@ -2948,7 +3029,9 @@ app.get("/record/:table/:id/edit", async (c) => {
     // THE HBN THAT CAME BACK (canon 0.30.84): the lot pencil's HBN options, read only for a lot.
     harvest_batches: table === "wet_weight_entries" || table === "wet_weights" ? await listLookup(c.env.DB, "harvest_batches") : [],
   };
-  return html(c, s, "Edit", editPage(table, id, row, lookups));
+  const back = c.req.query("back") ?? "";
+  const safeBack = back.startsWith("/") && !back.startsWith("//") ? back : "";
+  return html(c, s, "Edit", editPage(table, id, row, lookups, safeBack));
 });
 
 app.post("/record/:table/:id/edit", async (c) => {
@@ -2960,8 +3043,9 @@ app.post("/record/:table/:id/edit", async (c) => {
 app.get("/record/:table/:id/void", async (c) => {
   const s = await shell(c);
   // The referring page rides the form so the void can return there (owner ruling 2026-08-31).
-  let back = "";
-  const referer = c.req.header("referer");
+  const queryBack = c.req.query("back") ?? "";
+  let back = queryBack.startsWith("/") && !queryBack.startsWith("//") ? queryBack : "";
+  const referer = back ? "" : c.req.header("referer");
   if (referer) {
     try {
       const u = new URL(referer);
@@ -3122,7 +3206,12 @@ async function queueOptionsForStation(
   const out: Record<string, Awaited<ReturnType<typeof listQueueRows>>> = {};
   for (const key of keys) {
     const q = queueByKey(key);
-    if (q) out[key] = await listQueueRows(db, q);
+    if (!q) continue;
+    const farms = station.leftPane?.queue === key ? station.leftPane.farmCodes : undefined;
+    out[key] =
+      farms && farms.length > 0
+        ? await listPaneRows(db, q, station.leftPane?.paneFilter, farms)
+        : await listQueueRows(db, q);
   }
   return out;
 }

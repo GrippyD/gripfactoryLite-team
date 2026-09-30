@@ -800,16 +800,28 @@ export type LogisticsLotView = {
   planned_silo_name: string | null;
   oldest_finished_at: string | null;
   schedule_id?: string | null;
+  /** THE IN-TRANSIT RULE (canon 0.30.320): a weighing lot a sent load exposed. */
+  in_transit?: boolean;
+  in_transit_loads?: number;
 };
 
 export function logisticsLotView(parts: BarnWetLotRow[], scheduleId: string | null = null): LogisticsLotView | null {
   if (parts.length === 0) return null;
   const first = parts[0];
-  const trucks = [...new Set(parts.map((part) => String(part.truck_number ?? "").trim()).filter(Boolean))];
+  const trucks = [
+    ...new Set(
+      parts
+        .filter((part) => part.status !== LOT_STATUS.weighing)
+        .map((part) => String(part.truck_number ?? "").trim())
+        .filter(Boolean)
+    ),
+  ];
   const oldest = parts
     .map((part) => part.finished_at ?? "")
     .filter(Boolean)
     .sort()[0] ?? null;
+  const inTransitLoads = parts.reduce((sum, part) => sum + Number(part.in_transit_loads ?? 0), 0);
+  const inTransit = parts.some((part) => part.status === LOT_STATUS.weighing) && inTransitLoads > 0;
   return {
     harvest_batch_id: first.harvest_batch_id || first.id,
     hbn: first.hbn,
@@ -823,6 +835,8 @@ export function logisticsLotView(parts: BarnWetLotRow[], scheduleId: string | nu
     planned_silo_name: first.planned_silo_name ?? (first.planned_dryspc ? `Silo ${first.planned_dryspc}` : null),
     oldest_finished_at: oldest,
     schedule_id: scheduleId,
+    in_transit: inTransit,
+    in_transit_loads: inTransitLoads,
   };
 }
 
@@ -845,12 +859,17 @@ function logisticsRow(lot: LogisticsLotView, locale: Locale, nowIso: string, con
     truck_number: lot.trucks.length === 1 ? lot.trucks[0] : null,
   });
   const partsWord = lot.partIds.length === 1 ? t(locale, "1 part") : tFill(locale, "{n} parts", { n: String(lot.partIds.length) });
-  const trucks = lot.trucks.length > 0 ? lot.trucks.join(", ") : t(locale, "no truck");
+  const inTransit = lot.in_transit === true;
+  const loadCount = lot.in_transit_loads ?? 0;
+  const loadWord = loadCount === 1 ? t(locale, "1 load") : tFill(locale, "{n} loads", { n: String(loadCount) });
+  const trucks = inTransit
+    ? `${t(locale, "in transit")}, ${loadWord}`
+    : `${t(locale, "Trucks")} ${lot.trucks.length > 0 ? lot.trucks.join(", ") : t(locale, "no truck")}`;
   const planned = lot.planned_silo_name ?? t(locale, "no planned silo");
-  return `<li class="schedule-item" data-logistics-lot="${esc(lot.harvest_batch_id)}" data-logistics-parts="${esc(lot.partIds.join(" "))}" data-logistics-hbn="${esc(lot.hbn ?? "")}">
+  return `<li class="schedule-item"${inTransit ? " data-logistics-in-transit" : ""} data-logistics-lot="${esc(lot.harvest_batch_id)}" data-logistics-parts="${esc(lot.partIds.join(" "))}" data-logistics-hbn="${esc(lot.hbn ?? "")}">
           <span class="schedule-identity">${esc(label)}</span>
           <span class="muted" data-logistics-part-count>${esc(partsWord)}</span>
-          <span class="muted" data-logistics-trucks>${esc(t(locale, "Trucks"))} ${esc(trucks)}</span>
+          <span class="muted" data-logistics-trucks>${esc(trucks)}</span>
           <span class="muted" data-wet-grams="${esc(String(lot.weight_grams))}">${esc(formatGrams(lot.weight_grams))} g</span>
           <span class="muted" data-planned-silo>${esc(t(locale, "Planned silo"))}: ${esc(planned)}</span>
           <span class="muted" data-waited="${esc(lot.oldest_finished_at ?? "")}">${esc(t(locale, "Waited"))} ${esc(waitedLabel(lot.oldest_finished_at, nowIso))}</span>
