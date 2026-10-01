@@ -1002,10 +1002,20 @@ function trimTotalsLine(figures: TrimFigures, locale: Locale): string {
   const lbs = weightPair(grams);
   const cell = (key: string, label: string, value: string, sub = "") =>
     `<div class="hc-trim-total" data-hc-trim-total="${esc(key)}"><div class="hc-gate-name">${esc(t(locale, label))}</div><span class="hc-value">${esc(value)}</span>${sub ? `<span class="hc-sub muted">${esc(sub)}</span>` : ""}</div>`;
+  // THE WEIGHTED BTR (canon 0.30.335). Owner, 2026-10-01, verbatim: "on my
+  // totals under the trimmer, to the right of Lbs/DLH for both shifts, I'd like
+  // the weighted BTR across both shifts as well". Both shifts' Total Bud over
+  // both shifts' totals (weighed plus WIP left), so each shift counts by the
+  // weight it ran, not as an average of the two percents; operators on neither
+  // shift stay out of it, as they stay off the cards.
+  const budGrams = figures.shifts.reduce((n, shift) => n + shift.budGrams, 0);
+  const shiftGrams = figures.shifts.reduce((n, shift) => n + shift.totalGrams, 0);
+  const btr = shiftGrams > 0 ? budGrams / shiftGrams : null;
   return `<div class="hc-trim-totals" data-hc-trim-totals>
       ${cell("lbs", "Total Lbs", lbs.value, lbs.sub)}
       ${cell("hours", "Total Hours", hours == null ? t(locale, "type hours") : String(hours))}
       ${cell("per", "Lbs/DLH", per == null ? (hours == null ? t(locale, "type hours") : NA) : `${formatLbs(per)} lb/h`, per == null ? "" : `${formatGrams(roundGrams(per))} g/h`)}
+      ${cell("btr", "Weighted BTR", btr == null ? t(locale, "no packages yesterday") : fmtPct(btr), btr == null ? "" : t(locale, "both shifts, Total Bud over the shift totals"))}
     </div>`;
 }
 

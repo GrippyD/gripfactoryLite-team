@@ -101,6 +101,49 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     expect(carried).not.toContain('value="" selected');
   });
 
+  it("THE PLUS KEEPS THE CURSOR (canon 0.30.334): the Weight box takes the cursor and the + posts in the background", () => {
+    const load = {
+      id: "load-1",
+      operator_name: "Field Hand",
+      destination_farm_code: "PNN",
+      destination_name: "Penn North",
+      status: "open",
+      started_at: T0,
+      sent_at: null,
+      effective_date: "2026-09-30",
+    };
+    const options = [{ id: "hb-a", hbn: "26244-ARL-GH-027-0-NA-26001", label: "ARL / A / 2026-09-30" }];
+    const page = (locale: "en" | "es") =>
+      fieldHarvestPage({
+        locale,
+        destinations: [],
+        openLoads: [load],
+        sentLoads: [],
+        picked: { load, totes: [], hbnOptions: options, carryId: "hb-a", finish: "", warnIds: [] },
+      });
+    const html = page("en");
+    const start = html.indexOf("<form method=\"post\" action=\"/station/field_harvest/load/load-1/weights\"");
+    expect(start).toBeGreaterThan(-1);
+    const entry = html.slice(start, html.indexOf("</form>", start) + "</form>".length);
+    expect(entry).toContain('<input type="number" name="weight_grams" min="0" step="1" inputmode="numeric" required autofocus data-field-weight>');
+    expect(entry).toContain('<button type="submit" aria-label="+" data-field-plus>+</button>');
+    expect(entry).toContain('data-field-status data-no-answer="No answer from the server. Check the list before you add it again." role="status" aria-live="polite" hidden></p>');
+    expect(entry).toContain('querySelector("form[data-field-entry]")');
+    expect(entry).toContain('fetch(form.action, { method: "POST", body: data, credentials: "same-origin" })');
+    expect(entry).toContain('if (e.key !== "+") return;');
+    expect(html.split("var canPost = ").length - 1).toBe(1);
+    expect(html.split("autofocus").length - 1).toBe(1);
+    const script = entry.slice(entry.indexOf("<script>"), entry.indexOf("</script>"));
+    expect(script).not.toContain("data-field-tote=");
+    expect(script).not.toContain("data-finish-load");
+    expect(script).not.toContain("`");
+    const es = page("es");
+    expect(es).toContain('data-no-answer="Sin respuesta del servidor. Revise la lista antes de agregarlo otra vez."');
+    const cold = fieldHarvestPage({ locale: "en", destinations: [], openLoads: [], sentLoads: [], picked: null });
+    expect(cold).not.toContain("data-field-weight");
+    expect(cold).not.toContain("autofocus");
+  });
+
   it("Finish Load NO sends the load and leaves the HBN open; YES finishes without a pass", async () => {
     const m = await migratedDb();
     const person = seedPerson(m);
@@ -485,6 +528,17 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
       },
     });
     expect(es).toContain("Cosecha Penn South/Arlington");
+    // THE FINISH LOAD IN REACH (canon 0.30.335): under the entry row, above the totes; its script after them, once.
+    const entryEnd = es.indexOf("</form>", es.indexOf("data-field-entry"));
+    const blockAt = es.indexOf('<details class="field-finish"');
+    const firstTote = es.indexOf("data-field-tote=");
+    const finishJs = es.indexOf('document.querySelector("[data-finish-yes]")');
+    expect(entryEnd).toBeGreaterThan(-1);
+    expect(blockAt).toBeGreaterThan(entryEnd);
+    expect(firstTote).toBeGreaterThan(blockAt);
+    expect(finishJs).toBeGreaterThan(es.lastIndexOf("data-field-tote="));
+    expect(es.split('document.querySelector("[data-finish-yes]")').length - 1).toBe(1);
+    expect(es).toContain('block.addEventListener("toggle"');
     expect(es).toContain('<details class="field-finish" data-finish-load open>');
     expect(es).toContain('<summary class="btn" data-finish-open>Terminar carga</summary>');
     expect(es).toContain('<label class="field-finish-item">');
