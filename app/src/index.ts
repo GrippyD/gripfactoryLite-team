@@ -20,6 +20,7 @@ import {
   PRODUCTION_SCHEDULING_PATH,
   SCHEDULE_STAGE_TITLES,
   SCHEDULE_STAGES,
+  TERP_RECIPE_STATUS,
   DRY_SPACE_TYPES,
   type DrySpaceType,
   isKnownSiteLicense,
@@ -77,6 +78,9 @@ import {
   adoptFromMetrc,
   scheduleHbn,
   schedulePackage,
+  saveTerpRecipe,
+  retireTerpRecipe,
+  pickTerpRecipe,
   unscheduleItem,
   manualHbn,
   loadSilo,
@@ -336,6 +340,8 @@ import {
   listMountedOrderLines,
   listCryoRuns,
   getCryoRun,
+  listTerpRecipes,
+  listTerpRecipeLines,
   getScheduleRow,
   listCryoCategories,
   listCryoRunPool,
@@ -432,6 +438,7 @@ import {
 import { anyPlantCount, queueRowsToCsv, toCsv, wetWeightsCsv, wetWeightsCsvWithCounts, wetWeightsCsvWithTags, wetWeightsFilename } from "./csv";
 import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePrepackHours, saveTrimHours, saveTrimInputLbs } from "./console";
 import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
+import { terpRecipesPage } from "./terps";
 import { fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
 import { loadMetrcAdmin, metrcApiPage, runMetrcSweep, testMetrcConnection } from "./metrcapi";
 import { inTestingFixtureWorkbook, runInTestingSync } from "./intesting";
@@ -671,6 +678,9 @@ function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
   if (ok === "test_retest") return { kind: "ok", text: t(locale, "Retest scheduled. Two separate new samples must pass consecutively.") };
   if (ok === "test_remediated") return { kind: "ok", text: t(locale, "Marked remediated. The next attempt is still required.") };
   if (ok === "demoted") return { kind: "ok", text: t(locale, "Record demoted.") };
+  if (ok === "recipe_saved") return { kind: "ok", text: t(locale, "Recipe saved.") };
+  if (ok === "recipe_retired") return { kind: "ok", text: t(locale, "Recipe retired.") };
+  if (ok === "terp_saved") return { kind: "ok", text: t(locale, "Terp recipe saved.") };
   if (ok === "unfinished") {
     const hbn = url.searchParams.get("hbn");
     if (hbn) return { kind: "ok", text: tFill(locale, "Unfinished; the pasteurization run on {hbn} was unscheduled.", { hbn }) };
@@ -2306,17 +2316,33 @@ app.get(`${PRODUCTION_SCHEDULING_PATH}/:stage`, async (c) => {
     const [panes, adopt] = await Promise.all([listPrepackPanes(c.env.DB), listMetrcAdoptions(c.env.DB)]);
     return html(c, s, SCHEDULE_STAGE_TITLES[stage], prepackSchedulingPage(panes, adopt, s.locale, c.req.query("q") ?? ""));
   }
-  const [available, working, complete] = await Promise.all([
+  const [available, working, complete, terpRecipes] = await Promise.all([
     listScheduleAvailable(c.env.DB, stage),
     listScheduleWorking(c.env.DB, stage),
     listScheduleComplete(c.env.DB, stage),
+    stage === SCHEDULE_STAGES.cryo ? listTerpRecipes(c.env.DB, TERP_RECIPE_STATUS.active) : Promise.resolve([]),
   ]);
   return html(
     c,
     s,
     SCHEDULE_STAGE_TITLES[stage],
-    schedulingPage(stage, { available, working, complete }, s.locale, nowIso(), c.req.query("ok") ?? undefined)
+    schedulingPage(
+      stage,
+      { available, working, complete },
+      s.locale,
+      nowIso(),
+      c.req.query("ok") ?? undefined,
+      null,
+      terpRecipes.map((row) => ({ id: row.id, name: row.name }))
+    )
   );
+});
+
+app.post(`${PRODUCTION_SCHEDULING_PATH}/:stage/terp/:id`, async (c) => {
+  const stage = parseScheduleStage(c.req.param("stage"));
+  if (stage !== SCHEDULE_STAGES.cryo) return c.notFound();
+  const result = await pickTerpRecipe(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
 });
 
 app.post(`${PRODUCTION_SCHEDULING_PATH}/:stage/schedule`, async (c) => {
@@ -2419,6 +2445,8 @@ app.get("/station/cryo_weight", async (c) => {
   if (pick) {
     const run = await getCryoRun(c.env.DB, pick);
     if (!run) return c.notFound();
+    const terpLines = run.terp_recipe_id ? await listTerpRecipeLines(c.env.DB, run.terp_recipe_id) : [];
+    run.terp_lines = terpLines.map((line) => `${line.terp_name} ${line.percent}%`).join(", ");
     picked = {
       run,
       pool: await listCryoRunPool(c.env.DB, pick),
@@ -2947,6 +2975,10 @@ app.get("/admin/lookups/:section", async (c) => {
     const raw = await getConfigValue(c.env.DB, CONFIG_KEYS.trim_bogey_pct);
     return html(c, s, "Trim Bogey", trimBogeyPage(parseTrimBogey(raw), trimBogeyOf(raw) != null, s.locale, c.req.query("ok") || undefined));
   }
+  if (section === "terp_recipes") {
+    const recipes = await listTerpRecipes(c.env.DB);
+    return html(c, s, "Terp Recipes", terpRecipesPage({ recipes, showRetired: c.req.query("retired") === "1", locale: s.locale }));
+  }
   if (section === "silo_check_intervals") {
     return html(c, s, "Internal Silo Testing Interval", await intervalPage(c.env.DB, s.locale));
   }
@@ -2989,6 +3021,8 @@ app.post("/admin/lookups/:table", async (c) => {
   let result;
   if (table === "testing_labs") result = await saveTestingLab(c.env.DB, form);
   else if (table === "trim_bogey") result = await saveTrimBogey(c.env.DB, form);
+  else if (table === "terp_recipes" && action === "retire") result = await retireTerpRecipe(c.env.DB, form);
+  else if (table === "terp_recipes") result = await saveTerpRecipe(c.env.DB, form);
   else if (table === "plant_count") result = await saveFarmPlantCounts(c.env.DB, form);
   else if (table === "silo_check_intervals") result = await saveSiloCheckInterval(c.env.DB, form);
   else if (table === "fulfillment_override") result = await saveFulfillmentOverride(c.env.DB, form);

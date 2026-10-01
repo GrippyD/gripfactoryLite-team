@@ -53,6 +53,7 @@ import type { CryoOutputRow, CryoPool, CryoRunInputRow, CryoRunRow } from "./db"
 import { effectiveDateField } from "./effective";
 import { duplicateTagGuard, lockOnSubmitScript, localTimeScript } from "./html";
 import { t, type Locale } from "./i18n";
+import { terpRunHeader } from "./terps";
 import { esc } from "./ui";
 import type { XlsxCell, XlsxSheet } from "./xlsx";
 
@@ -331,6 +332,7 @@ export function cryoStationPage(input: CryoStationInput): string {
       : "";
     working = `<h2 class="working-pick">${esc(run.hbn)}</h2>
       <p class="muted">${esc(meta)}</p>
+      ${terpRunHeader(run, locale)}
       ${state}
       ${poolTable(pool, locale)}
       ${finished ? consumedList(run.id, inputs, locale) : ""}

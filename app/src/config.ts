@@ -211,6 +211,9 @@ export const SYSTEM_REASON = {
   field_load_received: "field load received",
   field_hbn_closed: "field hbn closed",
   field_tote_hbn: "field tote hbn",
+  // TERP RECIPES (canon 0.30.321): the pick and the dose on a pasteurization run.
+  terp_recipe_picked: "terp recipe picked",
+  terp_dose_set: "terp dose set",
   finish_unload: "finish unload",
   // THE BLAST FREEZER(S) (canon 0.30.106): the freezer line removed, the lot frozen; nothing moved.
   freezer_unload: "freezer line removed; the packages stand as FFZ in METRC",
@@ -1282,6 +1285,9 @@ export const INTERNAL_LOGISTICS_STAGE = "internal_logistics";
  * (canon 0.30.320): received once the scheduler's pass has taken every HBN on
  * it. A received load stays received. */
 export const FIELD_LOAD_STATUS = { open: "open", in_transit: "in_transit", received: "received" } as const;
+
+/** TERP RECIPES (canon 0.30.321): active until retired. A retired recipe is never edited. */
+export const TERP_RECIPE_STATUS = { active: "active", retired: "retired" } as const;
 export const FIELD_HARVEST_PATH = "/station/field_harvest";
 export const LOGISTICS_OPS_PATH = "/ops/interco_logistics";
 export const INTERNAL_LOGISTICS_PATH = "/logistics/internal";

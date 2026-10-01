@@ -42,6 +42,7 @@ import {
   INTERNAL_LOGISTICS_PATH,
   INTERNAL_LOGISTICS_STAGE,
   FIELD_LOAD_STATUS,
+  TERP_RECIPE_STATUS,
   SCHEDULE_STAGES,
   SCHEDULE_STATUS,
   sumGrams,
@@ -153,6 +154,7 @@ import {
   listOpenFarmHbns,
   listFieldHbns,
   listFieldDestinations,
+  defaultTerpRecipeForBatch,
   fieldHoldingSpaceId,
   getFieldLoad,
   listFieldLoadTotes,
@@ -2214,6 +2216,7 @@ export async function scheduleHbn(
     const containers = await listCryoFreeContainers(db, batchId);
     if (containers.length === 0) throw new HttpError(400, SCHEDULE_REFUSAL.nothingAvailable);
     const runId = crypto.randomUUID();
+    const terpRecipeId = await defaultTerpRecipeForBatch(db, batchId);
     const record = {
       id: runId,
       stage,
@@ -2228,6 +2231,7 @@ export async function scheduleHbn(
       created_by: actor.id,
       updated_at: ts,
       updated_by: actor.id,
+      terp_recipe_id: terpRecipeId,
     };
     stmts.push(
       db
@@ -2235,10 +2239,11 @@ export async function scheduleHbn(
           `INSERT INTO production_schedules (
             id, stage, wet_weight_entry_id, wip_package_id, harvest_batch_id, status,
             effective_date, scheduled_at, scheduled_by, completed_at, completed_by,
-            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
-          ) VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NULL, NULL, NULL)`
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason,
+            terp_recipe_id, terp_dose_pct
+          ) VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL)`
         )
-        .bind(runId, stage, batchId, SCHEDULE_STATUS.scheduled, effective.date, ts, actor.id, ts, actor.id, ts, actor.id)
+        .bind(runId, stage, batchId, SCHEDULE_STATUS.scheduled, effective.date, ts, actor.id, ts, actor.id, ts, actor.id, terpRecipeId)
     );
     stmts.push(...logsForInsert(db, "production_schedules", runId, record, actor.id, SYSTEM_REASON.schedule, ts));
     if (effective.overridden) {
@@ -2311,6 +2316,222 @@ export async function scheduleHbn(
   }
   await db.batch(stmts);
   return { redirect: scheduleRedirect(stage, "scheduled", `&n=${items.length}`) };
+}
+
+type TerpLineInput = { terp_name: string; percent: string };
+
+function terpLinesFromForm(form: FormData): TerpLineInput[] {
+  const names = form.getAll("terp_name").map((value) => String(value));
+  const percents = form.getAll("percent").map((value) => String(value));
+  const count = Math.max(names.length, percents.length);
+  const lines: TerpLineInput[] = [];
+  for (let i = 0; i < count; i++) {
+    const terp_name = (names[i] ?? "").trim();
+    const percent = (percents[i] ?? "").trim();
+    if (!terp_name && !percent) continue;
+    lines.push({ terp_name, percent });
+  }
+  return lines;
+}
+
+function parseTerpDose(raw: unknown): number | null {
+  const s = textOrNull(raw);
+  if (s == null) return null;
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) {
+    throw new HttpError(400, "Dose must be a percent from 0 to 100, with at most two decimals.");
+  }
+  const n = Number(s);
+  if (n < 0 || n > 100) throw new HttpError(400, "Dose must be a percent from 0 to 100, with at most two decimals.");
+  return n;
+}
+
+/** TERP RECIPES (canon 0.30.321): one batch, the name unique among active recipes, the lines summing to 100. */
+export async function saveTerpRecipe(db: D1Database, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const name = requireText(form.get("recipe_name"), "Recipe Name");
+  const taken = await db
+    .prepare(
+      `SELECT id FROM terp_recipes
+       WHERE deleted_at IS NULL AND status = ? AND lower(trim(name)) = lower(trim(?))`
+    )
+    .bind(TERP_RECIPE_STATUS.active, name)
+    .first<{ id: string }>();
+  if (taken) throw new HttpError(400, "That name is already an active recipe.");
+  const lines = terpLinesFromForm(form);
+  if (lines.length === 0) throw new HttpError(400, "The percents must total 100.");
+  let sum = 0;
+  const parsed: Array<{ terp_name: string; percent: number }> = [];
+  for (const line of lines) {
+    if (!line.terp_name || !line.percent) throw new HttpError(400, "Type a terp name and a percent.");
+    if (line.terp_name.length > 60) throw new HttpError(400, "A terp name must be 60 characters or fewer.");
+    if (!/^\d+$/.test(line.percent)) throw new HttpError(400, "A percent must be a whole number from 1 to 100.");
+    const percent = Number(line.percent);
+    if (percent < 1 || percent > 100) throw new HttpError(400, "A percent must be a whole number from 1 to 100.");
+    sum += percent;
+    parsed.push({ terp_name: line.terp_name, percent });
+  }
+  if (sum !== 100) throw new HttpError(400, "The percents must total 100.");
+  const ts = nowIso();
+  const id = crypto.randomUUID();
+  const record = {
+    id,
+    name,
+    status: TERP_RECIPE_STATUS.active,
+    created_at: ts,
+    created_by: actor.id,
+    updated_at: ts,
+    updated_by: actor.id,
+  };
+  const stmts: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO terp_recipes (
+          id, name, status, retired_at, retired_by, retire_reason,
+          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
+        ) VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL, NULL)`
+      )
+      .bind(id, name, TERP_RECIPE_STATUS.active, ts, actor.id, ts, actor.id),
+    ...logsForInsert(db, "terp_recipes", id, record, actor.id, SYSTEM_REASON.create, ts),
+  ];
+  parsed.forEach((line, index) => {
+    const lineId = crypto.randomUUID();
+    const lineRecord = {
+      id: lineId,
+      recipe_id: id,
+      position: index + 1,
+      terp_name: line.terp_name,
+      percent: line.percent,
+      created_at: ts,
+      created_by: actor.id,
+    };
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO terp_recipe_lines (id, recipe_id, position, terp_name, percent, created_at, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(lineId, id, index + 1, line.terp_name, line.percent, ts, actor.id),
+      ...logsForInsert(db, "terp_recipe_lines", lineId, lineRecord, actor.id, SYSTEM_REASON.create, ts)
+    );
+  });
+  await db.batch(stmts);
+  return { redirect: "/admin/lookups/terp_recipes?ok=recipe_saved" };
+}
+
+/** Retire keeps the lines and every run that picked the recipe. A reason is required. */
+export async function retireTerpRecipe(db: D1Database, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const id = requireText(form.get("id"), "Recipe");
+  const reason = requireReason(textOrNull(form.get("reason")));
+  const row = await db
+    .prepare(`SELECT id, status FROM terp_recipes WHERE id = ? AND deleted_at IS NULL`)
+    .bind(id)
+    .first<{ id: string; status: string }>();
+  if (!row) throw new HttpError(404, "Unknown recipe.");
+  if (row.status !== TERP_RECIPE_STATUS.active) throw new HttpError(400, "That recipe is already retired.");
+  const ts = nowIso();
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE terp_recipes SET status = ?, retired_at = ?, retired_by = ?, retire_reason = ?, updated_at = ?, updated_by = ?
+         WHERE id = ? AND deleted_at IS NULL`
+      )
+      .bind(TERP_RECIPE_STATUS.retired, ts, actor.id, reason, ts, actor.id, id),
+    insertLog(db, {
+      record_table: "terp_recipes",
+      record_id: id,
+      field: "status",
+      old_value: row.status,
+      new_value: TERP_RECIPE_STATUS.retired,
+      actor_person_id: actor.id,
+      reason,
+      changed_at: ts,
+    }),
+    insertLog(db, {
+      record_table: "terp_recipes",
+      record_id: id,
+      field: "retired_at",
+      old_value: null,
+      new_value: ts,
+      actor_person_id: actor.id,
+      reason,
+      changed_at: ts,
+    }),
+    insertLog(db, {
+      record_table: "terp_recipes",
+      record_id: id,
+      field: "retire_reason",
+      old_value: null,
+      new_value: reason,
+      actor_person_id: actor.id,
+      reason,
+      changed_at: ts,
+    }),
+  ]);
+  return { redirect: "/admin/lookups/terp_recipes?retired=1&ok=recipe_retired" };
+}
+
+/** The pick and the dose, only while the run is scheduled. A blank recipe clears it. The dose never carries onto the next run. */
+export async function pickTerpRecipe(db: D1Database, runId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const row = await db
+    .prepare(
+      `SELECT id, stage, status, terp_recipe_id, terp_dose_pct
+       FROM production_schedules WHERE id = ? AND deleted_at IS NULL`
+    )
+    .bind(runId)
+    .first<{ id: string; stage: string; status: string; terp_recipe_id: string | null; terp_dose_pct: number | null }>();
+  if (!row || row.stage !== SCHEDULE_STAGES.cryo) throw new HttpError(404, "Unknown run.");
+  if (row.status !== SCHEDULE_STATUS.scheduled) throw new HttpError(400, "Unfinish the run first to change its recipe.");
+  const recipeId = textOrNull(form.get("terp_recipe_id"));
+  if (recipeId) {
+    const recipe = await db
+      .prepare(`SELECT id FROM terp_recipes WHERE id = ? AND deleted_at IS NULL AND status = ?`)
+      .bind(recipeId, TERP_RECIPE_STATUS.active)
+      .first<{ id: string }>();
+    if (!recipe) throw new HttpError(400, "That recipe is not on the list.");
+  }
+  const dose = parseTerpDose(form.get("terp_dose_pct"));
+  const ts = nowIso();
+  const stmts: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `UPDATE production_schedules SET terp_recipe_id = ?, terp_dose_pct = ?, updated_at = ?, updated_by = ?
+         WHERE id = ? AND deleted_at IS NULL`
+      )
+      .bind(recipeId, dose, ts, actor.id, runId),
+  ];
+  if ((row.terp_recipe_id ?? null) !== (recipeId ?? null)) {
+    stmts.push(
+      insertLog(db, {
+        record_table: "production_schedules",
+        record_id: runId,
+        field: "terp_recipe_id",
+        old_value: row.terp_recipe_id,
+        new_value: recipeId,
+        actor_person_id: actor.id,
+        reason: SYSTEM_REASON.terp_recipe_picked,
+        changed_at: ts,
+      })
+    );
+  }
+  const oldDose = row.terp_dose_pct == null ? null : Number(row.terp_dose_pct);
+  if (oldDose !== dose) {
+    stmts.push(
+      insertLog(db, {
+        record_table: "production_schedules",
+        record_id: runId,
+        field: "terp_dose_pct",
+        old_value: oldDose == null ? null : String(oldDose),
+        new_value: dose == null ? null : String(dose),
+        actor_person_id: actor.id,
+        reason: SYSTEM_REASON.terp_dose_set,
+        changed_at: ts,
+      })
+    );
+  }
+  await db.batch(stmts);
+  return { redirect: scheduleRedirect(SCHEDULE_STAGES.cryo, "terp_saved") };
 }
 
 /** THE FILTER (canon 0.30.196): the Prepack page's filter rides every post back. */
