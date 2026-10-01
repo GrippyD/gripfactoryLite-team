@@ -94,6 +94,10 @@ export type RadRunPackageView = {
   lab: string | null;
   strain: string;
   quantityLabel: string;
+  /** BRIEF V10 (canon 0.30.334): the lot number the console names: the app
+   * batch's hbn through the lineage, else the harvest name's HBN, else the
+   * tag's last five. Absent on a hand-built view. */
+  lot?: string;
 };
 
 export type RadRunView = {
@@ -307,14 +311,32 @@ function mirrorLabel(tag: string, stored: RadPackageRecord, catalog: Map<string,
   return { strain: "", quantityLabel: grams };
 }
 
+/** BRIEF V10 (canon 0.30.334): the lot number for a tag on a run, his "Lot
+ * numbers" under the Rad on the console: the app batch's hbn where the
+ * catalog's lineage names one (hbnId), else the HBN the METRC harvest name
+ * yields through hbnFromMetrcName, else the tag's last five. */
+export function radLotNumber(tag: string, row: RadAvailableRow | undefined, hbnById: ReadonlyMap<string, string>): string {
+  if (row?.hbnId) {
+    const hbn = String(hbnById.get(row.hbnId) ?? "").trim();
+    if (hbn) return hbn;
+  }
+  if (row?.harvest) {
+    const read = hbnFromMetrcName(row.harvest, null, "2026-01-01");
+    if (read.ok) return read.mint.hbn;
+  }
+  return radLastFive(tag);
+}
+
 async function runViews(db: D1Database, now: string): Promise<{ scheduled: RadRunView[]; done: RadRunView[]; running: RadRunView[] }> {
-  const [runs, packages, catalog, startRaw] = await Promise.all([
+  const [runs, packages, catalog, startRaw, batches] = await Promise.all([
     listRadRunRecords(db),
     listRadPackageRecords(db),
     listRadCatalog(db),
     getConfigValue(db, CONFIG_KEYS.farm_day_start_hour),
+    listRadBatchGrows(db),
   ]);
   const byTag = new Map(catalog.map((row) => [row.tag, row]));
+  const hbnById = new Map(batches.map((row) => [row.id, row.hbn]));
   const byRun = new Map<string, RadRunPackageView[]>();
   for (const pkg of packages) {
     const tag = pkg.tag.toUpperCase();
@@ -328,6 +350,7 @@ async function runViews(db: D1Database, now: string): Promise<{ scheduled: RadRu
       lab: pkg.lab_test_status,
       strain: label.strain,
       quantityLabel: label.quantityLabel,
+      lot: radLotNumber(tag, byTag.get(tag), hbnById),
     };
     const list = byRun.get(pkg.run_id) ?? [];
     list.push(view);
@@ -357,6 +380,29 @@ async function runViews(db: D1Database, now: string): Promise<{ scheduled: RadRu
 export async function loadRadBoard(db: D1Database, q = ""): Promise<RadBoard> {
   const [available, views] = await Promise.all([listRadAvailable(db), runViews(db, nowIso())]);
   return { q: String(q ?? ""), available, ...views };
+}
+
+/** BRIEF V10 (canon 0.30.334): the run in the Rad, for the Harvest Console's
+ * Right now pane, with its lot numbers distinct in position order. */
+export type RadRunningView = RadRunView & { lots: string[] };
+
+/** The run in status running, read from the same views the Rad pages read so
+ * the console and the Rad Operation page tell one truth; null when the Rad is
+ * empty. Scheduled runs are not here: they stay on the Rad Schedule page. */
+export async function loadRadRunning(db: D1Database): Promise<RadRunningView | null> {
+  // The console reads this on every GET; the run records say first whether a
+  // run is running at all, so an empty Rad costs no catalog read.
+  const runs = await listRadRunRecords(db);
+  if (!runs.some((run) => run.status === RAD_RUN_STATUS.running)) return null;
+  const views = await runViews(db, nowIso());
+  const run = views.running[0];
+  if (!run) return null;
+  const lots: string[] = [];
+  for (const pkg of run.packages) {
+    const lot = pkg.lot ?? radLastFive(pkg.tag);
+    if (!lots.includes(lot)) lots.push(lot);
+  }
+  return { ...run, lots };
 }
 
 function stamp(label: string, iso: string | null, locale: Locale): string {
