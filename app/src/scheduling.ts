@@ -29,6 +29,7 @@ import { effectiveDateField } from "./effective";
 import { FARM_DAY_START_HOUR_DEFAULT, dayBefore, farmDay, farmDayBounds } from "./farmday";
 import { QUEUE_FOLD_SCRIPT, localTimeScript, queueFold } from "./html";
 import { t, tFill, type Locale } from "./i18n";
+import { terpCompleteLine, terpScheduleControls, type TerpRecipeOption } from "./terps";
 import { spaceTypeOf } from "./silo";
 import { esc } from "./ui";
 
@@ -121,12 +122,14 @@ function availableGroup(stage: ScheduleStage, group: ScheduleHbnGroup, locale: L
     </details>`;
 }
 
-function workingItem(stage: ScheduleStage, item: ScheduleItemRow, locale: Locale): string {
+function workingItem(stage: ScheduleStage, item: ScheduleItemRow, locale: Locale, recipes: readonly TerpRecipeOption[]): string {
   const status = t(locale, scheduleStatusWord(stage, item));
   const done = item.workDone ? `<span class="muted">${esc(t(locale, item.workDone))}</span>` : "";
+  const terp = stage === SCHEDULE_STAGES.cryo ? terpScheduleControls(item, recipes, locale) : "";
   const base = `${PRODUCTION_SCHEDULING_PATH}/${stage}`;
   return `<li class="schedule-item" data-schedule-id="${esc(item.id)}">
       <span class="schedule-identity">${esc(item.identity)}</span>
+      ${terp}
       <span class="muted schedule-status">${esc(status)}</span>
       ${done}
       <form method="post" action="${esc(base)}/unschedule/${esc(item.id)}" class="shuttle-form">
@@ -160,15 +163,17 @@ function completeItem(stage: ScheduleStage, item: ScheduleItemRow, locale: Local
   const when = item.completed_at
     ? `<time datetime="${esc(item.completed_at)}" data-local>${esc(item.completed_at)}</time>`
     : "";
+  const terp = stage === SCHEDULE_STAGES.cryo ? terpCompleteLine(item, locale) : "";
   return `<li class="schedule-item" data-schedule-id="${esc(item.id)}">
       <span class="schedule-identity">${esc(item.identity)}</span>
+      ${terp}
       ${when}
       ${unfinishForm(stage, item.id, locale)}
     </li>`;
 }
 
-function workingGroup(stage: ScheduleStage, group: ScheduleHbnGroup, locale: Locale): string {
-  const items = group.items.map((item) => workingItem(stage, item, locale)).join("");
+function workingGroup(stage: ScheduleStage, group: ScheduleHbnGroup, locale: Locale, recipes: readonly TerpRecipeOption[]): string {
+  const items = group.items.map((item) => workingItem(stage, item, locale, recipes)).join("");
   return `<section class="schedule-group" data-schedule-hbn="${esc(group.harvest_batch_id)}">
       <h3 class="schedule-hbn-label">${groupHeading(group)}</h3>
       <ul>${items}</ul>
@@ -448,7 +453,8 @@ export function schedulingPage(
   locale: Locale,
   nowIso: string,
   ok?: string,
-  adopt?: MetrcAdoptPane | null
+  adopt?: MetrcAdoptPane | null,
+  terpRecipes: readonly TerpRecipeOption[] = []
 ): string {
   void nowIso;
   void ok;
@@ -466,7 +472,7 @@ export function schedulingPage(
   const workingBody =
     panes.working.length === 0
       ? emptyLine(locale)
-      : panes.working.map((g) => workingGroup(stage, g, locale)).join("");
+      : panes.working.map((g) => workingGroup(stage, g, locale, terpRecipes)).join("");
   const completeBody =
     panes.complete.length === 0
       ? emptyLine(locale)

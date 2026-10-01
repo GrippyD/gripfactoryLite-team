@@ -21,6 +21,7 @@ import {
   INTERNAL_LOGISTICS_STAGE,
   SCHEDULE_STAGES,
   SCHEDULE_STATUS,
+  TERP_RECIPE_STATUS,
   NON_TRIM_SOURCE_SQL,
   WIP_SOURCE,
   WIP_STATUS,
@@ -390,6 +391,10 @@ export type ScheduleItemRow = {
   location?: string | null;
   /** THE PREPACK HEADINGS (canon 0.30.229): the HBN's grow method display name, or null when the batch has none. */
   grow_method?: string | null;
+  /** TERP RECIPES (canon 0.30.321): the run's recipe and dose. Null until a pick or a default. */
+  terp_recipe_id?: string | null;
+  terp_recipe_name?: string | null;
+  terp_dose_pct?: number | null;
 };
 
 /** THE HBN ON THE SCHEDULING PANES (canon 0.30.102; owner, 2026-09-16,
@@ -796,9 +801,15 @@ export type CryoRunRow = {
   in_grams: number | null;
   outputs: number;
   out_grams: number | null;
+  /** TERP RECIPES (canon 0.30.321). Optional so a hand-built row still typechecks. */
+  terp_recipe_id?: string | null;
+  terp_recipe_name?: string | null;
+  terp_dose_pct?: number | null;
+  terp_lines?: string | null;
 };
 
 const CRYO_RUN_SELECT = `SELECT ps.id, ps.status, ps.scheduled_at, ps.completed_at, ps.effective_date,
+              ps.terp_recipe_id, ps.terp_dose_pct, r.name AS terp_recipe_name,
               b.id AS harvest_batch_id, b.hbn, b.entry_date, b.farm_code,
               COALESCE(b.market_strain, s.name) AS strain_name,
               (SELECT COUNT(*) FROM cryo_run_inputs i WHERE i.run_id = ps.id) AS containers,
@@ -808,6 +819,7 @@ const CRYO_RUN_SELECT = `SELECT ps.id, ps.status, ps.scheduled_at, ps.completed_
        FROM production_schedules ps
        JOIN harvest_batches b ON b.id = ps.harvest_batch_id AND b.deleted_at IS NULL
        LEFT JOIN strains s ON s.id = b.strain_id
+       LEFT JOIN terp_recipes r ON r.id = ps.terp_recipe_id AND r.deleted_at IS NULL
        WHERE ps.deleted_at IS NULL AND ps.stage = '${SCHEDULE_STAGES.cryo}' AND ps.wip_package_id IS NULL`;
 
 export async function listCryoRuns(db: D1Database, status?: string): Promise<CryoRunRow[]> {
@@ -820,6 +832,97 @@ export async function listCryoRuns(db: D1Database, status?: string): Promise<Cry
 
 export async function getCryoRun(db: D1Database, id: string): Promise<CryoRunRow | null> {
   return db.prepare(`${CRYO_RUN_SELECT} AND ps.id = ?`).bind(id).first<CryoRunRow>();
+}
+
+export type TerpRecipeLine = { id: string; recipe_id: string; position: number; terp_name: string; percent: number };
+
+export type TerpRecipe = {
+  id: string;
+  name: string;
+  status: string;
+  retired_at: string | null;
+  retire_reason: string | null;
+  created_at: string;
+  lines: TerpRecipeLine[];
+};
+
+/** Active recipes, or every recipe, newest first. Lines ride in position order. */
+export async function listTerpRecipes(db: D1Database, status?: string): Promise<TerpRecipe[]> {
+  const recipes = status
+    ? await db
+        .prepare(
+          `SELECT id, name, status, retired_at, retire_reason, created_at
+           FROM terp_recipes WHERE deleted_at IS NULL AND status = ?
+           ORDER BY created_at DESC, id DESC`
+        )
+        .bind(status)
+        .all<Omit<TerpRecipe, "lines">>()
+    : await db
+        .prepare(
+          `SELECT id, name, status, retired_at, retire_reason, created_at
+           FROM terp_recipes WHERE deleted_at IS NULL
+           ORDER BY created_at DESC, id DESC`
+        )
+        .all<Omit<TerpRecipe, "lines">>();
+  const rows = recipes.results ?? [];
+  if (rows.length === 0) return [];
+  const lines = await db
+    .prepare(
+      `SELECT id, recipe_id, position, terp_name, percent
+       FROM terp_recipe_lines
+       WHERE recipe_id IN (${rows.map(() => "?").join(", ")})
+       ORDER BY position ASC, id ASC`
+    )
+    .bind(...rows.map((row) => row.id))
+    .all<TerpRecipeLine>();
+  const byRecipe = new Map<string, TerpRecipeLine[]>();
+  for (const line of lines.results ?? []) {
+    const group = byRecipe.get(line.recipe_id);
+    if (group) group.push(line);
+    else byRecipe.set(line.recipe_id, [line]);
+  }
+  return rows.map((row) => ({ ...row, lines: byRecipe.get(row.id) ?? [] }));
+}
+
+export async function listTerpRecipeLines(db: D1Database, recipeId: string): Promise<TerpRecipeLine[]> {
+  const result = await db
+    .prepare(
+      `SELECT id, recipe_id, position, terp_name, percent
+       FROM terp_recipe_lines WHERE recipe_id = ? ORDER BY position ASC, id ASC`
+    )
+    .bind(recipeId)
+    .all<TerpRecipeLine>();
+  return result.results ?? [];
+}
+
+/** The market strain the default reads: the typed strain, else the strain's name, trimmed. */
+const MARKET_STRAIN_KEY = (batch: string, strain: string) =>
+  `LOWER(TRIM(COALESCE(NULLIF(TRIM(${batch}.market_strain), ''), ${strain}.name, '')))`;
+
+/** THE DEFAULT (canon 0.30.321): the recipe on the newest pasteurization run of
+ * the same market strain, when that recipe is still active. Else none. */
+export async function defaultTerpRecipeForBatch(db: D1Database, harvestBatchId: string): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT ps.terp_recipe_id AS id
+       FROM production_schedules ps
+       JOIN harvest_batches b ON b.id = ps.harvest_batch_id AND b.deleted_at IS NULL
+       LEFT JOIN strains sb ON sb.id = b.strain_id
+       JOIN terp_recipes r ON r.id = ps.terp_recipe_id AND r.deleted_at IS NULL AND r.status = ?
+       WHERE ps.deleted_at IS NULL AND ps.stage = ? AND ps.wip_package_id IS NULL
+         AND ps.terp_recipe_id IS NOT NULL
+         AND ${MARKET_STRAIN_KEY("b", "sb")} = (
+           SELECT ${MARKET_STRAIN_KEY("b2", "s2")}
+           FROM harvest_batches b2
+           LEFT JOIN strains s2 ON s2.id = b2.strain_id
+           WHERE b2.id = ?
+         )
+       ORDER BY ps.scheduled_at DESC, ps.id DESC
+       LIMIT 1`
+    )
+    .bind(TERP_RECIPE_STATUS.active, SCHEDULE_STAGES.cryo, harvestBatchId)
+    .first<{ id: string }>();
+  return row?.id ?? null;
 }
 
 export type CryoRunInputRow = { id: string; wip_package_id: string; package_type_code: string; weight_grams: number; wet_weight_entry_id: string | null; package_code: string | null; status: string | null };
@@ -1065,6 +1168,9 @@ async function listCryoScheduled(db: D1Database, status: string): Promise<Schedu
     scheduled_at: row.scheduled_at,
     completed_at: row.completed_at,
     workDone: Number(row.outputs) > 0 ? "cryo weighed" : null,
+    terp_recipe_id: row.terp_recipe_id ?? null,
+    terp_recipe_name: row.terp_recipe_name ?? null,
+    terp_dose_pct: row.terp_dose_pct == null ? null : Number(row.terp_dose_pct),
   }));
 }
 

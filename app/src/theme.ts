@@ -368,6 +368,15 @@ select option[data-occupied] { color: var(--text-dim, #888); }
 .field-finish > p { margin-top: 0.8rem; }
 .field-finish-item { display: block; margin: 0.3rem 0; }
 .field-warn { margin: 0.6rem 0; padding: 0.6rem 0.8rem; border: 2px solid var(--line, #888); border-radius: 8px; }
+/* TERP RECIPES (canon 0.30.321): the builder and the schedule pick, shared by the three sheets. */
+.terp-work, .terp-pick { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
+.terp-work .field, .terp-pick .field, .terp-retire { margin: 0; }
+.terp-work input[data-terp-percent], .terp-pick input[data-terp-dose] { width: 6rem; }
+.terp-lines, .terp-saved { list-style: none; padding: 0; margin: 0.4rem 0; }
+.terp-lines li, .terp-saved li { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin: 0.3rem 0; }
+.terp-plain-row { display: flex; gap: 0.6rem; margin: 0.3rem 0; }
+.terp-complete { margin: 0.6rem 0; padding: 0.6rem 0.8rem; border: 2px solid var(--line, #888); border-radius: 8px; }
+.terp-retired { margin-top: 0.8rem; }
 .station-triple.field-triple > .working-pane { flex: 3 1 0; }
 .station-triple.field-triple > .queue-pane { min-width: 15rem; }
 body.device-phone .station-triple.field-triple > *, body.device-phone .station-triple.field-triple > .working-pane { flex: 1 1 auto; min-width: 0; }

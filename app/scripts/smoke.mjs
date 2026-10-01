@@ -402,8 +402,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 83 migration(s)")) {
-      throw new Error(`from-zero apply must say 83 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 84 migration(s)")) {
+      throw new Error(`from-zero apply must say 84 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -2617,6 +2617,8 @@ async function run() {
     assert(!cryoWorkPane.includes("BUD-SMOKE-1"), "the scheduled surface must expose no container");
     const runId = (cryoWorkPane.match(/data-schedule-id="([^"]+)"/) || [])[1];
     assert(runId, "the working pane must carry the run's id");
+    assert(cryoWorkPane.includes("data-terp-pick"), "a pasteurization run must offer a terp recipe");
+    assert(cryoWorkPane.includes('<option value="" selected>No recipe</option>'), "a first run takes no recipe when none was picked before");
     const cryoSecond = await req("/production/scheduling/cryo/schedule", {
       method: "POST",
       body: form({ hbn_id: batchId }),
@@ -7192,9 +7194,53 @@ async function run() {
       body: cryoLine({ package_code: secondTag, weight_grams: "4" }),
     });
     assert(secondPlus.status === 303, `the second line expected 303 got ${secondPlus.status} ${await secondPlus.text()}`);
+    const terpSave = await req("/admin/lookups/terp_recipes", {
+      method: "POST",
+      body: form({ recipe_name: "Smoke Blend", terp_name: ["Limonene", "Myrcene", "Caryophyllene"], percent: ["40", "35", "25"] }),
+    });
+    assert(terpSave.status === 303, `saving a terp recipe expected 303 got ${terpSave.status} ${await terpSave.text()}`);
+    const terpShort = await req("/admin/lookups/terp_recipes", {
+      method: "POST",
+      body: form({ recipe_name: "Short Blend", terp_name: ["Limonene"], percent: ["90"] }),
+    });
+    assert(terpShort.status === 400 && (await terpShort.text()).includes("The percents must total 100."), "a recipe that totals 90 must refuse");
+    const terpDup = await req("/admin/lookups/terp_recipes", {
+      method: "POST",
+      body: form({ recipe_name: "smoke blend", terp_name: ["Limonene"], percent: ["100"] }),
+    });
+    assert(terpDup.status === 400 && (await terpDup.text()).includes("That name is already an active recipe."), "a duplicate active name must refuse");
+    const terpSecond = await req("/admin/lookups/terp_recipes", {
+      method: "POST",
+      body: form({ recipe_name: "Smoke Blend Two", terp_name: ["Pinene", "Humulene"], percent: ["50", "50"] }),
+    });
+    assert(terpSecond.status === 303, `the second recipe expected 303 got ${terpSecond.status} ${await terpSecond.text()}`);
+    const terpListed = await text("/admin/lookups/terp_recipes");
+    assert(terpListed.body.includes("Smoke Blend") && terpListed.body.includes("Limonene 40%"), "the saved recipe must list its lines");
+    assert(terpListed.body.includes("Smoke Blend Two"), "the second recipe must be listed");
+    const terpId = terpListed.body
+      .split('<li data-terp-recipe="')
+      .slice(1)
+      .map((part) => ({ id: part.slice(0, part.indexOf('"')), part }))
+      .find((row) => row.part.includes("<strong>Smoke Blend</strong>"))?.id;
+    assert(terpId, "the active list must name Smoke Blend");
+    const terpPick = await req(`/production/scheduling/cryo/terp/${secondRun}`, {
+      method: "POST",
+      body: form({ terp_recipe_id: terpId, terp_dose_pct: "2.50" }),
+    });
+    assert(terpPick.status === 303, `the terp pick expected 303 got ${terpPick.status} ${await terpPick.text()}`);
+    const terpPicked = schedPaneOf((await text("/production/scheduling/cryo")).body, "working");
+    assert(terpPicked.includes(`<option value="${terpId}" selected>Smoke Blend</option>`), "the pick must read back on the working row");
+    assert(terpPicked.includes('data-terp-dose" inputmode="decimal" value="2.50"') || terpPicked.includes('value="2.50"'), "the dose must read back");
     const secondFinish = await req(`/station/cryo_weight/run/${secondRun}/finish`, { method: "POST", body: form({}) });
     assert(secondFinish.status === 303, `finishing the second run expected 303 got ${secondFinish.status}`);
+    const terpDone = await req(`/production/scheduling/cryo/terp/${secondRun}`, {
+      method: "POST",
+      body: form({ terp_recipe_id: terpId, terp_dose_pct: "1" }),
+    });
+    assert(terpDone.status === 400 && (await terpDone.text()).includes("Unfinish the run first to change its recipe."), "a completed run must refuse a terp pick");
     const finishedPick = await text(`/station/cryo_weight?pick=${secondRun}`);
+    assert(finishedPick.body.includes("Terp recipe: Smoke Blend (Limonene 40%, Myrcene 35%, Caryophyllene 25%)"), "Cryo Weight Entry must show the recipe");
+    assert(finishedPick.body.includes("Dose: 2.50 %"), "Cryo Weight Entry must show the dose");
     const inputId = (finishedPick.body.match(/data-cryo-input="([^"]+)"/) || [])[1];
     assert(inputId, "the finished run must list a consumed container");
     const poolBefore = (finishedPick.body.match(/data-pool-total-in="([^"]+)"/) || [])[1];
@@ -7216,6 +7262,9 @@ async function run() {
     const beforeTrim = await text("/production/scheduling/cryo");
     const emptyRunId = (schedPaneOf(beforeTrim.body, "working").match(/action="\/production\/scheduling\/cryo\/unschedule\/([^"]+)"/) || [])[1];
     assert(emptyRunId, "the empty run must be working");
+    const emptyTerp = beforeTrim.body.slice(beforeTrim.body.indexOf(`/cryo/terp/${emptyRunId}`));
+    assert(emptyTerp.includes(`<option value="${terpId}" selected>Smoke Blend</option>`), "a later run of the same market strain takes that recipe");
+    assert(/name="terp_dose_pct"[^>]*value=""/.test(emptyTerp.slice(0, 1500)), "the default does not carry the dose");
     const trimBack = await req(`/production/scheduling/trim/unfinish/${trimDone}`, { method: "POST", body: form({ unfinish_pin: ADMIN_PIN }) });
     const trimBody = trimBack.status === 303 ? (await text(trimBack.headers.get("location") || "/production/scheduling/trim")).body : await trimBack.text();
     if (trimBack.status === 303) {
@@ -7226,6 +7275,29 @@ async function run() {
       assert(trimBack.status === 400 && /is finished|outputs entered/.test(trimBody), `trim unfinish must refuse by name, got ${trimBack.status} ${trimBody.slice(0, 300)}`);
     }
     void unfinishBefore;
+    const terpRetire = await req("/admin/lookups/terp_recipes", {
+      method: "POST",
+      body: form({ action: "retire", id: terpId, reason: "smoke retire the blend" }),
+    });
+    assert(terpRetire.status === 303, `retiring a recipe expected 303 got ${terpRetire.status} ${await terpRetire.text()}`);
+    const retiredPage = await text("/admin/lookups/terp_recipes?retired=1");
+    assert(retiredPage.body.includes("data-terp-retired open") && retiredPage.body.includes("smoke retire the blend"), "the retired recipe must list under retired");
+    let cryoForLater = await text("/production/scheduling/cryo");
+    if (cryoForLater.body.includes(`/unschedule/${emptyRunId}`)) {
+      const freeEmpty = await req(`/production/scheduling/cryo/unschedule/${emptyRunId}`, { method: "POST", body: form({}) });
+      assert(freeEmpty.status === 303, `freeing the empty run expected 303 got ${freeEmpty.status} ${await freeEmpty.text()}`);
+      cryoForLater = await text("/production/scheduling/cryo");
+    }
+    assert(!cryoForLater.body.includes(`<option value="${terpId}"`), "a retired recipe leaves the select");
+    const idsBeforeLater = [...cryoForLater.body.matchAll(/data-schedule-id="([^"]+)"/g)].map((row) => row[1]);
+    const laterSched = await req("/production/scheduling/cryo/schedule", { method: "POST", body: form({ hbn_id: availHbn }) });
+    assert(laterSched.status === 303, `a run after the retire expected 303 got ${laterSched.status} ${await laterSched.text()}`);
+    const laterPage = await text("/production/scheduling/cryo");
+    const laterRun = [...laterPage.body.matchAll(/data-schedule-id="([^"]+)"/g)].map((row) => row[1]).find((id) => !idsBeforeLater.includes(id));
+    const laterWork = schedPaneOf(laterPage.body, "working");
+    assert(laterRun && laterWork.includes(`/cryo/terp/${laterRun}`), "the run after the retire must be working");
+    const laterTerp = laterWork.slice(laterWork.indexOf(`/cryo/terp/${laterRun}`));
+    assert(laterTerp.includes('<option value="" selected>No recipe</option>'), "a run after the recipe is retired takes none");
 
     // THE TRUCK RECORD (canon 0.30.226): one truck, two HBNs, Finish lot splits
     // it. Both lots read Truck 1 - <hbn> on Load Silo, both packages sit in the

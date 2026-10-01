@@ -199,6 +199,27 @@ describe("schedulingPage (canon 0.30.97)", () => {
     expect(trim).toContain("&gt;");
     const cryo = schedulingPage("cryo", { available: [], working, complete: [] }, "en", NOW);
     expect(cryo).toContain('<span class="muted schedule-status">Pasteurizing</span>');
+    expect(cryo).toContain("data-terp-pick");
+    expect(cryo).toContain('<option value="" selected>No recipe</option>');
+    expect(cryo).toContain('name="terp_dose_pct"');
+    expect(trim).not.toContain("data-terp-pick");
+    const picked = schedulingPage(
+      "cryo",
+      {
+        available: [],
+        working: [group([item({ id: "sched-1", identity: "1 container / 100 g in", terp_recipe_id: "rec-1", terp_recipe_name: "Smoke Blend", terp_dose_pct: 2.5 })])],
+        complete: [group([item({ id: "sched-9", identity: "1 container / 100 g in", status: "complete", terp_recipe_id: "rec-1", terp_recipe_name: "Smoke Blend", terp_dose_pct: 2.5 })])],
+      },
+      "es",
+      NOW,
+      undefined,
+      null,
+      [{ id: "rec-1", name: "Smoke Blend" }]
+    );
+    expect(picked).toContain("Receta de terpenos");
+    expect(picked).toContain('<option value="rec-1" selected>Smoke Blend</option>');
+    expect(picked).toContain('value="2.50"');
+    expect(picked).toContain("Dosis: 2.50 %");
   });
 
   it("right pane PIN box on the demote form, with the local instant", () => {

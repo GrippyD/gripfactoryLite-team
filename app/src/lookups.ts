@@ -87,6 +87,14 @@ export const LOOKUP_LANDING: LookupLandingSection[] = [
         description: "The trim plume's product line, a percent: that many of its last squares, in ROYGBIVWB-Aqua order, turn dark red when consumed.",
         lookupFieldName: "Trim Bogey",
       },
+      {
+        // TERP RECIPES (canon 0.30.321): blends for the Pasteurization schedule. Saved whole, retired, never edited.
+        key: "terp_recipes",
+        title: "Terp Recipes",
+        href: "/admin/lookups/terp_recipes",
+        description: "Named terpene blends for the Pasteurization schedule. A recipe is saved whole and retired, never edited.",
+        lookupFieldName: "Terp Recipes",
+      },
     ],
   },
   {

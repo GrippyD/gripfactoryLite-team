@@ -2779,6 +2779,49 @@ export const DICT: Record<string, { en: string; es: string }> = {
   },
   "Figures saved.": { en: "Figures saved.", es: "Cifras guardadas." },
   "Pick a day.": { en: "Pick a day.", es: "Elija un dia." },
+  // TERP RECIPES AND THE PASTEURIZATION SCHEDULE (canon 0.30.321).
+  "Terp Recipes": { en: "Terp Recipes", es: "Recetas de terpenos" },
+  "Named terpene blends for the Pasteurization schedule. A recipe is saved whole and retired, never edited.": {
+    en: "Named terpene blends for the Pasteurization schedule. A recipe is saved whole and retired, never edited.",
+    es: "Mezclas de terpenos con nombre para el programa de pasteurizacion. Una receta se guarda entera y se retira, nunca se edita.",
+  },
+  "Recipe Name": { en: "Recipe Name", es: "Nombre de la receta" },
+  "Terp Name": { en: "Terp Name", es: "Nombre del terpeno" },
+  "Start Over": { en: "Start Over", es: "Empezar de nuevo" },
+  "Type a terp name and a percent.": { en: "Type a terp name and a percent.", es: "Escriba un nombre de terpeno y un porcentaje." },
+  "That percent would pass 100.": { en: "That percent would pass 100.", es: "Ese porcentaje pasaria de 100." },
+  "This Mix is complete, would you like to save?": {
+    en: "This Mix is complete, would you like to save?",
+    es: "Esta mezcla esta completa, desea guardarla?",
+  },
+  "That name is already an active recipe.": { en: "That name is already an active recipe.", es: "Ese nombre ya es una receta activa." },
+  "The percents must total 100.": { en: "The percents must total 100.", es: "Los porcentajes deben sumar 100." },
+  "A percent must be a whole number from 1 to 100.": {
+    en: "A percent must be a whole number from 1 to 100.",
+    es: "Un porcentaje debe ser un numero entero de 1 a 100.",
+  },
+  "A terp name must be 60 characters or fewer.": {
+    en: "A terp name must be 60 characters or fewer.",
+    es: "Un nombre de terpeno debe tener 60 caracteres o menos.",
+  },
+  "Recipe saved.": { en: "Recipe saved.", es: "Receta guardada." },
+  "Retire": { en: "Retire", es: "Retirar" },
+  "Show retired": { en: "Show retired", es: "Mostrar retiradas" },
+  "Recipe retired.": { en: "Recipe retired.", es: "Receta retirada." },
+  "Terp recipe": { en: "Terp recipe", es: "Receta de terpenos" },
+  "No recipe": { en: "No recipe", es: "Sin receta" },
+  "Dose": { en: "Dose", es: "Dosis" },
+  "Terp recipe saved.": { en: "Terp recipe saved.", es: "Receta de terpenos guardada." },
+  "Unfinish the run first to change its recipe.": {
+    en: "Unfinish the run first to change its recipe.",
+    es: "Reabra la corrida primero para cambiar su receta.",
+  },
+  "That recipe is not on the list.": { en: "That recipe is not on the list.", es: "Esa receta no esta en la lista." },
+  "Dose must be a percent from 0 to 100, with at most two decimals.": {
+    en: "Dose must be a percent from 0 to 100, with at most two decimals.",
+    es: "La dosis debe ser un porcentaje de 0 a 100, con dos decimales como maximo.",
+  },
+  "That recipe is already retired.": { en: "That recipe is already retired.", es: "Esa receta ya esta retirada." },
 };
 
 /** Look a display string up by its English key; unknown keys render as-is. */
