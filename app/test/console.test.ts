@@ -154,7 +154,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(consoleBoxes({ ...input, hours: { PNN: null, ARL: null, PNS: null } }, "es").find((b) => b.farm === "Total")!.metrics.find((m) => m.key === "weight_per_dlh")!.value).toBe("escriba las horas");
   });
 
-  it("renders the collapsible sections: Plants, Drying and Trimming open, the two stubs closed (Trimming built by canon 0.30.88)", () => {
+  it("renders the collapsible sections: Plants, Trimming, Pasteurization and Testing open, Drying closed, no stub left (Pasteurization built by BRIEF V10, canon 0.30.334)", () => {
     const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" });
     expect(html).toContain("<h1>Harvest Console</h1>");
     expect(html).toContain('<details class="hc-section" data-hc-section="plants" open>');
@@ -163,8 +163,11 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(html).toContain("<summary>Drying</summary>");
     expect(html).toContain('<details class="hc-section" data-hc-section="trimming" open>');
     expect(html).toContain("<summary>Trimming</summary>");
-    expect(html).toContain(`<details class="hc-section hc-stub" data-hc-section="pasteurization">`);
+    // BRIEF V10 (canon 0.30.334): the Pasteurization section replaces the stub, open on a first visit.
+    expect(html).toContain(`<details class="hc-section" data-hc-section="pasteurization" open>`);
     expect(html).toContain(`<summary>Pasteurization</summary>`);
+    expect(html).toContain("data-hc-past-rightnow");
+    expect(html).toContain('data-hc-rad-state="empty"');
     expect(html).toContain(`<details class="hc-section" data-hc-section="testing" data-hc-testing-year="`);
     expect(html).toContain(`<summary>Testing <span class="muted hc-year">Harvest year 2026</span></summary>`);
     expect(html).toContain('data-hc-gate="ready"');
@@ -174,8 +177,8 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(html).toContain("No first-time tests on the sheet this season.");
     expect(html).not.toContain("data-hc-thc");
     expect(html).not.toContain("Lots ready");
-    expect(html.match(/data-hc-stub>/g)).toHaveLength(1);
-    expect(html).toContain("Stub: this section waits on the owner's definition.");
+    expect(html.match(/data-hc-stub>/g)).toBeNull();
+    expect(html).not.toContain("Stub: this section waits on the owner's definition.");
     expect(html).toContain('gf_hc_fold');
     expect(html).not.toContain('data-hc-section="drying" open');
     const order = ["plants", "drying", "trimming", "pasteurization", "testing", "prepack"].map((k) => html.indexOf(`data-hc-section="${k}"`));
@@ -283,8 +286,9 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(total).toContain('value="8"');
     // The date under the yesterday lines, and the flash after a save.
     // Twelve on the Plants boxes (hours, Weight Harvested and Weight/DLH per box), one per shift card
-    // (canon 0.30.88) and one on each card's sheet-hours line (canon 0.30.154).
-    expect(html.match(/<span class="hc-date muted">2026-09-14<\/span>/g)).toHaveLength(8);
+    // (canon 0.30.88), one on each card's sheet-hours line (canon 0.30.154), and one on each
+    // pasteurization shift pane (BRIEF V10, canon 0.30.334).
+    expect(html.match(/<span class="hc-date muted">2026-09-14<\/span>/g)).toHaveLength(10);
     expect(html).toContain('<p class="banner ok" data-hc-flash>Hours saved.</p>');
     expect(harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" })).not.toContain("data-hc-flash");
   });
@@ -1005,6 +1009,11 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(lbsSaved).toContain("data-hc-flash>Input lbs saved.</p>");
     expect(html.indexOf('data-hc-section="drying"')).toBeLessThan(html.indexOf('data-hc-section="trimming"'));
     expect(html.indexOf('data-hc-section="trimming"')).toBeLessThan(html.indexOf('data-hc-section="pasteurization"'));
+    // BRIEF V10 (canon 0.30.334): Pasteurization stands between Trimming and Testing, open, and flashes its hours saved.
+    expect(html.indexOf('data-hc-section="pasteurization"')).toBeLessThan(html.indexOf('data-hc-section="testing"'));
+    expect(html).toContain('data-hc-section="pasteurization" open');
+    const pastSaved = harvestConsolePage({ input: withTrim, live: [], nowIso: "2026-09-15T12:00:00.000Z", ok: "pasteurization_hours" });
+    expect(pastSaved).toContain("data-hc-flash>Hours saved.</p>");
   });
 
   it("the Prepack section lists bags by size and one DLH box", () => {

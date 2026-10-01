@@ -854,6 +854,37 @@ table.data th { background: var(--panel-2); }
 .hc-running { color: #2e9e4f; font-weight: 800; letter-spacing: 0.1em; font-size: 0.8rem; animation: hc-running 1.6s ease-in-out infinite; }
 @keyframes hc-running { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .hc-running { animation-duration: 3.2s; } }
+/* BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): the Right now pane's two halves (stacked on the phone), the Rad's green throb like a loading silo (slowed, never stilled, under reduced motion, canon 0.30.79), his CRYO, AMAPS, UV picture in the plume's deep red (canon 0.30.248) with a darker band, the five-figure row of the shift panes. */
+.hc-past-rightnow { margin: 0 0 0.8rem; }
+.hc-past-halves { display: flex; flex-wrap: wrap; gap: 0.9rem; align-items: stretch; }
+.hc-past-half { border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.6rem 0.7rem; }
+.hc-past-rad { flex: 1 1 14rem; min-width: 12rem; text-align: center; }
+.hc-past-rad .hc-icon { width: 9rem; height: auto; max-width: 100%; display: block; margin: 0.2rem auto 0.4rem; color: #2e9e4f; }
+.hc-rad-throb path { animation: hc-rad-throb 1.6s ease-in-out infinite; }
+@keyframes hc-rad-throb { 0%, 100% { stroke-opacity: 0.3; } 50% { stroke-opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .hc-rad-throb path { animation-duration: 3.2s; } }
+.hc-rad-lots { font-weight: 800; font-variant-numeric: tabular-nums; margin: 0.2rem 0; overflow-wrap: anywhere; }
+.hc-past-rad .silo-clock { display: block; margin-top: 0.25rem; }
+.hc-past-cryo { flex: 3 1 30rem; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.9rem; align-items: flex-start; }
+.hc-cryoline { display: block; flex: 3 1 22rem; min-width: 0; max-width: 40rem; height: auto; }
+.hc-cryoline .hc-node { fill: var(--panel, var(--surface, transparent)); stroke: var(--line, var(--border, #88888899)); stroke-width: 3; }
+.hc-cryoline text { fill: var(--text, currentColor); text-anchor: middle; font-family: inherit; }
+.hc-cryoline .hc-node-label { font-weight: 800; font-size: 40px; letter-spacing: 0.06em; }
+.hc-cryoline .hc-node-value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hc-cryoline .hc-node-sub { font-size: 18px; opacity: 0.75; font-variant-numeric: tabular-nums; }
+.hc-cryoline .hc-cryo-flow-a { fill: #7c1b1b; }
+.hc-cryoline .hc-cryo-flow-b { fill: #4a0f0f; }
+.hc-cryo-side { flex: 1 1 12rem; min-width: 11rem; }
+.hc-cryo-list { margin: 0.3rem 0 0; display: grid; gap: 0.3rem; }
+.hc-cryo-list dt { font-size: 0.7rem; letter-spacing: 0.05em; opacity: 0.8; }
+.hc-cryo-list dd { margin: 0; font-variant-numeric: tabular-nums; }
+.hc-past-figures { margin: 0.2rem 0 0.6rem; gap: 0.35rem; }
+.hc-past-figures .hc-gate-pane { flex: 1 1 5rem; min-width: 5rem; padding: 0.45rem 0.15rem 0.4rem; }
+.hc-past-figures .hc-gate-name { font-size: 0.62rem; letter-spacing: 0.02em; }
+.hc-past-figures .hc-icon { width: 100%; max-width: 5rem; margin-bottom: 0.25rem; }
+/* The V10 gate's fix (canon 0.30.337): a number never breaks between its digits; the row wraps instead. */
+.hc-past-figures .hc-value { font-size: 0.95rem; overflow-wrap: normal; }
+body.device-phone .hc-past-half { flex-basis: 100%; }
 .hc-sheet-hours dd { font-variant-numeric: tabular-nums; }
 .hc-shift .hc-metrics { flex: 1 1 auto; }
 body.device-phone .hc-shift { flex-basis: 100%; }
@@ -1600,6 +1631,37 @@ table.data tbody tr:hover td { background: var(--surface-2); }
 .hc-running { color: #2e9e4f; font-weight: 800; letter-spacing: 0.1em; font-size: 0.8rem; animation: hc-running 1.6s ease-in-out infinite; }
 @keyframes hc-running { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .hc-running { animation-duration: 3.2s; } }
+/* BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): the Right now pane's two halves (stacked on the phone), the Rad's green throb like a loading silo (slowed, never stilled, under reduced motion, canon 0.30.79), his CRYO, AMAPS, UV picture in the plume's deep red (canon 0.30.248) with a darker band, the five-figure row of the shift panes. */
+.hc-past-rightnow { margin: 0 0 0.8rem; }
+.hc-past-halves { display: flex; flex-wrap: wrap; gap: 0.9rem; align-items: stretch; }
+.hc-past-half { border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.6rem 0.7rem; }
+.hc-past-rad { flex: 1 1 14rem; min-width: 12rem; text-align: center; }
+.hc-past-rad .hc-icon { width: 9rem; height: auto; max-width: 100%; display: block; margin: 0.2rem auto 0.4rem; color: #2e9e4f; }
+.hc-rad-throb path { animation: hc-rad-throb 1.6s ease-in-out infinite; }
+@keyframes hc-rad-throb { 0%, 100% { stroke-opacity: 0.3; } 50% { stroke-opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .hc-rad-throb path { animation-duration: 3.2s; } }
+.hc-rad-lots { font-weight: 800; font-variant-numeric: tabular-nums; margin: 0.2rem 0; overflow-wrap: anywhere; }
+.hc-past-rad .silo-clock { display: block; margin-top: 0.25rem; }
+.hc-past-cryo { flex: 3 1 30rem; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.9rem; align-items: flex-start; }
+.hc-cryoline { display: block; flex: 3 1 22rem; min-width: 0; max-width: 40rem; height: auto; }
+.hc-cryoline .hc-node { fill: var(--panel, var(--surface, transparent)); stroke: var(--line, var(--border, #88888899)); stroke-width: 3; }
+.hc-cryoline text { fill: var(--text, currentColor); text-anchor: middle; font-family: inherit; }
+.hc-cryoline .hc-node-label { font-weight: 800; font-size: 40px; letter-spacing: 0.06em; }
+.hc-cryoline .hc-node-value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hc-cryoline .hc-node-sub { font-size: 18px; opacity: 0.75; font-variant-numeric: tabular-nums; }
+.hc-cryoline .hc-cryo-flow-a { fill: #7c1b1b; }
+.hc-cryoline .hc-cryo-flow-b { fill: #4a0f0f; }
+.hc-cryo-side { flex: 1 1 12rem; min-width: 11rem; }
+.hc-cryo-list { margin: 0.3rem 0 0; display: grid; gap: 0.3rem; }
+.hc-cryo-list dt { font-size: 0.7rem; letter-spacing: 0.05em; opacity: 0.8; }
+.hc-cryo-list dd { margin: 0; font-variant-numeric: tabular-nums; }
+.hc-past-figures { margin: 0.2rem 0 0.6rem; gap: 0.35rem; }
+.hc-past-figures .hc-gate-pane { flex: 1 1 5rem; min-width: 5rem; padding: 0.45rem 0.15rem 0.4rem; }
+.hc-past-figures .hc-gate-name { font-size: 0.62rem; letter-spacing: 0.02em; }
+.hc-past-figures .hc-icon { width: 100%; max-width: 5rem; margin-bottom: 0.25rem; }
+/* The V10 gate's fix (canon 0.30.337): a number never breaks between its digits; the row wraps instead. */
+.hc-past-figures .hc-value { font-size: 0.95rem; overflow-wrap: normal; }
+body.device-phone .hc-past-half { flex-basis: 100%; }
 .hc-sheet-hours dd { font-variant-numeric: tabular-nums; }
 .hc-shift .hc-metrics { flex: 1 1 auto; }
 body.device-phone .hc-shift { flex-basis: 100%; }
@@ -2293,6 +2355,37 @@ legend { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; c
 .hc-running { color: #3ecf6b; font-weight: 800; letter-spacing: 0.1em; font-size: 0.8rem; animation: hc-running 1.6s ease-in-out infinite; }
 @keyframes hc-running { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .hc-running { animation-duration: 3.2s; } }
+/* BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): the Right now pane's two halves (stacked on the phone), the Rad's green throb like a loading silo (slowed, never stilled, under reduced motion, canon 0.30.79), his CRYO, AMAPS, UV picture in the plume's deep red (canon 0.30.248) with a darker band, the five-figure row of the shift panes. */
+.hc-past-rightnow { margin: 0 0 0.8rem; }
+.hc-past-halves { display: flex; flex-wrap: wrap; gap: 0.9rem; align-items: stretch; }
+.hc-past-half { border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.6rem 0.7rem; }
+.hc-past-rad { flex: 1 1 14rem; min-width: 12rem; text-align: center; }
+.hc-past-rad .hc-icon { width: 9rem; height: auto; max-width: 100%; display: block; margin: 0.2rem auto 0.4rem; color: #3ecf6b; }
+.hc-rad-throb path { animation: hc-rad-throb 1.6s ease-in-out infinite; }
+@keyframes hc-rad-throb { 0%, 100% { stroke-opacity: 0.3; } 50% { stroke-opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .hc-rad-throb path { animation-duration: 3.2s; } }
+.hc-rad-lots { font-weight: 800; font-variant-numeric: tabular-nums; margin: 0.2rem 0; overflow-wrap: anywhere; }
+.hc-past-rad .silo-clock { display: block; margin-top: 0.25rem; }
+.hc-past-cryo { flex: 3 1 30rem; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.9rem; align-items: flex-start; }
+.hc-cryoline { display: block; flex: 3 1 22rem; min-width: 0; max-width: 40rem; height: auto; }
+.hc-cryoline .hc-node { fill: var(--panel, var(--surface, transparent)); stroke: var(--line, var(--border, #88888899)); stroke-width: 3; }
+.hc-cryoline text { fill: var(--text, currentColor); text-anchor: middle; font-family: inherit; }
+.hc-cryoline .hc-node-label { font-weight: 800; font-size: 40px; letter-spacing: 0.06em; }
+.hc-cryoline .hc-node-value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hc-cryoline .hc-node-sub { font-size: 18px; opacity: 0.75; font-variant-numeric: tabular-nums; }
+.hc-cryoline .hc-cryo-flow-a { fill: #ba2929; }
+.hc-cryoline .hc-cryo-flow-b { fill: #6e1414; }
+.hc-cryo-side { flex: 1 1 12rem; min-width: 11rem; }
+.hc-cryo-list { margin: 0.3rem 0 0; display: grid; gap: 0.3rem; }
+.hc-cryo-list dt { font-size: 0.7rem; letter-spacing: 0.05em; opacity: 0.8; }
+.hc-cryo-list dd { margin: 0; font-variant-numeric: tabular-nums; }
+.hc-past-figures { margin: 0.2rem 0 0.6rem; gap: 0.35rem; }
+.hc-past-figures .hc-gate-pane { flex: 1 1 5rem; min-width: 5rem; padding: 0.45rem 0.15rem 0.4rem; }
+.hc-past-figures .hc-gate-name { font-size: 0.62rem; letter-spacing: 0.02em; }
+.hc-past-figures .hc-icon { width: 100%; max-width: 5rem; margin-bottom: 0.25rem; }
+/* The V10 gate's fix (canon 0.30.337): a number never breaks between its digits; the row wraps instead. */
+.hc-past-figures .hc-value { font-size: 0.95rem; overflow-wrap: normal; }
+body.device-phone .hc-past-half { flex-basis: 100%; }
 .hc-sheet-hours dd { font-variant-numeric: tabular-nums; }
 .hc-shift .hc-metrics { flex: 1 1 auto; }
 body.device-phone .hc-shift { flex-basis: 100%; }

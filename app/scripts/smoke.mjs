@@ -409,8 +409,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 85 migration(s)")) {
-      throw new Error(`from-zero apply must say 85 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 86 migration(s)")) {
+      throw new Error(`from-zero apply must say 86 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -2740,6 +2740,96 @@ async function run() {
     const cryoFinished = await text(cryoFinish.headers.get("location") || "");
     assert(cryoFinished.body.includes("data-cryo-run-finished") && cryoFinished.body.includes("Run finished."), "the finished run must open read-only with its flash");
     assert(!cryoFinished.body.includes(`action="/station/cryo_weight/run/${runId}/add"`), "a finished run takes no more lines");
+    // BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): the section replaces the stub,
+    // open on a first visit, the Right now pane above the two shift panes. The Right now pane
+    // reads today's farm day: the lines above carry 2026-09-08 as their cryo date, so today's
+    // list has no BUD from them, while the run finished this second counts its inputs less its
+    // outputs (100 less 88) as WASTE on the day it closed (his pick), and an output entered
+    // seconds ago turns the cryo line RUNNING. The shift panes read the day picked.
+    const pastSection = (body) => body.slice(body.indexOf('data-hc-section="pasteurization"'), body.indexOf('data-hc-section="testing"'));
+    const pastRead = (slice, key) => (slice.match(new RegExp(`data-hc="${key}">([^<]*)<`)) || [])[1];
+    const pastConsole = await text("/harvest");
+    assert(pastConsole.res.status === 200, `GET /harvest after Finish run expected 200 got ${pastConsole.res.status}`);
+    assert(pastConsole.body.includes('<details class="hc-section" data-hc-section="pasteurization" open>'), "the Pasteurization section must stand open on a first visit");
+    assert(!pastConsole.body.includes('hc-stub" data-hc-section="pasteurization"'), "the Pasteurization stub is gone");
+    const pastNow = pastSection(pastConsole.body);
+    assert(pastNow.includes("data-hc-past-rightnow") && pastNow.indexOf("data-hc-past-rightnow") < pastNow.indexOf('data-hc-past-shift="day"'), "Right now stands above the shift cards");
+    assert(pastNow.indexOf('data-hc-past-shift="day"') < pastNow.indexOf('data-hc-past-shift="second"'), "Day shift stands before Second Shift");
+    assert(pastNow.indexOf("data-hc-rad ") < pastNow.indexOf("data-hc-cryo>"), "the Rad half stands before the Cryo half");
+    assert(pastNow.includes('data-hc-rad-state="empty"') && pastNow.includes("data-hc-rad-empty>Rad empty<") && !pastNow.includes("hc-rad-throb"), "no Rad run is running yet: the icon stands inert and says Rad empty");
+    const pastHead = pastNow.slice(0, pastNow.indexOf("hc-past-halves"));
+    assert(pastNow.includes('data-hc-cryoline-running="1"') && pastHead.includes("data-hc-running>RUNNING<") && !pastHead.includes("data-hc-past-down"), "an output entered seconds ago turns the cryo line RUNNING on the Right now head");
+    assert(
+      pastRead(pastNow, "past_now_bud_g") === "0 g" && pastRead(pastNow, "past_now_wpr_g") === "0 g" && pastRead(pastNow, "past_now_sha_g") === "0 g",
+      `the lines dated 2026-09-08 are not today's: BUD, WPR and SHA read 0 g, got ${pastRead(pastNow, "past_now_bud_g")} ${pastRead(pastNow, "past_now_wpr_g")} ${pastRead(pastNow, "past_now_sha_g")}`
+    );
+    assert(
+      pastRead(pastNow, "past_now_waste_g") === "12 g" && pastRead(pastNow, "past_now_waste_lb") === "0.03 lb",
+      `the run finished now gives WASTE its inputs less its outputs, 100 less 88, got ${pastRead(pastNow, "past_now_waste_g")} ${pastRead(pastNow, "past_now_waste_lb")}`
+    );
+    assert(pastRead(pastNow, "past_now_total_g") === "12 g", `TOTAL is the four summed, got ${pastRead(pastNow, "past_now_total_g")}`);
+    assert(pastNow.includes('data-hc-node-value="cryo" x="770" y="156">0.03 lb<') && pastNow.includes("12 g \u00b7 0 packages</text>"), "the CRYO node carries BUD + WPR + WASTE with the day's package count");
+    assert(pastNow.includes('data-hc-node-value="amaps" x="210" y="506">0.00 lb<') && pastNow.includes('data-hc-node-value="uv" x="770" y="506">0.00 lb<'), "AMAPS carries BUD + WPR and UV carries SHA, both empty today");
+    assert(pastNow.includes('data-hc-node="meter"') && !pastNow.includes('data-hc-node-value="meter"'), "the metering box carries no label and no number");
+    assert(pastNow.includes('data-hc-flow="cryo-meter"') && pastNow.includes('data-hc-flow="meter-amaps"') && pastNow.includes('data-hc-flow="cryo-uv"'), "three burgundy flows join CRYO to the box, the box to AMAPS and CRYO to UV");
+    assert(pastNow.includes("<animate "), "the flows move while the line runs");
+    assert(pastNow.includes('data-hc-cryo-since="06:00">since 06:00<'), "the list reads since the farm day's start hour");
+    assert(!pastNow.includes("data-hc-cryo-open"), "no scheduled run holds unentered weight here, so the open-runs line is absent");
+    // The shift panes read the day picked by their own operators, blank until named in Admin,
+    // Lookups, app_config: the Day shift takes the smoke's cryo operator, so 2026-09-08 reads the
+    // 88 g BUD line (the WPR line was voided) on Bulk Bud and Total; the Second Shift reads zeros.
+    const pastOpsEdit = await req("/record/app_config/pasteurization_shift_day_operators/edit", { method: "POST", body: form({ value: "Austin", reason: "smoke: the day shift's cryo operator" }) });
+    assert(pastOpsEdit.status === 303, `naming the pasteurization day operators expected 303 got ${pastOpsEdit.status} ${await pastOpsEdit.text()}`);
+    const PAST_DAY = "2026-09-08";
+    const pastDayCardOf = (body) => {
+      const section = pastSection(body);
+      return section.slice(section.indexOf('data-hc-past-shift="day"'), section.indexOf('data-hc-past-shift="second"'));
+    };
+    const pastPicked = await text(`/harvest?day=${PAST_DAY}`);
+    assert(pastPicked.res.status === 200, `GET /harvest?day=${PAST_DAY} expected 200 got ${pastPicked.res.status}`);
+    const pastCards = pastSection(pastPicked.body);
+    const pastDayCard = pastDayCardOf(pastPicked.body);
+    const pastSecondCard = pastCards.slice(pastCards.indexOf('data-hc-past-shift="second"'));
+    assert(pastDayCard.includes("data-hc-past-operators>Austin</span>"), "the Day shift card names its own operator");
+    assert(pastDayCard.includes(`<span class="hc-date muted">${PAST_DAY}</span>`), "the card names the day picked");
+    for (const icon of ["bulk-bud", "prepack", "shake", "waste", "total"]) {
+      assert(pastDayCard.includes(`data-hc-icon="${icon}"`) && pastSecondCard.includes(`data-hc-icon="${icon}"`), `each card carries the ${icon} icon`);
+    }
+    assert(!pastDayCard.includes("hc-cryoline") && !pastDayCard.includes("data-hc-bud") && !pastDayCard.includes("hc-trimline"), "the shift cards carry no machine picture and no bud");
+    assert(
+      pastRead(pastDayCard, "past_bulk_g") === "88 g" && pastRead(pastDayCard, "past_bulk_lb") === "0.20 lb",
+      `Bulk Bud reads the 88 g BUD line of ${PAST_DAY}, got ${pastRead(pastDayCard, "past_bulk_g")} ${pastRead(pastDayCard, "past_bulk_lb")}`
+    );
+    assert(pastRead(pastDayCard, "past_prepack_g") === "0 g" && pastRead(pastDayCard, "past_shake_g") === "0 g", "Prepack and Shake read nothing on that day (the WPR line was voided)");
+    assert(pastRead(pastDayCard, "past_waste_g") === "0 g", "the run finished today lands its waste on today, not on the day picked");
+    assert(pastRead(pastDayCard, "past_total_g") === "88 g", `Total is the four summed, got ${pastRead(pastDayCard, "past_total_g")}`);
+    assert(pastRead(pastSecondCard, "past_total_g") === "0 g" && pastSecondCard.includes("data-hc-past-operators>no operators named</span>"), "the Second Shift card reads zeros with no operators named");
+    assert(!pastCards.includes("data-hc-past-unassigned"), "the operator is named on the Day shift: no unassigned note");
+    assert(
+      pastDayCard.includes(`<input type="hidden" name="work_date" value="${PAST_DAY}">`) && pastDayCard.includes('<input type="hidden" name="day_picked" value="1">') && pastDayCard.includes('data-hc-past-hours="day"'),
+      "the Day card's hours box carries the picked day"
+    );
+    assert(pastRead(pastDayCard, "past_lbs_per_dlh") === "type hours", "Lbs/DLH asks for hours until they are typed");
+    const pastBadShift = await req("/harvest/pasteurization-hours", { method: "POST", body: form({ shift: "night", work_date: PAST_DAY, hours: "5", day_picked: "1" }) });
+    assert(pastBadShift.status === 400 && (await pastBadShift.text()).includes("Pick a shift."), "an unknown pasteurization shift must refuse in words");
+    const pastBadHours = await req("/harvest/pasteurization-hours", { method: "POST", body: form({ shift: "day", work_date: PAST_DAY, hours: "seven", day_picked: "1" }) });
+    assert(pastBadHours.status === 400 && (await pastBadHours.text()).includes("Hours must be a number of hours, zero or more."), "word hours must refuse in words");
+    const pastHours = await req("/harvest/pasteurization-hours", { method: "POST", body: form({ shift: "day", work_date: PAST_DAY, hours: "7.5", day_picked: "1" }) });
+    assert(
+      pastHours.status === 303 && (pastHours.headers.get("location") || "") === `/harvest?ok=pasteurization_hours&day=${PAST_DAY}`,
+      `saving the hours expected 303 to the picked day, got ${pastHours.status} ${pastHours.headers.get("location")}`
+    );
+    const pastSaved = await text(`/harvest?ok=pasteurization_hours&day=${PAST_DAY}`);
+    assert(pastSaved.body.includes("data-hc-flash>Hours saved.</p>"), "the hours save must flash");
+    const pastSavedDay = pastDayCardOf(pastSaved.body);
+    assert(/value="7.5"[^>]*aria-label="Total Hours Day shift" data-hc-hours-input>/.test(pastSavedDay), "the Day box must keep its typed 7.5");
+    assert(pastSavedDay.includes('data-hc="past_lbs_per_dlh">0.03 lb/h</span><span class="hc-sub muted">12 g/h</span>'), `Lbs/DLH divides 88 g by 7.5 h, got ${pastRead(pastSavedDay, "past_lbs_per_dlh")}`);
+    const pastLog = await text("/log");
+    assert(pastLog.body.includes("<td>pasteurization_labor_hours</td>"), "the hours must land in the change log under pasteurization_labor_hours");
+    const pastClear = await req("/harvest/pasteurization-hours", { method: "POST", body: form({ shift: "day", work_date: PAST_DAY, hours: "", day_picked: "1" }) });
+    assert(pastClear.status === 303, `clearing the hours expected 303 got ${pastClear.status}`);
+    const pastClearedDay = pastDayCardOf((await text(`/harvest?day=${PAST_DAY}`)).body);
+    assert(/value=""[^>]*aria-label="Total Hours Day shift" data-hc-hours-input>/.test(pastClearedDay) && pastRead(pastClearedDay, "past_lbs_per_dlh") === "type hours", "a blank save clears the row: the box empty, type hours");
     // The trim container is archival: out of the Cryo Queue, its ledger grams zero; the output stands.
     counts = await homeCounts();
     assert(counts.cryo === 0, `cryo after Finish run expected 0 got ${counts.cryo}`);
@@ -4911,7 +5001,8 @@ async function run() {
       assert(consolePage.body.includes(`data-hc-section="${section}"`), `the console must carry the ${section} section`);
     }
     assert(consolePage.body.includes('data-hc-section="plants" open') && consolePage.body.includes('data-hc-section="drying">') && !consolePage.body.includes('data-hc-section="drying" open'), "Plants open and Drying closed on a first visit");
-    assert((consolePage.body.match(/data-hc-stub>/g) || []).length === 1, "Pasteurization is the remaining stub; Testing is built");
+    assert((consolePage.body.match(/data-hc-stub>/g) || []).length === 0, "no stub remains: Pasteurization is built (canon 0.30.334) and Testing before it");
+    assert(consolePage.body.includes('data-hc-section="pasteurization" open') && !consolePage.body.includes('hc-stub" data-hc-section="pasteurization"'), "Pasteurization must be a section, open on a first visit");
     assert(consolePage.body.includes('data-hc-section="testing"') && !consolePage.body.includes('hc-stub" data-hc-section="testing"'), "Testing must be a section, not a stub");
     const testingSection = consolePage.body.slice(consolePage.body.indexOf('data-hc-section="testing"'), consolePage.body.indexOf('data-hc-section="prepack"'));
     assert(testingSection.includes('data-hc-gate="ready"') && testingSection.includes('data-hc-icon="ready"'), "Ready for Testing must carry its line-art icon");
@@ -4966,7 +5057,7 @@ async function run() {
     const thcDesc = await text(`/harvest?day=${pickedDay}&thc=desc`);
     assert(thcDesc.res.status === 200 && !thcDesc.body.includes("data-hc-thc-sort") && thcDesc.body.includes('data-hc="ready_packages">0<') && thcDesc.body.includes("picked; the panes below read this day"), "a thc query must keep the picked day and leave the gate alone");
     // Three farm hours forms, two DLH boxes, two input lbs boxes, and the prepack DLH box carry the day home.
-    assert((consolePicked.body.match(new RegExp(`name="work_date" value="${pickedDay}"`, "g")) || []).length === 6, "the harvest hours box, the two DLH boxes, the two input lbs boxes and the prepack box must carry the picked day");
+    assert((consolePicked.body.match(new RegExp(`name="work_date" value="${pickedDay}"`, "g")) || []).length === 8, "the harvest hours box, the two DLH boxes, the two input lbs boxes, the two pasteurization hours boxes and the prepack box must carry the picked day");
     assert(consolePicked.body.includes(`<span class="hc-date muted">${pickedDay}</span>`), "the date under the yesterday lines must be the picked day");
     const pickedHours = await req("/harvest/hours", { method: "POST", body: form({ farm: "ALL", work_date: pickedDay, hours: "3", day_picked: "1" }) });
     assert(pickedHours.status === 303 && (pickedHours.headers.get("location") || "") === `/harvest?ok=hours&day=${pickedDay}`, `hours on a picked day must return to that day, got ${pickedHours.headers.get("location")}`);
@@ -6854,9 +6945,26 @@ async function run() {
     const cryoWork = schedPaneOf((await text("/production/scheduling/cryo")).body, "working");
     const prepackRun = (cryoWork.match(/data-schedule-id="([^"]+)"/) || [])[1];
     assert(prepackRun, "the working pane must carry the run that will feed prepack");
+    // BRIEF V10 (canon 0.30.334): a scheduled run with inputs above its outputs is weight not yet
+    // entered out; the Right now pane names it under the list and never counts it as waste. His
+    // word at the gate (canon 0.30.338): started runs only. The run just scheduled holds its pool
+    // with nothing entered yet, so it is queued and off the line; its first line starts it and the
+    // line reads one run with the pool less that line; the lines below draw it down and Finish run
+    // closes it.
+    const feedPick = await text(`/station/cryo_weight?pick=${prepackRun}`);
+    const feedIn = Number((feedPick.body.match(/data-pool-total-in="([^"]+)"/) || [])[1]);
+    assert(feedIn > 20, `the feed run must hold more than its first 20 g line, got ${feedIn}`);
+    const pastSectionOf = (body) => body.slice(body.indexOf('data-hc-section="pasteurization"'), body.indexOf('data-hc-section="testing"'));
+    const feedQueuedNow = pastSectionOf((await text("/harvest")).body);
+    assert(feedQueuedNow.includes("data-hc-cryo>"), "the Right now pane's cryo half must render before the feed run starts");
+    assert(!feedQueuedNow.includes("data-hc-cryo-open"), "a scheduled run with no output yet is queued, not held, so the open-runs line is absent");
     const addWpr = (tag, grams) => req(`/station/cryo_weight/run/${prepackRun}/add`, { method: "POST", body: form({ package_code: tag, package_type_code: "WPR", weight_grams: grams, cryo_operator: "Austin" }) });
     const wprA = await addWpr(PP1, "20");
     assert(wprA.status === 303, `the first WPR output expected 303 got ${wprA.status} ${await wprA.text()}`);
+    const feedLeft = feedIn - 20;
+    const feedOpenNow = pastSectionOf((await text("/harvest")).body);
+    assert(feedOpenNow.includes(`data-hc-cryo-open data-hc-cryo-open-runs="1" data-hc-cryo-open-grams="${feedLeft}"`), `the open-runs line must name the one started run holding ${feedLeft} g`);
+    assert(feedOpenNow.includes(`1 open run holds ${(Math.round((feedLeft / 448) * 100) / 100).toFixed(2)} lb not yet entered out`), "the open-runs line reads the remainder in pounds");
     const wprB = await addWpr(PP2, "10");
     assert(wprB.status === 303, `the second WPR output expected 303 got ${wprB.status} ${await wprB.text()}`);
     const TAG_Q = "1A4050300000000000000C11";
@@ -6866,8 +6974,34 @@ async function run() {
     assert(wprQ.status === 303, `the queue WPR expected 303 got ${wprQ.status} ${await wprQ.text()}`);
     const wprHold = await addWpr(TAG_HOLD, "8");
     assert(wprHold.status === 303, `the held WPR expected 303 got ${wprHold.status} ${await wprHold.text()}`);
+    // BRIEF V10 (canon 0.30.334): one SHA line on the same run, dated today, so the console's UV node
+    // and the list's SHA read a weight and the CRYO node counts five packages.
+    const TAG_SHA = "1A4050300000000000000C13";
+    const shaFeed = await req(`/station/cryo_weight/run/${prepackRun}/add`, { method: "POST", body: form({ package_code: TAG_SHA, package_type_code: "SHA", weight_grams: "5", cryo_operator: "Austin" }) });
+    assert(shaFeed.status === 303, `the SHA line expected 303 got ${shaFeed.status} ${await shaFeed.text()}`);
     const finishFeed = await req(`/station/cryo_weight/run/${prepackRun}/finish`, { method: "POST", body: form({}) });
     assert(finishFeed.status === 303, `finishing the feed run expected 303 got ${finishFeed.status} ${await finishFeed.text()}`);
+    // BRIEF V10 (canon 0.30.334): the Right now pane reads today's farm day, and the four WPR lines
+    // above took today's date (no Effective Date typed), so today's list reads their 53 g on WPR
+    // and the AMAPS node carries them (BUD + WPR); the feed run finished just now adds its inputs
+    // less its outputs to WASTE on today; TOTAL is the four summed, read back from the page's own
+    // numbers.
+    const feedConsole = await text("/harvest");
+    const feedNow = feedConsole.body.slice(feedConsole.body.indexOf('data-hc-section="pasteurization"'), feedConsole.body.indexOf('data-hc-section="testing"'));
+    const feedRead = (key) => (feedNow.match(new RegExp(`data-hc="${key}">([^<]*)<`)) || [])[1];
+    const feedGrams = (key) => Number(String(feedRead(key) || "").replace(/[^0-9]/g, ""));
+    assert(feedRead("past_now_wpr_g") === "53 g" && feedRead("past_now_wpr_lb") === "0.12 lb", `today's WPR reads the four lines, 53 g, got ${feedRead("past_now_wpr_g")} ${feedRead("past_now_wpr_lb")}`);
+    assert(/data-hc-node-value="amaps" x="210" y="506">0\.12 lb<\/text>\s*<text class="hc-node-sub" x="210" y="540">53 g<\/text>/.test(feedNow), "the AMAPS node carries BUD + WPR, the 53 g");
+    assert(feedRead("past_now_sha_g") === "5 g" && feedRead("past_now_sha_lb") === "0.01 lb", `today's SHA reads the one line, 5 g, got ${feedRead("past_now_sha_g")} ${feedRead("past_now_sha_lb")}`);
+    assert(/data-hc-node-value="uv" x="770" y="506">0\.01 lb<\/text>\s*<text class="hc-node-sub" x="770" y="540">5 g<\/text>/.test(feedNow), "the UV node carries SHA, the 5 g");
+    assert(/data-hc-node-value="cryo" x="770" y="156">[0-9.,]+ lb<\/text>\s*<text class="hc-node-sub" x="770" y="190">[0-9,]+ g \u00b7 5 packages<\/text>/.test(feedNow), "the CRYO node counts the five packages entered today");
+    assert(feedNow.includes('data-hc-cryoline-running="1"'), "the lines just entered keep the cryo line RUNNING");
+    assert(
+      feedGrams("past_now_total_g") === feedGrams("past_now_bud_g") + feedGrams("past_now_wpr_g") + feedGrams("past_now_sha_g") + feedGrams("past_now_waste_g"),
+      `TOTAL is the four summed, got ${feedRead("past_now_total_g")} for ${feedRead("past_now_bud_g")} ${feedRead("past_now_wpr_g")} ${feedRead("past_now_sha_g")} ${feedRead("past_now_waste_g")}`
+    );
+    assert(!feedNow.includes("data-hc-cryo-open"), "Finish run closed the feed run and no scheduled run holds weight, so the open-runs line is gone");
+    assert(feedGrams("past_now_waste_g") >= Math.max(0, feedIn - 58), `WASTE carries the feed run's inputs less its outputs (${feedIn} less 58) on the day it closed, got ${feedRead("past_now_waste_g")}`);
     const releaseTag = async (tag) => {
       const queue = await text("/admin/queues");
       const at = queue.body.indexOf(tag);
@@ -8431,8 +8565,23 @@ async function run() {
     assert(radBadShape.status === 400 && (await radBadShape.text()).includes("Start time must be HH:MM."), `13:00 PM must be refused, got ${radBadShape.status}`);
     const radSame = await req(`/compliance/rad_operation/run/${radRunB}/start_time`, { method: "POST", body: form({ start_time: radClock12.hhmm, meridiem: radClock12.meridiem }) });
     assert(radSame.status === 303, `the same time again expected 303 got ${radSame.status} ${await radSame.text()}`);
+    // BRIEF V10 (canon 0.30.334): the Harvest Console's Right now pane carries the run in the Rad:
+    // the icon throbbing green, the lot number (the HBN its harvest name yields), the package
+    // count, the grey and the clock from the saved start, so the Start Time edit above moved it.
+    const radConsole = await text("/harvest");
+    const radHalfOf = (body) => body.slice(body.indexOf("data-hc-rad "), body.indexOf("data-hc-cryo>"));
+    const radHalf = radHalfOf(radConsole.body);
+    assert(radHalf.includes('data-hc-rad-state="running"') && radHalf.includes("hc-rad-throb"), "a running Rad run throbs the icon green on the console");
+    assert(radHalf.includes(`data-hc-rad-lots>${radHbn("GH", "27011")}<`), "the Rad half names the run's lot number, the HBN its harvest name yields");
+    assert(radHalf.includes("data-hc-rad-count>1 package<"), "the Rad half counts the run's packages");
+    assert(radHalf.includes("data-hc-rad-grey>Grey (Gy) 1500<"), "the Rad half reads the run's grey");
+    assert(radHalf.includes(`data-clock data-state="running" data-started="${radTargetMs}"`), "the Rad clock runs from the saved start");
+    assert(!radHalf.includes("Rad empty"), "a running Rad does not say Rad empty");
     const radUnstart = await req(`/compliance/rad_operation/run/${radRunB}/unstart`, { method: "POST", body: form({}) });
     assert(radUnstart.status === 303, `unstart expected 303 got ${radUnstart.status} ${await radUnstart.text()}`);
+    // After unstart the Rad stands empty on the console: the icon inert, the words Rad empty.
+    const radEmptyHalf = radHalfOf((await text("/harvest")).body);
+    assert(radEmptyHalf.includes('data-hc-rad-state="empty"') && radEmptyHalf.includes("data-hc-rad-empty>Rad empty<") && !radEmptyHalf.includes("hc-rad-throb"), "after unstart the Rad stands empty on the console");
     const radRemoveEmpty = await req(`/compliance/rad_schedule/run/${radRunC}/remove`, { method: "POST", body: form({}) });
     assert(radRemoveEmpty.status === 303, `Remove run expected 303 got ${radRemoveEmpty.status} ${await radRemoveEmpty.text()}`);
     const radTesting = (body) => {

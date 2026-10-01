@@ -149,6 +149,7 @@ import {
   HARVEST_TRIM_HOURS_PATH,
   HARVEST_TRIM_INPUT_PATH,
   HARVEST_PREPACK_HOURS_PATH,
+  HARVEST_PASTEURIZATION_HOURS_PATH,
   parsePrepackUnits,
   NON_TRIM_SOURCE_SQL,
   parseBtrTypeCodes,
@@ -158,6 +159,9 @@ import {
   parseNameList,
   parseShiftWindow,
   parseTrimBogey,
+  PASTEURIZATION_RUNNING_MINUTES,
+  PASTEURIZATION_SHIFT_HOURS_DEFAULT,
+  PASTEURIZATION_SHIFTS,
   roundGrams,
   shiftWindowHolds,
   SYSTEM_REASON,
@@ -169,18 +173,19 @@ import { HttpError, nowIso, textOrNull } from "./audit";
 import { getConfigValue, insertLog, TRIM_SCHEDULED_SQL } from "./db";
 import { formatClock, siloStrip } from "./drying";
 import { fulfillmentSection, emptyFulfillment, type FulfillmentDay } from "./fulfillmentboard";
-import { dayBefore, etClockMinutes, etDate, etDayBounds, FARM_TIME_ZONE, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHour } from "./farmday";
+import { dayBefore, etClockMinutes, etDate, etDayBounds, FARM_DAY_START_HOUR_DEFAULT, FARM_TIME_ZONE, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHour } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
 import { type SiloLive, dryingTotalsMarkup, type DryingTotals } from "./silo";
 import { latestSheetSync, sheetSyncLineText, type SheetSyncView } from "./sheetsync";
 import { outcomeOf } from "./intesting";
 import { consoleIconSvg, type ConsoleIconName } from "./consoleicons";
+import { loadRadRunning, type RadRunningView } from "./rad";
 import { esc } from "./ui";
 
 export const CONSOLE_FARMS = ["PNN", "ARL", "PNS"] as const;
 export type ConsoleFarm = (typeof CONSOLE_FARMS)[number];
 export const CONSOLE_TIME_ZONE = FARM_TIME_ZONE;
-export { HARVEST_PATH, HARVEST_HOURS_PATH, HARVEST_TRIM_HOURS_PATH, HARVEST_TRIM_INPUT_PATH };
+export { HARVEST_PATH, HARVEST_HOURS_PATH, HARVEST_TRIM_HOURS_PATH, HARVEST_TRIM_INPUT_PATH, HARVEST_PASTEURIZATION_HOURS_PATH };
 
 /* --------------------------------------------------------------- the day */
 
@@ -227,6 +232,14 @@ export type HarvestConsoleInput = {
   /** THE SHEET SYNC (canon 0.30.162): the last run of the sheet sync (ok, skipped or failed), null before any run;
    * the second line under the sheet hours reads it. */
   sheetSync?: SheetSyncView | null;
+  /** BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): the day picked's cryo outputs and finished runs by shift; absent renders the panes empty. */
+  pasteurization?: PasteurizationInput;
+  /** Today's farm day so far, every operator, with the open runs' remainders; absent reads as nothing today. */
+  pasteurizationLive?: PasteurizationInput;
+  /** The instant of the last cryo output ever entered, any day. Null when none was ever entered. */
+  lastCryoOutputAt?: string | null;
+  /** The Rad run in status running with its lot numbers; null (or absent) when the Rad is empty. */
+  radRunning?: RadRunningView | null;
 };
 
 /* ------------------------------------------------------------ the trimming */
@@ -869,12 +882,16 @@ function foldScript(): string {
     sections.forEach(function (el) {
       var name = el.getAttribute("data-hc-section");
       if (!name || !Object.prototype.hasOwnProperty.call(stored, name)) return;
+      // BRIEF V10 (canon 0.30.334): a fold remembered against the pasteurization stub (closed by
+      // default) is forgotten once, so the built section opens on its first visit; the next toggle
+      // writes the mark and the fold is remembered from then on.
+      if (name === "pasteurization" && stored.pasteurization_built !== "1") return;
       if (stored[name] === "1") el.setAttribute("open", "");
       else if (stored[name] === "0") el.removeAttribute("open");
     });
   }
   function write() {
-    var next = {};
+    var next = { pasteurization_built: "1" };
     sections.forEach(function (el) {
       var name = el.getAttribute("data-hc-section");
       if (name) next[name] = el.open ? "1" : "0";
@@ -884,13 +901,6 @@ function foldScript(): string {
   sections.forEach(function (el) { el.addEventListener("toggle", write); });
 })();
 </script>`;
-}
-
-function stubSection(key: string, title: string, locale: Locale): string {
-  return `<details class="hc-section hc-stub" data-hc-section="${esc(key)}">
-      <summary>${esc(t(locale, title))}</summary>
-      <p class="muted" data-hc-stub>${esc(t(locale, "Stub: this section waits on the owner's definition."))}</p>
-    </details>`;
 }
 
 function trimHoursBox(shift: TrimShiftFigures, input: HarvestConsoleInput, locale: Locale): string {
@@ -1074,6 +1084,563 @@ export function trimmingSection(input: HarvestConsoleInput, locale: Locale = "en
       ${trimLineScript()}
     </details>`;
 }
+
+/* ------------------------------------------------------ the pasteurization */
+
+/**
+ * BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334, re-based 0.30.335).
+ * The owner's doc, its Pasteurization section, as the brief quotes it: a Right
+ * now pane with a Rad half ("What is running in the Rad Source according to the
+ * Rad Source Schedule", the wireframe cube icon throbbing green like a loading
+ * silo while it runs, an inert green outline when empty, "Underneath Lot
+ * numbers and a timer", the grey setting, how long it has been in there) and a
+ * Cryo half ("What is running in the Cryo room according to the package count",
+ * his picture of the metering box, CRYO, AMAPS and UV joined in burgundy that
+ * "should show movement if the shift has weight on it. If it doesn't or hasn't
+ * for thirty minutes, it should say "DOWN" and show that timer"; UV the SHA
+ * since 6AM, Cryo the BUD and WPR plus Waste, AMAPS the BUD and WPR; the list
+ * BUD, WPR, SHA, WASTE, TOTAL in lbs since 6AM), then two shift panes "like trim
+ * (no equipment)" for the day picked: Bulk Bud, Prepack, Shake, Waste, Total,
+ * Total Hours with Save, Lbs/DLH. His answers: the shifts use "Their own, new
+ * fields"; "Bulk Bud = BUD, Prepack = WPR, Shake = SHA"; the waste is "Inputs
+ * minus outputs at Finish run" (his pick, 2026-10-01): a run's waste is what
+ * went in less what came out, counted on the day and shift the run is finished;
+ * runs left open show no waste, and the pane says how many hold unentered
+ * weight. The metering box has no name ("a complicated funnel/conveyor belt
+ * referee"), so it carries no label and no number. THE FARM DAY BEGINS AT SIX
+ * (canon 0.30.151): "since 6AM" is the farm day's start hour in data.
+ */
+
+export type PasteurizationShiftKey = TrimShiftKey;
+
+/** One cryo output on the day: the category it was entered under (its package type code), its grams and the operator who typed it. */
+export type PasteurizationOutputRow = { type_code: string | null; weight_grams: number; cryo_operator: string | null };
+
+/** A cryo run finished within the window: the grams its inputs carried, the grams its live outputs carry, and the operator of its last output (the shift its waste lands on). */
+export type CryoFinishedRun = { run_id: string; in_grams: number; out_grams: number; last_operator: string | null };
+
+/** A scheduled cryo run still open: once its first output is entered, its inputs above its outputs
+ * is weight not yet entered out. A run with no output yet is queued, not held (his word at the V10
+ * gate, canon 0.30.338: started runs only). */
+export type CryoOpenRun = { run_id: string; in_grams: number; out_grams: number };
+
+/** An output entered in the last PASTEURIZATION_RUNNING_MINUTES, any day: the operator who typed it (the shift it lights). */
+export type CryoRecentRow = { cryo_operator: string | null };
+
+export type PasteurizationInput = {
+  /** The day's live cryo outputs (cryo_date = the day, or created within its bounds when the date is null). */
+  outputs: PasteurizationOutputRow[];
+  /** The cryo runs completed within the day's bounds (completed_at): his waste law. */
+  finishedRuns: CryoFinishedRun[];
+  /** The scheduled runs still open, for the Right now pane's muted line; never counted as waste. */
+  openRuns?: CryoOpenRun[];
+  /** The outputs entered lately, any day. */
+  recent?: CryoRecentRow[];
+  /** The trim type to category map (app_config cryo_type_categories): a type the list maps to WPR is Prepack. */
+  typeCategories?: Map<string, string>;
+  /** The operators of each shift (app_config pasteurization_shift_day_operators, pasteurization_shift_second_operators). */
+  operators: Record<PasteurizationShiftKey, string[]>;
+  /** The typed Total Hours per shift; null when none typed. */
+  hours: Record<PasteurizationShiftKey, number | null>;
+  /** The instant the figures are read at (the Eastern clock decides the shift on duty). */
+  nowIso?: string;
+  /** Each shift's hours, HH:MM-HH:MM Eastern (app_config pasteurization_shift_day_hours, pasteurization_shift_second_hours). */
+  shiftHours?: Partial<Record<PasteurizationShiftKey, string | null>>;
+  /** The farm day's start hour in data (6), the doc's "since 6AM". */
+  startHour?: number;
+};
+
+export function emptyPasteurizationInput(): PasteurizationInput {
+  return { outputs: [], finishedRuns: [], operators: { day: [], second: [] }, hours: { day: null, second: null } };
+}
+
+/** Inputs less outputs, above zero: a finished run's waste (his pick), or an
+ * open run's weight not yet entered out. A run whose outputs exceed its inputs
+ * reads 0 (two such runs stand on the floor). */
+export function cryoRunLeft(run: { in_grams: number | string | null; out_grams: number | string | null }): number {
+  const left = Number(run.in_grams ?? 0) - Number(run.out_grams ?? 0);
+  return left > 0 ? left : 0;
+}
+
+type PastAcc = { packages: number; bud: number; prepack: number; shake: number; other: number; waste: number; finished: number; running: boolean };
+
+function freshPast(): PastAcc {
+  return { packages: 0, bud: 0, prepack: 0, shake: 0, other: 0, waste: 0, finished: 0, running: false };
+}
+
+/** The category an output reads as: its own code, or the category the type list maps it to (SMALLS reads as WPR). */
+function cryoCategoryOf(type: string | null | undefined, categories: ReadonlyMap<string, string>): string {
+  const key = String(type ?? "").trim().toUpperCase();
+  return String(categories.get(key) ?? key).trim().toUpperCase();
+}
+
+function addCryoOutput(acc: PastAcc, category: string, grams: number): void {
+  acc.packages += 1;
+  if (category === "BUD") acc.bud += grams;
+  else if (category === "WPR") acc.prepack += grams;
+  else if (category === "SHA") acc.shake += grams;
+  else acc.other += grams;
+}
+
+function pasteurizationWindows(input: PasteurizationInput): Record<PasteurizationShiftKey, string> {
+  return {
+    day: String(input.shiftHours?.day ?? "").trim() || PASTEURIZATION_SHIFT_HOURS_DEFAULT.day,
+    second: String(input.shiftHours?.second ?? "").trim() || PASTEURIZATION_SHIFT_HOURS_DEFAULT.second,
+  };
+}
+
+/** Which pasteurization shift the clock is inside, by the shifts' own windows, or null in a gap. Day wins when both hold. */
+export function pasteurizationDuty(input: PasteurizationInput): PasteurizationShiftKey | null {
+  const clock = input.nowIso ? etClockMinutes(input.nowIso) : null;
+  if (clock == null) return null;
+  const windows = pasteurizationWindows(input);
+  if (shiftWindowHolds(parseShiftWindow(windows.day, PASTEURIZATION_SHIFT_HOURS_DEFAULT.day), clock)) return "day";
+  if (shiftWindowHolds(parseShiftWindow(windows.second, PASTEURIZATION_SHIFT_HOURS_DEFAULT.second), clock)) return "second";
+  return null;
+}
+
+export type PasteurizationShiftFigures = {
+  key: PasteurizationShiftKey;
+  label: string;
+  operators: string[];
+  /** The outputs entered on the day by this shift's operators. */
+  packages: number;
+  /** His Bulk Bud = BUD, grams. */
+  budGrams: number;
+  /** His Prepack = WPR, and any type the category list maps to WPR, grams. */
+  prepackGrams: number;
+  /** His Shake = SHA, grams. */
+  shakeGrams: number;
+  /** His Waste: inputs less outputs of the runs this shift finished on the day, grams. */
+  wasteGrams: number;
+  /** Outputs under a category off the three, grams: counted among the packages, not in the four. */
+  otherGrams: number;
+  /** His Total = the four summed (Bulk Bud, Prepack, Shake, Waste), grams. */
+  totalGrams: number;
+  /** How many runs this shift finished on the day. */
+  finishedRuns: number;
+  hours: number | null;
+  /** Grams per direct labor hour, Total over the typed hours; null without hours. */
+  gramsPerDlh: number | null;
+  /** RUNNING: one of this shift's operators entered an output in the last 30 minutes. */
+  running: boolean;
+  /** The Eastern clock is inside this shift's hours. */
+  onDuty: boolean;
+  /** This shift's hours as read (HH:MM-HH:MM). */
+  hours_window: string;
+};
+
+export type PasteurizationFigures = {
+  shifts: PasteurizationShiftFigures[];
+  /** Grams by operators named on neither shift (their outputs and the waste of the runs they finished), so nothing disappears in silence. */
+  unassignedGrams: number;
+  unassignedOperators: string[];
+  /** RUNNING by an operator on neither shift: the line runs, no card can flash it. */
+  unassignedRunning: boolean;
+};
+
+/** The shift panes' figures for the day picked, pure: each output lands on the
+ * shift whose list names its operator (case-insensitive, trimmed), its grams on
+ * Bulk Bud, Prepack or Shake by its category; a finished run's waste (inputs
+ * less outputs, above zero) lands on the shift whose list names the operator of
+ * its last output (the trim finished lot's rule); Total is the four summed;
+ * Lbs/DLH divides Total by the typed hours; RUNNING lights the shift whose
+ * operator entered an output lately. */
+export function pasteurizationFigures(input: PasteurizationInput): PasteurizationFigures {
+  const categories = input.typeCategories ?? parseCryoTypeCategories(null);
+  const shiftOf = new Map<string, PasteurizationShiftKey>();
+  for (const shift of PASTEURIZATION_SHIFTS) {
+    for (const name of input.operators[shift.key] ?? []) shiftOf.set(name.trim().toLowerCase(), shift.key);
+  }
+  const keyOf = (operator: string | null | undefined): PasteurizationShiftKey | undefined => shiftOf.get(String(operator ?? "").trim().toLowerCase());
+  const acc: Record<PasteurizationShiftKey, PastAcc> = { day: freshPast(), second: freshPast() };
+  let unassignedGrams = 0;
+  const unassigned = new Set<string>();
+  for (const o of input.outputs) {
+    const grams = Number(o.weight_grams ?? 0);
+    const operator = String(o.cryo_operator ?? "").trim();
+    const key = keyOf(operator);
+    if (!key) {
+      unassignedGrams += grams;
+      if (operator) unassigned.add(operator);
+      continue;
+    }
+    addCryoOutput(acc[key], cryoCategoryOf(o.type_code, categories), grams);
+  }
+  for (const run of input.finishedRuns) {
+    const waste = cryoRunLeft(run);
+    const operator = String(run.last_operator ?? "").trim();
+    const key = keyOf(operator);
+    if (!key) {
+      unassignedGrams += waste;
+      if (operator && waste > 0) unassigned.add(operator);
+      continue;
+    }
+    acc[key].finished += 1;
+    acc[key].waste += waste;
+  }
+  let unassignedRunning = false;
+  for (const r of input.recent ?? []) {
+    const key = keyOf(r.cryo_operator);
+    if (key) acc[key].running = true;
+    else unassignedRunning = true;
+  }
+  const clock = input.nowIso ? etClockMinutes(input.nowIso) : null;
+  const windows = pasteurizationWindows(input);
+  const shifts = PASTEURIZATION_SHIFTS.map((shift) => {
+    const a = acc[shift.key];
+    const totalGrams = roundGrams(a.bud + a.prepack + a.shake + a.waste);
+    const hours = input.hours[shift.key] ?? null;
+    return {
+      key: shift.key,
+      label: shift.label,
+      operators: input.operators[shift.key] ?? [],
+      packages: a.packages,
+      budGrams: roundGrams(a.bud),
+      prepackGrams: roundGrams(a.prepack),
+      shakeGrams: roundGrams(a.shake),
+      wasteGrams: roundGrams(a.waste),
+      otherGrams: roundGrams(a.other),
+      totalGrams,
+      finishedRuns: a.finished,
+      hours,
+      gramsPerDlh: hours != null && hours > 0 ? totalGrams / hours : null,
+      running: a.running,
+      onDuty: clock != null && shiftWindowHolds(parseShiftWindow(windows[shift.key], PASTEURIZATION_SHIFT_HOURS_DEFAULT[shift.key]), clock),
+      hours_window: windows[shift.key],
+    };
+  });
+  return { shifts, unassignedGrams: roundGrams(unassignedGrams), unassignedOperators: [...unassigned].sort(), unassignedRunning };
+}
+
+export type PasteurizationLive = {
+  /** The outputs entered since the day began, every operator. */
+  packages: number;
+  budGrams: number;
+  prepackGrams: number;
+  shakeGrams: number;
+  /** The runs finished since the day began, inputs less outputs. */
+  wasteGrams: number;
+  otherGrams: number;
+  /** BUD + WPR + SHA + WASTE. */
+  totalGrams: number;
+  /** His CRYO = BUD + WPR + WASTE. */
+  cryoGrams: number;
+  /** His AMAPS = BUD + WPR. */
+  amapsGrams: number;
+  /** His UV = SHA. */
+  uvGrams: number;
+  finishedRuns: number;
+  /** The started scheduled runs (an output entered) holding inputs above their outputs, and those
+   * remainders summed; a run not started is not counted (canon 0.30.338). */
+  openRuns: number;
+  openGrams: number;
+  /** RUNNING: an output entered in the last 30 minutes by any operator, and nothing else. */
+  running: boolean;
+  /** The shift on the clock by the pasteurization windows, or null in a gap. */
+  duty: PasteurizationShiftKey | null;
+  hours_window: string;
+};
+
+/** THE RIGHT NOW PANE's cryo half, pure: today's outputs and finished runs,
+ * every operator in one line (shift and date agnostic); RUNNING is an output
+ * entered in the last 30 minutes and nothing else; the open runs' remainders
+ * are shown as a line and never counted as waste, the started runs only (his
+ * word at the V10 gate, canon 0.30.338: a run with no output yet is queued). */
+export function livePasteurization(input: PasteurizationInput): PasteurizationLive {
+  const categories = input.typeCategories ?? parseCryoTypeCategories(null);
+  const a = freshPast();
+  for (const o of input.outputs) addCryoOutput(a, cryoCategoryOf(o.type_code, categories), Number(o.weight_grams ?? 0));
+  for (const run of input.finishedRuns) {
+    a.finished += 1;
+    a.waste += cryoRunLeft(run);
+  }
+  let openRuns = 0;
+  let openGrams = 0;
+  for (const run of input.openRuns ?? []) {
+    if (!(Number(run.out_grams ?? 0) > 0)) continue;
+    const left = cryoRunLeft(run);
+    if (left <= 0) continue;
+    openRuns += 1;
+    openGrams += left;
+  }
+  const duty = pasteurizationDuty(input);
+  const windows = pasteurizationWindows(input);
+  return {
+    packages: a.packages,
+    budGrams: roundGrams(a.bud),
+    prepackGrams: roundGrams(a.prepack),
+    shakeGrams: roundGrams(a.shake),
+    wasteGrams: roundGrams(a.waste),
+    otherGrams: roundGrams(a.other),
+    totalGrams: roundGrams(a.bud + a.prepack + a.shake + a.waste),
+    cryoGrams: roundGrams(a.bud + a.prepack + a.waste),
+    amapsGrams: roundGrams(a.bud + a.prepack),
+    uvGrams: roundGrams(a.shake),
+    finishedRuns: a.finished,
+    openRuns,
+    openGrams: roundGrams(openGrams),
+    running: (input.recent ?? []).length > 0,
+    duty,
+    hours_window: duty ? windows[duty] : "",
+  };
+}
+
+/** His cryo picture, drawn large in the trim line picture's manner: the metering
+ * box top left with no label and no number (his answer: it has no name), CRYO
+ * top right, AMAPS bottom left, UV bottom right; three flow bars of the trim
+ * line's width joining CRYO to the box, the box down to AMAPS and CRYO down to
+ * UV, in burgundy candy stripes (the plume's deep red and a darker band) that
+ * move toward the next machine at the trim line's cadence while the line runs
+ * and stand still otherwise. CRYO carries BUD + WPR + WASTE since the day began
+ * with the day's package count under it, AMAPS BUD + WPR, UV SHA; pounds first,
+ * grams under. */
+export const CRYO_LINE_FLOW_MS = TRIM_LINE_FLOW_MS;
+
+function cryoLineFlowPattern(id: string, axis: "x" | "y", to: number, running: boolean): string {
+  const anim = running ? `<animate attributeName="${axis}" from="0" to="${to}" dur="${CRYO_LINE_FLOW_MS}ms" repeatCount="indefinite"/>` : "";
+  return `<pattern id="${id}" patternUnits="userSpaceOnUse" width="20" height="20"><rect class="hc-cryo-flow-b" width="20" height="20"/><polygon class="hc-cryo-flow-a" points="0,0 10,0 0,10"/><polygon class="hc-cryo-flow-a" points="20,0 20,10 10,20 0,20"/>${anim}</pattern>`;
+}
+
+export function cryoLinePicture(live: PasteurizationLive, locale: Locale = "en"): string {
+  const lb = (grams: number) => `${formatLbs(grams)} lb`;
+  const g = (grams: number) => `${formatGrams(roundGrams(grams))} g`;
+  const w = TRIM_LINE_BAR_WIDTH;
+  const left = "hc-cryo-flow-left";
+  const down = "hc-cryo-flow-down";
+  const packages = `${live.packages} ${t(locale, live.packages === 1 ? "package" : "packages")}`;
+  const label = `${t(locale, "Cryo")} ${lb(live.cryoGrams)}`;
+  return `<svg class="hc-cryoline" viewBox="0 0 1000 600" role="img" aria-label="${esc(label)}" data-hc-cryoline data-hc-cryoline-running="${live.running ? "1" : "0"}" data-hc-cryoline-cryo="${esc(String(live.cryoGrams))}">
+      <defs>${cryoLineFlowPattern(left, "x", -20, live.running)}${cryoLineFlowPattern(down, "y", 20, live.running)}</defs>
+      <g class="hc-flows" data-hc-flows>
+        <rect class="hc-flow" data-hc-flow="cryo-meter" x="300" y="${145 - w / 2}" width="300" height="${w}" fill="url(#${left})"/>
+        <rect class="hc-flow" data-hc-flow="meter-amaps" x="${190 - w / 2}" y="220" width="${w}" height="180" fill="url(#${down})"/>
+        <rect class="hc-flow" data-hc-flow="cryo-uv" x="${770 - w / 2}" y="250" width="${w}" height="150" fill="url(#${down})"/>
+      </g>
+      <g class="hc-nodes">
+        <rect class="hc-node" data-hc-node="meter" x="80" y="70" width="220" height="150"/>
+        <rect class="hc-node" data-hc-node="cryo" x="600" y="40" width="340" height="210"/>
+        <text class="hc-node-label" x="770" y="112">CRYO</text>
+        <text class="hc-node-value" data-hc-node-value="cryo" x="770" y="156">${esc(lb(live.cryoGrams))}</text>
+        <text class="hc-node-sub" x="770" y="190">${esc(`${g(live.cryoGrams)} · ${packages}`)}</text>
+        <rect class="hc-node" data-hc-node="amaps" x="40" y="400" width="340" height="170"/>
+        <text class="hc-node-label" x="210" y="462">AMAPS</text>
+        <text class="hc-node-value" data-hc-node-value="amaps" x="210" y="506">${esc(lb(live.amapsGrams))}</text>
+        <text class="hc-node-sub" x="210" y="540">${esc(g(live.amapsGrams))}</text>
+        <rect class="hc-node" data-hc-node="uv" x="620" y="400" width="300" height="170"/>
+        <text class="hc-node-label" x="770" y="462">UV</text>
+        <text class="hc-node-value" data-hc-node-value="uv" x="770" y="506">${esc(lb(live.uvGrams))}</text>
+        <text class="hc-node-sub" x="770" y="540">${esc(g(live.uvGrams))}</text>
+      </g>
+    </svg>`;
+}
+
+/** The Rad half: the running run alone (scheduled runs stay on the Rad
+ * Schedule page). Running: the icon's strokes throb green like a loading silo
+ * and under it the lot numbers, the package count, the grey and the timer from
+ * started_at (V9.2's Start Time edits move it; the page's clock script ticks
+ * it). Empty: the icon inert in the running green and the words Rad empty. */
+function radNowPane(run: RadRunningView | null, nowIso: string | undefined, locale: Locale): string {
+  const name = `<div class="hc-gate-name">${esc(t(locale, "Rad"))}</div>`;
+  if (!run) {
+    return `<div class="hc-past-half hc-past-rad" data-hc-rad data-hc-rad-state="empty">
+          ${name}
+          ${consoleIconSvg("rad", { label: t(locale, "Rad empty") })}
+          <span class="muted" data-hc-rad-empty>${esc(t(locale, "Rad empty"))}</span>
+        </div>`;
+  }
+  const startedMs = run.startedAt ? Date.parse(run.startedAt) : NaN;
+  const nowMs = Date.parse(nowIso ?? "");
+  const seconds = Number.isFinite(startedMs) && Number.isFinite(nowMs) ? Math.max(0, Math.floor((nowMs - startedMs) / 1000)) : 0;
+  const count = run.packages.length;
+  return `<div class="hc-past-half hc-past-rad" data-hc-rad data-hc-rad-state="running" data-hc-rad-run="${esc(run.id)}">
+          ${name}
+          ${consoleIconSvg("rad", { label: `${t(locale, "Rad")} ${t(locale, "RUNNING")}`, className: "hc-rad-throb" })}
+          <div class="hc-rad-lots" data-hc-rad-lots>${esc(run.lots.join(", "))}</div>
+          <span class="hc-sub" data-hc-rad-count>${esc(`${count} ${t(locale, count === 1 ? "package" : "packages")}`)}</span>
+          <span class="hc-sub" data-hc-rad-grey>${esc(`${t(locale, "Grey (Gy)")} ${run.grey}`)}</span>
+          <span class="silo-clock" data-clock data-state="running" data-started="${Number.isFinite(startedMs) ? startedMs : 0}" data-paused-at="" data-paused-seconds="0">${esc(formatClock(seconds))}</span>
+        </div>`;
+}
+
+/** The Cryo half: the picture, and beside it the list BUD, WPR, SHA, WASTE,
+ * TOTAL in lbs and grams since the day began, then the open runs' muted line. */
+function cryoNowPane(live: PasteurizationLive, since: string, locale: Locale): string {
+  const lb = (grams: number) => `${formatLbs(grams)} lb`;
+  const g = (grams: number) => `${formatGrams(roundGrams(grams))} g`;
+  const line = (key: string, label: string, grams: number) =>
+    `<div class="hc-cryo-line" data-hc-cryo-line="${esc(key)}"><dt>${esc(label)}</dt><dd><span class="hc-value" data-hc="past_now_${esc(key.toLowerCase())}_lb">${esc(lb(grams))}</span><span class="hc-sub muted" data-hc="past_now_${esc(key.toLowerCase())}_g">${esc(g(grams))}</span></dd></div>`;
+  const open =
+    live.openRuns > 0
+      ? `<p class="muted hc-note" data-hc-cryo-open data-hc-cryo-open-runs="${live.openRuns}" data-hc-cryo-open-grams="${esc(String(live.openGrams))}">${esc(
+          tFill(locale, live.openRuns === 1 ? "{n} open run holds {lbs} lb not yet entered out" : "{n} open runs hold {lbs} lb not yet entered out", {
+            n: String(live.openRuns),
+            lbs: formatLbs(live.openGrams),
+          })
+        )}</p>`
+      : "";
+  return `<div class="hc-past-half hc-past-cryo" data-hc-cryo>
+          ${cryoLinePicture(live, locale)}
+          <div class="hc-cryo-side">
+            <div class="hc-gate-name">${esc(t(locale, "Cryo"))} <span class="hc-date muted" data-hc-cryo-since="${esc(since)}">${esc(tFill(locale, "since {time}", { time: since }))}</span></div>
+            <dl class="hc-cryo-list" data-hc-cryo-list>
+              ${line("BUD", t(locale, "BUD"), live.budGrams)}
+              ${line("WPR", "WPR", live.prepackGrams)}
+              ${line("SHA", "SHA", live.shakeGrams)}
+              ${line("WASTE", t(locale, "WASTE"), live.wasteGrams)}
+              ${line("TOTAL", t(locale, "TOTAL"), live.totalGrams)}
+            </dl>
+            ${open}
+          </div>
+        </div>`;
+}
+
+/** THE RIGHT NOW PANE of the Pasteurization section: today's farm day, shift
+ * and date agnostic, the head of the trim pane (the words Right now, today's
+ * date, the pasteurization shift on the clock by its own windows, RUNNING or
+ * DOWN with the timer from the last output ever entered), then the Rad half
+ * and the Cryo half side by side (stacked on the phone). */
+function pasteurizationRightNow(input: HarvestConsoleInput, locale: Locale): string {
+  const liveInput = input.pasteurizationLive ?? emptyPasteurizationInput();
+  const live = livePasteurization(liveInput);
+  const dutyText = live.duty == null ? t(locale, "no shift on duty") : t(locale, live.duty === "day" ? "Day shift" : "Second Shift");
+  const nowMs = Date.parse(liveInput.nowIso ?? "");
+  const enteredMs = input.lastCryoOutputAt ? Date.parse(input.lastCryoOutputAt) : NaN;
+  let status: string;
+  if (live.running) {
+    status = `<span class="hc-running" data-hc-running>${esc(t(locale, "RUNNING"))}</span>`;
+  } else if (Number.isFinite(enteredMs)) {
+    const seconds = Number.isFinite(nowMs) ? Math.max(0, Math.floor((nowMs - enteredMs) / 1000)) : 0;
+    status = `<span class="hc-trim-down" data-hc-past-down>${esc(t(locale, "DOWN"))}</span> <span class="silo-clock" data-clock data-state="running" data-started="${enteredMs}" data-paused-at="" data-paused-seconds="0">${esc(formatClock(seconds))}</span>`;
+  } else {
+    status = `<span class="hc-trim-down" data-hc-past-down>${esc(t(locale, "DOWN"))}</span>`;
+  }
+  const startHour = liveInput.startHour ?? FARM_DAY_START_HOUR_DEFAULT;
+  const since = `${String(Math.max(0, Math.min(23, startHour))).padStart(2, "0")}:00`;
+  return `<div class="hc-past-rightnow" data-hc-past-rightnow data-hc-past-running="${live.running ? "1" : "0"}">
+      <div class="hc-shift-head">
+        <span class="hc-shift-name">${esc(t(locale, "Right now"))}</span>
+        <span class="hc-date muted">${esc(input.today)}</span>
+        <span class="muted" data-hc-past-duty>${esc(dutyText)}</span>
+        ${status}
+      </div>
+      <div class="hc-past-halves">
+        ${radNowPane(input.radRunning ?? null, liveInput.nowIso, locale)}
+        ${cryoNowPane(live, since, locale)}
+      </div>
+    </div>`;
+}
+
+/** The five figures of a shift pane, in the doc's order, each the icon with the figure centered under it as the Testing gate panes do. */
+const PASTEURIZATION_FIGURES: ReadonlyArray<{ key: string; icon: ConsoleIconName; label: string; pick: (shift: PasteurizationShiftFigures) => number }> = [
+  { key: "bulk", icon: "bulk-bud", label: "Bulk Bud", pick: (shift) => shift.budGrams },
+  { key: "prepack", icon: "prepack", label: "Prepack", pick: (shift) => shift.prepackGrams },
+  { key: "shake", icon: "shake", label: "Shake", pick: (shift) => shift.shakeGrams },
+  { key: "waste", icon: "waste", label: "Waste", pick: (shift) => shift.wasteGrams },
+  { key: "total", icon: "total", label: "Total", pick: (shift) => shift.totalGrams },
+];
+
+function pasteurizationHoursBox(shift: PasteurizationShiftFigures, input: HarvestConsoleInput, locale: Locale): string {
+  return `<form method="post" action="${esc(HARVEST_PASTEURIZATION_HOURS_PATH)}" class="hc-hours" data-hc-past-hours="${esc(shift.key)}">
+              <input type="hidden" name="shift" value="${esc(shift.key)}">
+              <input type="hidden" name="work_date" value="${esc(input.yesterday)}">
+              <input type="hidden" name="day_picked" value="${input.dayPicked ? "1" : ""}">
+              <input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="${shift.hours == null ? "" : esc(String(shift.hours))}" placeholder="${esc(
+                t(locale, "hours")
+              )}" aria-label="${esc(`${t(locale, "Total Hours")} ${t(locale, shift.label)}`)}" data-hc-hours-input>
+              <button type="submit" class="secondary">${esc(t(locale, "Save"))}</button>
+            </form>`;
+}
+
+/** One shift's pane, like trim's card with no equipment and no bud: the head,
+ * the five figures in a row, then Total Hours with its box and Lbs/DLH. */
+function pasteurizationShiftCard(shift: PasteurizationShiftFigures, input: HarvestConsoleInput, locale: Locale): string {
+  const figures = PASTEURIZATION_FIGURES.map((spec) => {
+    const weight = weightPair(spec.pick(shift));
+    return `<div class="hc-gate-pane hc-past-figure" data-hc-past-figure="${esc(spec.key)}">
+            <div class="hc-gate-name">${esc(t(locale, spec.label))}</div>
+            ${consoleIconSvg(spec.icon, { label: t(locale, spec.label) })}
+            <span class="hc-value" data-hc="past_${esc(spec.key)}_lb">${esc(weight.value)}</span>
+            <span class="hc-sub muted" data-hc="past_${esc(spec.key)}_g">${esc(weight.sub)}</span>
+          </div>`;
+  }).join("");
+  const perDlh =
+    shift.gramsPerDlh == null
+      ? { value: shift.hours == null ? t(locale, "type hours") : NA, sub: "" }
+      : { value: `${formatLbs(shift.gramsPerDlh)} lb/h`, sub: `${formatGrams(roundGrams(shift.gramsPerDlh))} g/h` };
+  const operators = shift.operators.length ? shift.operators.join(", ") : t(locale, "no operators named");
+  const running = shift.running ? `<span class="hc-running" data-hc-running>${esc(t(locale, "RUNNING"))}</span>` : "";
+  return `<div class="hc-shift hc-past-shift" data-hc-past-shift="${esc(shift.key)}" data-hc-past-shift-grams="${esc(String(shift.totalGrams))}" data-hc-past-shift-running="${shift.running ? "1" : "0"}">
+          <div class="hc-shift-head">
+            <span class="hc-shift-name">${esc(t(locale, shift.label))}</span>
+            <span class="hc-shift-ops muted" data-hc-past-operators>${esc(operators)}</span>
+            <span class="hc-date muted">${esc(input.yesterday)}</span>
+            ${running}
+          </div>
+          <div class="hc-gate hc-past-figures" data-hc-past-figures>${figures}</div>
+          <dl class="hc-metrics">
+            <div class="hc-metric" data-hc-metric="past_hours"><dt>${esc(t(locale, "Total Hours"))}</dt><dd>${pasteurizationHoursBox(shift, input, locale)}</dd></div>
+            <div class="hc-metric" data-hc-metric="past_lbs_per_dlh"><dt>${esc(t(locale, "Lbs/DLH"))}</dt><dd><span class="hc-value" data-hc="past_lbs_per_dlh">${esc(perDlh.value)}</span>${
+              perDlh.sub ? `<span class="hc-sub muted">${esc(perDlh.sub)}</span>` : ""
+            }</dd></div>
+          </dl>
+        </div>`;
+}
+
+/** THE BLUE THROB law for the cryo flows (canon 0.30.79): a reduced-motion setting slows the stripes instead of stilling them. */
+function pasteurizationLineScript(): string {
+  return `<script>(function(){try{if(!(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches))return;document.querySelectorAll(".hc-cryoline animate").forEach(function(a){a.setAttribute("dur","${CRYO_LINE_FLOW_MS * 2}ms");});}catch(e){}})();</script>`;
+}
+
+/** THE PASTEURIZATION SECTION (BRIEF V10, canon 0.30.334): Right now, then the
+ * two shift panes for the day picked, then the notes. Open on a first visit;
+ * the fold script remembers it after (canon 0.30.288). */
+export function pasteurizationSection(input: HarvestConsoleInput, locale: Locale = "en", open = true): string {
+  const figures = pasteurizationFigures(input.pasteurization ?? emptyPasteurizationInput());
+  const cards = figures.shifts.map((shift) => pasteurizationShiftCard(shift, input, locale)).join("");
+  const unassigned =
+    figures.unassignedGrams > 0
+      ? `<p class="muted hc-note" data-hc-past-unassigned>${esc(
+          `${formatGrams(figures.unassignedGrams)} g ${t(locale, "on the day by operators on neither shift")}${
+            figures.unassignedOperators.length ? `: ${figures.unassignedOperators.join(", ")}` : ""
+          }. ${t(locale, "Name the shifts' operators in Admin, Lookups, app_config.")}`
+        )}</p>`
+      : "";
+  const unassignedRunning = figures.unassignedRunning
+    ? `<p class="muted hc-note" data-hc-past-running-unassigned><span class="hc-running">${esc(t(locale, "RUNNING"))}</span> ${esc(
+        t(locale, "an output was entered in the last 30 minutes by an operator on neither shift.")
+      )}</p>`
+    : "";
+  return `<details class="hc-section" data-hc-section="pasteurization"${open ? " open" : ""}>
+      <summary>${esc(t(locale, "Pasteurization"))}</summary>
+      ${pasteurizationRightNow(input, locale)}
+      <div class="hc-shifts">${cards}</div>
+      ${unassigned}${unassignedRunning}
+      ${pasteurizationLineScript()}
+    </details>`;
+}
+
+/** The day's live cryo outputs, dated by the typed cryo date (a row without one by its entry instant), the trim queries' shape. */
+const PASTEURIZATION_OUTPUTS_SQL = `SELECT p.package_type_code AS type_code, p.weight_grams, p.cryo_operator
+         FROM wip_packages p
+         WHERE p.deleted_at IS NULL AND p.source = 'cryo'
+           AND (p.cryo_date = ? OR (p.cryo_date IS NULL AND p.created_at >= ? AND p.created_at < ?))`;
+
+/** A cryo run (an HBN-level production_schedules row, canon 0.30.110) with the grams its inputs carried, the grams its live outputs carry, and the operator of its last output. */
+const CRYO_RUN_SUMS_SQL = `SELECT ps.id AS run_id,
+                (SELECT COALESCE(SUM(i.weight_grams), 0) FROM cryo_run_inputs i WHERE i.run_id = ps.id) AS in_grams,
+                (SELECT COALESCE(SUM(o.weight_grams), 0) FROM wip_packages o WHERE o.cryo_run_id = ps.id AND o.deleted_at IS NULL) AS out_grams,
+                (SELECT o2.cryo_operator FROM wip_packages o2
+                  WHERE o2.cryo_run_id = ps.id AND o2.deleted_at IS NULL
+                  ORDER BY o2.created_at DESC, o2.id DESC LIMIT 1) AS last_operator
+         FROM production_schedules ps
+         WHERE ps.deleted_at IS NULL AND ps.stage = 'cryo' AND ps.wip_package_id IS NULL`;
+
+/** His pick: the runs Finish run closed within the window. */
+const CRYO_RUNS_FINISHED_SQL = `${CRYO_RUN_SUMS_SQL} AND ps.status = 'complete' AND ps.completed_at >= ? AND ps.completed_at < ?`;
+
+/** The scheduled runs still open; the code keeps the started ones (an output entered) whose inputs stand above their outputs. */
+const CRYO_RUNS_OPEN_SQL = `${CRYO_RUN_SUMS_SQL} AND ps.status = 'scheduled'`;
 
 /* ---------------------------------------------------- the testing section */
 
@@ -1544,7 +2111,7 @@ export function testingSection(figures: TestingFigures, opts: { locale?: Locale;
     </details>`;
 }
 
-/** The console sections. Plants, Trimming, Testing, Prepack and Fulfillment start open. Drying and the pasteurization stub start closed. */
+/** The console sections. Plants, Trimming, Pasteurization, Testing, Prepack and Fulfillment start open. Drying starts closed. */
 /** THE CONSOLE DAY (canon 0.30.152): the date control, yesterday by default, any day up to today. */
 export function consoleDayControl(input: HarvestConsoleInput, locale: Locale): string {
   const yesterday = dayBefore(input.today);
@@ -1689,7 +2256,7 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
   const locale = page.locale ?? "en";
   const boxes = consoleBoxes(page.input, locale);
   const flash =
-    page.ok === "hours" || page.ok === "trim_hours" || page.ok === "prepack_hours"
+    page.ok === "hours" || page.ok === "trim_hours" || page.ok === "pasteurization_hours" || page.ok === "prepack_hours"
       ? `<p class="banner ok" data-hc-flash>${esc(t(locale, "Hours saved."))}</p>`
       : page.ok === "trim_input"
         ? `<p class="banner ok" data-hc-flash>${esc(t(locale, "Input lbs saved."))}</p>`
@@ -1707,7 +2274,7 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
       ${page.dryingTotals ? dryingTotalsMarkup(page.dryingTotals, locale) : ""}
     </details>
     ${trimmingSection(page.input, locale)}
-    ${stubSection("pasteurization", "Pasteurization", locale)}
+    ${pasteurizationSection(page.input, locale)}
     ${testingSection(page.testing ?? emptyTestingFigures(), {
       locale,
       year: page.input.year,
@@ -1810,6 +2377,8 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
   const todayBounds = farmDayBounds(today, startHour);
   // THE TRIM LINE PICTURE (canon 0.30.154): RUNNING is a package weighed in the last 30 minutes.
   const recentSince = new Date(Date.parse(atIso) - TRIM_RUNNING_MINUTES * 60_000).toISOString();
+  // BRIEF V10 (canon 0.30.334), his thirty: the cryo line RUNS on an output entered in the last 30 minutes.
+  const cryoRecentSince = new Date(Date.parse(atIso) - PASTEURIZATION_RUNNING_MINUTES * 60_000).toISOString();
   const [
     remaining,
     seasonHarvested,
@@ -1834,6 +2403,19 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     livePackages,
     liveFinished,
     lastWeighed,
+    pastOutputs,
+    pastLiveOutputs,
+    pastFinished,
+    pastLiveFinished,
+    pastOpenRuns,
+    pastRecent,
+    lastCryoOutput,
+    pastDayOpsRaw,
+    pastSecondOpsRaw,
+    pastDayHoursRaw,
+    pastSecondHoursRaw,
+    pastHoursRows,
+    radRunning,
   ] = await Promise.all([
     db
       .prepare(
@@ -1971,6 +2553,29 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     db
       .prepare(`SELECT MAX(p.created_at) AS weighed_at FROM wip_packages p WHERE p.deleted_at IS NULL AND ${NON_TRIM_SOURCE_SQL}`)
       .first<{ weighed_at: string | null }>(),
+    // BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): the day's cryo
+    // outputs and today's, the runs Finish run closed in each window (his pick:
+    // waste is inputs less outputs, counted when the run is finished), the open
+    // runs' remainders, the outputs entered lately, the last output ever entered,
+    // the shifts' own operators and windows, the typed hours, and the run in the Rad.
+    db.prepare(PASTEURIZATION_OUTPUTS_SQL).bind(yesterday, bounds.startIso, bounds.endIso).all<PasteurizationOutputRow>(),
+    db.prepare(PASTEURIZATION_OUTPUTS_SQL).bind(today, todayBounds.startIso, atIso).all<PasteurizationOutputRow>(),
+    db.prepare(CRYO_RUNS_FINISHED_SQL).bind(bounds.startIso, bounds.endIso).all<CryoFinishedRun>(),
+    db.prepare(CRYO_RUNS_FINISHED_SQL).bind(todayBounds.startIso, atIso).all<CryoFinishedRun>(),
+    db.prepare(CRYO_RUNS_OPEN_SQL).all<CryoOpenRun>(),
+    db
+      .prepare(`SELECT p.cryo_operator FROM wip_packages p WHERE p.deleted_at IS NULL AND p.source = 'cryo' AND p.created_at >= ?`)
+      .bind(cryoRecentSince)
+      .all<CryoRecentRow>(),
+    db
+      .prepare(`SELECT MAX(p.created_at) AS entered_at FROM wip_packages p WHERE p.deleted_at IS NULL AND p.source = 'cryo'`)
+      .first<{ entered_at: string | null }>(),
+    getConfigValue(db, CONFIG_KEYS.pasteurization_shift_day_operators),
+    getConfigValue(db, CONFIG_KEYS.pasteurization_shift_second_operators),
+    getConfigValue(db, CONFIG_KEYS.pasteurization_shift_day_hours),
+    getConfigValue(db, CONFIG_KEYS.pasteurization_shift_second_hours),
+    db.prepare(`SELECT shift, hours FROM pasteurization_labor_hours WHERE work_date = ?`).bind(yesterday).all<{ shift: string; hours: number }>(),
+    loadRadRunning(db),
   ]);
   const trimHours: Record<TrimShiftKey, number | null> = { day: null, second: null };
   for (const row of trimHoursRows.results ?? []) {
@@ -2043,6 +2648,38 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     const farm = farmOf(row.farm_code);
     if (farm) plantCounts[farm] = Number(row.plant_count);
   }
+  // BRIEF V10 (canon 0.30.334): the pasteurization inputs, the day picked and today so far.
+  const pastHours: Record<PasteurizationShiftKey, number | null> = { day: null, second: null };
+  for (const row of pastHoursRows.results ?? []) {
+    if (row.shift === "day" || row.shift === "second") pastHours[row.shift] = Number(row.hours);
+  }
+  const pastOutputRows = (rows: { results?: PasteurizationOutputRow[] }): PasteurizationOutputRow[] =>
+    (rows.results ?? []).map((r) => ({ type_code: r.type_code, weight_grams: Number(r.weight_grams ?? 0), cryo_operator: r.cryo_operator }));
+  const pastRunRows = (rows: { results?: CryoFinishedRun[] }): CryoFinishedRun[] =>
+    (rows.results ?? []).map((r) => ({ run_id: r.run_id, in_grams: Number(r.in_grams ?? 0), out_grams: Number(r.out_grams ?? 0), last_operator: r.last_operator }));
+  const pasteurization: PasteurizationInput = {
+    outputs: pastOutputRows(pastOutputs),
+    finishedRuns: pastRunRows(pastFinished),
+    recent: (pastRecent.results ?? []).map((r) => ({ cryo_operator: r.cryo_operator })),
+    typeCategories: parseCryoTypeCategories(typeCatsRaw),
+    operators: { day: parseNameList(pastDayOpsRaw), second: parseNameList(pastSecondOpsRaw) },
+    hours: pastHours,
+    nowIso: atIso,
+    shiftHours: { day: pastDayHoursRaw, second: pastSecondHoursRaw },
+    startHour,
+  };
+  const pasteurizationLive: PasteurizationInput = {
+    outputs: pastOutputRows(pastLiveOutputs),
+    finishedRuns: pastRunRows(pastLiveFinished),
+    openRuns: (pastOpenRuns.results ?? []).map((r) => ({ run_id: r.run_id, in_grams: Number(r.in_grams ?? 0), out_grams: Number(r.out_grams ?? 0) })),
+    recent: pasteurization.recent,
+    typeCategories: pasteurization.typeCategories,
+    operators: pasteurization.operators,
+    hours: { day: null, second: null },
+    nowIso: atIso,
+    shiftHours: pasteurization.shiftHours,
+    startHour,
+  };
   return {
     today,
     yesterday,
@@ -2064,6 +2701,10 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     trimLive,
     lastWeighedAt: lastWeighed?.weighed_at ?? null,
     sheetSync: syncView,
+    pasteurization,
+    pasteurizationLive,
+    lastCryoOutputAt: lastCryoOutput?.entered_at ?? null,
+    radRunning,
   };
 }
 
@@ -2209,6 +2850,63 @@ export async function saveTrimHours(db: D1Database, form: FormData): Promise<{ r
   }
   if (stmts.length) await db.batch(stmts);
   return { redirect: `${HARVEST_PATH}?ok=trim_hours${textOrNull(form.get("day_picked")) ? `&day=${encodeURIComponent(workDate)}` : ""}` };
+}
+
+/** BRIEF V10 (canon 0.30.334): save (or clear) one pasteurization shift's Total
+ * Hours for one day, as the trim DLH is saved; the change lands in
+ * record_change_log under pasteurization_labor_hours. */
+export async function savePasteurizationHours(db: D1Database, form: FormData): Promise<{ redirect: string }> {
+  const actorId = textOrNull(form.get("person_id"));
+  const shiftRaw = textOrNull(form.get("shift"));
+  const shift = PASTEURIZATION_SHIFTS.find((s) => s.key === shiftRaw)?.key;
+  if (!shift) throw new HttpError(400, "Pick a shift.");
+  const workDate = textOrNull(form.get("work_date")) ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(workDate) || !Number.isFinite(Date.parse(`${workDate}T00:00:00.000Z`))) {
+    throw new HttpError(400, "Work date must be YYYY-MM-DD.");
+  }
+  const hours = parseHours(textOrNull(form.get("hours")));
+  const ts = nowIso();
+  const existing = await db
+    .prepare(`SELECT id, hours FROM pasteurization_labor_hours WHERE work_date = ? AND shift = ?`)
+    .bind(workDate, shift)
+    .first<{ id: string; hours: number }>();
+  const log = (id: string, oldValue: string | null, newValue: string | null) =>
+    insertLog(db, {
+      record_table: "pasteurization_labor_hours",
+      record_id: id,
+      field: "hours",
+      old_value: oldValue,
+      new_value: newValue,
+      actor_person_id: actorId,
+      reason: SYSTEM_REASON.labor_hours,
+      changed_at: ts,
+    });
+  const stmts: D1PreparedStatement[] = [];
+  if (hours == null) {
+    if (existing) {
+      stmts.push(db.prepare(`DELETE FROM pasteurization_labor_hours WHERE id = ?`).bind(existing.id), log(existing.id, String(existing.hours), null));
+    }
+  } else if (existing) {
+    if (Number(existing.hours) !== hours) {
+      stmts.push(
+        db.prepare(`UPDATE pasteurization_labor_hours SET hours = ?, updated_at = ?, updated_by = ? WHERE id = ?`).bind(hours, ts, actorId, existing.id),
+        log(existing.id, String(existing.hours), String(hours))
+      );
+    }
+  } else {
+    const id = crypto.randomUUID();
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO pasteurization_labor_hours (id, work_date, shift, hours, created_at, created_by, updated_at, updated_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(id, workDate, shift, hours, ts, actorId, ts, actorId),
+      log(id, null, String(hours))
+    );
+  }
+  if (stmts.length) await db.batch(stmts);
+  return { redirect: `${HARVEST_PATH}?ok=pasteurization_hours${textOrNull(form.get("day_picked")) ? `&day=${encodeURIComponent(workDate)}` : ""}` };
 }
 
 /** THE TRIM LINE PICTURE (canon 0.30.154): the typed input pounds, zero or

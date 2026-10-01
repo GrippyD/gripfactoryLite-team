@@ -12,6 +12,7 @@ import {
   HARVEST_TRIM_HOURS_PATH,
   HARVEST_TRIM_INPUT_PATH,
   HARVEST_PREPACK_HOURS_PATH,
+  HARVEST_PASTEURIZATION_HOURS_PATH,
   PREPACK_STATION_PATH,
   HARVEST_PATH,
   INTERNAL_LOGISTICS_PATH,
@@ -447,7 +448,7 @@ import {
   type StationDef,
 } from "./pipeline";
 import { anyPlantCount, queueRowsToCsv, toCsv, wetWeightsCsv, wetWeightsCsvWithCounts, wetWeightsCsvWithTags, wetWeightsFilename } from "./csv";
-import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePrepackHours, saveTrimHours, saveTrimInputLbs } from "./console";
+import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePasteurizationHours, savePrepackHours, saveTrimHours, saveTrimInputLbs } from "./console";
 import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { terpRecipesPage } from "./terps";
 import { fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
@@ -1471,7 +1472,7 @@ app.post(`${ADMIN_METRC_API_PATH}/test`, async (c) => {
 // Admin, add a new button: [Harvest Console]" with its collapsible sections:
 // Plants (the three farms and Total, shaded by % complete), Drying (the silo
 // strip with the Arlington Dry Room as the wire box and the FFZ cube), and the
-// Trimming is built. Pasteurization stays a stub. Testing reads the season.
+// Trimming is built. Pasteurization is built (BRIEF V10, canon 0.30.334). Testing reads the season.
 app.get(HARVEST_PATH, async (c) => {
   const s = await shell(c);
   const now = nowIso();
@@ -1577,6 +1578,14 @@ app.post(HARVEST_TRIM_HOURS_PATH, async (c) => {
 // T-0)", one number per shift per day, behind the console's PIN like the DLH.
 app.post(HARVEST_TRIM_INPUT_PATH, async (c) => {
   const result = await saveTrimInputLbs(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+// BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): "Total Hours
+// [Save]", one number per pasteurization shift per day, behind the console's
+// PIN like the DLH.
+app.post(HARVEST_PASTEURIZATION_HOURS_PATH, async (c) => {
+  const result = await savePasteurizationHours(c.env.DB, actorForm(c, await c.req.formData()));
   return c.redirect(result.redirect, 303);
 });
 

@@ -472,6 +472,16 @@ export const CONFIG_KEYS = {
   // migration seeded them; add the rows in Admin, Lookups, app_config to change).
   trim_shift_day_hours: "trim_shift_day_hours",
   trim_shift_second_hours: "trim_shift_second_hours",
+  // BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334). His answer on the
+  // shifts, verbatim: "Their own, new fields". The pasteurization operators of
+  // each shift (comma lists, matched to the cryo operator typed on each output,
+  // case-insensitive) and each shift's hours, Eastern, HH:MM-HH:MM; values in
+  // data (canon L-4), seeded by migration 0086 (the lists blank until named in
+  // Admin, Lookups, app_config; the windows 06:00-18:00 and 18:00-06:00).
+  pasteurization_shift_day_operators: "pasteurization_shift_day_operators",
+  pasteurization_shift_second_operators: "pasteurization_shift_second_operators",
+  pasteurization_shift_day_hours: "pasteurization_shift_day_hours",
+  pasteurization_shift_second_hours: "pasteurization_shift_second_hours",
   // THE CRYO CATEGORIES (canon 0.30.112). Owner, 2026-09-17, verbatim: "in cryo
   // weight entry, add the product categories: 1. WPR 2. BUD 3. SHA". The
   // product categories a cryo line may be entered under, a comma list in his
@@ -1352,6 +1362,8 @@ export const HARVEST_HOURS_PATH = "/harvest/hours";
 export const HARVEST_TRIM_HOURS_PATH = "/harvest/trim-hours";
 /** THE TRIM LINE PICTURE (canon 0.30.154): "input lbs (total lbs ran through T-0)" posts here, one number per shift per day. */
 export const HARVEST_TRIM_INPUT_PATH = "/harvest/trim-input";
+/** BRIEF V10 (canon 0.30.334): the pasteurization shift panes' "Total Hours [Save]" posts here, one number per shift per day. */
+export const HARVEST_PASTEURIZATION_HOURS_PATH = "/harvest/pasteurization-hours";
 /** THE PREPACK (canon 0.30.188): one DLH box a day. */
 export const HARVEST_PREPACK_HOURS_PATH = "/harvest/prepack-hours";
 export const PREPACK_STATION_PATH = "/station/prepack";
@@ -1361,6 +1373,24 @@ export const PREPACK_LOCATION_DEFAULT = "Prepack Room";
 /** THE LINE RUNS ON THE CLOCK (canon 0.30.163): his hours, "6-6 and 6-6": the
  * Day shift 6:00 AM to 6:00 PM Eastern, the Second shift 6:00 PM to 6:00 AM. */
 export const TRIM_SHIFT_HOURS_DEFAULT: Readonly<Record<"day" | "second", string>> = { day: "06:00-18:00", second: "18:00-06:00" };
+
+/** BRIEF V10 (canon 0.30.334): the pasteurization shifts keep windows of their
+ * own (app_config pasteurization_shift_day_hours and _second_hours, seeded by
+ * migration 0086 to the same hours as trim's); the code's fallback when a row
+ * is missing or off. */
+export const PASTEURIZATION_SHIFT_HOURS_DEFAULT: Readonly<Record<"day" | "second", string>> = { day: "06:00-18:00", second: "18:00-06:00" };
+
+/** BRIEF V10 (canon 0.30.334): the two pasteurization shifts, named as the trim
+ * shifts are ("Day shift", "Second Shift"), each bound to its own operator list. */
+export const PASTEURIZATION_SHIFTS: readonly { key: "day" | "second"; label: string; configKey: string }[] = [
+  { key: "day", label: "Day shift", configKey: CONFIG_KEYS.pasteurization_shift_day_operators },
+  { key: "second", label: "Second Shift", configKey: CONFIG_KEYS.pasteurization_shift_second_operators },
+];
+
+/** BRIEF V10 (canon 0.30.334), his thirty: the cryo line RUNS while an output
+ * was entered in the last 30 minutes by any operator; otherwise DOWN with the
+ * timer from the last output ever entered. */
+export const PASTEURIZATION_RUNNING_MINUTES = 30;
 
 export type ShiftWindow = { startMinutes: number; endMinutes: number };
 
