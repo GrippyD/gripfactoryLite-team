@@ -161,6 +161,20 @@ body.device-phone .back-crumb .back-link { min-height: 2.4rem; display: inline-f
 .freezer-gauge .freezer-lines .inv-lot { margin: 0.15rem 0; }
 .freezer-gauge .freezer-lines .inv-lot-id { font-weight: 700; }
 .schedule-item { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+/* THE RAD (canon 0.30.327): a run card stacks its grey, its stamps, and its
+   packages. The clock is the strip's clock, tabular so the seconds hold still. */
+.rad-card { display: grid; gap: 0.35rem; margin: 0 0 0.9rem; padding: 0 0 0.7rem; border-bottom: 1px solid var(--line, var(--border, #88888855)); }
+.rad-card .rad-packages { margin: 0.2rem 0; padding-left: 1.1rem; }
+.rad-card .silo-clock { font-variant-numeric: tabular-nums; font-weight: 700; }
+.rad-grey { display: flex; flex-wrap: wrap; align-items: end; gap: 0.4rem; }
+/* THE RAD START TIME (canon 0.30.330): the running card's clock and its Start
+   Time form share one line and wrap under the clock on the phone; the form is
+   a row of its own, the box about 4.5rem wide. */
+.rad-start-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; }
+.rad-start-line .rad-start-form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0; }
+.rad-start-line .rad-start-form input[name="start_time"] { width: 4.5rem; }
+.rad-start-line .rad-start-form select[name="meridiem"] { width: auto; }
+body.device-phone main .rad-start-line .rad-start-form button { width: auto; }
 .schedule-item-readonly { list-style: none; padding: 0.25rem 0; }
 /* THE SCHEDULER BY PACKAGE (canon 0.30.196): the filter hides a row with the
    hidden attribute, which the row's own display would otherwise defeat; the

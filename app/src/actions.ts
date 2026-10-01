@@ -112,9 +112,12 @@ import { recallPrefillFromBatch, recallRedirectPath, type RecallableBatch } from
 import { hbnWithSeq, wetWeightsFilename } from "./csv";
 import { backRedirect, HttpError, nowIso, parseGrams, parsePlantCount, refusal, requireReason, requireText, textOrNull } from "./audit";
 import { EFFECTIVE_DATE_FIELD, EFFECTIVE_DATE_REASON, effectiveOverrideLog, farmDayStartHour, farmToday, resolveEffectiveDate } from "./effective";
-import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmInstant, farmInstantFromInput } from "./farmday";
+import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmInstant, farmInstantFromInput, wallClock24From12 } from "./farmday";
 import { capacityUomOf, drySpaceTypeOf, spaceHoldsOneLot, trimBogeyOf, DRY_SPACE_TYPES, CAPACITY_UOMS } from "./config";
 import { assertHbnAvailable, formatLotToken, harvestYearFromEntryDate, hbnFromMetrcName, HbnCollisionError, mintHbn, nextLotSerial } from "./mint";
+import { RAD_RUN_STATUS } from "./config";
+import { newestRadGrey } from "./db";
+import { isRadGrey, RAD_OPERATION_PATH, RAD_RUN_LIMIT, RAD_SCHEDULE_PATH, radAdoptSource, requireRadAvailable } from "./rad";
 import {
   assertTable,
   countLotWeights,
@@ -9532,6 +9535,599 @@ export async function completePick(db: D1Database, orderId: string, form: FormDa
   );
   await batchChunked(db, stmts);
   return { redirect: `/fulfillment/pick-orders?order=${encodeURIComponent(orderId)}&ok=fulfilled` };
+}
+
+type RadPendingBatch = { id: string; hbn: string; farm_code: string; strain_id: string };
+
+/** A METRC package the app has never minted, born into the testing queue the
+ * way adoptFromMetrc mints a stranger, with no prepack schedule row. */
+async function radAdoptStatements(
+  db: D1Database,
+  actorId: string,
+  ts: string,
+  source: {
+    tag: string;
+    type: string;
+    grams: number;
+    harvest: string;
+    hbnId: string | null;
+    strainName: string;
+    license: string;
+    location: string | null;
+    packagedDate: string | null;
+  },
+  pending: Map<string, RadPendingBatch>
+): Promise<D1PreparedStatement[]> {
+  const stmts: D1PreparedStatement[] = [];
+  const key = source.harvest.trim().toUpperCase();
+  let batch: RadPendingBatch;
+  const queued = pending.get(key);
+  if (source.hbnId) {
+    const found = await db
+      .prepare(`SELECT id, hbn, farm_code, strain_id FROM harvest_batches WHERE id = ? AND deleted_at IS NULL`)
+      .bind(source.hbnId)
+      .first<RadPendingBatch>();
+    if (!found) throw new HttpError(400, "That package is not available.");
+    batch = found;
+  } else if (queued) {
+    batch = queued;
+  } else {
+    const minted = await mintMetrcBatch(
+      db,
+      source.harvest,
+      { strain: source.strainName, license: source.license, packagedDate: source.packagedDate },
+      actorId,
+      ts
+    );
+    batch = minted.batch;
+    pending.set(key, batch);
+    pending.set(batch.hbn.trim().toUpperCase(), batch);
+    stmts.push(...minted.stmts);
+  }
+  const lotId = (await lotByHbn(db)).get(batch.hbn) ?? null;
+  const id = crypto.randomUUID();
+  const itemId = crypto.randomUUID();
+  const record = {
+    id,
+    wet_weight_entry_id: lotId,
+    harvest_batch_id: batch.id,
+    package_code: source.tag,
+    package_type_code: source.type,
+    weight_grams: source.grams,
+    status: WIP_STATUS.testing_queue,
+    source: WIP_SOURCE.metrc,
+  };
+  stmts.push(
+    db
+      .prepare(
+        `INSERT INTO wip_packages (
+          id, wet_weight_entry_id, harvest_batch_id, package_code, package_type_code, weight_grams, cryo_weight_grams,
+          status, test_outcome, source, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL)`
+      )
+      .bind(id, lotId, batch.id, source.tag, source.type, source.grams, WIP_STATUS.testing_queue, WIP_SOURCE.metrc, ts, actorId, ts, actorId),
+    ...logsForInsert(db, "wip_packages", id, record, actorId, SYSTEM_REASON.rad_run_complete, ts),
+    db
+      .prepare(
+        `INSERT INTO local_inventory_items (
+          id, item_kind, package_code, metrc_tag, harvest_batch_id, wet_weight_entry_id, wip_package_id,
+          strain_id, qty, uom, farm_code, license_value, location,
+          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
+        ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 'g', ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`
+      )
+      .bind(itemId, ITEM_KIND_WIP, source.tag, source.tag, batch.id, id, batch.strain_id, source.grams, batch.farm_code, source.license, source.location, ts, actorId, ts, actorId),
+    ...logsForInsert(
+      db,
+      "local_inventory_items",
+      itemId,
+      { item_kind: ITEM_KIND_WIP, metrc_tag: source.tag, harvest_batch_id: batch.id, strain_id: batch.strain_id, qty: source.grams, location: source.location, license_value: source.license },
+      actorId,
+      SYSTEM_REASON.rad_run_complete,
+      ts
+    )
+  );
+  return stmts;
+}
+
+function radScheduleRedirect(ok: string, form: FormData): string {
+  const q = textOrNull(form.get("q"));
+  const params = new URLSearchParams({ ok });
+  if (q) params.set("q", q);
+  return `${RAD_SCHEDULE_PATH}?${params.toString()}`;
+}
+
+function radOperationRedirect(ok: string): string {
+  return `${RAD_OPERATION_PATH}?ok=${encodeURIComponent(ok)}`;
+}
+
+async function radRunRow(db: D1Database, id: string): Promise<{ id: string; status: string; grey: number } | null> {
+  return db
+    .prepare(`SELECT id, status, grey FROM rad_runs WHERE id = ? AND deleted_at IS NULL`)
+    .bind(id)
+    .first<{ id: string; status: string; grey: number }>();
+}
+
+async function radPackageCount(db: D1Database, runId: string): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS n FROM rad_run_packages WHERE run_id = ? AND deleted_at IS NULL`)
+    .bind(runId)
+    .first<{ n: number }>();
+  return Number(row?.n ?? 0);
+}
+
+async function nextRadPosition(db: D1Database, runId: string): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COALESCE(MAX(position), 0) AS n FROM rad_run_packages WHERE run_id = ? AND deleted_at IS NULL`)
+    .bind(runId)
+    .first<{ n: number }>();
+  return Number(row?.n ?? 0) + 1;
+}
+
+function radRunInsert(db: D1Database, id: string, grey: number, actorId: string, ts: string): D1PreparedStatement[] {
+  const record = {
+    id,
+    status: RAD_RUN_STATUS.scheduled,
+    grey,
+    scheduled_at: ts,
+    scheduled_by: actorId,
+    created_at: ts,
+    created_by: actorId,
+    updated_at: ts,
+    updated_by: actorId,
+  };
+  return [
+    db
+      .prepare(
+        `INSERT INTO rad_runs (
+          id, status, grey, scheduled_at, scheduled_by, started_at, started_by, completed_at, completed_by,
+          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
+        ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL, NULL)`
+      )
+      .bind(id, RAD_RUN_STATUS.scheduled, grey, ts, actorId, ts, actorId, ts, actorId),
+    ...logsForInsert(db, "rad_runs", id, record, actorId, SYSTEM_REASON.rad_scheduled, ts),
+  ];
+}
+
+function radPackageInsert(
+  db: D1Database,
+  runId: string,
+  source: { tag: string; type: string; grams: number | null; lab: string },
+  position: number,
+  actorId: string,
+  ts: string
+): D1PreparedStatement[] {
+  const id = crypto.randomUUID();
+  const record = {
+    id,
+    run_id: runId,
+    tag: source.tag,
+    item_type: source.type,
+    grams: source.grams,
+    lab_test_status: source.lab,
+    position,
+    created_at: ts,
+    created_by: actorId,
+  };
+  return [
+    db
+      .prepare(
+        `INSERT INTO rad_run_packages (
+          id, run_id, tag, item_type, grams, lab_test_status, position, created_at, created_by, deleted_at, deleted_by, delete_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`
+      )
+      .bind(id, runId, source.tag, source.type, source.grams, source.lab, position, ts, actorId),
+    ...logsForInsert(db, "rad_run_packages", id, record, actorId, SYSTEM_REASON.rad_scheduled, ts),
+  ];
+}
+
+async function defaultRadGrey(db: D1Database): Promise<number> {
+  const grey = await newestRadGrey(db);
+  return grey != null && isRadGrey(grey) ? grey : 100;
+}
+
+/** >> puts the package on the newest scheduled run with room. When no
+ * scheduled run exists, a new run is born. When every scheduled run is full,
+ * the eleventh is refused. */
+export async function scheduleRadPackage(db: D1Database, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, textOrNull(form.get("person_id")));
+  const source = await requireRadAvailable(db, requireText(form.get("tag"), "Tag"));
+  const open = await db
+    .prepare(
+      `SELECT r.id,
+              (SELECT COUNT(*) FROM rad_run_packages p WHERE p.run_id = r.id AND p.deleted_at IS NULL) AS n
+       FROM rad_runs r
+       WHERE r.deleted_at IS NULL AND r.status = ?
+       ORDER BY r.scheduled_at DESC, r.id DESC`
+    )
+    .bind(RAD_RUN_STATUS.scheduled)
+    .all<{ id: string; n: number }>();
+  const runs = open.results ?? [];
+  const room = runs.find((run) => Number(run.n) < RAD_RUN_LIMIT);
+  if (!room && runs.length > 0) throw new HttpError(400, "That run is full; start a new run.");
+  const ts = nowIso();
+  const stmts: D1PreparedStatement[] = [];
+  let runId = room?.id ?? "";
+  if (!room) {
+    runId = crypto.randomUUID();
+    stmts.push(...radRunInsert(db, runId, await defaultRadGrey(db), actor.id, ts));
+  }
+  const position = room ? await nextRadPosition(db, runId) : 1;
+  stmts.push(...radPackageInsert(db, runId, source, position, actor.id, ts));
+  await db.batch(stmts);
+  return { redirect: radScheduleRedirect("scheduled", form) };
+}
+
+export async function newRadRun(db: D1Database, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, textOrNull(form.get("person_id")));
+  const ts = nowIso();
+  const id = crypto.randomUUID();
+  await db.batch(radRunInsert(db, id, await defaultRadGrey(db), actor.id, ts));
+  return { redirect: radScheduleRedirect("new", form) };
+}
+
+export async function setRadRunGrey(db: D1Database, runId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, textOrNull(form.get("person_id")));
+  const run = await radRunRow(db, runId);
+  if (!run) throw new HttpError(404, "Unknown run.");
+  if (run.status !== RAD_RUN_STATUS.scheduled) throw new HttpError(400, "That run is not scheduled.");
+  const raw = textOrNull(form.get("grey"));
+  const grey = raw && /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!isRadGrey(grey)) throw new HttpError(400, "Grey is a whole Gray from 100 to 3000 by 100.");
+  if (Number(run.grey) !== grey) {
+    const ts = nowIso();
+    await db.batch([
+      db.prepare(`UPDATE rad_runs SET grey = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`).bind(grey, ts, actor.id, run.id),
+      insertLog(db, {
+        record_table: "rad_runs",
+        record_id: run.id,
+        field: "grey",
+        old_value: String(run.grey),
+        new_value: String(grey),
+        actor_person_id: actor.id,
+        reason: SYSTEM_REASON.rad_grey_set,
+        changed_at: ts,
+      }),
+    ]);
+  }
+  return { redirect: radScheduleRedirect("grey", form) };
+}
+
+export async function unscheduleRadPackage(db: D1Database, runId: string, packageId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, textOrNull(form.get("person_id")));
+  const run = await radRunRow(db, runId);
+  if (!run) throw new HttpError(404, "Unknown run.");
+  if (run.status !== RAD_RUN_STATUS.scheduled) throw new HttpError(400, "That run is not scheduled.");
+  const pkg = await db
+    .prepare(`SELECT id FROM rad_run_packages WHERE id = ? AND run_id = ? AND deleted_at IS NULL`)
+    .bind(packageId, runId)
+    .first<{ id: string }>();
+  if (!pkg) throw new HttpError(400, "That package is not on this run.");
+  const ts = nowIso();
+  const stmts: D1PreparedStatement[] = [
+    db
+      .prepare(`UPDATE rad_run_packages SET deleted_at = ?, deleted_by = ?, delete_reason = ? WHERE id = ? AND deleted_at IS NULL`)
+      .bind(ts, actor.id, SYSTEM_REASON.rad_unscheduled, pkg.id),
+    insertLog(db, {
+      record_table: "rad_run_packages",
+      record_id: pkg.id,
+      field: "deleted_at",
+      old_value: null,
+      new_value: ts,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.rad_unscheduled,
+      changed_at: ts,
+    }),
+  ];
+  if ((await radPackageCount(db, runId)) <= 1) {
+    stmts.push(
+      db
+        .prepare(
+          `UPDATE rad_runs SET deleted_at = ?, deleted_by = ?, delete_reason = ?, updated_at = ?, updated_by = ?
+           WHERE id = ? AND deleted_at IS NULL`
+        )
+        .bind(ts, actor.id, SYSTEM_REASON.rad_unscheduled, ts, actor.id, run.id),
+      insertLog(db, {
+        record_table: "rad_runs",
+        record_id: run.id,
+        field: "deleted_at",
+        old_value: null,
+        new_value: ts,
+        actor_person_id: actor.id,
+        reason: SYSTEM_REASON.rad_unscheduled,
+        changed_at: ts,
+      })
+    );
+  }
+  await db.batch(stmts);
+  return { redirect: radScheduleRedirect("removed", form) };
+}
+
+export async function removeRadRun(db: D1Database, runId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, textOrNull(form.get("person_id")));
+  const run = await radRunRow(db, runId);
+  if (!run) throw new HttpError(404, "Unknown run.");
+  if (run.status !== RAD_RUN_STATUS.scheduled) throw new HttpError(400, "That run is not scheduled.");
+  if ((await radPackageCount(db, runId)) > 0) throw new HttpError(400, "That run still has packages.");
+  const ts = nowIso();
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE rad_runs SET deleted_at = ?, deleted_by = ?, delete_reason = ?, updated_at = ?, updated_by = ?
+         WHERE id = ? AND deleted_at IS NULL`
+      )
+      .bind(ts, actor.id, SYSTEM_REASON.rad_unscheduled, ts, actor.id, run.id),
+    insertLog(db, {
+      record_table: "rad_runs",
+      record_id: run.id,
+      field: "deleted_at",
+      old_value: null,
+      new_value: ts,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.rad_unscheduled,
+      changed_at: ts,
+    }),
+  ]);
+  return { redirect: radScheduleRedirect("removed", form) };
+}
+
+export async function startRadRun(db: D1Database, runId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, textOrNull(form.get("person_id")));
+  const run = await radRunRow(db, runId);
+  if (!run) throw new HttpError(404, "Unknown run.");
+  if (run.status !== RAD_RUN_STATUS.scheduled) throw new HttpError(400, "That run is not scheduled.");
+  if ((await radPackageCount(db, runId)) < 1) throw new HttpError(400, "A run needs a package before it starts.");
+  const other = await db
+    .prepare(`SELECT id FROM rad_runs WHERE deleted_at IS NULL AND status = ? AND id <> ?`)
+    .bind(RAD_RUN_STATUS.running, run.id)
+    .first<{ id: string }>();
+  if (other) throw new HttpError(400, "The Rad is running another run.");
+  const ts = nowIso();
+  await db.batch([
+    db
+      .prepare(`UPDATE rad_runs SET status = ?, started_at = ?, started_by = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
+      .bind(RAD_RUN_STATUS.running, ts, actor.id, ts, actor.id, run.id),
+    insertLog(db, {
+      record_table: "rad_runs",
+      record_id: run.id,
+      field: "status",
+      old_value: run.status,
+      new_value: RAD_RUN_STATUS.running,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.rad_started,
+      changed_at: ts,
+    }),
+    insertLog(db, {
+      record_table: "rad_runs",
+      record_id: run.id,
+      field: "started_at",
+      old_value: null,
+      new_value: ts,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.rad_started,
+      changed_at: ts,
+    }),
+  ]);
+  return { redirect: radOperationRedirect("started") };
+}
+
+export async function unstartRadRun(db: D1Database, runId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, textOrNull(form.get("person_id")));
+  const run = await radRunRow(db, runId);
+  if (!run) throw new HttpError(404, "Unknown run.");
+  if (run.status !== RAD_RUN_STATUS.running) throw new HttpError(400, "That run is not running.");
+  const current = await db.prepare(`SELECT started_at FROM rad_runs WHERE id = ?`).bind(run.id).first<{ started_at: string | null }>();
+  const ts = nowIso();
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE rad_runs SET status = ?, started_at = NULL, started_by = NULL, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+      )
+      .bind(RAD_RUN_STATUS.scheduled, ts, actor.id, run.id),
+    insertLog(db, {
+      record_table: "rad_runs",
+      record_id: run.id,
+      field: "status",
+      old_value: run.status,
+      new_value: RAD_RUN_STATUS.scheduled,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.rad_unstarted,
+      changed_at: ts,
+    }),
+    insertLog(db, {
+      record_table: "rad_runs",
+      record_id: run.id,
+      field: "started_at",
+      old_value: current?.started_at ?? null,
+      new_value: null,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.rad_unstarted,
+      changed_at: ts,
+    }),
+  ]);
+  return { redirect: radOperationRedirect("unstarted") };
+}
+
+/** THE RAD START TIME (canon 0.30.330): the running run's actual start, which
+ * the Start press only approximated, typed on the 12-hour clock in farm time
+ * and resolved on the server on the farm day the run started (THE ZONELESS
+ * ZERO; a time before the start hour falls on the next calendar date, the
+ * silo's own rule). Ahead of now beyond ten minutes is refused, the silo's
+ * grace; started_by stays the hand that pressed Start; an unchanged instant
+ * writes nothing and still answers the flash. */
+export async function setRadStartTime(db: D1Database, runId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, textOrNull(form.get("person_id")));
+  const run = await radRunRow(db, runId);
+  if (!run) throw new HttpError(404, "Unknown run.");
+  if (run.status !== RAD_RUN_STATUS.running) throw new HttpError(400, "That run is not running.");
+  const hhmm = wallClock24From12(textOrNull(form.get("start_time")) ?? "", textOrNull(form.get("meridiem")) ?? "");
+  if (!hhmm) throw new HttpError(400, "Start time must be HH:MM.");
+  const current = await db.prepare(`SELECT started_at FROM rad_runs WHERE id = ?`).bind(run.id).first<{ started_at: string | null }>();
+  const ts = nowIso();
+  const startHour = await farmDayStartHour(db);
+  const instant = farmInstant(farmDay(current?.started_at || ts, startHour), hhmm, startHour);
+  if (!instant) throw new HttpError(400, "Start time must be HH:MM.");
+  if (Date.parse(instant) > Date.parse(ts) + 10 * 60 * 1000) throw new HttpError(400, "Start time is ahead of now.");
+  if (instant === current?.started_at) return { redirect: radOperationRedirect("start_time") };
+  await db.batch([
+    db
+      .prepare(`UPDATE rad_runs SET started_at = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
+      .bind(instant, ts, actor.id, run.id),
+    insertLog(db, {
+      record_table: "rad_runs",
+      record_id: run.id,
+      field: "started_at",
+      old_value: current?.started_at ?? null,
+      new_value: instant,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.rad_start_time_set,
+      changed_at: ts,
+    }),
+  ]);
+  return { redirect: radOperationRedirect("start_time") };
+}
+
+export async function completeRadRun(db: D1Database, runId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, textOrNull(form.get("person_id")));
+  const run = await radRunRow(db, runId);
+  if (!run) throw new HttpError(404, "Unknown run.");
+  if (run.status !== RAD_RUN_STATUS.running) throw new HttpError(400, "That run is not running.");
+  const packages = await db
+    .prepare(`SELECT tag FROM rad_run_packages WHERE run_id = ? AND deleted_at IS NULL ORDER BY position`)
+    .bind(run.id)
+    .all<{ tag: string }>();
+  const ts = nowIso();
+  const stmts: D1PreparedStatement[] = [];
+  const pending = new Map<string, RadPendingBatch>();
+  for (const pkg of packages.results ?? []) {
+    const tag = pkg.tag.toUpperCase();
+    const wips = await db
+      .prepare(`SELECT id, status FROM wip_packages WHERE deleted_at IS NULL AND UPPER(package_code) = ?`)
+      .bind(tag)
+      .all<{ id: string; status: string }>();
+    const rows = wips.results ?? [];
+    if (rows.length === 0) {
+      const source = await radAdoptSource(db, tag);
+      if (!source) throw new HttpError(400, "That package is not available.");
+      if (source.grams == null) throw new HttpError(400, "That package has no gram weight.");
+      stmts.push(
+        ...(await radAdoptStatements(
+          db,
+          actor.id,
+          ts,
+          {
+            tag: source.tag,
+            type: source.type,
+            grams: source.grams,
+            harvest: source.harvest,
+            hbnId: source.hbnId,
+            strainName: source.strainName,
+            license: source.license,
+            location: source.location,
+            packagedDate: source.packagedDate,
+          },
+          pending
+        ))
+      );
+      continue;
+    }
+    for (const wip of rows) {
+      if (wip.status === WIP_STATUS.testing_queue) continue;
+      let next: string;
+      try {
+        next = applyTransition("rad_complete", wip.status);
+      } catch (err) {
+        throw new HttpError(409, err instanceof Error ? err.message : "Invalid status transition.");
+      }
+      stmts.push(
+        db
+          .prepare(`UPDATE wip_packages SET status = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
+          .bind(next, ts, actor.id, wip.id),
+        insertLog(db, {
+          record_table: "wip_packages",
+          record_id: wip.id,
+          field: "status",
+          old_value: wip.status,
+          new_value: next,
+          actor_person_id: actor.id,
+          reason: SYSTEM_REASON.rad_run_complete,
+          changed_at: ts,
+        })
+      );
+    }
+  }
+  stmts.push(
+    db
+      .prepare(
+        `UPDATE rad_runs SET status = ?, completed_at = ?, completed_by = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+      )
+      .bind(RAD_RUN_STATUS.complete, ts, actor.id, ts, actor.id, run.id),
+    insertLog(db, {
+      record_table: "rad_runs",
+      record_id: run.id,
+      field: "status",
+      old_value: run.status,
+      new_value: RAD_RUN_STATUS.complete,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.rad_completed,
+      changed_at: ts,
+    }),
+    insertLog(db, {
+      record_table: "rad_runs",
+      record_id: run.id,
+      field: "completed_at",
+      old_value: null,
+      new_value: ts,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.rad_completed,
+      changed_at: ts,
+    })
+  );
+  await db.batch(stmts);
+  return { redirect: radOperationRedirect("completed") };
+}
+
+async function requireRadReopenPin(db: D1Database, form: FormData): Promise<void> {
+  const pin = await getConfigValue(db, CONFIG_KEYS.admin_pin);
+  const entered = textOrNull(form.get("unfinish_pin")) ?? textOrNull(form.get("pin"));
+  if (!pin || entered !== pin) throw new HttpError(403, SCHEDULE_REFUSAL.demotePin);
+}
+
+export async function reopenRadRun(db: D1Database, runId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, textOrNull(form.get("person_id")));
+  await requireRadReopenPin(db, form);
+  const run = await radRunRow(db, runId);
+  if (!run) throw new HttpError(404, "Unknown run.");
+  if (run.status !== RAD_RUN_STATUS.complete) throw new HttpError(400, "That run is not complete.");
+  const current = await db.prepare(`SELECT completed_at FROM rad_runs WHERE id = ?`).bind(run.id).first<{ completed_at: string | null }>();
+  const ts = nowIso();
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE rad_runs SET status = ?, completed_at = NULL, completed_by = NULL, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+      )
+      .bind(RAD_RUN_STATUS.running, ts, actor.id, run.id),
+    insertLog(db, {
+      record_table: "rad_runs",
+      record_id: run.id,
+      field: "status",
+      old_value: run.status,
+      new_value: RAD_RUN_STATUS.running,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.rad_reopened,
+      changed_at: ts,
+    }),
+    insertLog(db, {
+      record_table: "rad_runs",
+      record_id: run.id,
+      field: "completed_at",
+      old_value: current?.completed_at ?? null,
+      new_value: null,
+      actor_person_id: actor.id,
+      reason: SYSTEM_REASON.rad_reopened,
+      changed_at: ts,
+    }),
+  ]);
+  return { redirect: radOperationRedirect("reopened") };
 }
 
 export { MANIFEST_COLUMNS, buckedPackageCode };

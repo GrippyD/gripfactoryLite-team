@@ -31,6 +31,8 @@ import {
   BUD_CELLS,
   BUD_PRODUCT_CELLS,
   budWaffle,
+  buildTestingFigures,
+  isPasteurizedTag,
   type HarvestConsoleInput,
   type TrimInput,
 } from "../src/console";
@@ -1067,5 +1069,29 @@ describe("THE METRC-BORN HBN STAYS OUT OF THE HARVEST (canon 0.30.196)", () => {
       createWetWeight(m.db, formOf({ person_id: person, team_lead: "Lead", harvest_batch_id: "hb-metrc", actual_dryspc: "dry-1" }))
     ).rejects.toMatchObject({ message: "That batch is not in the HBN Queue." });
     await expect(recallHarvestBatch(m.db, formOf({ person_id: person, id: "hb-metrc" }))).rejects.toMatchObject({ message: "That batch is not in the HBN Queue." });
+  });
+});
+
+describe("the Rad is the second way a tag is pasteurized", () => {
+  it("counts a completed Rad tag in Ready and leaves a failed tag out", () => {
+    expect(isPasteurizedTag("1A4050300000000000A00003", new Set(), new Set(["1A4050300000000000A00003"]))).toBe(true);
+    expect(isPasteurizedTag("1A4050300000000000A00003", new Set())).toBe(false);
+    const figures = buildTestingFigures({
+      year: 2026,
+      gateTypes: ["BUD", "WPR", "PRE", "MOB"],
+      unitGrams: { PRE: 28, MOB: 70 },
+      mirror: [
+        { tag: "1A4050300000000000A00003", item: "BUD - A", quantity: 100, uom: "g", lab_test_status: "NotSubmitted", farm: "PNN" },
+        { tag: "1A4050300000000000A00015", item: "WPR - A", quantity: 40, uom: "g", lab_test_status: "TestFailed", farm: "PNN" },
+      ],
+      cryo: [],
+      rad: [{ tag: "1A4050300000000000A00003" }, { tag: "1A4050300000000000A00015" }],
+      orders: [],
+      sheet: [],
+      marketByHbn: new Map(),
+    });
+    const ready = figures.panes.find((pane) => pane.gate === "ready");
+    expect(ready?.packages).toBe(1);
+    expect(ready?.grams).toBe(100);
   });
 });

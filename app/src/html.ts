@@ -210,6 +210,26 @@ export function time24MaskScript(): string {
 </script>`;
 }
 
+/** THE RAD START TIME (canon 0.30.330): the same digits-and-colon mask on the
+ * 12-hour Start Time box ([data-time12-mask]); AM or PM ride a select beside it. */
+export function time12MaskScript(): string {
+  return `<script>
+(function () {
+  function mask(raw) {
+    var d = String(raw).replace(/\\D/g, "").slice(0, 4);
+    if (d.length <= 2) return d;
+    return d.slice(0, 2) + ":" + d.slice(2);
+  }
+  document.querySelectorAll("[data-time12-mask]").forEach(function (el) {
+    el.addEventListener("input", function () {
+      var next = mask(el.value);
+      if (el.value !== next) el.value = next;
+    });
+  });
+})();
+</script>`;
+}
+
 /** Owner ruling 2026-08-31: add commas to all thousands. A gram field's value
  * formats through formatGrams at every HTML render; every other field renders
  * as stored. Form input values and CSV exports never come through here. */

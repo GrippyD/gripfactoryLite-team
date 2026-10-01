@@ -148,6 +148,30 @@ export function etWallClock(iso: string): string {
   return `${pick("year")}-${pick("month")}-${pick("day")} ${pick("hour")}:${pick("minute")}`;
 }
 
+/** THE RAD START TIME (canon 0.30.330): a wall clock typed on the 12-hour
+ * clock with its AM or PM, as the 24-hour "HH:MM" the farm resolves. 12 AM is
+ * 00, 12 PM is 12, 1 to 11 PM add twelve; the meridiem is trimmed and case
+ * folded; "" when the shape is off. */
+export function wallClock24From12(hhmm: string, meridiem: string): string {
+  const m = /^(0[1-9]|1[0-2]):([0-5][0-9])$/.exec(String(hhmm ?? "").trim());
+  const half = String(meridiem ?? "").trim().toUpperCase();
+  if (!m || (half !== "AM" && half !== "PM")) return "";
+  const hour = (Number(m[1]) % 12) + (half === "PM" ? 12 : 0);
+  return `${String(hour).padStart(2, "0")}:${m[2]}`;
+}
+
+/** The Eastern wall clock of an instant on the 12-hour clock, for the Start
+ * Time box's prefill: "02:35" with its AM or PM; a blank hhmm (and AM) when
+ * the value is not an instant. */
+export function etClock12(iso: string): { hhmm: string; meridiem: "AM" | "PM" } {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return { hhmm: "", meridiem: "AM" };
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: FARM_TIME_ZONE, hourCycle: "h12", hour: "2-digit", minute: "2-digit" }).formatToParts(d);
+  const pick = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const meridiem = pick("dayPeriod").trim().toUpperCase() === "PM" ? "PM" : "AM";
+  return { hhmm: `${pick("hour").padStart(2, "0")}:${pick("minute").padStart(2, "0")}`, meridiem };
+}
+
 /** A typed time as a UTC instant (ISO), or null when the shape is not one the
  * farm accepts. THE ZONELESS ZERO (canon 0.30.102/104; the owner's Silo 4
  * clock ran four hours long because a pencil stored "2026-09-15 01:00" as

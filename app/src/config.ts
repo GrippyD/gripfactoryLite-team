@@ -214,6 +214,17 @@ export const SYSTEM_REASON = {
   // TERP RECIPES (canon 0.30.321): the pick and the dose on a pasteurization run.
   terp_recipe_picked: "terp recipe picked",
   terp_dose_set: "terp dose set",
+  // THE RAD (canon 0.30.327): the stamps, the grey, and the queue effect.
+  rad_scheduled: "rad scheduled",
+  rad_unscheduled: "rad unscheduled",
+  rad_grey_set: "rad grey set",
+  rad_started: "rad started",
+  rad_unstarted: "rad unstarted",
+  rad_completed: "rad completed",
+  rad_reopened: "rad reopened",
+  rad_run_complete: "rad run complete",
+  // THE RAD START TIME (canon 0.30.330): the running run's actual start, typed.
+  rad_start_time_set: "rad start time set",
   finish_unload: "finish unload",
   // THE BLAST FREEZER(S) (canon 0.30.106): the freezer line removed, the lot frozen; nothing moved.
   freezer_unload: "freezer line removed; the packages stand as FFZ in METRC",
@@ -802,7 +813,8 @@ export type TransitionName =
   | "cryo_unconsumed"
   | "released"
   | "prepack_packed"
-  | "prepack_unpacked";
+  | "prepack_unpacked"
+  | "rad_complete";
 
 export const STATUS_TRANSITIONS: Record<
   TransitionName,
@@ -883,17 +895,28 @@ export const STATUS_TRANSITIONS: Record<
     from: WIP_STATUS.packed,
     to: WIP_STATUS.released,
   },
+  // THE RAD (canon 0.30.327): completion returns a package to the testing
+  // queue. applyTransition also accepts pasteurized. Demote ignores this edge
+  // so the Testing Queue's step back stays the cryo queue.
+  rad_complete: {
+    entity: "wip_packages",
+    from: WIP_STATUS.released,
+    to: WIP_STATUS.testing_queue,
+  },
 };
 
-/** Reverse steps. demoteStep ignores them so a birth status stays a birth status. */
-const UNFINISH_TRANSITIONS = new Set<TransitionName>(["cryo_unconsumed", "prepack_unpacked"]);
+/** Reverse steps, plus rad_complete. demoteStep ignores them so a birth status
+ * stays a birth status and the Testing Queue still steps back to the cryo queue. */
+const UNFINISH_TRANSITIONS = new Set<TransitionName>(["cryo_unconsumed", "prepack_unpacked", "rad_complete"]);
+
+const RAD_COMPLETE_FROM = new Set<string>([WIP_STATUS.released, WIP_STATUS.pasteurized]);
 
 export function applyTransition(name: TransitionName, currentStatus: string): string {
   const spec = STATUS_TRANSITIONS[name];
-  if (currentStatus !== spec.from) {
-    throw new Error(
-      `Cannot apply ${name}: status is ${currentStatus}, expected ${spec.from}.`
-    );
+  const ok = name === "rad_complete" ? RAD_COMPLETE_FROM.has(currentStatus) : currentStatus === spec.from;
+  if (!ok) {
+    const expected = name === "rad_complete" ? "released or pasteurized" : spec.from;
+    throw new Error(`Cannot apply ${name}: status is ${currentStatus}, expected ${expected}.`);
   }
   return spec.to;
 }
@@ -1275,6 +1298,9 @@ export function dryingReturnPath(raw: unknown): string | null {
 /** The Complete pane's window: today and the six farm days before it. */
 export const DRYING_COMPLETE_DAYS = 7;
 export const SCHEDULE_STATUS = { scheduled: "scheduled", complete: "complete" } as const;
+
+/** THE RAD (canon 0.30.327): a run waits, runs, or is complete. */
+export const RAD_RUN_STATUS = { scheduled: "scheduled", running: "running", complete: "complete" } as const;
 
 /** THE LOAD AND THE LOT (canon 0.30.241): a pass of an HBN onto Load Silo.
  * One production_schedules row, entry and package null. Not a line stage. */

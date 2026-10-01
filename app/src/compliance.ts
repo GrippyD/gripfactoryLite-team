@@ -379,6 +379,14 @@ export function complianceMenuPage(kpis: ComplianceKpis, locale: Locale = "en"):
         ${kind}
         <span class="tile-title">${esc(t(locale, "Compliance Testing"))}</span>
       </a>
+      <a class="tile" href="/compliance/rad_schedule" data-compliance-key="rad_schedule">
+        ${kind}
+        <span class="tile-title">${esc(t(locale, "Rad Schedule"))}</span>
+      </a>
+      <a class="tile" href="/compliance/rad_operation" data-compliance-key="rad_operation">
+        ${kind}
+        <span class="tile-title">${esc(t(locale, "Rad Operation"))}</span>
+      </a>
     </div>`;
 }
 
