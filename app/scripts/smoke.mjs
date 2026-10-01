@@ -5134,6 +5134,10 @@ async function run() {
     assert(secondCard.includes('data-hc="trim_bulk">0.00 lb</span><span class="hc-sub muted">0 g · SHAKE + BUD</span>'), "Second Shift Bulk Bud must read zero");
     assert(secondCard.includes('data-hc="trim_other">0.04 lb</span><span class="hc-sub muted">20 g · TRIM 0 + BIO 0 + WIP left 0 + other types 20</span>'), "Second Shift Other must gather the WASTE 20 g as another type");
     assert(secondCard.includes('data-hc-bud-consumed="69"'), "Second BTR 31.0% must grey 69 cells of the bud");
+    // THE WEIGHTED BTR (canon 0.30.335): the totals' fourth cell, right of Lbs/DLH: (30 + 9) of (50 + 29), 49.4%.
+    const trimTotals = trimSection.slice(trimSection.indexOf("data-hc-trim-totals"));
+    assert(trimTotals.indexOf('data-hc-trim-total="btr"') > trimTotals.indexOf('data-hc-trim-total="per"'), "the weighted BTR must stand right of Lbs/DLH");
+    assert(trimTotals.includes('data-hc-trim-total="btr"><div class="hc-gate-name">Weighted BTR</div><span class="hc-value">49.4%</span>'), "the weighted BTR must read 49.4% (39 of 79)");
     // THE TRIM BOGEY (canon 0.30.249): 40 until saved; at 35 the 69 consumed reach four product cells, from the 66th.
     const wasteOf = (card) => {
       const at = card.indexOf('<svg class="hc-bud"');
@@ -8097,7 +8101,11 @@ async function run() {
     assert(fieldOpened.body.includes("<dt>Operator</dt><dd>Field Hand</dd>"), "an open load must read its operator");
     assert(fieldOpened.body.includes("<dt>Destination</dt><dd>Penn North</dd>"), "an open load must read Penn North");
     assert(fieldOpened.body.includes('<details class="field-finish" data-finish-load>'), "the Finish Load block starts closed");
-    assert(fieldOpened.body.includes('<summary class="btn" data-finish-open>Finish Load</summary>'), "the Finish Load button must stand under the totes");
+    assert(fieldOpened.body.includes('<summary class="btn" data-finish-open>Finish Load</summary>'), "the Finish Load button must stand on the page");
+    // THE PLUS KEEPS THE CURSOR (canon 0.30.334): the Weight box takes the cursor, the + keeps it, the post goes in the background.
+    assert(fieldOpened.body.includes('name="weight_grams" min="0" step="1" inputmode="numeric" required autofocus data-field-weight'), "the Weight box must take the cursor");
+    assert(fieldOpened.body.includes('aria-label="+" data-field-plus>+</button>'), "the + must carry its hook");
+    assert(fieldOpened.body.split("var canPost = ").length - 1 === 1, "the entry script must ride the page once");
     const fieldSelect = (fieldOpened.body.match(/<select name="harvest_batch_id">([\s\S]*?)<\/select>/) || [])[1] || "";
     assert(fieldSelect.includes('value="" selected'), "the HBN select is null on load");
     const fieldArlId = optionId(fieldOpened.body, fieldArl.hbn);
@@ -8127,6 +8135,12 @@ async function run() {
     const pnsSelect = (carriedPns.body.match(/data-field-entry[\s\S]*?<select name="harvest_batch_id">([\s\S]*?)<\/select>/) || [])[1] || "";
     assert(pnsSelect.includes(`value="${fieldPnsId}" selected`), "the select must carry the PNS HBN, the last pick");
     assert((carriedPns.body.match(/data-field-tote=/g) || []).length === 3, "the load must list three totes");
+    // THE FINISH LOAD IN REACH (canon 0.30.335): the block under the entry row, above the totes.
+    assert(
+      carriedPns.body.indexOf('<details class="field-finish"') > carriedPns.body.indexOf("data-field-entry") &&
+        carriedPns.body.indexOf('<details class="field-finish"') < carriedPns.body.indexOf("data-field-tote="),
+      "the Finish Load block must stand under the entry row, above the totes"
+    );
     const fieldNo = await req(`/station/field_harvest/load/${fieldLoad1}/send`, { method: "POST", body: form({}) });
     assert(fieldNo.status === 303, `Finish Load NO expected 303 got ${fieldNo.status} ${await fieldNo.text()}`);
     const sentPane = await text("/station/field_harvest");

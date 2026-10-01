@@ -376,6 +376,8 @@ select option[data-occupied] { color: var(--text-dim, #888); }
 .field-entry { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
 .field-entry .field { margin: 0; }
 .field-entry input[type="number"] { width: 8rem; }
+/* THE PLUS KEEPS THE CURSOR (canon 0.30.334): a refusal or no answer under the entry form, on a row of its own. */
+.field-entry .field-entry-status { flex: 1 1 100%; margin: 0.4rem 0 0; }
 .field-finish { margin-top: 0.8rem; }
 .field-finish > summary { list-style: none; display: inline-block; cursor: pointer; }
 .field-finish > summary::-webkit-details-marker { display: none; }

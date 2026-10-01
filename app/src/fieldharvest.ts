@@ -102,10 +102,18 @@ function middle(input: FieldHarvestPageInput): string {
       <dt>${esc(t(locale, "Destination"))}</dt><dd>${esc(load.destination_name)}</dd>
       <dt>${esc(t(locale, "Started"))}</dt><dd><time datetime="${esc(load.started_at)}">${esc(etWallClock(load.started_at))}</time></dd>
     </dl>`;
+  // THE FINISH LOAD IN REACH (canon 0.30.335). Owner, 2026-10-01, verbatim:
+  // "finish load button on alrington Penn Spouth Harvest doesn't do anything".
+  // It did open, but under a long list of totes the person scrolls until the
+  // button shows at the bottom of the screen, and the question opened below the
+  // edge. His V15 ruling put [Finish Load] in the entry pane after "+", so the
+  // block sits right under the entry row, above the totes; its script comes
+  // after the totes so it finds every row.
   return `${header}
     ${entryPane(picked, locale)}
+    ${finishBlock(picked, locale)}
     ${contentPane(picked, locale)}
-    ${finishBlock(picked, locale)}`;
+    ${finishScript()}`;
 }
 
 function emptyHeader(destinations: FieldDestination[], locale: Locale): string {
@@ -121,15 +129,150 @@ function emptyHeader(destinations: FieldDestination[], locale: Locale): string {
     </form>`;
 }
 
+/** THE PLUS KEEPS THE CURSOR (canon 0.30.334). Owner, 2026-10-01, verbatim:
+ * "when the wet weight entry screen has the "+" pushed, the screen refreshes
+ * and the operator needs to refind the cursor and click on the weight entry.
+ * They're doing this 3500 times a day. Can we fix it so they can type, hit +
+ * and type again without the exercise?" The Weight box takes the cursor when
+ * the page loads (autofocus, the path without script); the script keeps it
+ * there: the + press does not take the focus, the + key typed in the box is
+ * the + button, and the post goes in the background, so the page never
+ * reloads and a tablet's keyboard stays up. The box clears as the weight
+ * leaves; the totes and the Finish Load block come back from the server's
+ * own page and replace the old ones; a refusal or no answer puts the weight
+ * back with the words under the form. */
 function entryPane(
   picked: NonNullable<FieldHarvestPageInput["picked"]>,
   locale: Locale
 ): string {
   return `<form method="post" action="${esc(PATH)}/load/${esc(picked.load.id)}/weights" class="field-entry" data-field-entry>
-      <label class="field">${esc(t(locale, "Weight"))} <input type="number" name="weight_grams" min="0" step="1" inputmode="numeric" required></label>
+      <label class="field">${esc(t(locale, "Weight"))} <input type="number" name="weight_grams" min="0" step="1" inputmode="numeric" required autofocus data-field-weight></label>
       ${hbnSelect("harvest_batch_id", picked.hbnOptions, picked.carryId ?? "", true, locale)}
-      <button type="submit" aria-label="+">+</button>
+      <button type="submit" aria-label="+" data-field-plus>+</button>
+      <p class="banner err field-entry-status" data-field-status data-no-answer="${esc(
+        t(locale, "No answer from the server. Check the list before you add it again.")
+      )}" role="status" aria-live="polite" hidden></p>
+      ${fieldEntryScript()}
     </form>`;
+}
+
+/** The script of the entry form. It sits inside the form, which the background
+ * post never replaces, so it runs once; the panes after the form are replaced
+ * from the server's page and their own script runs again on the new nodes. */
+function fieldEntryScript(): string {
+  return `<script>
+(function () {
+  var form = document.querySelector("form[data-field-entry]");
+  if (!form) return;
+  var box = form.querySelector("[data-field-weight]");
+  var plus = form.querySelector("[data-field-plus]");
+  var status = form.querySelector("[data-field-status]");
+  if (!box) return;
+  var canPost = !!(window.fetch && window.DOMParser && window.FormData);
+  var busy = false;
+  var again = false;
+  function keep() {
+    var a = document.activeElement;
+    if (a === box) return;
+    if (a && a !== document.body && a !== plus) return;
+    try { box.focus({ preventScroll: true }); } catch (e) { box.focus(); }
+  }
+  function say(text) {
+    if (!status) return;
+    status.textContent = text || "";
+    status.hidden = !text;
+  }
+  function noAnswer() { return (status && status.getAttribute("data-no-answer")) || ""; }
+  if (plus) {
+    plus.addEventListener("mousedown", function (e) { e.preventDefault(); });
+    plus.addEventListener("pointerdown", function (e) { e.preventDefault(); });
+  }
+  box.addEventListener("keydown", function (e) {
+    if (e.key !== "+") return;
+    e.preventDefault();
+    if (!form.reportValidity()) return;
+    if (canPost) post(); else form.submit();
+  });
+  if (!canPost) return;
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    post();
+  });
+  function swap(doc) {
+    var fresh = doc.querySelector("form[data-field-entry]");
+    var pane = form.parentNode;
+    if (!fresh || !pane) return false;
+    while (form.nextSibling) pane.removeChild(form.nextSibling);
+    for (var n = fresh.nextSibling; n; n = n.nextSibling) pane.appendChild(document.importNode(n, true));
+    var runs = pane.querySelectorAll("script");
+    for (var i = 0; i < runs.length; i++) {
+      if (form.contains(runs[i])) continue;
+      var s = document.createElement("script");
+      s.text = runs[i].text;
+      runs[i].parentNode.replaceChild(s, runs[i]);
+    }
+    var sel = form.querySelector('select[name="harvest_batch_id"]');
+    var freshSel = fresh.querySelector('select[name="harvest_batch_id"]');
+    if (sel && freshSel) {
+      sel.innerHTML = freshSel.innerHTML;
+      sel.value = freshSel.value;
+    }
+    var main = document.querySelector("main");
+    var freshMain = doc.querySelector("main");
+    if (main && freshMain) {
+      var old = main.querySelectorAll(":scope > .banner");
+      for (var j = 0; j < old.length; j++) main.removeChild(old[j]);
+      var head = main.querySelector(":scope > h1");
+      var come = freshMain.querySelectorAll(":scope > .banner");
+      for (var k = 0; k < come.length; k++) main.insertBefore(document.importNode(come[k], true), head || main.firstChild);
+    }
+    return true;
+  }
+  function refresh() {
+    fetch(location.href, { credentials: "same-origin" })
+      .then(function (res) { return res.ok ? res.text() : ""; })
+      .then(function (html) { if (html) swap(new DOMParser().parseFromString(html, "text/html")); })
+      .catch(function () {});
+  }
+  function post() {
+    if (busy) { again = true; return; }
+    var sent = box.value;
+    if (!sent) return;
+    busy = true;
+    again = false;
+    var data = new FormData(form);
+    box.value = "";
+    say("");
+    function fail(text) {
+      again = false;
+      if (!box.value) box.value = sent;
+      say(sent + " g: " + text);
+    }
+    fetch(form.action, { method: "POST", body: data, credentials: "same-origin" })
+      .then(function (res) {
+        return res.text().then(function (html) { return { res: res, doc: new DOMParser().parseFromString(html, "text/html") }; });
+      })
+      .then(function (r) {
+        if (!r.res.ok) {
+          var err = r.doc.querySelector(".banner.err");
+          fail((err && err.textContent) || noAnswer());
+          return;
+        }
+        if (!swap(r.doc)) { location.assign(r.res.url || location.href); return; }
+        if (history.replaceState && r.res.url) history.replaceState(null, "", r.res.url);
+      })
+      .catch(function () { fail(noAnswer()); refresh(); })
+      .then(function () {
+        busy = false;
+        keep();
+        if (again) {
+          again = false;
+          if (box.value && form.checkValidity()) post();
+        }
+      });
+  }
+})();
+</script>`;
 }
 
 function contentPane(
@@ -230,8 +373,7 @@ function finishBlock(
       </div>
       ${ask}
       ${warn}
-    </details>
-    ${finishScript()}`;
+    </details>`;
 }
 
 function hbnGroups(totes: FieldToteRow[]): Array<{ id: string; hbn: string; onLoad: number; inAll: number }> {
@@ -254,10 +396,21 @@ function finishScript(): string {
 (function () {
   var yes = document.querySelector("[data-finish-yes]");
   var list = document.querySelector("[data-finish-list]");
+  var block = document.querySelector("details.field-finish");
+  function show(el) {
+    if (!el || !el.scrollIntoView) return;
+    try { el.scrollIntoView({ block: "nearest" }); } catch (e) { el.scrollIntoView(false); }
+  }
+  if (block) {
+    block.addEventListener("toggle", function () {
+      if (block.open) show(block);
+    });
+  }
   if (yes && list) {
     yes.addEventListener("click", function (e) {
       e.preventDefault();
       list.hidden = false;
+      show(list);
     });
   }
   document.querySelectorAll("[data-tote-hbn]").forEach(function (f) {
@@ -284,7 +437,11 @@ function finishScript(): string {
     form.querySelectorAll('input[name="hbn"]:checked').forEach(function (box) {
       labels.push(box.getAttribute("data-hbn-label") || box.value);
     });
-    if (!labels.length) return;
+    if (!labels.length) {
+      form.setAttribute("data-posting", "1");
+      form.submit();
+      return;
+    }
     var msg = (form.getAttribute("data-confirm") || "").split("{list}").join(labels.join(", "));
     if (!window.confirm(msg)) return;
     form.setAttribute("data-posting", "1");

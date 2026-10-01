@@ -932,6 +932,17 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     const none = trimmingSection({ ...withTrim, trim: { ...trim, hours: { day: null, second: null } } });
     expect(none).toContain('data-hc-trim-total="hours"');
     expect(none).toContain("type hours");
+    // THE WEIGHTED BTR (canon 0.30.335): to the right of Lbs/DLH, both shifts' Total Bud over both shifts' totals:
+    // Day 450 of 750 and Second 90 of 300 make 540 of 1050, 51.4% (the plain average would be 45.0%); Les and the
+    // unnamed operator stay out.
+    expect(both.indexOf('data-hc-trim-total="btr"')).toBeGreaterThan(both.indexOf('data-hc-trim-total="per"'));
+    expect(both).toContain(
+      '<div class="hc-trim-total" data-hc-trim-total="btr"><div class="hc-gate-name">Weighted BTR</div><span class="hc-value">51.4%</span><span class="hc-sub muted">both shifts, Total Bud over the shift totals</span></div>'
+    );
+    const quiet = trimmingSection({ ...withTrim, trim: { ...trim, packages: [] } });
+    expect(quiet).toMatch(/data-hc-trim-total="btr"[\s\S]*?<span class="hc-value">no packages yesterday<\/span><\/div>/);
+    const esTotals = trimmingSection({ ...withTrim, trim: { ...trim, hours: { day: 5, second: 3 } } }, "es");
+    expect(esTotals).toContain('<div class="hc-gate-name">BTR ponderado</div><span class="hc-value">51.4%</span><span class="hc-sub muted">ambos turnos, flor total sobre los totales de turno</span>');
   });
 
   it("THE SHEET SYNC (canon 0.30.162): the line under the sheet hours says when the sheet was last read; never read before a run; Spanish speaks, footnotes included", () => {

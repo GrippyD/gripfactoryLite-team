@@ -312,6 +312,11 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Load sent.": { en: "Load sent.", es: "Carga enviada." },
   "Load reopened.": { en: "Load reopened.", es: "Carga reabierta." },
   "Weight added.": { en: "Weight added.", es: "Peso agregado." },
+  // THE PLUS KEEPS THE CURSOR (canon 0.30.334): the field + posted in the background found no server.
+  "No answer from the server. Check the list before you add it again.": {
+    en: "No answer from the server. Check the list before you add it again.",
+    es: "Sin respuesta del servidor. Revise la lista antes de agregarlo otra vez.",
+  },
   "Change": { en: "Change", es: "Cambiar" },
   "Penn North Harvest takes Penn North batches only.": {
     en: "Penn North Harvest takes Penn North batches only.",
@@ -1287,6 +1292,12 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Bulk Bud": { en: "Bulk Bud", es: "Flor a granel" },
   "Prepack Bud": { en: "Prepack Bud", es: "Flor preempacada" },
   "Total Bud": { en: "Total Bud", es: "Flor total" },
+  // THE WEIGHTED BTR (canon 0.30.335): the totals under the two trim shifts.
+  "Weighted BTR": { en: "Weighted BTR", es: "BTR ponderado" },
+  "both shifts, Total Bud over the shift totals": {
+    en: "both shifts, Total Bud over the shift totals",
+    es: "ambos turnos, flor total sobre los totales de turno",
+  },
   "Bulk + Prepack": { en: "Bulk + Prepack", es: "Granel + preempacada" },
   "Total Bud / shift total (weighed + WIP left)": { en: "Total Bud / shift total (weighed + WIP left)", es: "Flor total / total del turno (pesado + WIP restante)" },
   "Shift total": { en: "Shift total", es: "Total del turno" },
