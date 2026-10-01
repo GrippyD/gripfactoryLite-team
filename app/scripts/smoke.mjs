@@ -245,6 +245,13 @@ function etWallClockSmoke(iso) {
   const pick = (type) => parts.find((p) => p.type === type)?.value ?? "";
   return `${pick("year")}-${pick("month")}-${pick("day")} ${pick("hour")}:${pick("minute")}`;
 }
+// THE RAD START TIME (canon 0.30.330): the farm's wall clock on the 12-hour
+// clock with its AM or PM, as the Start Time box takes it.
+function etClock12Smoke(iso) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: SMOKE_FARM_TZ, hourCycle: "h12", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date(iso));
+  const pick = (type) => parts.find((p) => p.type === type)?.value ?? "";
+  return { hhmm: `${pick("hour").padStart(2, "0")}:${pick("minute").padStart(2, "0")}`, meridiem: pick("dayPeriod").trim().toUpperCase() };
+}
 function etInstantSmoke(date, hhmm) {
   const [hh, mm] = hhmm.split(":").map(Number);
   const wallAsUtc = Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), hh, mm);
@@ -402,8 +409,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 84 migration(s)")) {
-      throw new Error(`from-zero apply must say 84 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 85 migration(s)")) {
+      throw new Error(`from-zero apply must say 85 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -8275,6 +8282,235 @@ async function run() {
     });
     assert(fieldVoided.status === 303, `the void expected 303 got ${fieldVoided.status} ${await fieldVoided.text()}`);
     assert((fieldVoided.headers.get("location") || "").includes(`/station/field_harvest?load=${fieldLoad4}`), "the void must return to the load");
+
+    // THE RAD SCHEDULE AND RAD OPERATION (canon 0.30.327).
+    const radMenu = await text("/compliance");
+    assert(radMenu.body.includes('href="/compliance/rad_schedule"') && radMenu.body.includes("Rad Schedule"), "the Compliance Console must tile Rad Schedule");
+    assert(radMenu.body.includes('href="/compliance/rad_operation"') && radMenu.body.includes("Rad Operation"), "the Compliance Console must tile Rad Operation");
+    const radTag = (tail) => `1A4050300000000000B${tail}`;
+    const radHbn = (grow, serial) => `26273-PNN-${grow}-027-0-NA-${serial}`;
+    const radHead = "Tag,Source Harvest(s),Source Package(s),Original Source Package Label,Source Processing Job(s),Location,Sublocation,Item,Category,Item Strain,Quantity,Unit Of Measure,Production Batch Number,Source Production Batch,Lab Test Status,Finished Goods,Administrative Hold,Administrative Recall,Packaged Date,Received,Expiration Date,Lab Test Expiration";
+    const radRow = (tail, item, status, grow, serial, harvest = radHbn(grow, serial)) =>
+      `${radTag(tail)},${harvest},,,,Cryo,,${item},Buds,Fruity Pebbles,100,g,,,${status},False,False,False,9/1/2026 12:00:00 AM,,,`;
+    const radRows = [
+      radRow("00020", "BUD - Fruity Pebbles - PNN - O", "NotSubmitted", "ID", "26820"),
+      radRow("00003", "BUD - Fruity Pebbles - PNN - O", "NotSubmitted", "GH", "26803"),
+      radRow("00050", "WPR - Fruity Pebbles - PNN - O", "NotSubmitted", "GH", "26850"),
+      radRow("00008", "SHA - Fruity Pebbles - PNN - O", "NotSubmitted", "GH", "26808"),
+      radRow("00015", "WPR - Fruity Pebbles - PNN - O", "TestFailed", "GH", "26815"),
+      radRow("00001", "BUD - Fruity Pebbles - PNN - O", "NotSubmitted", "GH", "26801", ""),
+      radRow("00002", "BUD - Fruity Pebbles - PNN - O", "TestPassed", "GH", "26802"),
+      radRow("00004", "MIX - Fruity Pebbles - PNN - O", "NotSubmitted", "GH", "26804"),
+    ];
+    for (let i = 1; i <= 11; i++) radRows.push(radRow(String(10000 + i), "BUD - Fruity Pebbles - PNN - O", "NotSubmitted", "GH", String(27000 + i)));
+    for (const tail of ["30001", "30002", "30003"]) radRows.push(radRow(tail, "BUD - Fruity Pebbles - PNN - O", "NotSubmitted", "GH", String(27200 + Number(tail.slice(-2)))));
+    const radForm = new FormData();
+    radForm.append("file", new File([new TextEncoder().encode(`${radHead}\r\n${radRows.join("\r\n")}\r\n`)], "MetrcMichiganGRC001132PackagesActive_rad.csv", { type: "text/csv" }));
+    const radMount = await req("/inventory/metrc/mount", { method: "POST", body: radForm });
+    assert(radMount.status === 303, `the rad mirror drop expected 303 got ${radMount.status} ${await radMount.text()}`);
+    const radOrder = [radTag("00020"), radTag("00003"), radTag("00050"), radTag("00008"), radTag("00015")];
+    const radPage = await text("/compliance/rad_schedule");
+    assert(radPage.res.status === 200, `GET /compliance/rad_schedule expected 200 got ${radPage.res.status}`);
+    const radAvailable = radPage.body.slice(radPage.body.indexOf('data-rad-pane="available"'), radPage.body.indexOf('data-rad-pane="scheduled"'));
+    const radSeen = [...radAvailable.matchAll(/data-rad-tag="([^"]+)"/g)].map((row) => row[1]).filter((code) => code.startsWith("1A4050300000000000B"));
+    const radRanked = radSeen.filter((code) => radOrder.includes(code));
+    assert(radRanked.join(",") === radOrder.join(","), `Available order expected ${radOrder.join(",")} got ${radRanked.join(",")}`);
+    assert(!radAvailable.includes(radTag("00001")) && !radAvailable.includes(radTag("00002")) && !radAvailable.includes(radTag("00004")), "a package with no harvest, a passed package, and MIX stay off Available");
+    const radFiltered = await text(`/compliance/rad_schedule?q=${radTag("00003").slice(-5)}`);
+    const radFilteredAvail = radFiltered.body.slice(radFiltered.body.indexOf('data-rad-pane="available"'), radFiltered.body.indexOf('data-rad-pane="scheduled"'));
+    const radLi = (html, code) => {
+      const at = html.indexOf(`data-rad-tag="${code}"`);
+      return at < 0 ? "" : html.slice(html.lastIndexOf("<li", at), html.indexOf(">", at));
+    };
+    assert(radLi(radFilteredAvail, radTag("00003")) && !radLi(radFilteredAvail, radTag("00003")).includes(" hidden"), "the filter must show the last five it was given");
+    assert(radLi(radFilteredAvail, radTag("00020")).includes(" hidden"), "the filter must hide a tag whose last five do not match");
+    const radFill = [];
+    for (let i = 1; i <= 11; i++) radFill.push(radTag(String(10000 + i)));
+    let radSched = await req("/compliance/rad_schedule/schedule", { method: "POST", body: form({ tag: radFill[0] }) });
+    assert(radSched.status === 303, `the first >> expected 303 got ${radSched.status} ${await radSched.text()}`);
+    const radBuilt = await text("/compliance/rad_schedule");
+    const radRunA = (radBuilt.body.match(/data-rad-run="([^"]+)"/) || [])[1];
+    assert(radRunA, "the first >> must birth a run");
+    assert(radBuilt.body.includes('value="100" selected'), "the first run's grey is 100");
+    for (let i = 1; i < 10; i++) {
+      const add = await req("/compliance/rad_schedule/schedule", { method: "POST", body: form({ tag: radFill[i] }) });
+      assert(add.status === 303, `>> ${i + 1} expected 303 got ${add.status} ${await add.text()}`);
+    }
+    const radEleventh = await req("/compliance/rad_schedule/schedule", { method: "POST", body: form({ tag: radFill[10] }) });
+    assert(radEleventh.status === 400 && (await radEleventh.text()).includes("That run is full; start a new run."), "the eleventh package must be refused");
+    const radGrey = await req(`/compliance/rad_schedule/run/${radRunA}/grey`, { method: "POST", body: form({ grey: "1500" }) });
+    assert(radGrey.status === 303, `saving the grey expected 303 got ${radGrey.status} ${await radGrey.text()}`);
+    const radGreyPage = await text("/compliance/rad_schedule");
+    assert(radGreyPage.body.includes('value="1500" selected'), "the saved grey must read back");
+    const radOff = (radGreyPage.body.match(/data-rad-package="([^"]+)"/) || [])[1];
+    assert(radOff, "a package on the run must offer <");
+    const radUn = await req(`/compliance/rad_schedule/run/${radRunA}/package/${radOff}/unschedule`, { method: "POST", body: form({}) });
+    assert(radUn.status === 303, `< expected 303 got ${radUn.status} ${await radUn.text()}`);
+    const radAfterUn = await text("/compliance/rad_schedule");
+    assert(!radAfterUn.body.includes(`data-rad-package="${radOff}"`), "the package must leave the run");
+    const radNew = await req("/compliance/rad_schedule/run", { method: "POST", body: form({}) });
+    assert(radNew.status === 303, `New run expected 303 got ${radNew.status} ${await radNew.text()}`);
+    const radTwo = await text("/compliance/rad_schedule");
+    const radIds = [...radTwo.body.matchAll(/data-rad-run="([^"]+)"/g)].map((row) => row[1]);
+    const radRunB = radIds.find((id) => id !== radRunA);
+    assert(radRunB, "New run must add a second card");
+    const radOntoB = await req("/compliance/rad_schedule/schedule", { method: "POST", body: form({ tag: radFill[10] }) });
+    assert(radOntoB.status === 303, `>> onto the new run expected 303 got ${radOntoB.status} ${await radOntoB.text()}`);
+    const radLanded = await text("/compliance/rad_schedule");
+    const radCardB = radLanded.body.slice(radLanded.body.indexOf(`data-rad-run="${radRunB}"`), radLanded.body.indexOf(`data-rad-run="${radRunB}"`) + 4000);
+    assert(radCardB.includes(radFill[10].slice(-5)), ">> must land on the newest open run");
+    const radEmptyNew = await req("/compliance/rad_schedule/run", { method: "POST", body: form({}) });
+    assert(radEmptyNew.status === 303, `the empty run expected 303 got ${radEmptyNew.status}`);
+    const radThree = await text("/compliance/rad_schedule");
+    const radRunC = [...radThree.body.matchAll(/data-rad-run="([^"]+)"/g)].map((row) => row[1]).find((id) => id !== radRunA && id !== radRunB);
+    assert(radRunC, "the empty run must have an id");
+    const radStartEmpty = await req(`/compliance/rad_operation/run/${radRunC}/start`, { method: "POST", body: form({}) });
+    assert(radStartEmpty.status === 400 && (await radStartEmpty.text()).includes("A run needs a package before it starts."), "an empty run must refuse Start");
+    const radStart = await req(`/compliance/rad_operation/run/${radRunB}/start`, { method: "POST", body: form({}) });
+    assert(radStart.status === 303, `Start expected 303 got ${radStart.status} ${await radStart.text()}`);
+    const radStartAgain = await req(`/compliance/rad_operation/run/${radRunA}/start`, { method: "POST", body: form({}) });
+    assert(radStartAgain.status === 400 && (await radStartAgain.text()).includes("The Rad is running another run."), "a second Start must be refused");
+    const radOp = await text("/compliance/rad_operation");
+    assert(/data-clock[^>]*data-state="running"[^>]*data-started="\d+"/.test(radOp.body), "the running pane must carry the clock");
+    assert(/\d+d \d{2}:\d{2}:\d{2}/.test(radOp.body), "the clock's first text comes from formatClock");
+    // THE RAD START TIME (canon 0.30.330): the box after the clock sets the running run's actual
+    // start, typed on the 12-hour clock in farm time and resolved on the server on the run's farm
+    // day: thirty minutes before the start (or the farm day's 06:01 AM when the run began within
+    // its first thirty minutes; on the fall-back day's repeated hour the wall clock lands on its
+    // first instance, the silo's own rule), then a time ahead of now refused (one hour on, or the
+    // farm day's last minute; skipped when neither can be named ahead of now), a time off the
+    // shape refused, and the same time again a no-op that still answers 303.
+    const radStartedMs = Number((radOp.body.match(/data-clock[^>]*data-started="(\d+)"/) || [])[1]);
+    assert(radStartedMs > 0, "the running pane must carry the start instant");
+    const radLineAt = radOp.body.indexOf("data-rad-start-line");
+    const radLine = radLineAt < 0 ? "" : radOp.body.slice(radLineAt, radOp.body.indexOf("</div>", radLineAt));
+    assert(radLine.includes("data-clock") && radLine.indexOf("data-clock") < radLine.indexOf("data-rad-start-time"), "the running card must carry the Start Time box after the clock");
+    assert(radLine.includes('name="start_time"') && radLine.includes('name="meridiem"') && radLine.includes("data-time12-mask"), "the Start Time form must carry the box, the meridiem and the mask");
+    const radFarmDay = farmDaySmoke(new Date(radStartedMs).toISOString());
+    const radDayStartMs = Date.parse(etInstantSmoke(radFarmDay, "06:00"));
+    const radEarlierIso = new Date(radStartedMs - 30 * 60_000).toISOString();
+    const radTargetIso = radStartedMs - 30 * 60_000 < radDayStartMs ? etInstantSmoke(radFarmDay, "06:01") : etInstantSmoke(etDateSmoke(radEarlierIso), etWallClockSmoke(radEarlierIso).slice(11));
+    const radTargetMs = Date.parse(radTargetIso);
+    const radClock12 = etClock12Smoke(radTargetIso);
+    const radSet = await req(`/compliance/rad_operation/run/${radRunB}/start_time`, { method: "POST", body: form({ start_time: radClock12.hhmm, meridiem: radClock12.meridiem }) });
+    assert(radSet.status === 303 && (radSet.headers.get("location") || "").endsWith("/compliance/rad_operation?ok=start_time"), `Start time expected 303 to ok=start_time got ${radSet.status} ${await radSet.text()}`);
+    const radOpSet = await text("/compliance/rad_operation?ok=start_time");
+    const radStartedSet = Number((radOpSet.body.match(/data-clock[^>]*data-started="(\d+)"/) || [])[1]);
+    assert(radStartedSet === radTargetMs, `the clock must run from the saved start, ${radStartedSet} for ${radTargetMs}`);
+    assert(radOpSet.body.includes(`<time datetime="${radTargetIso}">`), "the Started stamp must read the saved start");
+    assert(radOpSet.body.includes("Start time saved."), "the flash must say the start time is saved");
+    assert(radOpSet.body.includes(`name="start_time" value="${radClock12.hhmm}"`) && radOpSet.body.includes(`<option value="${radClock12.meridiem}" selected>`), "the box must prefill with the saved start");
+    const radNowMs = Date.now();
+    const radHourOnIso = new Date(radNowMs + 60 * 60_000).toISOString();
+    const radAheadIso =
+      farmDaySmoke(radHourOnIso) === radFarmDay
+        ? etInstantSmoke(etDateSmoke(radHourOnIso), etWallClockSmoke(radHourOnIso).slice(11))
+        : etInstantSmoke(new Date(Date.parse(`${radFarmDay}T00:00:00.000Z`) + 86_400_000).toISOString().slice(0, 10), "05:59");
+    if (Date.parse(radAheadIso) > radNowMs + 11 * 60_000) {
+      const radAhead12 = etClock12Smoke(radAheadIso);
+      const radAhead = await req(`/compliance/rad_operation/run/${radRunB}/start_time`, { method: "POST", body: form({ start_time: radAhead12.hhmm, meridiem: radAhead12.meridiem }) });
+      assert(radAhead.status === 400 && (await radAhead.text()).includes("Start time is ahead of now."), `a start ahead of now must be refused, got ${radAhead.status}`);
+    } else {
+      process.stdout.write("rad start time: no wall clock ahead of now can be named on this farm day (its last minutes, or the fall-back hour), the ahead-of-now refusal is out of reach on this walk\n");
+    }
+    const radBadShape = await req(`/compliance/rad_operation/run/${radRunB}/start_time`, { method: "POST", body: form({ start_time: "13:00", meridiem: "PM" }) });
+    assert(radBadShape.status === 400 && (await radBadShape.text()).includes("Start time must be HH:MM."), `13:00 PM must be refused, got ${radBadShape.status}`);
+    const radSame = await req(`/compliance/rad_operation/run/${radRunB}/start_time`, { method: "POST", body: form({ start_time: radClock12.hhmm, meridiem: radClock12.meridiem }) });
+    assert(radSame.status === 303, `the same time again expected 303 got ${radSame.status} ${await radSame.text()}`);
+    const radUnstart = await req(`/compliance/rad_operation/run/${radRunB}/unstart`, { method: "POST", body: form({}) });
+    assert(radUnstart.status === 303, `unstart expected 303 got ${radUnstart.status} ${await radUnstart.text()}`);
+    const radRemoveEmpty = await req(`/compliance/rad_schedule/run/${radRunC}/remove`, { method: "POST", body: form({}) });
+    assert(radRemoveEmpty.status === 303, `Remove run expected 303 got ${radRemoveEmpty.status} ${await radRemoveEmpty.text()}`);
+    const radTesting = (body) => {
+      const at = body.indexOf('data-fold="testing_queue"');
+      const next = body.indexOf("data-fold=", at + 12);
+      return at < 0 ? "" : body.slice(at, next > at ? next : at + 80000);
+    };
+    const radQueueId = (body, code) => {
+      const slice = radTesting(body);
+      const at = slice.indexOf(code);
+      if (at < 0) return "";
+      return (slice.slice(at, at + 4000).match(/name="id" value="([^"]+)"/) || [])[1] || "";
+    };
+    const readyCount = (html) => Number((html.match(/data-hc="ready_packages">(\d+)</) || [])[1] || "-1");
+    const radHeld = radTag("30002");
+    const radBack = radTag("30001");
+    const radStranger = radTag("30003");
+    const radSchedPane = (body) => body.slice(body.indexOf('data-rad-pane="scheduled"'), body.indexOf('data-rad-pane="done"'));
+    const radNewestRun = (body) => (radSchedPane(body).match(/data-rad-run="([^"]+)"/) || [])[1] || "";
+    const radSolo = async (code) => {
+      const born = await req("/compliance/rad_schedule/run", { method: "POST", body: form({}) });
+      assert(born.status === 303, `a solo run expected 303 got ${born.status}`);
+      const id = radNewestRun((await text("/compliance/rad_schedule")).body);
+      assert(id, "the new run must lead the scheduled pane");
+      const add = await req("/compliance/rad_schedule/schedule", { method: "POST", body: form({ tag: code }) });
+      assert(add.status === 303, `scheduling ${code.slice(-5)} expected 303 got ${add.status} ${await add.text()}`);
+      const pane = radSchedPane((await text("/compliance/rad_schedule")).body);
+      const card = pane.slice(pane.indexOf(`data-rad-run="${id}"`), pane.indexOf(`data-rad-run="${id}"`) + 2500);
+      assert(card.includes(code.slice(-5)), `${code.slice(-5)} must land on the new run`);
+      const started = await req(`/compliance/rad_operation/run/${id}/start`, { method: "POST", body: form({}) });
+      assert(started.status === 303, `starting ${code.slice(-5)} expected 303 got ${started.status} ${await started.text()}`);
+      const finished = await req(`/compliance/rad_operation/run/${id}/complete`, { method: "POST", body: form({}) });
+      assert(finished.status === 303, `completing ${code.slice(-5)} expected 303 got ${finished.status} ${await finished.text()}`);
+      return id;
+    };
+    const ready0 = readyCount((await text("/harvest")).body);
+    await radSolo(radHeld);
+    const heldId = radQueueId((await text("/admin/queues")).body, radHeld);
+    assert(heldId, "the package that stays in the queue must have an id");
+    await radSolo(radBack);
+    const backId = radQueueId((await text("/admin/queues")).body, radBack);
+    assert(backId, "the package to release must have an id");
+    const radRelease = await req("/queue/testing_queue/control", { method: "POST", body: form({ id: backId, control: "release", outcome: "passed" }) });
+    assert(radRelease.status === 303, `releasing expected 303 got ${radRelease.status} ${await radRelease.text()}`);
+    assert(!radTesting((await text("/admin/queues")).body).includes(radBack), "a released package must leave the testing queue");
+    const readyMid = readyCount((await text("/harvest")).body);
+    assert(readyMid === ready0 + 2, `the two solo completes must add two Ready packages, ${ready0} to ${readyMid}`);
+    // THE RAD, the gate's fix (canon 0.30.328): a completed package leaves Available while METRC still
+    // shows the state the run recorded; a changed state (the two re-mounted as TestFailed) lists it again.
+    const radAfterSolo = (await text("/compliance/rad_schedule")).body;
+    const radAvailAfterSolo = radAfterSolo.slice(radAfterSolo.indexOf('data-rad-pane="available"'), radAfterSolo.indexOf('data-rad-pane="scheduled"'));
+    assert(!radAvailAfterSolo.includes(`data-rad-tag="${radHeld}"`) && !radAvailAfterSolo.includes(`data-rad-tag="${radBack}"`), "a completed package must leave Available while its lab state stands");
+    const radMovedRows = radRows.map((row) => (row.startsWith(radHeld) || row.startsWith(radBack) ? row.replace(",NotSubmitted,", ",TestFailed,") : row));
+    const radMovedForm = new FormData();
+    radMovedForm.append("file", new File([new TextEncoder().encode(`${radHead}\r\n${radMovedRows.join("\r\n")}\r\n`)], "MetrcMichiganGRC001132PackagesActive_rad2.csv", { type: "text/csv" }));
+    const radMovedMount = await req("/inventory/metrc/mount", { method: "POST", body: radMovedForm });
+    assert(radMovedMount.status === 303, `the moved mirror drop expected 303 got ${radMovedMount.status} ${await radMovedMount.text()}`);
+    const radAfterMove = (await text("/compliance/rad_schedule")).body;
+    const radAvailAfterMove = radAfterMove.slice(radAfterMove.indexOf('data-rad-pane="available"'), radAfterMove.indexOf('data-rad-pane="scheduled"'));
+    assert(radAvailAfterMove.includes(`data-rad-tag="${radHeld}"`) && radAvailAfterMove.includes(`data-rad-tag="${radBack}"`), "a completed package must return to Available once its lab state moves");
+    const readyMoved = readyCount((await text("/harvest")).body);
+    assert(readyMoved === readyMid - 2, `the two moved to TestFailed must leave Ready, ${readyMid} to ${readyMoved}`);
+    const radEffectBorn = await req("/compliance/rad_schedule/run", { method: "POST", body: form({}) });
+    assert(radEffectBorn.status === 303, `the effect run expected 303 got ${radEffectBorn.status}`);
+    const radEffectRun = radNewestRun((await text("/compliance/rad_schedule")).body);
+    assert(radEffectRun, "the effect run must lead the scheduled pane");
+    for (const code of [radBack, radHeld, radStranger]) {
+      const add = await req("/compliance/rad_schedule/schedule", { method: "POST", body: form({ tag: code }) });
+      assert(add.status === 303, `the effect >> of ${code.slice(-5)} expected 303 got ${add.status} ${await add.text()}`);
+    }
+    const radEffectPage = await text("/compliance/rad_schedule");
+    const radEffectSlice = radEffectPage.body.slice(radEffectPage.body.indexOf(`data-rad-run="${radEffectRun}"`), radEffectPage.body.indexOf(`data-rad-run="${radEffectRun}"`) + 6000);
+    assert([radBack, radHeld, radStranger].every((code) => radEffectSlice.includes(code.slice(-5))), "the effect run must hold the three packages");
+    const radEffectStart = await req(`/compliance/rad_operation/run/${radEffectRun}/start`, { method: "POST", body: form({}) });
+    assert(radEffectStart.status === 303, `starting the effect run expected 303 got ${radEffectStart.status} ${await radEffectStart.text()}`);
+    const radEffectDone = await req(`/compliance/rad_operation/run/${radEffectRun}/complete`, { method: "POST", body: form({}) });
+    assert(radEffectDone.status === 303, `completing the effect run expected 303 got ${radEffectDone.status} ${await radEffectDone.text()}`);
+    const radDone = await text("/compliance/rad_schedule");
+    assert(radDone.body.includes('data-rad-pane="done"') && radDone.body.includes("ready for testing"), "Done must say ready for testing");
+    const radAfterQueues = await text("/admin/queues");
+    const radAfterTesting = radTesting(radAfterQueues.body);
+    assert(radAfterTesting.includes(radBack) && radAfterTesting.includes(radHeld) && radAfterTesting.includes(radStranger), "the three packages must stand in the testing queue");
+    assert(radQueueId(radAfterQueues.body, radHeld) === heldId, "a package already in the queue must keep its row");
+    const ready1 = readyCount((await text("/harvest")).body);
+    assert(ready1 === readyMoved + 1, `Ready must gain the stranger, ${readyMoved} to ${ready1}`);
+    const radReopenNo = await req(`/compliance/rad_operation/run/${radEffectRun}/reopen`, { method: "POST", body: form({ unfinish_pin: "00000" }) });
+    assert(radReopenNo.status === 403, `Reopen with the wrong PIN expected 403 got ${radReopenNo.status}`);
+    const radReopen = await req(`/compliance/rad_operation/run/${radEffectRun}/reopen`, { method: "POST", body: form({ unfinish_pin: ADMIN_PIN }) });
+    assert(radReopen.status === 303, `Reopen expected 303 got ${radReopen.status} ${await radReopen.text()}`);
+    assert(radTesting((await text("/admin/queues")).body).includes(radBack), "Reopen must leave the moved row in the testing queue");
+    const ready2 = readyCount((await text("/harvest")).body);
+    assert(ready2 === readyMoved, `Reopen must lift the effect run's pasteurized mark, Ready ${ready1} back to ${ready2}`);
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

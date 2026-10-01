@@ -5003,3 +5003,132 @@ export async function listLaborHours(
     .all<{ work_date: string; operation: string; value: number; unit: string; updated_at: string }>();
   return (result.results ?? []).map((row) => ({ ...row, value: Number(row.value) }));
 }
+
+/* ------------------------------------------------ THE RAD (canon 0.30.327) */
+
+export type RadMirrorRow = {
+  tag: string;
+  license_value: string;
+  source_harvests: string | null;
+  source_packages: string | null;
+  location: string | null;
+  item: string | null;
+  item_strain: string | null;
+  quantity: number | null;
+  uom: string | null;
+  lab_test_status: string | null;
+  packaged_date: string | null;
+};
+
+/** Live mirror packages. The Rad's Available pane filters this in the app. */
+export async function listRadMirrorRows(db: D1Database): Promise<RadMirrorRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT tag, license_value, source_harvests, source_packages, location, item, item_strain,
+              quantity, uom, lab_test_status, packaged_date
+       FROM metrc_packages WHERE gone_at IS NULL`
+    )
+    .all<RadMirrorRow>();
+  return result.results ?? [];
+}
+
+export type RadBatchGrow = { id: string; hbn: string; grow_method: string | null };
+export async function listRadBatchGrows(db: D1Database): Promise<RadBatchGrow[]> {
+  const result = await db
+    .prepare(
+      `SELECT b.id, b.hbn, gm.display_name AS grow_method
+       FROM harvest_batches b
+       LEFT JOIN grow_methods gm ON gm.code = b.grow_method_code AND gm.deleted_at IS NULL
+       WHERE b.deleted_at IS NULL AND b.hbn IS NOT NULL AND TRIM(b.hbn) <> ''`
+    )
+    .all<RadBatchGrow>();
+  return result.results ?? [];
+}
+
+export async function listRadGrowMethods(db: D1Database): Promise<Array<{ display_name: string; hbn_code: string }>> {
+  const result = await db
+    .prepare(`SELECT display_name, hbn_code FROM grow_methods WHERE deleted_at IS NULL ORDER BY code`)
+    .all<{ display_name: string; hbn_code: string }>();
+  return result.results ?? [];
+}
+
+/** Tags on a scheduled or running run. A completed run does not hold its tag. */
+export async function listRadOpenTags(db: D1Database): Promise<string[]> {
+  const result = await db
+    .prepare(
+      `SELECT UPPER(p.tag) AS tag
+       FROM rad_run_packages p
+       JOIN rad_runs r ON r.id = p.run_id
+       WHERE p.deleted_at IS NULL AND r.deleted_at IS NULL AND r.status IN ('scheduled', 'running')`
+    )
+    .all<{ tag: string }>();
+  return (result.results ?? []).map((row) => row.tag);
+}
+
+/** THE RAD, the gate's fix (canon 0.30.328): the lab state each tag carried
+ * onto its newest completed run. While the mirror still shows that state the
+ * package has not moved on, so it stays off Available; a reopened run is not
+ * complete and drops out of this map. */
+export async function listRadCompletedStates(db: D1Database): Promise<Map<string, string>> {
+  const result = await db
+    .prepare(
+      `SELECT UPPER(p.tag) AS tag, p.lab_test_status AS lab, r.completed_at
+       FROM rad_run_packages p
+       JOIN rad_runs r ON r.id = p.run_id
+       WHERE p.deleted_at IS NULL AND r.deleted_at IS NULL AND r.status = 'complete'
+       ORDER BY r.completed_at ASC, r.id ASC, p.position ASC`
+    )
+    .all<{ tag: string; lab: string | null; completed_at: string | null }>();
+  const byTag = new Map<string, string>();
+  for (const row of result.results ?? []) byTag.set(row.tag, String(row.lab ?? "").trim());
+  return byTag;
+}
+
+export type RadRunRecord = {
+  id: string;
+  status: string;
+  grey: number;
+  scheduled_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export async function listRadRunRecords(db: D1Database): Promise<RadRunRecord[]> {
+  const result = await db
+    .prepare(
+      `SELECT id, status, grey, scheduled_at, started_at, completed_at
+       FROM rad_runs WHERE deleted_at IS NULL
+       ORDER BY scheduled_at DESC, id DESC`
+    )
+    .all<RadRunRecord>();
+  return result.results ?? [];
+}
+
+export type RadPackageRecord = {
+  id: string;
+  run_id: string;
+  tag: string;
+  item_type: string | null;
+  grams: number | null;
+  lab_test_status: string | null;
+  position: number;
+};
+
+export async function listRadPackageRecords(db: D1Database): Promise<RadPackageRecord[]> {
+  const result = await db
+    .prepare(
+      `SELECT id, run_id, tag, item_type, grams, lab_test_status, position
+       FROM rad_run_packages WHERE deleted_at IS NULL
+       ORDER BY position ASC, id ASC`
+    )
+    .all<RadPackageRecord>();
+  return result.results ?? [];
+}
+
+/** The grey of the newest run of any status, or null when the table is empty. */
+export async function newestRadGrey(db: D1Database): Promise<number | null> {
+  const row = await db
+    .prepare(`SELECT grey FROM rad_runs WHERE deleted_at IS NULL ORDER BY scheduled_at DESC, id DESC LIMIT 1`)
+    .first<{ grey: number }>();
+  return row ? Number(row.grey) : null;
+}

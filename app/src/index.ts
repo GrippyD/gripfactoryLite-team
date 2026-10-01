@@ -81,6 +81,16 @@ import {
   saveTerpRecipe,
   retireTerpRecipe,
   pickTerpRecipe,
+  scheduleRadPackage,
+  newRadRun,
+  setRadRunGrey,
+  unscheduleRadPackage,
+  removeRadRun,
+  startRadRun,
+  unstartRadRun,
+  setRadStartTime,
+  completeRadRun,
+  reopenRadRun,
   unscheduleItem,
   manualHbn,
   loadSilo,
@@ -169,6 +179,7 @@ import {
   toggleListing,
 } from "./biz";
 import { auditsPage, complianceMenuPage, testingPage, type AuditNoteRow, type AuditRow, type ExternalTestRow } from "./compliance";
+import { loadRadBoard, radOperationPage, radSchedulePage } from "./rad";
 import { labelPrintHtml, labelsPage, type LabelPackage, type LabelTemplateRow } from "./labels";
 import { listingsWithMatch, marketplacePage, parseMarketplacePane, salesOrderPage, type ListingRow, type MarketplacePane, type SalesOrderRow } from "./marketplace";
 import { listZohoMenuItems, listZohoMounts, mountZohoInventory } from "./zohoinv";
@@ -3565,6 +3576,66 @@ app.post("/compliance/testing/internal", async (c) => {
 
 app.post("/compliance/testing/external", async (c) => {
   const result = await saveExternalResult(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.get("/compliance/rad_schedule", async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Rad Schedule", radSchedulePage(await loadRadBoard(c.env.DB, c.req.query("q") ?? ""), s.locale, c.req.query("ok") ?? ""));
+});
+
+app.post("/compliance/rad_schedule/schedule", async (c) => {
+  const result = await scheduleRadPackage(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/compliance/rad_schedule/run", async (c) => {
+  const result = await newRadRun(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/compliance/rad_schedule/run/:id/grey", async (c) => {
+  const result = await setRadRunGrey(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/compliance/rad_schedule/run/:id/package/:packageId/unschedule", async (c) => {
+  const result = await unscheduleRadPackage(c.env.DB, c.req.param("id"), c.req.param("packageId"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/compliance/rad_schedule/run/:id/remove", async (c) => {
+  const result = await removeRadRun(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.get("/compliance/rad_operation", async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Rad Operation", radOperationPage(await loadRadBoard(c.env.DB), s.locale, c.req.query("ok") ?? ""));
+});
+
+app.post("/compliance/rad_operation/run/:id/start", async (c) => {
+  const result = await startRadRun(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/compliance/rad_operation/run/:id/unstart", async (c) => {
+  const result = await unstartRadRun(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/compliance/rad_operation/run/:id/start_time", async (c) => {
+  const result = await setRadStartTime(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/compliance/rad_operation/run/:id/complete", async (c) => {
+  const result = await completeRadRun(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/compliance/rad_operation/run/:id/reopen", async (c) => {
+  const result = await reopenRadRun(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
   return c.redirect(result.redirect, 303);
 });
 

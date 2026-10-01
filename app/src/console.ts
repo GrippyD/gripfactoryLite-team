@@ -1074,11 +1074,21 @@ export const PASTEURIZED_CRYO_SQL = `SELECT UPPER(package_code) AS tag, UPPER(CO
      FROM wip_packages
      WHERE deleted_at IS NULL AND source = 'cryo' AND TRIM(COALESCE(package_code, '')) <> ''`;
 
-/** A tag is pasteurized when a live cryo output carries it.
- * THE RAD run (V9) is the second way and lands in this function. */
-export function isPasteurizedTag(tag: string | null | undefined, cryoTags: ReadonlySet<string>): boolean {
+/** Tags on a completed Rad run. Reopen lifts the mark by leaving status complete. */
+export const PASTEURIZED_RAD_SQL = `SELECT UPPER(p.tag) AS tag
+     FROM rad_run_packages p
+     JOIN rad_runs r ON r.id = p.run_id
+     WHERE p.deleted_at IS NULL AND r.deleted_at IS NULL AND r.status = 'complete'`;
+
+/** A tag is pasteurized when a live cryo output carries it, or a completed
+ * Rad run does (canon 0.30.327). A reopened run is not complete, so its tags leave. */
+export function isPasteurizedTag(
+  tag: string | null | undefined,
+  cryoTags: ReadonlySet<string>,
+  radTags?: ReadonlySet<string>
+): boolean {
   const key = String(tag ?? "").trim().toUpperCase();
-  return key.length > 0 && cryoTags.has(key);
+  return key.length > 0 && (cryoTags.has(key) || (radTags != null && radTags.has(key)));
 }
 
 /** The item's first token before " - ", upper-cased. */
@@ -1249,6 +1259,8 @@ export function buildTestingFigures(input: {
   unitGrams: Readonly<Record<string, number>>;
   mirror: TestingMirrorRow[];
   cryo: TestingCryoRow[];
+  /** Tags on completed Rad runs. Absent reads as none. */
+  rad?: ReadonlyArray<{ tag: string | null }>;
   orders: TestingOrderRow[];
   sheet: TestingSheetRow[];
   marketByHbn: ReadonlyMap<string, string>;
@@ -1265,6 +1277,11 @@ export function buildTestingFigures(input: {
   for (const row of input.cryo) {
     const tag = String(row.tag ?? "").trim().toUpperCase();
     if (tag) cryoTags.add(tag);
+  }
+  const radTags = new Set<string>();
+  for (const row of input.rad ?? []) {
+    const tag = String(row.tag ?? "").trim().toUpperCase();
+    if (tag) radTags.add(tag);
   }
 
   const liveTags = new Set<string>();
@@ -1292,7 +1309,7 @@ export function buildTestingFigures(input: {
 
   for (const [tag, pkg] of gateByTag) {
     if (pkg.status !== "NotSubmitted") continue;
-    if (!isPasteurizedTag(tag, cryoTags)) continue;
+    if (!isPasteurizedTag(tag, cryoTags, radTags)) continue;
     if (openTags.has(tag)) continue;
     addWeight(ready, pkg.grams);
   }
@@ -1708,7 +1725,7 @@ const OPEN_SQL = TEST_OPEN_STATUSES.map((status) => `'${status}'`).join(",");
  * the desk's open orders. The stats and the pie read the season's first-time
  * rows on the In Testing sheet. The console's picked day is not an input. */
 export async function loadTestingSection(db: D1Database, year: number): Promise<TestingFigures> {
-  const [typesRaw, unitsRaw, mirror, cryo, orders, sheet, batches] = await Promise.all([
+  const [typesRaw, unitsRaw, mirror, cryo, rad, orders, sheet, batches] = await Promise.all([
     getConfigValue(db, CONFIG_KEYS.gate_type_codes),
     getConfigValue(db, CONFIG_KEYS.gate_unit_grams),
     db
@@ -1723,6 +1740,7 @@ export async function loadTestingSection(db: D1Database, year: number): Promise<
     db
       .prepare(PASTEURIZED_CRYO_SQL)
       .all<{ tag: string; type: string; cryo_weight_grams: number | null; weight_grams: number | null }>(),
+    db.prepare(PASTEURIZED_RAD_SQL).all<{ tag: string }>(),
     db
       .prepare(
         `SELECT id, UPPER(COALESCE(source_package_tag, '')) AS tag, status, batch_grams
@@ -1765,6 +1783,7 @@ export async function loadTestingSection(db: D1Database, year: number): Promise<
     unitGrams: parseGateUnitGrams(unitsRaw),
     mirror: mirror.results ?? [],
     cryo: cryo.results ?? [],
+    rad: rad.results ?? [],
     orders: orders.results ?? [],
     sheet: sheet.results ?? [],
     marketByHbn,
