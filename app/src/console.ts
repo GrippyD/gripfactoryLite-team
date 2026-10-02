@@ -200,6 +200,36 @@ export type FarmCount = { farm: string | null; plants: number };
 export type FarmGrams = { farm: string | null; wet_grams: number };
 export type ConsoleLot = { farm: string | null; wet_grams: number; dry_grams: number | null; plant_count: number | null };
 
+/** One trim package on a yield lot. Cryo and METRC rows are not in this list. */
+export type YieldPackage = { type_code: string | null; weight_grams: number };
+
+/** BRIEF V22 (canon 0.30.356): one lot of the harvest year, for Assumed Dry and Estimated Bud. */
+export type YieldLot = {
+  farm: string | null;
+  status: string;
+  /** The lot's wet total, the grams the lot row carries (its totes so far while it is still weighing). */
+  wet_grams: number;
+  dry_grams: number | null;
+  /** Sits in a freezer space. Fresh frozen, out of both figures, the same as status frozen. */
+  freezer: boolean;
+  packages: YieldPackage[];
+};
+
+export type FarmYield = {
+  /** Dry over wet, weighted, over unloaded and trimmed lots with a dry weight above zero. Null when there is no dry-down. */
+  dryDown: number | null;
+  assumedDryGrams: number;
+  /** Bud-type trim grams over all trim grams, trimmed lots only. Null when there is no BTR. */
+  btr: number | null;
+  estimatedBudGrams: number;
+};
+
+export type ConsoleYields = {
+  farms: Record<ConsoleFarm, FarmYield>;
+  /** The sum of the three farms. Not a ratio taken over the pooled lots. */
+  total: { assumedDryGrams: number; estimatedBudGrams: number };
+};
+
 export type HarvestConsoleInput = {
   /** The farm's day today (by the start hour in data), YYYY-MM-DD, and the harvest year. */
   today: string;
@@ -240,6 +270,10 @@ export type HarvestConsoleInput = {
   lastCryoOutputAt?: string | null;
   /** The Rad run in status running with its lot numbers; null (or absent) when the Rad is empty. */
   radRunning?: RadRunningView | null;
+  /** BRIEF V22: the harvest year's lots. Absent reads as none, so both figures are zero. */
+  yieldLots?: YieldLot[];
+  /** The BTR type codes. Absent reads as the seeded BUD, SMALLS and SHAKE. */
+  btrTypeCodes?: string[];
 };
 
 /* ------------------------------------------------------------ the trimming */
@@ -726,9 +760,156 @@ function weightPair(grams: number, suffix = ""): { value: string; sub: string } 
   return { value: `${formatLbs(grams)} lb${suffix}`, sub: `${formatGrams(roundGrams(grams))} g${suffix}` };
 }
 
-/** The eight metrics for one farm (null is the Total column), pure; the values are display text in the locale. */
+const YIELD_DRIED = new Set(["unloaded", "trimmed"]);
+const YIELD_STILL = new Set(["weighing", "in_transit", "drying"]);
+
+/** BRIEF V23 (canon 0.30.359): one weighted dry-down for the season, the three farms pooled,
+ * and the wet weight of the lots V22 leaves out (frozen, or in a freezer). */
+export type SeasonDry = {
+  factor: number | null;
+  frozenWetGrams: number;
+  frozenLots: number;
+};
+
+export function seasonDryFactor(lots: readonly YieldLot[]): SeasonDry {
+  let drySum = 0;
+  let wetSum = 0;
+  let driedLots = 0;
+  let frozenWetGrams = 0;
+  let frozenLots = 0;
+  for (const lot of lots) {
+    const wet = Number(lot.wet_grams ?? 0);
+    const dry = lot.dry_grams == null ? 0 : Number(lot.dry_grams);
+    if (lot.status === "frozen" || lot.freezer) {
+      frozenWetGrams += wet;
+      frozenLots += 1;
+      continue;
+    }
+    if (!farmOf(lot.farm)) continue;
+    if (YIELD_DRIED.has(lot.status) && dry > 0) {
+      drySum += dry;
+      wetSum += wet;
+      driedLots += 1;
+    }
+  }
+  return { factor: driedLots > 0 && wetSum > 0 ? drySum / wetSum : null, frozenWetGrams, frozenLots };
+}
+
+/** BRIEF V22, ASSUMED DRY AND ESTIMATED BUD (canon 0.30.356). Per farm, then the
+ * Total as the sum of the three farms' grams. A frozen lot, and a lot in a freezer
+ * space, is fresh frozen and stays out of both figures. */
+export function consoleYields(lots: readonly YieldLot[], budCodes?: readonly string[]): ConsoleYields {
+  const bud = new Set((budCodes && budCodes.length > 0 ? budCodes : parseBtrTypeCodes(null)).map((c) => c.trim().toUpperCase()));
+  const byFarm: Record<ConsoleFarm, YieldLot[]> = { PNN: [], ARL: [], PNS: [] };
+  for (const lot of lots) {
+    if (lot.status === "frozen" || lot.freezer) continue;
+    const farm = farmOf(lot.farm);
+    if (farm) byFarm[farm].push(lot);
+  }
+  const farms = { PNN: oneFarmYield(byFarm.PNN, bud), ARL: oneFarmYield(byFarm.ARL, bud), PNS: oneFarmYield(byFarm.PNS, bud) };
+  return {
+    farms,
+    total: {
+      assumedDryGrams: CONSOLE_FARMS.reduce((n, farm) => n + farms[farm].assumedDryGrams, 0),
+      estimatedBudGrams: CONSOLE_FARMS.reduce((n, farm) => n + farms[farm].estimatedBudGrams, 0),
+    },
+  };
+}
+
+function oneFarmYield(lots: readonly YieldLot[], bud: ReadonlySet<string>): FarmYield {
+  let drySum = 0;
+  let wetOfDried = 0;
+  let driedLots = 0;
+  let actualDry = 0;
+  let wetStill = 0;
+  let budAll = 0;
+  let budTrimmed = 0;
+  let trimTrimmed = 0;
+  let trimmedLots = 0;
+  let remainder = 0;
+  for (const lot of lots) {
+    const wet = Number(lot.wet_grams ?? 0);
+    const dry = lot.dry_grams == null ? 0 : Number(lot.dry_grams);
+    let budGrams = 0;
+    let trimGrams = 0;
+    for (const pkg of lot.packages) {
+      const grams = Number(pkg.weight_grams ?? 0);
+      trimGrams += grams;
+      if (bud.has(String(pkg.type_code ?? "").trim().toUpperCase())) budGrams += grams;
+    }
+    // Flower is counted once, where it comes off the trim room: BUD, SMALLS and SHAKE
+    // (WBP, WPR and SHA). Finished BUD, PRE and SHA live in METRC only today. When
+    // pasteurization's conversion comes into the app, a finished package replaces
+    // its WIP parent in this sum, never adds to it.
+    budAll += budGrams;
+    if (YIELD_DRIED.has(lot.status)) {
+      actualDry += dry;
+      if (dry > 0) {
+        drySum += dry;
+        wetOfDried += wet;
+        driedLots += 1;
+      }
+    }
+    if (YIELD_STILL.has(lot.status)) wetStill += wet;
+    if (lot.status === "trimmed") {
+      trimmedLots += 1;
+      budTrimmed += budGrams;
+      trimTrimmed += trimGrams;
+    }
+    if (lot.status === "unloaded") {
+      const left = dry - trimGrams;
+      if (left > 0) remainder += left;
+    }
+  }
+  const dryDown = driedLots > 0 && wetOfDried > 0 ? drySum / wetOfDried : null;
+  const projectedDry = dryDown == null ? 0 : dryDown * wetStill;
+  const btr = trimmedLots > 0 && trimTrimmed > 0 ? budTrimmed / trimTrimmed : null;
+  const estimatedBudGrams = budAll + (btr == null ? 0 : btr * (projectedDry + remainder));
+  return { dryDown, assumedDryGrams: actualDry + projectedDry, btr, estimatedBudGrams };
+}
+
+function yieldPct(ratio: number): string {
+  return (ratio * 100).toFixed(1);
+}
+
+/** BRIEF V23: the Total box only, after Estimated Bud. A dash when the season has no dry-down. */
+function freshFrozenMetrics(season: SeasonDry, remaining: number, wetPerPlant: number | null, assumedDryGrams: number, locale: Locale): ConsoleMetric[] {
+  const factor = season.factor;
+  if (factor == null) {
+    const dash = t(locale, "no dry-down yet");
+    return [
+      { key: "ff_dry_equiv", label: "Dry Equiv. Wt of Fresh Frozen", value: "-", sub: dash },
+      { key: "estimated_dry_total", label: "Estimated Dry Total", value: "-", sub: dash },
+    ];
+  }
+  const equiv = factor * season.frozenWetGrams;
+  const perPlant = wetPerPlant == null ? 0 : wetPerPlant * factor;
+  const remainingDry = remaining * perPlant;
+  const line =
+    wetPerPlant == null
+      ? t(locale, "no wet weight per plant")
+      : tFill(locale, "{n} plants left at {lb} lb each + Assumed Dry + fresh frozen", { n: fmtCount(remaining), lb: formatLbs(perPlant) });
+  return [
+    {
+      key: "ff_dry_equiv",
+      label: "Dry Equiv. Wt of Fresh Frozen",
+      value: `${formatLbs(equiv)} lb`,
+      sub: tFill(locale, "{wet} lb frozen at {pct}% dry-down", { wet: formatLbs(season.frozenWetGrams), pct: yieldPct(factor) }),
+    },
+    {
+      key: "estimated_dry_total",
+      label: "Estimated Dry Total",
+      value: `${formatLbs(remainingDry + assumedDryGrams + equiv)} lb`,
+      sub: line,
+    },
+  ];
+}
+
+/** The farm metrics, pure; the values are display text in the locale. Weight Harvested is the console day. Harvest Year Total, Assumed Dry and Estimated Bud are the harvest year. */
 export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"): ConsoleBox[] {
   const columns: Array<ConsoleFarm | null> = [...CONSOLE_FARMS, null];
+  const yields = consoleYields(input.yieldLots ?? [], input.btrTypeCodes);
+  const season = seasonDryFactor(input.yieldLots ?? []);
   return columns.map((f) => {
     const farmRemaining = (farm: ConsoleFarm) => sumBy(input.remaining, farm, (r) => r.plants, (r) => r.farm);
     const farmHarvested = (farm: ConsoleFarm) => sumBy(input.seasonHarvested, farm, (r) => r.plants, (r) => r.farm);
@@ -757,6 +938,20 @@ export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"):
     const dryPerPlant = dryPlants > 0 ? dried.reduce((n, l) => n + Number(l.dry_grams ?? 0), 0) / dryPlants : null;
     const wetDay = sumBy(input.dayWet, f, (r) => r.wet_grams, (r) => r.farm);
     const wetYear = sumBy(input.yearWet ?? [], f, (r) => r.wet_grams, (r) => r.farm);
+    const assumedGrams = f == null ? yields.total.assumedDryGrams : yields.farms[f].assumedDryGrams;
+    const estimatedGrams = f == null ? yields.total.estimatedBudGrams : yields.farms[f].estimatedBudGrams;
+    let assumedLine: string;
+    let estimatedLine: string;
+    if (f == null) {
+      assumedLine = t(locale, "the three farms");
+      estimatedLine = t(locale, "the three farms");
+    } else {
+      const figure = yields.farms[f];
+      assumedLine = figure.dryDown == null ? t(locale, "no dry-down yet") : tFill(locale, "at {pct}% dry-down", { pct: yieldPct(figure.dryDown) });
+      estimatedLine = figure.btr == null ? t(locale, "no BTR yet") : tFill(locale, "at {pct}% BTR", { pct: yieldPct(figure.btr) });
+    }
+    const assumedPane: ConsoleMetric = { key: "assumed_dry", label: "Assumed Dry", value: `${formatLbs(assumedGrams)} lb`, sub: assumedLine };
+    const estimatedPane: ConsoleMetric = { key: "estimated_bud", label: "Estimated Bud", value: `${formatLbs(estimatedGrams)} lb`, sub: estimatedLine };
     const metrics: ConsoleMetric[] = [
       { key: "remaining_total", label: "Plants Remaining/Total Plants", value: `${fmtCount(remaining)} / ${fmtCount(total)}` },
       { key: "harvested", label: "Plants Harvested", value: fmtCount(harvested) },
@@ -768,7 +963,7 @@ export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"):
     // THE YEAR PANE (canon 0.30.346, his words): "in its own pane within the farm pane", under
     // Weight Harvested on each farm, and on Total "beneath the lbs/DLH metric".
     const yearPane: ConsoleMetric = { key: "weight_harvested_year", label: "Harvest Year Total", ...weightPair(wetYear) };
-    if (f != null) metrics.push(yearPane);
+    if (f != null) metrics.push(yearPane, assumedPane, estimatedPane);
     if (f == null) {
       let hours: number | null;
       if (input.harvestHoursAll != null) hours = input.harvestHoursAll;
@@ -792,7 +987,10 @@ export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"):
           label: "Weight/DLH",
           ...(perDlh == null ? { value: hours == null ? t(locale, "type hours") : NA } : weightPair(perDlh, "/h")),
         },
-        yearPane
+        yearPane,
+        assumedPane,
+        estimatedPane,
+        ...freshFrozenMetrics(season, remaining, wetPerPlant, assumedGrams, locale)
       );
     }
     return { farm: f ?? "Total", pct, metrics };
@@ -2324,7 +2522,25 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
 
 /* ------------------------------------------------------------ the loaders */
 
-/** The console's inputs from the floor. Every query is Postgres-portable SQL. */
+/** BRIEF V22: the harvest year's lots, and whether each sits in a freezer.
+ * `space_type` is the freezer flag (canon 0.30.106). `kind` is read too, for a row whose kind is freezer. */
+const YIELD_LOTS_SQL = `SELECT w.id AS id, b.farm_code AS farm, w.status AS status,
+            w.weight_grams AS wet_grams, w.dry_weight_grams AS dry_grams,
+            CASE WHEN s.space_type = 'freezer' OR s.kind = 'freezer' THEN 1 ELSE 0 END AS freezer
+     FROM wet_weight_entries w
+     JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
+     LEFT JOIN dry_spaces s ON s.id = w.actual_dryspc
+     WHERE w.deleted_at IS NULL AND b.harvest_year = ?`;
+
+/** Trim packages of those lots, cryo and METRC excluded, grouped by lot and type. */
+const YIELD_PACKAGES_SQL = `SELECT p.wet_weight_entry_id AS lot_id, p.package_type_code AS type_code,
+            COALESCE(SUM(p.weight_grams), 0) AS weight_grams
+     FROM wip_packages p
+     JOIN wet_weight_entries w ON w.id = p.wet_weight_entry_id AND w.deleted_at IS NULL
+     JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
+     WHERE p.deleted_at IS NULL AND ${NON_TRIM_SOURCE_SQL} AND b.harvest_year = ?
+     GROUP BY p.wet_weight_entry_id, p.package_type_code`;
+
 /** THE CONSOLE DAY: the day the console reads. A blank, invalid, future or
  * equal-to-today pick reads today. Any real day before today is a pick. */
 export function consoleDayOf(picked: string | null | undefined, today: string): { day: string; dayPicked: boolean } {
@@ -2413,6 +2629,7 @@ export async function loadTestingSection(db: D1Database, year: number): Promise<
   });
 }
 
+/** The console's inputs from the floor. Every query is Postgres-portable SQL. */
 export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDay: string | null = null): Promise<HarvestConsoleInput> {
   // THE FARM DAY BEGINS AT SIX (canon 0.30.151): today and the day under view are farm days.
   const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour));
@@ -2461,6 +2678,8 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     pastSecondHoursRaw,
     pastHoursRows,
     radRunning,
+    yieldLotRows,
+    yieldPkgRows,
   ] = await Promise.all([
     db
       .prepare(
@@ -2629,6 +2848,8 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     getConfigValue(db, CONFIG_KEYS.pasteurization_shift_second_hours),
     db.prepare(`SELECT shift, hours FROM pasteurization_labor_hours WHERE work_date = ?`).bind(day).all<{ shift: string; hours: number }>(),
     loadRadRunning(db),
+    db.prepare(YIELD_LOTS_SQL).bind(year).all<{ id: string; farm: string | null; status: string; wet_grams: number; dry_grams: number | null; freezer: number }>(),
+    db.prepare(YIELD_PACKAGES_SQL).bind(year).all<{ lot_id: string; type_code: string | null; weight_grams: number }>(),
   ]);
   const trimHours: Record<TrimShiftKey, number | null> = { day: null, second: null };
   for (const row of trimHoursRows.results ?? []) {
@@ -2759,7 +2980,29 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     pasteurizationLive,
     lastCryoOutputAt: lastCryoOutput?.entered_at ?? null,
     radRunning,
+    yieldLots: yieldLotsOf(yieldLotRows.results ?? [], yieldPkgRows.results ?? []),
+    btrTypeCodes: trim.budCodes,
   };
+}
+
+function yieldLotsOf(
+  lots: Array<{ id: string; farm: string | null; status: string; wet_grams: number; dry_grams: number | null; freezer: number }>,
+  packages: Array<{ lot_id: string; type_code: string | null; weight_grams: number }>
+): YieldLot[] {
+  const byLot = new Map<string, YieldPackage[]>();
+  for (const row of packages) {
+    const list = byLot.get(row.lot_id) ?? [];
+    list.push({ type_code: row.type_code, weight_grams: Number(row.weight_grams ?? 0) });
+    byLot.set(row.lot_id, list);
+  }
+  return lots.map((row) => ({
+    farm: row.farm,
+    status: row.status,
+    wet_grams: Number(row.wet_grams ?? 0),
+    dry_grams: row.dry_grams == null ? null : Number(row.dry_grams),
+    freezer: Number(row.freezer) === 1,
+    packages: byLot.get(row.id) ?? [],
+  }));
 }
 
 /* -------------------------------------------------------------- the hours */

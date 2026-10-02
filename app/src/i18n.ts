@@ -1222,6 +1222,23 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Weight/DLH": { en: "Weight/DLH", es: "Peso/hora de trabajo" },
   "Weight Harvested": { en: "Weight Harvested", es: "Peso cosechado" },
   "Harvest Year Total": { en: "Harvest Year Total", es: "Total del año de cosecha" },
+  // BRIEF V22, ASSUMED DRY AND ESTIMATED BUD (canon 0.30.356).
+  "Assumed Dry": { en: "Assumed Dry", es: "Seco asumido" },
+  "Estimated Bud": { en: "Estimated Bud", es: "Cogollo estimado" },
+  "at {pct}% dry-down": { en: "at {pct}% dry-down", es: "al {pct}% de seco" },
+  "no dry-down yet": { en: "no dry-down yet", es: "sin porcentaje de seco aun" },
+  "at {pct}% BTR": { en: "at {pct}% BTR", es: "al {pct}% BTR" },
+  "no BTR yet": { en: "no BTR yet", es: "sin BTR aun" },
+  "the three farms": { en: "the three farms", es: "las tres granjas" },
+  // BRIEF V23, THE FRESH FROZEN DRY EQUIVALENT (canon 0.30.359). The Total box only.
+  "Dry Equiv. Wt of Fresh Frozen": { en: "Dry Equiv. Wt of Fresh Frozen", es: "Peso seco equiv. de fresco congelado" },
+  "Estimated Dry Total": { en: "Estimated Dry Total", es: "Total seco estimado" },
+  "{wet} lb frozen at {pct}% dry-down": { en: "{wet} lb frozen at {pct}% dry-down", es: "{wet} lb congelado al {pct}% de seco" },
+  "{n} plants left at {lb} lb each + Assumed Dry + fresh frozen": {
+    en: "{n} plants left at {lb} lb each + Assumed Dry + fresh frozen",
+    es: "{n} plantas restantes a {lb} lb cada una + Seco asumido + congelado fresco",
+  },
+  "no wet weight per plant": { en: "no wet weight per plant", es: "sin peso humedo por planta" },
   "type hours": { en: "type hours", es: "escriba las horas" },
   "hours": { en: "hours", es: "horas" },
   "Hours saved.": { en: "Hours saved.", es: "Horas guardadas." },

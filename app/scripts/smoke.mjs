@@ -5198,6 +5198,39 @@ async function run() {
     assert((consolePage.body.match(/<div class="hc-metric hc-year-pane" data-hc-metric="weight_harvested_year">/g) || []).length === 4, "every box carries the year in its own pane");
     const totalBoxYear = consolePage.body.slice(consolePage.body.indexOf('data-hc-farm="Total"'));
     assert(totalBoxYear.indexOf('data-hc-metric="weight_per_dlh"') < totalBoxYear.indexOf('data-hc-metric="weight_harvested_year"'), "on Total the year pane sits beneath Weight/DLH");
+    // BRIEF V22: Assumed Dry and Estimated Bud sit after the year pane, in lb, on every box.
+    for (const farm of ["PNN", "ARL", "PNS", "Total"]) {
+      const start = consolePage.body.indexOf(`data-hc-farm="${farm}"`);
+      const end = farm === "Total" ? consolePage.body.indexOf('data-hc-section="drying"') : consolePage.body.indexOf(`data-hc-farm="${farm === "PNN" ? "ARL" : farm === "ARL" ? "PNS" : "Total"}"`);
+      const box = consolePage.body.slice(start, end);
+      const yearAt = box.indexOf('data-hc-metric="weight_harvested_year"');
+      const dryAt = box.indexOf('data-hc-metric="assumed_dry"');
+      const budAt = box.indexOf('data-hc-metric="estimated_bud"');
+      assert(yearAt >= 0 && dryAt > yearAt && budAt > dryAt, `${farm} must carry Assumed Dry and Estimated Bud after the year pane`);
+      const dryVal = box.match(/data-hc="assumed_dry">([^<]+)</);
+      const budVal = box.match(/data-hc="estimated_bud">([^<]+)</);
+      const drySub = box.match(/data-hc="assumed_dry">[^<]+<\/span><span class="hc-sub muted">([^<]*)<\/span>/);
+      const budSub = box.match(/data-hc="estimated_bud">[^<]+<\/span><span class="hc-sub muted">([^<]*)<\/span>/);
+      assert(dryVal && / lb$/.test(dryVal[1]), `${farm} Assumed Dry must be in lb, got ${dryVal && dryVal[1]}`);
+      assert(budVal && / lb$/.test(budVal[1]), `${farm} Estimated Bud must be in lb, got ${budVal && budVal[1]}`);
+      assert(drySub && !/\sg$/.test(drySub[1]), `${farm} Assumed Dry must not carry a grams line, got ${drySub && drySub[1]}`);
+      assert(budSub && !/\sg$/.test(budSub[1]), `${farm} Estimated Bud must not carry a grams line, got ${budSub && budSub[1]}`);
+    }
+    assert(totalBoxYear.includes('data-hc-metric="assumed_dry"') && totalBoxYear.indexOf('data-hc-metric="weight_harvested_year"') < totalBoxYear.indexOf('data-hc-metric="assumed_dry"'), "on Total the two figures follow the year pane");
+    // BRIEF V23: Dry Equiv. Wt of Fresh Frozen and Estimated Dry Total follow Estimated Bud, on Total only.
+    const totalBoxV23 = consolePage.body.slice(consolePage.body.indexOf('data-hc-farm="Total"'), consolePage.body.indexOf('data-hc-section="drying"'));
+    const budAt = totalBoxV23.indexOf('data-hc-metric="estimated_bud"');
+    const ffAt = totalBoxV23.indexOf('data-hc-metric="ff_dry_equiv"');
+    const dryTotalAt = totalBoxV23.indexOf('data-hc-metric="estimated_dry_total"');
+    assert(budAt >= 0 && ffAt > budAt && dryTotalAt > ffAt, "Total must carry the fresh frozen equivalent and Estimated Dry Total after Estimated Bud");
+    assert((consolePage.body.match(/data-hc-metric="ff_dry_equiv"/g) || []).length === 1, "the fresh frozen equivalent is on one box");
+    assert((consolePage.body.match(/data-hc-metric="estimated_dry_total"/g) || []).length === 1, "Estimated Dry Total is on one box");
+    for (const farm of ["PNN", "ARL", "PNS"]) {
+      const start = consolePage.body.indexOf(`data-hc-farm="${farm}"`);
+      const next = farm === "PNN" ? "ARL" : farm === "ARL" ? "PNS" : "Total";
+      const box = consolePage.body.slice(start, consolePage.body.indexOf(`data-hc-farm="${next}"`));
+      assert(!box.includes("ff_dry_equiv") && !box.includes("estimated_dry_total"), `${farm} must not carry the fresh frozen figures`);
+    }
     // The counted lots (42 + 7 so far) roll into Plants Harvested for Total.
     const totalBox = consolePage.body.slice(consolePage.body.indexOf('data-hc-farm="Total"'), consolePage.body.indexOf('data-hc-section="drying"'));
     const harvestedTotal = totalBox.match(/data-hc="harvested">([^<]+)</);

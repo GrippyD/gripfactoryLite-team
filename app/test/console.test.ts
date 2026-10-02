@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { formatLbs } from "../src/compliance";
 import {
   CONSOLE_FARMS,
   consoleBoxes,
+  consoleYields,
+  seasonDryFactor,
   dayBefore,
   etDate,
   etDayBounds,
@@ -33,6 +36,7 @@ import {
   isPasteurizedTag,
   type HarvestConsoleInput,
   type TrimInput,
+  type YieldLot,
 } from "../src/console";
 import { CONFIG_KEYS, parseBtrTypeCodes, parseCryoTypeCategories, parseNameList, parseShiftWindow, parseTrimBogey, shiftWindowHolds, TRIM_BOGEY_DEFAULT, TRIM_SHIFT_HOURS_DEFAULT, trimBogeyOf } from "../src/config";
 import { etClockMinutes, farmDayBounds } from "../src/farmday";
@@ -112,7 +116,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(boxes.map((b) => b.farm)).toEqual(["PNN", "ARL", "PNS", "Total"]);
     const pnn = boxes[0];
     expect(pnn.pct).toBeCloseTo(0.4, 9);
-    expect(pnn.metrics.map((m) => m.key)).toEqual(["remaining_total", "harvested", "pct", "wet_per_plant", "dry_per_plant", "weight_harvested", "weight_harvested_year"]);
+    expect(pnn.metrics.map((m) => m.key)).toEqual(["remaining_total", "harvested", "pct", "wet_per_plant", "dry_per_plant", "weight_harvested", "weight_harvested_year", "assumed_dry", "estimated_bud"]);
     const by = (farm: string, key: string) => {
       const box = boxes.find((b) => b.farm === farm)!;
       return box.metrics.find((m) => m.key === key)!;
@@ -145,7 +149,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(by("Total", "hours")).toEqual({ key: "hours", label: "Harvest Hours", value: "8" });
     expect(by("Total", "weight_per_dlh")).toEqual({ key: "weight_per_dlh", label: "Weight/DLH", value: "26.58 lb/h", sub: "11,907 g/h" });
     // THE YEAR PANE (canon 0.30.346): last on Total, beneath Weight/DLH.
-    expect(total.metrics.map((m) => m.key).slice(-3)).toEqual(["hours", "weight_per_dlh", "weight_harvested_year"]);
+    expect(total.metrics.map((m) => m.key).slice(-7)).toEqual(["hours", "weight_per_dlh", "weight_harvested_year", "assumed_dry", "estimated_bud", "ff_dry_equiv", "estimated_dry_total"]);
     // THE PLANTS FROM ADMIN'S TOTAL (canon 0.30.346): a typed total less the remaining is the harvested, and drives the percent.
     const typed = consoleBoxes({ ...input, plantCounts: { PNN: 5000, ARL: null, PNS: 10 } });
     const tby = (farm: string, key: string) => typed.find((b) => b.farm === farm)!.metrics.find((m) => m.key === key)!.value;
@@ -271,6 +275,8 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
       "Dry Weight/plant AVG",
       "Weight Harvested",
       "Harvest Year Total",
+      "Assumed Dry",
+      "Estimated Bud",
     ];
     for (const label of labels) expect(html.match(new RegExp(`<dt>${label.replace(/[%/]/g, (c) => (c === "%" ? "%" : "\\/"))}`, "g"))).toHaveLength(4);
     expect(html.match(/<dt>Harvest Hours/g)).toHaveLength(1);
@@ -337,6 +343,8 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     const page = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" });
     expect(page.match(/data-hc-metric="weight_harvested"/g)).toHaveLength(4);
     expect(page.match(/data-hc-metric="weight_harvested_year"/g)).toHaveLength(4);
+    expect(page.match(/data-hc-metric="assumed_dry"/g)).toHaveLength(4);
+    expect(page.match(/data-hc-metric="estimated_bud"/g)).toHaveLength(4);
     expect(page.match(/Harvest Year Total <span class="hc-date muted">2026<\/span>/g)).toHaveLength(4);
     expect(page).toContain('data-hc="weight_harvested">0.00 lb</span><span class="hc-sub muted">0 g</span>');
     expect(page).not.toContain("Plants remaining are the live plants");
@@ -371,6 +379,238 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(earlier.dayWet).toEqual([{ farm: "PNN", wet_grams: 896 }]);
     expect(bounds.startIso < "2026-09-15T15:00:00.000Z" && "2026-09-15T15:00:00.000Z" < bounds.endIso).toBe(true);
     expect("2026-09-15T09:00:00.000Z" < bounds.startIso).toBe(true);
+  });
+
+  it("BRIEF V22: Assumed Dry and Estimated Bud, weighted, the frozen lot out, Total the sum of the farms", () => {
+    const pkg = (type: string, grams: number) => ({ type_code: type, weight_grams: grams });
+    const lots: YieldLot[] = [
+      { farm: "PNN", status: "unloaded", wet_grams: 10000, dry_grams: 2000, freezer: false, packages: [pkg("BUD", 400), pkg("SMALLS", 100), pkg("TRIM", 100)] },
+      { farm: "PNN", status: "unloaded", wet_grams: 2000, dry_grams: 1000, freezer: false, packages: [pkg("SHAKE", 800), pkg("TRIM", 400)] },
+      { farm: "PNN", status: "trimmed", wet_grams: 8000, dry_grams: 1600, freezer: false, packages: [pkg("BUD", 900), pkg("smalls", 100), pkg("TRIM", 200)] },
+      { farm: "PNN", status: "drying", wet_grams: 4000, dry_grams: null, freezer: false, packages: [] },
+      { farm: "PNN", status: "weighing", wet_grams: 2000, dry_grams: null, freezer: false, packages: [] },
+      { farm: "PNN", status: "frozen", wet_grams: 99999, dry_grams: 50000, freezer: false, packages: [pkg("BUD", 99999)] },
+      { farm: "PNN", status: "drying", wet_grams: 50000, dry_grams: null, freezer: true, packages: [pkg("BUD", 1000)] },
+      { farm: "ARL", status: "drying", wet_grams: 10000, dry_grams: null, freezer: false, packages: [] },
+      { farm: "ZZZ", status: "trimmed", wet_grams: 8000, dry_grams: 8000, freezer: false, packages: [pkg("BUD", 8000)] },
+    ];
+    const yields = consoleYields(lots);
+    // Weighted dry-down: 4600 / 20000 = 0.23. An average of the three ratios would be 0.30.
+    expect(yields.farms.PNN.dryDown).toBeCloseTo(0.23, 9);
+    expect(yields.farms.PNN.assumedDryGrams).toBeCloseTo(5980, 6);
+    // BTR is the trimmed lot only: 1000 / 1200. The unloaded lots' packages stay out of the ratio.
+    expect(yields.farms.PNN.btr).toBeCloseTo(1000 / 1200, 9);
+    // SMALLS and SHAKE count as bud, TRIM does not. The over-trimmed lot's remainder stays at zero.
+    // 2300 + (1000/1200) * (1380 + 1400) = 4616.666...
+    expect(yields.farms.PNN.estimatedBudGrams).toBeCloseTo(2300 + (1000 / 1200) * 2780, 6);
+    // No unloaded lot and no trimmed lot: no dry-down, and the line says so.
+    expect(yields.farms.ARL.dryDown).toBeNull();
+    expect(yields.farms.ARL.assumedDryGrams).toBe(0);
+    expect(yields.farms.ARL.btr).toBeNull();
+    expect(yields.farms.ARL.estimatedBudGrams).toBe(0);
+    // A trimmed lot with no unloaded lot still has a dry-down (unloaded or trimmed).
+    const trimmedOnly = consoleYields([{ farm: "PNS", status: "trimmed", wet_grams: 1000, dry_grams: 200, freezer: false, packages: [pkg("BUD", 80), pkg("TRIM", 20)] }]);
+    expect(trimmedOnly.farms.PNS.dryDown).toBeCloseTo(0.2, 9);
+    // No trimmed lot: the unloaded lot's bud counts, and nothing is projected.
+    const noTrim = consoleYields([{ farm: "PNS", status: "unloaded", wet_grams: 5000, dry_grams: 1000, freezer: false, packages: [pkg("BUD", 400)] }]);
+    expect(noTrim.farms.PNS.btr).toBeNull();
+    expect(noTrim.farms.PNS.estimatedBudGrams).toBe(400);
+    expect(noTrim.farms.PNS.assumedDryGrams).toBe(1000);
+    // in_transit is still out, and takes the dry-down on its wet weight.
+    const transit = consoleYields([
+      { farm: "PNS", status: "unloaded", wet_grams: 5000, dry_grams: 1000, freezer: false, packages: [] },
+      { farm: "PNS", status: "in_transit", wet_grams: 500, dry_grams: null, freezer: false, packages: [] },
+    ]);
+    expect(transit.farms.PNS.assumedDryGrams).toBeCloseTo(1100, 6);
+    // Total is the sum of the farms, not the ratio over the pooled lots (that would be 8280 g).
+    expect(yields.total.assumedDryGrams).toBeCloseTo(5980, 6);
+    expect(yields.total.assumedDryGrams).not.toBeCloseTo(8280, 0);
+    expect(yields.total.estimatedBudGrams).toBeCloseTo(yields.farms.PNN.estimatedBudGrams, 6);
+    const filled = { ...input, yieldLots: lots };
+    const boxes = consoleBoxes(filled);
+    const metric = (farm: string, key: string) => boxes.find((b) => b.farm === farm)!.metrics.find((m) => m.key === key)!;
+    expect(metric("PNN", "assumed_dry")).toEqual({ key: "assumed_dry", label: "Assumed Dry", value: `${formatLbs(5980)} lb`, sub: "at 23.0% dry-down" });
+    expect(metric("PNN", "estimated_bud").value).toBe(`${formatLbs(yields.farms.PNN.estimatedBudGrams)} lb`);
+    expect(metric("PNN", "estimated_bud").sub).toBe("at 83.3% BTR");
+    expect(metric("ARL", "assumed_dry").sub).toBe("no dry-down yet");
+    expect(metric("ARL", "estimated_bud").sub).toBe("no BTR yet");
+    expect(metric("PNS", "assumed_dry")).toEqual({ key: "assumed_dry", label: "Assumed Dry", value: "0.00 lb", sub: "no dry-down yet" });
+    expect(metric("Total", "assumed_dry").sub).toBe("the three farms");
+    expect(metric("Total", "estimated_bud").sub).toBe("the three farms");
+    expect(metric("Total", "assumed_dry").value).toBe(metric("PNN", "assumed_dry").value);
+    expect(metric("Total", "assumed_dry").value).not.toContain("g");
+    // The look-back does not move the harvest-year figures.
+    const otherDay = consoleBoxes({ ...filled, day: "2025-01-01", dayPicked: true });
+    expect(otherDay.find((b) => b.farm === "PNN")!.metrics.find((m) => m.key === "assumed_dry")).toEqual(metric("PNN", "assumed_dry"));
+    const page = harvestConsolePage({ input: filled, live, nowIso: "2026-09-15T12:00:00.000Z" });
+    const pnn = page.slice(page.indexOf('data-hc-farm="PNN"'), page.indexOf('data-hc-farm="ARL"'));
+    const yearAt = pnn.indexOf('data-hc-metric="weight_harvested_year"');
+    const dryAt = pnn.indexOf('data-hc-metric="assumed_dry"');
+    const budAt = pnn.indexOf('data-hc-metric="estimated_bud"');
+    expect(yearAt).toBeGreaterThan(0);
+    expect(dryAt).toBeGreaterThan(yearAt);
+    expect(budAt).toBeGreaterThan(dryAt);
+    expect(pnn).toContain('data-hc="assumed_dry">13.35 lb</span><span class="hc-sub muted">at 23.0% dry-down</span>');
+    expect(pnn).toContain('data-hc="estimated_bud">10.31 lb</span><span class="hc-sub muted">at 83.3% BTR</span>');
+    const es = harvestConsolePage({ input: filled, live, nowIso: "2026-09-15T12:00:00.000Z", locale: "es" });
+    expect(es).toContain("Seco asumido");
+    expect(es).toContain("al 23.0% de seco");
+    expect(es).toContain("Cogollo estimado");
+    expect(es).toContain("al 83.3% BTR");
+    expect(es).toContain("sin porcentaje de seco aun");
+    expect(es).toContain("sin BTR aun");
+    expect(es).toContain("las tres granjas");
+  });
+
+  it("BRIEF V22: the loader reads the harvest year, and a picked day does not move the figures", async () => {
+    const m = await migratedDb();
+    const at = "2026-09-15T16:00:00.000Z";
+    const ts = "2026-09-15T12:00:00.000Z";
+    const freezer = "a1000001-0000-4000-8000-0000000000bf";
+    seedBatch(m, { id: "hb-yield", hbn: "26258-PNN-GH-001-0-NA-26901", serial: 901, farm: "PNN" });
+    seedBatch(m, { id: "hb-old", hbn: "25258-PNN-GH-001-0-NA-25901", serial: 801, farm: "PNN" });
+    m.run(`UPDATE harvest_batches SET harvest_year = 2025 WHERE id = 'hb-old'`);
+    const addLot = (id: string, batch: string, status: string, wet: number, dry: number | null, space: string) =>
+      m.run(
+        `INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, dry_weight_grams, actual_dryspc, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        id,
+        batch,
+        wet,
+        dry,
+        space,
+        status,
+        ts,
+        ts
+      );
+    const addPkg = (id: string, lot: string, type: string, grams: number, source: string | null, deleted: string | null) =>
+      m.run(
+        `INSERT INTO wip_packages (id, wet_weight_entry_id, package_code, package_type_code, weight_grams, status, source, created_at, updated_at, deleted_at)
+         VALUES (?, ?, ?, ?, ?, 'created', ?, ?, ?, ?)`,
+        id,
+        lot,
+        id,
+        type,
+        grams,
+        source,
+        ts,
+        ts,
+        deleted
+      );
+    addLot("lot-unloaded", "hb-yield", "unloaded", 4480, 896, "dry-1");
+    addPkg("pkg-bud", "lot-unloaded", "BUD", 200, null, null);
+    addPkg("pkg-shake", "lot-unloaded", "SHAKE", 100, null, null);
+    addPkg("pkg-trim", "lot-unloaded", "TRIM", 50, null, null);
+    addPkg("pkg-cryo", "lot-unloaded", "BUD", 9999, "cryo", null);
+    addPkg("pkg-void", "lot-unloaded", "BUD", 9999, null, ts);
+    addLot("lot-trimmed", "hb-yield", "trimmed", 4480, 896, "dry-1");
+    addPkg("pkg-tbud", "lot-trimmed", "BUD", 400, null, null);
+    addPkg("pkg-ttrim", "lot-trimmed", "TRIM", 100, null, null);
+    addLot("lot-frozen", "hb-yield", "frozen", 99999, 99999, "dry-1");
+    addLot("lot-freezer", "hb-yield", "drying", 99999, null, freezer);
+    addLot("lot-2025", "hb-old", "unloaded", 99999, 99999, "dry-1");
+    addPkg("pkg-2025", "lot-2025", "BUD", 9999, null, null);
+    const today = await loadHarvestConsole(m.db, at, "2026-09-15");
+    const picked = await loadHarvestConsole(m.db, at, "2026-09-14");
+    const read = (rows: YieldLot[] | undefined) => consoleYields(rows ?? [], ["BUD", "SMALLS", "SHAKE"]).farms.PNN;
+    expect(read(picked.yieldLots)).toEqual(read(today.yieldLots));
+    const pnn = read(today.yieldLots);
+    expect(pnn.dryDown).toBeCloseTo(0.2, 9);
+    expect(pnn.assumedDryGrams).toBeCloseTo(1792, 6);
+    expect(pnn.btr).toBeCloseTo(0.8, 9);
+    expect(pnn.estimatedBudGrams).toBeCloseTo(1136.8, 6);
+  });
+
+  it("BRIEF V23: fresh frozen dry equivalent and Estimated Dry Total, pooled, Total only", () => {
+    const lot = (farm: string, status: string, wet: number, dry: number | null, freezer = false): YieldLot => ({
+      farm,
+      status,
+      wet_grams: wet,
+      dry_grams: dry,
+      freezer,
+      packages: [],
+    });
+    const lots: YieldLot[] = [
+      lot("PNN", "unloaded", 10000, 2000),
+      lot("PNN", "trimmed", 10000, 4000),
+      lot("PNN", "drying", 5000, null),
+      lot("PNN", "frozen", 8000, 9000),
+      lot("ARL", "unloaded", 4000, 2000),
+      lot("ARL", "drying", 2000, null, true),
+      lot("ZZZ", "unloaded", 50000, 40000),
+    ];
+    const season = seasonDryFactor(lots);
+    // Pooled 8000/24000. The mean of the farms' dry-downs is 0.40.
+    expect(season.factor).toBeCloseTo(1 / 3, 9);
+    expect(season.factor).not.toBeCloseTo(0.4, 2);
+    expect(season.frozenLots).toBe(2);
+    expect(season.frozenWetGrams).toBe(10000);
+    const assumed = consoleYields(lots).total.assumedDryGrams;
+    expect(assumed).toBeCloseTo(9500, 6);
+    const filled = {
+      ...input,
+      remaining: [
+        { farm: "PNN", plants: 100 },
+        { farm: "ARL", plants: 40 },
+        { farm: "PNS", plants: 10 },
+        { farm: null, plants: 9 },
+      ],
+      seasonHarvested: [],
+      plantCounts: { PNN: null, ARL: null, PNS: null },
+      seasonLots: [{ farm: "PNN", wet_grams: 4480, dry_grams: null, plant_count: 10 }],
+      yieldLots: lots,
+    };
+    const boxes = consoleBoxes(filled);
+    const metric = (farm: string, key: string) => boxes.find((b) => b.farm === farm)!.metrics.find((m) => m.key === key);
+    for (const farm of ["PNN", "ARL", "PNS"]) {
+      expect(metric(farm, "ff_dry_equiv")).toBeUndefined();
+      expect(metric(farm, "estimated_dry_total")).toBeUndefined();
+    }
+    const remaining = 150;
+    const wetPer = 448;
+    const factor = season.factor!;
+    const remainingDry = remaining * wetPer * factor;
+    const equiv = factor * season.frozenWetGrams;
+    const totalGrams = remainingDry + assumed + equiv;
+    expect(metric("Total", "ff_dry_equiv")).toEqual({
+      key: "ff_dry_equiv",
+      label: "Dry Equiv. Wt of Fresh Frozen",
+      value: `${formatLbs(equiv)} lb`,
+      sub: `${formatLbs(10000)} lb frozen at 33.3% dry-down`,
+    });
+    expect(metric("Total", "estimated_dry_total")).toEqual({
+      key: "estimated_dry_total",
+      label: "Estimated Dry Total",
+      value: `${formatLbs(totalGrams)} lb`,
+      sub: `150 plants left at ${formatLbs(wetPer * factor)} lb each + Assumed Dry + fresh frozen`,
+    });
+    expect(metric("Total", "estimated_dry_total")!.value).toBe("78.65 lb");
+    expect(metric("Total", "ff_dry_equiv")!.value).not.toContain("g");
+    const otherDay = consoleBoxes({ ...filled, day: "2025-01-01", dayPicked: true });
+    expect(otherDay.find((b) => b.farm === "Total")!.metrics.find((m) => m.key === "estimated_dry_total")).toEqual(metric("Total", "estimated_dry_total"));
+    // No unloaded or trimmed lot: both figures are a dash.
+    const open = consoleBoxes({
+      ...input,
+      yieldLots: [lot("PNN", "drying", 5000, null), lot("ARL", "frozen", 9000, null)],
+    });
+    const dash = (key: string) => open.find((b) => b.farm === "Total")!.metrics.find((m) => m.key === key)!;
+    expect(dash("ff_dry_equiv")).toEqual({ key: "ff_dry_equiv", label: "Dry Equiv. Wt of Fresh Frozen", value: "-", sub: "no dry-down yet" });
+    expect(dash("estimated_dry_total").value).toBe("-");
+    expect(dash("estimated_dry_total").sub).toBe("no dry-down yet");
+    // A factor with no Wet Weight/Plant Avg leaves that part at zero and says so.
+    const noAvg = consoleBoxes({ ...filled, seasonLots: [] });
+    const noAvgTotal = noAvg.find((b) => b.farm === "Total")!.metrics.find((m) => m.key === "estimated_dry_total")!;
+    expect(noAvgTotal.sub).toBe("no wet weight per plant");
+    expect(noAvgTotal.value).toBe(`${formatLbs(assumed + equiv)} lb`);
+    const es = harvestConsolePage({ input: filled, live, nowIso: "2026-09-15T12:00:00.000Z", locale: "es" });
+    const esTotal = es.slice(es.indexOf('data-hc-farm="Total"'), es.indexOf('data-hc-section="drying"'));
+    expect(esTotal).toContain("Peso seco equiv. de fresco congelado");
+    expect(esTotal).toContain("Total seco estimado");
+    expect(esTotal).toContain("22.32 lb congelado al 33.3% de seco");
+    expect(esTotal).toContain("150 plantas restantes a 0.33 lb cada una + Seco asumido + congelado fresco");
+    expect(es.indexOf('data-hc-farm="PNN"')).toBeLessThan(es.indexOf('data-hc-farm="Total"'));
+    const esPnn = es.slice(es.indexOf('data-hc-farm="PNN"'), es.indexOf('data-hc-farm="ARL"'));
+    expect(esPnn).not.toContain("ff_dry_equiv");
   });
 
   it("the Drying section is the silo strip with the Arlington Dry Room as the wire box", () => {
