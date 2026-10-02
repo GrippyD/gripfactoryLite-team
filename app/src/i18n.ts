@@ -1270,6 +1270,25 @@ export const DICT: Record<string, { en: string; es: string }> = {
   // THE RUN (canon 0.30.248): the Complete pane's run and each space's average.
   "Ran {t}": { en: "Ran {t}", es: "Duró {t}" },
   "average {t}": { en: "average {t}", es: "promedio {t}" },
+  "Max Tote Weight": { en: "Max Tote Weight", es: "Peso maximo por caja" },
+  "Max Tote Weight (lb)": { en: "Max Tote Weight (lb)", es: "Peso maximo por caja (lb)" },
+  "Max Tote Weight is pounds from 1 to 500.": { en: "Max Tote Weight is pounds from 1 to 500.", es: "El peso maximo por caja es de 1 a 500 libras." },
+  "Not saved yet: the stations refuse a weight above the default, {n} lb.": {
+    en: "Not saved yet: the stations refuse a weight above the default, {n} lb.",
+    es: "Aun sin guardar: las estaciones rechazan un peso mayor que el valor por defecto, {n} lb.",
+  },
+  "The most one wet weight may be. Penn North Harvest and Penn South/Arlington Harvest refuse anything heavier before it is saved.": {
+    en: "The most one wet weight may be. Penn North Harvest and Penn South/Arlington Harvest refuse anything heavier before it is saved.",
+    es: "Lo maximo que puede pesar un peso humedo. Penn North Harvest y Penn South/Arlington Harvest rechazan cualquier peso mayor antes de guardarlo.",
+  },
+  "The most one wet weight may be, in pounds: Penn North Harvest and Penn South/Arlington Harvest refuse anything heavier.": {
+    en: "The most one wet weight may be, in pounds: Penn North Harvest and Penn South/Arlington Harvest refuse anything heavier.",
+    es: "Lo maximo que puede pesar un peso humedo, en libras: Penn North Harvest y Penn South/Arlington Harvest rechazan cualquier peso mayor.",
+  },
+  "{g} g is over the Max Tote Weight ({lb} lb, {limit} g). Check the scale reading and type it again.": {
+    en: "{g} g is over the Max Tote Weight ({lb} lb, {limit} g). Check the scale reading and type it again.",
+    es: "{g} g supera el peso maximo por caja ({lb} lb, {limit} g). Revise la lectura de la bascula y escribalo otra vez.",
+  },
   "Trim Bogey is a whole percent from 0 to 100.": {
     en: "Trim Bogey is a whole percent from 0 to 100.",
     es: "La meta de recorte es un porcentaje entero de 0 a 100.",

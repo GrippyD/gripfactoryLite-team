@@ -1,4 +1,4 @@
-import { CAPACITY_UOMS, DRY_SPACE_KINDS, DRY_SPACE_TYPE_LABELS, DRY_SPACE_TYPES, drySpaceTypeOf, FLOOR_SITE_ORDER, SITE_LICENSES, TRIM_BOGEY_DEFAULT } from "./config";
+import { CAPACITY_UOMS, DRY_SPACE_KINDS, DRY_SPACE_TYPE_LABELS, DRY_SPACE_TYPES, drySpaceTypeOf, FLOOR_SITE_ORDER, SITE_LICENSES, MAX_TOTE_LBS_DEFAULT, TRIM_BOGEY_DEFAULT } from "./config";
 import { etWallClock } from "./farmday";
 import { LOOKUP_LANDING, LOOKUP_VALUE_SECTIONS } from "./lookups";
 import { EDITABLE_FIELDS, type EditFieldDef } from "./pipeline";
@@ -320,6 +320,22 @@ export function trimBogeyPage(value: number, stored: boolean, locale: Locale = "
     ${flash}${unset}
     <form class="stack" method="post" action="/admin/lookups/trim_bogey" data-trim-bogey>
       <label class="field">${esc(t(locale, "Trim Bogey (%)"))} <input type="text" name="trim_bogey_pct" inputmode="numeric" pattern="[0-9]{1,3}%?" required value="${esc(String(value))}" data-trim-bogey-value></label>
+      <label class="field">${esc(t(locale, "Reason"))} <input type="text" name="reason" required></label>
+      <button type="submit">${esc(t(locale, "Save"))}</button>
+    </form>`;
+}
+
+/** THE MAX TOTE WEIGHT (canon 0.30.350): pounds, saved under a reason; `stored` is false while the default stands. */
+export function maxToteWeightPage(value: number, stored: boolean, locale: Locale = "en", ok?: string): string {
+  const flash = ok === "saved" ? `<p class="banner ok" data-max-tote-flash>${esc(t(locale, "Saved."))}</p>` : "";
+  const unset = stored
+    ? ""
+    : `<p class="muted" data-max-tote-default>${esc(tFill(locale, "Not saved yet: the stations refuse a weight above the default, {n} lb.", { n: String(MAX_TOTE_LBS_DEFAULT) }))}</p>`;
+  return `<h1>${esc(t(locale, "Max Tote Weight"))}</h1>
+    <p class="muted">${esc(t(locale, "The most one wet weight may be. Penn North Harvest and Penn South/Arlington Harvest refuse anything heavier before it is saved."))}</p>
+    ${flash}${unset}
+    <form class="stack" method="post" action="/admin/lookups/max_tote_lbs" data-max-tote>
+      <label class="field">${esc(t(locale, "Max Tote Weight (lb)"))} <input type="text" name="max_tote_lbs" inputmode="decimal" pattern="[0-9]{1,3}([.][0-9]{1,2})?" required value="${esc(String(value))}" data-max-tote-value></label>
       <label class="field">${esc(t(locale, "Reason"))} <input type="text" name="reason" required></label>
       <button type="submit">${esc(t(locale, "Save"))}</button>
     </form>`;

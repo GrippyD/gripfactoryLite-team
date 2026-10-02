@@ -454,6 +454,7 @@ export const CONFIG_KEYS = {
   // whole percent 0 to 100 in data (canon L-4), written by Admin, Lookups,
   // Trim Bogey on its first save; TRIM_BOGEY_DEFAULT until then.
   trim_bogey_pct: "trim_bogey_pct",
+  max_tote_lbs: "max_tote_lbs",
   // THE FARM DAY BEGINS AT SIX (canon 0.30.151). Owner, 2026-09-20: "Second
   // shift ends the next day, how can I have the report date treat the start of
   // the shift a the date?"; his pick "6:00 AM". The Eastern hour at which the
@@ -1518,6 +1519,24 @@ export function trimBogeyOf(raw: unknown): number | null {
 /** The stored Trim Bogey; the default when the row is missing or unreadable. */
 export function parseTrimBogey(raw: string | null | undefined): number {
   return trimBogeyOf(raw) ?? TRIM_BOGEY_DEFAULT;
+}
+
+/** THE MAX TOTE WEIGHT (canon 0.30.350). Owner, 2026-10-02, verbatim: "Can we add that to an Admin lookup?  Seed
+ * 50lbs", after a 64,668,712 g tote. One weight on a wet weigh station (Penn North Harvest, Penn South/Arlington
+ * Harvest) above this many pounds (the app's 448 g pound) is refused before it is saved. */
+export const MAX_TOTE_LBS_DEFAULT = 50;
+
+/** A typed Max Tote Weight: pounds, 1 to 500, two decimals at most; null for anything else. */
+export function maxToteLbsOf(raw: unknown): number | null {
+  const text = String(raw ?? "").trim().replace(/\s*lbs?$/i, "").trim();
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(text)) return null;
+  const n = Number(text);
+  return n >= 1 && n <= 500 ? n : null;
+}
+
+/** The stored Max Tote Weight in pounds; the default when the row is missing or unreadable. */
+export function parseMaxToteLbs(raw: string | null | undefined): number {
+  return maxToteLbsOf(raw) ?? MAX_TOTE_LBS_DEFAULT;
 }
 
 /** THE CRYO CATEGORIES (canon 0.30.112): the product categories a cryo line
