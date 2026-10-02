@@ -1290,6 +1290,8 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "Lot cap must be a whole number of lots, 1 to 999.",
     es: "El tope de lotes debe ser un numero entero de lotes, de 1 a 999.",
   },
+  "{pct}% full - {n} Lots": { en: "{pct}% full - {n} Lots", es: "{pct}% lleno - {n} lotes" },
+  "{pct}% full - 1 Lot": { en: "{pct}% full - 1 Lot", es: "{pct}% lleno - 1 lote" },
   "{n} of {cap} lots, {pct}% full": { en: "{n} of {cap} lots, {pct}% full", es: "{n} de {cap} lotes, {pct}% lleno" },
   "Lot cap saved.": { en: "Lot cap saved.", es: "Tope de lotes guardado." },
   "Not saved yet: the tile reads the default, {n} lots.": {

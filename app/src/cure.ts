@@ -354,11 +354,13 @@ function lotRow(lot: CureLot, nowIso: string, locale: Locale): string {
     </details>`;
 }
 
-/** Lots over the cap. Empty is clear; the first lot tints; the cap is near-solid; past the cap stays solid. */
-export function cureShadeOpacity(n: number, cap: number): string {
-  if (n <= 0) return (0).toFixed(3);
-  const pct = cap > 0 ? n / cap : 0;
-  return (0.15 + 0.7 * Math.min(pct, 1)).toFixed(3);
+/** THE PANE IS A BAR (owner, 2026-10-02: "if it's 50% full, saturate with green from the bottom to 50% of the
+ * way up--in other words make the whole pane into a bar on a graph"): the shade's height is the percent full,
+ * lots over the cap, from the bottom of the tile; past the cap it fills the tile. */
+export function cureShadeFill(n: number, cap: number): string {
+  if (n <= 0) return (0).toFixed(1);
+  const pct = cap > 0 ? n / cap : 1;
+  return (Math.min(pct, 1) * 100).toFixed(1);
 }
 
 function paneCard(name: CurePaneName, lots: CureLot[], cap: number, reading: CureReading | null, nowIso: string, locale: Locale, flags: string[]): string {
@@ -369,16 +371,22 @@ function paneCard(name: CurePaneName, lots: CureLot[], cap: number, reading: Cur
   const pct = cap > 0 ? n / cap : 0;
   const pctShown = Math.round(pct * 100);
   const over = n > cap;
-  const count = tFill(locale, "{n} of {cap} lots, {pct}% full", { n: String(n), cap: String(cap), pct: String(pctShown) });
+  const fill = cureShadeFill(n, cap);
+  // THE FULLNESS LINE FOLDS THE LOTS (owner, 2026-10-02: "Collapse all the lots into the text containing the
+  // fullness" "% full - n Lots"): one summary line; open, the lots as they were, each still folding on its number.
+  const count = tFill(locale, n === 1 ? "{pct}% full - 1 Lot" : "{pct}% full - {n} Lots", { n: String(n), pct: String(pctShown) });
+  const capLine = tFill(locale, "{n} of {cap} lots, {pct}% full", { n: String(n), cap: String(cap), pct: String(pctShown) });
   const body = lots.length
     ? lots.map((lot) => lotRow(lot, nowIso, locale)).join("")
     : `<p class="muted" data-cure-empty>${esc(t(locale, "No lots."))}</p>`;
   return `<div class="inv-gauge cure-pane" data-cure-pane="${name}">
-      <div class="cure-shade" style="opacity:${cureShadeOpacity(n, cap)}" data-cure-shade></div>
+      <div class="cure-shade" style="height:${fill}%" data-cure-shade data-cure-fill="${fill}"></div>
       <div class="inv-gauge-name">${name}</div>
-      <p class="cure-count${over ? " cure-over" : ""}" data-cure-count="${n}" data-cure-cap="${cap}" data-cure-pct="${pctShown}">${esc(count)}</p>
       <p class="cure-conditions${cond.stale || alert ? " cure-stale" : ""}" data-cure-conditions>${esc(text)}</p>
-      ${body}
+      <details class="cure-lots" data-cure-lots>
+        <summary class="cure-count${over ? " cure-over" : ""}" data-cure-count="${n}" data-cure-cap="${cap}" data-cure-pct="${pctShown}" title="${esc(capLine)}">${esc(count)}</summary>
+        ${body}
+      </details>
     </div>`;
 }
 
@@ -403,6 +411,15 @@ export function cureClockScript(): string {
   }
   tick();
   setInterval(tick, 1000);
+  // A pane's fold stays as this tablet left it, across a reload (localStorage per pane, gf_cure_open:).
+  document.querySelectorAll("[data-cure-lots]").forEach(function (d) {
+    var pane = d.closest("[data-cure-pane]");
+    var key = "gf_cure_open:" + (pane ? pane.getAttribute("data-cure-pane") : "");
+    try { if (localStorage.getItem(key) === "1") d.open = true; } catch (e) {}
+    d.addEventListener("toggle", function () {
+      try { localStorage.setItem(key, d.open ? "1" : "0"); } catch (e) {}
+    });
+  });
 })();
 </script>`;
 }

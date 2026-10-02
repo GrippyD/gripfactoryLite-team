@@ -334,12 +334,16 @@ details.reconcile-purge > summary, details.reconcile-edit > summary { cursor: po
 select option[data-occupied] { color: var(--text-dim, #888); }
 /* THE CURE PANES (canon 0.30.164): CSA and CSB ride the drying row after the FFZ cube
    (owner, 2026-09-22: "in line with drying spaces, in the void after FFZ Inventory set the same size").
-   A pane is an inv-gauge tile; its children are the silo drawing's width (11.2rem), so the tile
-   computes the same width as the silo and FFZ tiles beside it. */
-.cure-pane { flex: 0 0 auto; width: auto; min-width: 0; font-size: 0.8rem; position: relative; overflow: hidden; }
-.cure-pane > * { width: 11.2rem; }
-/* THE CURE CAPS (canon 0.30.341): a green shade under the tile's content, light at the first lot and near-solid at the cap. */
-.cure-pane > .cure-shade { position: absolute; inset: 0; width: auto; background: #2e9e4f; pointer-events: none; }
+   A pane is an inv-gauge tile the silo tiles' width (13.6rem, canon 0.30.355), its children the tile's full width. */
+.cure-pane { flex: 0 0 auto; width: 13.6rem; min-width: 0; font-size: 0.8rem; position: relative; overflow: hidden; }
+.cure-pane > * { width: 100%; }
+/* THE PANE IS A BAR (canon 0.30.355): the green rises from the tile's bottom to the percent full (its inline height), the silo tiles' width (13.6rem, owner 2026-10-02: "match width of the columns above"). */
+.cure-pane > .cure-shade { position: absolute; left: 0; right: 0; bottom: 0; top: auto; width: auto; background: rgba(46, 158, 79, 0.6); border-top: 2px solid #2e9e4f; pointer-events: none; transition: height 0.6s ease; }
+.cure-pane > .cure-shade[data-cure-fill="0.0"] { border-top: 0; }
+.cure-lots > summary.cure-count { cursor: pointer; list-style: none; }
+.cure-lots > summary.cure-count::-webkit-details-marker { display: none; }
+.cure-lots > summary.cure-count::before { content: "▸ "; font-size: 0.8em; opacity: 0.7; }
+.cure-lots[open] > summary.cure-count::before { content: "▾ "; }
 .cure-pane > :not(.cure-shade) { position: relative; }
 .cure-count { margin: 0.1rem 0 0.35rem; font-weight: 600; }
 .cure-over { color: #7c1b1b; }
@@ -2529,7 +2533,7 @@ body.device-phone .ops-map-phone .ops-node { width: 100%; max-width: 18rem; }
 ${walkSliceChrome("cerberus")}
 .php-best { background: color-mix(in srgb, var(--ok, #3ecf6b) 28%, transparent); color: var(--ok, #3ecf6b); }
 .php-worst { background: color-mix(in srgb, #ba2929 28%, transparent); color: #ba2929; }
-.cure-pane > .cure-shade { background: #3ecf6b; }
+.cure-pane > .cure-shade { background: rgba(62, 207, 107, 0.5); border-top-color: #3ecf6b; }
 .cure-over { color: #ba2929; }
 /* =====================================================================
    BOOT SCRAWL (owner ruling 2026-09-01)

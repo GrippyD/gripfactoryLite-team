@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { saveLotCap } from "../src/actions";
 import { HttpError } from "../src/audit";
 import { CONFIG_KEYS, CSA_LOT_CAP_DEFAULT, CSB_LOT_CAP_DEFAULT, lotCapOf, parseLotCap } from "../src/config";
-import { curePanes, cureShadeOpacity, type CureLot, type CurePanesData } from "../src/cure";
+import { curePanes, cureShadeFill, type CureLot, type CurePanesData } from "../src/cure";
 import { getConfigValue } from "../src/db";
 import { LOOKUP_LANDING } from "../src/lookups";
 import { lotCapPage } from "../src/pages";
@@ -42,25 +42,30 @@ describe("THE CURE CAPS (canon 0.30.341)", () => {
     expect(parseLotCap(null, 8)).toBe(8);
   });
 
-  it("shades the tile from clear, through a tint, to solid red letters past the cap", () => {
+  it("fills the tile from the bottom as a bar to the percent full, and folds the lots under the fullness line", () => {
     const empty = tile(0);
     expect(empty.startsWith('<div class="inv-gauge cure-pane" data-cure-pane="CSA">')).toBe(true);
-    expect(empty).toContain('class="cure-shade" style="opacity:0.000" data-cure-shade');
+    expect(empty).toContain('class="cure-shade" style="height:0.0%" data-cure-shade data-cure-fill="0.0"');
     expect(empty).toContain('data-cure-count="0" data-cure-cap="36" data-cure-pct="0"');
-    expect(empty).toContain("0 of 36 lots, 0% full");
+    expect(empty).toContain(">0% full - 0 Lots</summary>");
     expect(empty).not.toContain("cure-over");
-    const mid = tile(12);
-    expect(cureShadeOpacity(12, 36)).toBe("0.383");
-    expect(mid).toContain('class="cure-shade" style="opacity:0.383" data-cure-shade');
-    expect(mid).toContain('data-cure-count="12" data-cure-cap="36" data-cure-pct="33"');
-    expect(mid).toContain("12 of 36 lots, 33% full");
+    const mid = tile(18);
+    expect(cureShadeFill(18, 36)).toBe("50.0");
+    expect(mid).toContain('class="cure-shade" style="height:50.0%" data-cure-shade data-cure-fill="50.0"');
+    expect(mid).toContain('<details class="cure-lots" data-cure-lots>');
+    expect(mid).toContain('title="18 of 36 lots, 50% full">50% full - 18 Lots</summary>');
     expect(mid.indexOf("data-cure-shade")).toBeLessThan(mid.indexOf("inv-gauge-name"));
-    expect(mid.indexOf("inv-gauge-name")).toBeLessThan(mid.indexOf("data-cure-count"));
+    expect(mid.indexOf("inv-gauge-name")).toBeLessThan(mid.indexOf("data-cure-conditions"));
+    expect(mid.indexOf("data-cure-conditions")).toBeLessThan(mid.indexOf("data-cure-lots"));
+    const lotsAt = mid.indexOf("</summary>", mid.indexOf("data-cure-count"));
+    expect(mid.indexOf('<details class="cure-row"')).toBeGreaterThan(lotsAt);
+    expect(mid.lastIndexOf('<details class="cure-row"')).toBeLessThan(mid.lastIndexOf("</details>"));
+    expect(tile(1)).toContain(">3% full - 1 Lot</summary>");
     const over = tile(40);
-    expect(over).toContain('class="cure-shade" style="opacity:0.850" data-cure-shade');
+    expect(over).toContain('class="cure-shade" style="height:100.0%" data-cure-shade data-cure-fill="100.0"');
     expect(over).toContain('class="cure-count cure-over" data-cure-count="40" data-cure-cap="36" data-cure-pct="111"');
-    expect(over).toContain("40 of 36 lots, 111% full");
-    expect(tile(12, "es")).toContain("12 de 36 lotes, 33% lleno");
+    expect(over).toContain(">111% full - 40 Lots</summary>");
+    expect(tile(18, "es")).toContain(">50% lleno - 18 lotes</summary>");
   });
 
   it("stands on Harvest Operations and saves a cap under a reason into the change log", async () => {
