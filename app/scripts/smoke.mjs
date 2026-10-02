@@ -2086,12 +2086,13 @@ async function run() {
       const next = rest.indexOf('data-cure-pane="', 20);
       return next < 0 ? rest : rest.slice(0, next);
     };
-    const cureShadeOf = (n, cap) => (n <= 0 ? (0).toFixed(3) : (0.15 + 0.7 * Math.min(n / cap, 1)).toFixed(3));
+    // THE PANE IS A BAR (canon 0.30.355): the shade's height is the percent full, capped at the tile.
+    const cureShadeOf = (n, cap) => (n <= 0 ? (0).toFixed(1) : (Math.min(cap > 0 ? n / cap : 1, 1) * 100).toFixed(1));
     const cureStats = (html, name) => {
       const pane = cureOf(html, name);
       const lots = (pane.match(/data-cure-lot="/g) || []).length;
       const tag = pane.match(/data-cure-count="(\d+)" data-cure-cap="(\d+)" data-cure-pct="(\d+)"/);
-      const shade = pane.match(/class="cure-shade" style="opacity:([0-9.]+)"/);
+      const shade = pane.match(/class="cure-shade" style="height:([0-9.]+)%" data-cure-shade data-cure-fill="\1"/);
       return {
         pane,
         lots,
@@ -2108,7 +2109,8 @@ async function run() {
     const csaUnloaded = cureStats(consoleUnloaded.body, "CSA");
     const csbUnloaded = cureStats(consoleUnloaded.body, "CSB");
     assert(csaUnloaded.pane.includes("data-cure-shade") && csbUnloaded.pane.includes("data-cure-shade"), "each cure pane must carry a shade");
-    assert(csaUnloaded.n === csaUnloaded.lots && csaUnloaded.cap === 36 && csaUnloaded.pct === Math.round((csaUnloaded.n / 36) * 100) && csaUnloaded.opacity === cureShadeOf(csaUnloaded.n, 36), `CSA must count its lots against 36, got ${csaUnloaded.n} of ${csaUnloaded.cap} at ${csaUnloaded.pct}% opacity ${csaUnloaded.opacity}`);
+    assert(csaUnloaded.n === csaUnloaded.lots && csaUnloaded.cap === 36 && csaUnloaded.pct === Math.round((csaUnloaded.n / 36) * 100) && csaUnloaded.opacity === cureShadeOf(csaUnloaded.n, 36), `CSA must count its lots against 36, got ${csaUnloaded.n} of ${csaUnloaded.cap} at ${csaUnloaded.pct}% fill ${csaUnloaded.opacity}`);
+    assert(csaUnloaded.pane.includes(`>${csaUnloaded.pct}% full - ${csaUnloaded.n} Lot${csaUnloaded.n === 1 ? "" : "s"}</summary>`) && csaUnloaded.pane.includes('<details class="cure-lots" data-cure-lots>'), "the CSA lots must fold under the fullness line");
     assert(csbUnloaded.cap === 8 && csbUnloaded.n === csbUnloaded.lots, `CSB must count its lots against 8, got ${csbUnloaded.n}`);
     // THE ROW FOLDS ON THE LOT NUMBER (owner, 2026-09-22): the lot's row is a folded details element, the id and the time in on its summary.
     {
@@ -2133,7 +2135,7 @@ async function run() {
     assert(!cureOf(consoleUnloaded.body, "CSB").includes(`data-cure-lot="${wetLotId}"`), "CSB must not list a lot that is not scheduled for trim");
     assert(cureOf(dryingUnloaded.body, "CSA").includes(`data-cure-lot="${wetLotId}"`), "a drying page CSA pane must list the unloaded lot");
     const dryingCsa = cureStats(dryingUnloaded.body, "CSA");
-    assert(dryingCsa.n === csaUnloaded.n && dryingCsa.cap === 36 && dryingUnloaded.body.includes(`${csaUnloaded.n} of 36 lots,`), "a drying page must carry the same CSA count line");
+    assert(dryingCsa.n === csaUnloaded.n && dryingCsa.cap === 36 && dryingUnloaded.body.includes(`title="${csaUnloaded.n} of 36 lots,`), "a drying page must carry the same CSA count line");
     const sensorOk = await req("/sensors/readings", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2347,9 +2349,9 @@ async function run() {
     const harvestCapped = await text("/harvest");
     const csbCapped = cureStats(harvestCapped.body, "CSB");
     if (csbCapped.n > 1) {
-      assert(csbCapped.pane.includes("cure-over") && csbCapped.opacity === "0.850", `CSB over a cap of 1 must letter in red on a solid shade, got ${csbCapped.n} opacity ${csbCapped.opacity}`);
+      assert(csbCapped.pane.includes("cure-over") && csbCapped.opacity === "100.0", `CSB over a cap of 1 must letter in red on a full bar, got ${csbCapped.n} fill ${csbCapped.opacity}`);
     } else {
-      assert(csbCapped.n === 1 && csbCapped.cap === 1 && csbCapped.pct === 100 && csbCapped.opacity === "0.850", `one lot on a cap of 1 must read 100% on a solid shade, got ${csbCapped.n} of ${csbCapped.cap} at ${csbCapped.pct}%`);
+      assert(csbCapped.n === 1 && csbCapped.cap === 1 && csbCapped.pct === 100 && csbCapped.opacity === "100.0", `one lot on a cap of 1 must read 100% on a full bar, got ${csbCapped.n} of ${csbCapped.cap} at ${csbCapped.pct}%`);
     }
     const badLotCap = await req("/admin/lookups/csb_lot_cap", { method: "POST", body: form({ lot_cap: "0", reason: "smoke" }) });
     assert(badLotCap.status === 400, `a lot cap of 0 expected 400 got ${badLotCap.status}`);
