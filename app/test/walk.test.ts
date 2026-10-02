@@ -602,15 +602,17 @@ describe("walk slice markup", () => {
     expect(html).toMatch(/replace\(/);
   });
 
-  it("the wet weight header carries the Spear/Bucked toggle, spear checked (owner ruling 2026-09-07, canon 0.29.1)", () => {
+  it("Acquire HBN carries the Spear/Bucked toggle, bucked checked; the wet header carries none (canon 0.29.1, 0.30.341)", () => {
     const wet = stationByKey("wet_weight")!;
-    const field = wet.fields.find((f) => f.name === "material_form");
+    expect(wet.fields.find((f) => f.name === "material_form")).toBeUndefined();
+    const acquire = stationByKey("acquire_hbn")!;
+    const field = acquire.fields.find((f) => f.name === "material_form");
     expect(field).toBeDefined();
     expect(field!.input).toBe("radio");
     const html = renderField(field!, {}, {}, {}, "en");
-    expect(html).toContain('name="material_form" value="spear" checked');
-    expect(html).toContain('name="material_form" value="bucked"');
-    expect(html).not.toContain('value="bucked" checked');
+    expect(html).toContain('name="material_form" value="bucked" checked');
+    expect(html).toContain('name="material_form" value="spear"');
+    expect(html).not.toContain('value="spear" checked');
     expect(html).toContain("Spear or Bucked");
   });
 

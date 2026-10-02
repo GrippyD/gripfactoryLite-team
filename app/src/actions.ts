@@ -48,7 +48,9 @@ import {
   sumGrams,
   SYSTEM_REASON,
   TRUCK_DRY_SPACE_ID,
-  truckNumberFromPick,
+  isMaterialForm,
+  siloSequenceNumber,
+  type MaterialForm,
   METRC_UPLOAD_KINDS,
   LANDING_FARM,
   LOC_CRYO_ROOM,
@@ -159,6 +161,8 @@ import {
   listFieldDestinations,
   defaultTerpRecipeForBatch,
   fieldHoldingSpaceId,
+  listSiloSequence,
+  siloSpaceOfNumber,
   getFieldLoad,
   listFieldLoadTotes,
   listOpenSiloLoadsInSpace,
@@ -274,7 +278,10 @@ export async function createHarvestBatch(db: D1Database, form: FormData): Promis
   // product name downstream; it never determines the HBN.
   const typedMarketStrain = textOrNull(form.get("market_strain"));
   const manicure = checkbox01(form, "manicure") as 0 | 1;
-  const siloNumber = textOrNull(form.get("planned_dryspc"));
+  // THE HBN ENTRY (canon 0.30.341): the HBN decides a lot's form and its space,
+  // so both are required at the mint; the sixth segment is the silo number.
+  const siloNumber = requirePlannedSilo(form.get("planned_dryspc"));
+  const materialForm = requireMaterialForm(form.get("material_form"));
   const startTime = optionalTime24(form.get("start_time"), "Start Time (24h)");
   const zone = textOrNull(form.get("zone"));
   const rowsText = textOrNull(form.get("rows_text"));
@@ -341,6 +348,7 @@ export async function createHarvestBatch(db: D1Database, form: FormData): Promis
       market_strain: marketStrain,
       manicure,
       planned_dryspc: siloNumber,
+      material_form: materialForm,
       start_time: startTime,
       zone,
       rows_text: rowsText,
@@ -359,10 +367,10 @@ export async function createHarvestBatch(db: D1Database, form: FormData): Promis
       db
         .prepare(
           `INSERT INTO harvest_batches (
-          id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, planned_dryspc,
+          id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, planned_dryspc, material_form,
           start_time, zone, rows_text, metrc_harvest_tag, hbn, lot_serial, harvest_year, status, license_value,
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
         )
         .bind(
           id,
@@ -373,6 +381,7 @@ export async function createHarvestBatch(db: D1Database, form: FormData): Promis
           marketStrain,
           manicure,
           siloNumber,
+          materialForm,
           startTime,
           zone,
           rowsText,
@@ -422,17 +431,16 @@ export async function createWetWeight(db: D1Database, form: FormData): Promise<A
   // (lead_person_id) is retired: new lots leave it NULL.
   const teamLead = requireText(form.get("team_lead"), "Team Lead");
   const harvestBatchId = requireText(form.get("harvest_batch_id"), "HBN");
-  const moveTo = requireText(form.get("actual_dryspc") ?? form.get("dry_space_id"), "Move To");
   // Owner addendum 2026-09-04 (canon 0.22.0): the ACTUAL start time is a data
   // field captured here, where the HBN ratifies. Optional; 24-hour law when set.
   const actualStartTime = optionalTime24(form.get("actual_start_time"), "Actual Start Time (24h)");
   const notes = textOrNull(form.get("notes"));
   const batch = await db
     .prepare(
-      `SELECT id, status, born_from, farm_code FROM harvest_batches WHERE id = ? AND deleted_at IS NULL`
+      `SELECT id, status, born_from, farm_code, material_form, planned_dryspc FROM harvest_batches WHERE id = ? AND deleted_at IS NULL`
     )
     .bind(harvestBatchId)
-    .first<{ id: string; status: string; born_from: string; farm_code: string | null }>();
+    .first<{ id: string; status: string; born_from: string; farm_code: string | null; material_form: string | null; planned_dryspc: string | null }>();
   if (!batch) throw new HttpError(400, "Unknown harvest batch.");
   // THE HBN INHERITED (canon 0.30.196): a METRC-born batch carries lineage, never a lot.
   if (batch.status !== HARVEST_STATUS.open || batch.born_from === HARVEST_BORN.metrc) {
@@ -443,40 +451,19 @@ export async function createWetWeight(db: D1Database, form: FormData): Promise<A
   if (batch.farm_code && batch.farm_code !== "PNN") {
     throw new HttpError(400, "Penn North Harvest takes Penn North batches only.");
   }
-  // Owner ruling 2026-08-31: trucks are record-borne. Move To is either a real
-  // dry_spaces id or the encoded truck-<n>; the sentinel backs the NOT NULL
-  // dry_space_id and the number stores on the lot itself. The bare sentinel id
-  // must never arrive raw; a truck pick always carries its number.
-  // THE BLANK SLATE (canon 0.30.108; owner, 2026-09-17: "assume everything
-  // that get's entered into wet weights is landing in PNN's barn location"):
-  // the trucks left the Move To list; a truck pick, staged or hand-built,
-  // refuses in words. The sentinel and truckNumberFromPick stay for the lots
-  // that already ride a truck.
-  if (moveTo === TRUCK_DRY_SPACE_ID || truckNumberFromPick(moveTo)) {
-    throw new HttpError(400, "Trucks left the Move To list; every lot lands in PNN's barn. Pick a silo or a room.");
-  }
   // THE TRUCK RECORD (canon 0.30.226): Truck # is free text on the header.
-  // Blank is a lot that goes straight to its space. Move To stays a silo or a room.
+  // Blank is a lot that goes straight to its space.
   const truckNumber = textOrNull(form.get("truck_number"));
-  const drySpaceId = moveTo;
-  const space = await db
-    .prepare(`SELECT id, kind FROM dry_spaces WHERE id = ? AND deleted_at IS NULL`)
-    .bind(drySpaceId)
-    .first<{ id: string; kind: string }>();
-  if (!space) throw new HttpError(400, "Unknown dry space.");
-  // Owner ruling 2026-09-07 (canon 0.29.1): the spear/buck toggle lives here.
-  // Spear is the checked default (one tap); a missing field means a non-form
-  // client and takes the same default; anything else refuses. A silo Move To
-  // overrides to bucked at create, the same physics the 0032 backfill wrote.
-  const materialFormRaw = textOrNull(form.get("material_form"));
-  const materialFormPick =
-    materialFormRaw === null || materialFormRaw === "spear"
-      ? "spear"
-      : materialFormRaw === "bucked"
-        ? "bucked"
-        : null;
-  if (!materialFormPick) throw new HttpError(400, "Pick Spear or Bucked.");
-  const materialForm = space.kind === "silo" ? "bucked" : materialFormPick;
+  // THE HBN ENTRY (canon 0.30.341; the owner: "remove "move-to" altogether";
+  // his pick "Bucked to the HBN's silo, Spear hangs"): the HBN decides the
+  // lot's form and its space. A Bucked HBN's lots weigh into its silo (the
+  // sequence's space for planned_dryspc; an HBN with no numeric silo refuses
+  // in words) and mint WIP; a Spear HBN's lots hang in Penn North's holding
+  // space (Hang in Place) and mint SPR. A posted actual_dryspc or
+  // material_form, from any older client, is ignored.
+  const landing = await lotLandingForBatch(db, batch, LANDING_FARM);
+  const drySpaceId = landing.spaceId;
+  const materialForm = landing.materialForm;
 
   const id = crypto.randomUUID();
   const ts = nowIso();
@@ -568,6 +555,9 @@ export async function manualHbn(db: D1Database, form: FormData): Promise<ActionO
   const growMethodCode = requireText(form.get("grow_method_code"), "Grow Method");
   const strainId = requireText(form.get("strain_id"), "Strain");
   const metrc = textOrNull(form.get("metrc_harvest_tag"));
+  // THE HBN ENTRY (canon 0.30.341): the manual mint takes the same two fields as Acquire; the typed HBN stays as typed.
+  const siloNumber = requirePlannedSilo(form.get("planned_dryspc"));
+  const materialForm = requireMaterialForm(form.get("material_form"));
   const grow = await db
     .prepare(`SELECT hbn_code FROM grow_methods WHERE code = ? AND deleted_at IS NULL`)
     .bind(growMethodCode)
@@ -606,6 +596,8 @@ export async function manualHbn(db: D1Database, form: FormData): Promise<ActionO
     grow_method_code: growMethodCode,
     strain_id: strainId,
     market_strain: marketStrain,
+    planned_dryspc: siloNumber,
+    material_form: materialForm,
     metrc_harvest_tag: metrc,
     hbn,
     lot_serial: lotSerial,
@@ -621,10 +613,10 @@ export async function manualHbn(db: D1Database, form: FormData): Promise<ActionO
     db
       .prepare(
         `INSERT INTO harvest_batches (
-          id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, planned_dryspc,
+          id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, planned_dryspc, material_form,
           start_time, zone, rows_text, metrc_harvest_tag, hbn, lot_serial, harvest_year, status, license_value,
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-        ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
       )
       .bind(
         id,
@@ -633,6 +625,8 @@ export async function manualHbn(db: D1Database, form: FormData): Promise<ActionO
         growMethodCode,
         strainId,
         marketStrain,
+        siloNumber,
+        materialForm,
         metrc,
         hbn,
         lotSerial,
@@ -647,6 +641,42 @@ export async function manualHbn(db: D1Database, form: FormData): Promise<ActionO
     ...logsForInsert(db, "harvest_batches", id, record, actor.id, reason, ts),
   ]);
   return { redirect: `/admin/manual-hbn?ok=${encodeURIComponent(hbn)}` };
+}
+
+/** THE HBN ENTRY (canon 0.30.341): the Silo field of an HBN mint, a sequence number 1 to 7. */
+function requirePlannedSilo(raw: unknown): string {
+  const n = siloSequenceNumber(textOrNull(raw));
+  if (n == null) throw new HttpError(400, "Pick a silo.");
+  return String(n);
+}
+
+/** THE HBN ENTRY (canon 0.30.341): the Spear or Bucked radio of an HBN mint. */
+function requireMaterialForm(raw: unknown): MaterialForm {
+  const value = textOrNull(raw);
+  if (!isMaterialForm(value)) throw new HttpError(400, "Pick Spear or Bucked.");
+  return value;
+}
+
+/** THE DISPATCH RULE as THE HBN ENTRY reads it (canon 0.30.155, 0.30.341; his
+ * pick "Bucked to the HBN's silo, Spear hangs"): where a lot of this HBN lands
+ * and what it is. Bucked goes to the sequence's space for the HBN's planned
+ * silo (an HBN with no numeric silo refuses in words); Spear goes to the
+ * holding farm's hang space (Hang in Place at Penn North, the Arlington Dry
+ * Room at Arlington) and the silo is for the schedule alone. */
+export async function lotLandingForBatch(
+  db: D1Database,
+  batch: { material_form: string | null; planned_dryspc: string | null },
+  holdingFarm: string
+): Promise<{ spaceId: string; materialForm: MaterialForm }> {
+  const materialForm: MaterialForm = batch.material_form === "spear" ? "spear" : "bucked";
+  if (materialForm === "bucked") {
+    const space = siloSpaceOfNumber(await listSiloSequence(db), batch.planned_dryspc);
+    if (!space) throw new HttpError(400, "This HBN has no silo. Set it on the HBN first.");
+    return { spaceId: space.id, materialForm };
+  }
+  const spaceId = await fieldHoldingSpaceId(db, holdingFarm);
+  if (!spaceId) throw new HttpError(400, "That destination has no holding space.");
+  return { spaceId, materialForm };
 }
 
 export function assertLotHasWeights(count: number): void {
@@ -892,9 +922,9 @@ async function splitTruckIfNeeded(
     stmts.push(
       db
         .prepare(
-          `UPDATE wet_weight_entries SET status = ?, weight_grams = ?, plant_count = ?, harvest_file_seq = COALESCE(harvest_file_seq, ?), updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+          `UPDATE wet_weight_entries SET status = ?, weight_grams = ?, plant_count = ?, harvest_file_seq = COALESCE(harvest_file_seq, ?), finished_at = COALESCE(finished_at, ?), updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
         )
-        .bind(next, group.grams, plantCount, seq, ts, actorId, rowId),
+        .bind(next, group.grams, plantCount, seq, ts, ts, actorId, rowId),
       insertLog(db, {
         record_table: "wet_weight_entries",
         record_id: rowId,
@@ -974,18 +1004,20 @@ async function singleLotFinishStmts(
   const skipped = String(form.get("plant_prompt") ?? "") === "skip";
   const plantCount = skipped ? null : parsePlantCount(form.get("plant_count"));
   const fileSeq = await nextHarvestFileSeq(db, lot.harvest_batch_id);
+  // THE HBN ENTRY (canon 0.30.341): the finish stamps finished_at, the instant
+  // the lot left weighing, which the HBN Queue reads against the farm's day.
   const stmts: D1PreparedStatement[] = [
     plantCount == null
       ? db
           .prepare(
-            `UPDATE wet_weight_entries SET status = ?, harvest_file_seq = COALESCE(harvest_file_seq, ?), updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+            `UPDATE wet_weight_entries SET status = ?, harvest_file_seq = COALESCE(harvest_file_seq, ?), finished_at = COALESCE(finished_at, ?), updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
           )
-          .bind(next, fileSeq, ts, actorId, lot.id)
+          .bind(next, fileSeq, ts, ts, actorId, lot.id)
       : db
           .prepare(
-            `UPDATE wet_weight_entries SET status = ?, plant_count = ?, harvest_file_seq = COALESCE(harvest_file_seq, ?), updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
+            `UPDATE wet_weight_entries SET status = ?, plant_count = ?, harvest_file_seq = COALESCE(harvest_file_seq, ?), finished_at = COALESCE(finished_at, ?), updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`
           )
-          .bind(next, plantCount, fileSeq, ts, actorId, lot.id),
+          .bind(next, plantCount, fileSeq, ts, ts, actorId, lot.id),
     insertLog(db, {
       record_table: "wet_weight_entries",
       record_id: lot.id,
@@ -1224,8 +1256,16 @@ async function ensureWeighingLotStmts(
     .bind(hbnId, LOT_STATUS.weighing)
     .first<{ id: string; weight_grams: number }>();
   if (existing) return { lotId: existing.id, stmts: [], priorGrams: Number(existing.weight_grams) };
-  const spaceId = await fieldHoldingSpaceId(db, load.destination_farm_code);
-  if (!spaceId) throw new HttpError(400, "That destination has no holding space.");
+  // THE HBN ENTRY (canon 0.30.341): the HBN decides the tote's lot. Bucked
+  // weighs into the HBN's silo (refuse the tote when the HBN has none); Spear
+  // hangs in the destination's holding space as before.
+  const batch = await db
+    .prepare(`SELECT material_form, planned_dryspc FROM harvest_batches WHERE id = ? AND deleted_at IS NULL`)
+    .bind(hbnId)
+    .first<{ material_form: string | null; planned_dryspc: string | null }>();
+  if (!batch) throw new HttpError(400, "Unknown harvest batch.");
+  const landing = await lotLandingForBatch(db, batch, load.destination_farm_code);
+  const spaceId = landing.spaceId;
   const id = crypto.randomUUID();
   const operator = (load.operator_name ?? "").trim() || null;
   const record = {
@@ -1233,7 +1273,7 @@ async function ensureWeighingLotStmts(
     harvest_batch_id: hbnId,
     weight_grams: 0,
     actual_dryspc: spaceId,
-    material_form: "spear",
+    material_form: landing.materialForm,
     team_lead: operator,
     status: LOT_STATUS.weighing,
     effective_date: load.effective_date,
@@ -1251,9 +1291,9 @@ async function ensureWeighingLotStmts(
           `INSERT INTO wet_weight_entries (
             id, harvest_batch_id, weight_grams, wet_spear_weight_grams, actual_dryspc, actual_start_time, truck_number, material_form, lead_person_id, team_lead, notes, status, effective_date,
             created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-          ) VALUES (?, ?, 0, NULL, ?, NULL, NULL, 'spear', NULL, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+          ) VALUES (?, ?, 0, NULL, ?, NULL, NULL, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL)`
         )
-        .bind(id, hbnId, spaceId, operator, LOT_STATUS.weighing, load.effective_date, ts, actorId, ts, actorId),
+        .bind(id, hbnId, spaceId, landing.materialForm, operator, LOT_STATUS.weighing, load.effective_date, ts, actorId, ts, actorId),
       ...logsForInsert(db, "wet_weight_entries", id, record, actorId, SYSTEM_REASON.create, ts),
     ],
   };
@@ -1577,10 +1617,10 @@ function lotArrivalStmts(
   const stmts: D1PreparedStatement[] = [
     db
       .prepare(
-        `UPDATE wet_weight_entries SET status = ?, updated_at = ?, updated_by = ?
+        `UPDATE wet_weight_entries SET status = ?, finished_at = COALESCE(finished_at, ?), updated_at = ?, updated_by = ?
          WHERE id = ? AND deleted_at IS NULL`
       )
-      .bind(LOT_STATUS.drying, ts, actorId, lot.id),
+      .bind(LOT_STATUS.drying, ts, ts, actorId, lot.id),
     insertLog(db, {
       record_table: "wet_weight_entries",
       record_id: lot.id,
@@ -3765,7 +3805,11 @@ export async function runQueueControl(
     ];
     // THE IN-TRANSIT RULE (canon 0.30.320): drying back to weighing clears the
     // Finish Load YES close, so the HBN returns to the field select.
+    // THE HBN ENTRY (canon 0.30.341): back on weighing the lot has no finish, so finished_at clears.
     if (entity === "wet_weight_entries" && target === LOT_STATUS.weighing) {
+      stmts.push(
+        db.prepare(`UPDATE wet_weight_entries SET finished_at = NULL WHERE id = ? AND deleted_at IS NULL`).bind(id)
+      );
       const lot = await db
         .prepare(`SELECT harvest_batch_id FROM wet_weight_entries WHERE id = ? AND deleted_at IS NULL`)
         .bind(id)
@@ -4325,7 +4369,7 @@ export async function recallHarvestBatch(db: D1Database, form: FormData): Promis
   const row = await db
     .prepare(
       `SELECT id, hbn, entry_date, farm_code, grow_method_code, strain_id, manicure,
-              planned_dryspc, start_time, zone, rows_text, metrc_harvest_tag, status, born_from
+              planned_dryspc, material_form, start_time, zone, rows_text, metrc_harvest_tag, status, born_from
        FROM harvest_batches WHERE id = ? AND deleted_at IS NULL`
     )
     .bind(id)
@@ -4569,11 +4613,12 @@ export async function editRecord(
       if (!iso) throw new HttpError(400, `${short} must be a farm-time date and time, YYYY-MM-DD HH:MM.`);
       if (Date.parse(iso) > Date.parse(ts) + 10 * 60 * 1000) throw new HttpError(400, `${short} is ahead of now.`);
       next = iso;
-    } else if (table === "wet_weight_entries" && field.name === "material_form") {
+    } else if ((table === "wet_weight_entries" || table === "harvest_batches") && field.name === "material_form") {
       // Owner ruling 2026-09-07 (canon 0.29.1): the column is NOT NULL and
       // drives the receive mint, so a blank or absent field means UNCHANGED
       // (older floor forms predate the column and must keep editing across the
       // deploy boundary); a present value must be spear or bucked, in words.
+      // THE HBN ENTRY (canon 0.30.341): the HBN's own form reads the same law.
       const raw = textOrNull(form.get(field.name));
       if (raw == null) continue;
       if (raw !== "spear" && raw !== "bucked") {

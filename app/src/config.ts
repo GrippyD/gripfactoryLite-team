@@ -635,6 +635,30 @@ export const HBN_MINT_FORMAT =
   "<YYDDD>-<farm>-<grow_code>-<strain_code>-<manicure>-<silo>-<YY###>";
 export const HBN_BLANK_SILO = "NA";
 
+/** THE HBN ENTRY (canon 0.30.341). The owner, 2026-10-02: "The HBN being made
+ * defaults to the next silo in sequence for scheduling purposes ... (Arlington
+ * dry room and the blast freezer will count as silo 6 and 7 for our
+ * sequence)". The sequence is the first seven kind-silo spaces in the drying
+ * strip's order (listSilos), numbered 1 to 7 by position; the HBN's sixth
+ * segment is that number. */
+export const SILO_SEQUENCE_SIZE = 7;
+
+/** The two words of an HBN's or a lot's material form (canon 0.29.1, 0.30.341). */
+export const MATERIAL_FORMS = ["spear", "bucked"] as const;
+export type MaterialForm = (typeof MATERIAL_FORMS)[number];
+
+export function isMaterialForm(value: unknown): value is MaterialForm {
+  return value === "spear" || value === "bucked";
+}
+
+/** A planned silo value as a sequence number (1 to SILO_SEQUENCE_SIZE), else null (blank, NA, or out of range). */
+export function siloSequenceNumber(raw: unknown): number | null {
+  const text = String(raw ?? "").trim();
+  if (!/^[0-9]{1,2}$/.test(text)) return null;
+  const n = Number(text);
+  return n >= 1 && n <= SILO_SEQUENCE_SIZE ? n : null;
+}
+
 /** Owner ruling 2026-08-31: the single lot identifier law. Travelers carry the
  * last 5 digits of the HBN (the YY### serial) plus the last 6 of the METRC
  * harvest tag, rendered like 26002/A4B7C9; a blank tag renders just the serial.

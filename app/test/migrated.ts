@@ -93,16 +93,18 @@ export function seedPerson(m: MigratedDb, id = "person-1"): string {
   return id;
 }
 
-/** An app-minted batch (born_from app). */
+/** An app-minted batch (born_from app). THE HBN ENTRY (canon 0.30.341): `silo`
+ * is the planned sequence number (null by default, as a sheet or METRC mint
+ * leaves it) and `form` the HBN's Spear or Bucked (the column's bucked default). */
 export function seedBatch(
   m: MigratedDb,
-  over: { id: string; hbn: string; serial: number; strainId?: string; farm?: string; status?: string; born?: string }
+  over: { id: string; hbn: string; serial: number; strainId?: string; farm?: string; status?: string; born?: string; silo?: string | null; form?: string }
 ): string {
   m.run(
     `INSERT INTO harvest_batches (
        id, entry_date, farm_code, grow_method_code, strain_id, manicure, hbn, lot_serial, harvest_year, status,
-       license_value, born_from, created_at, updated_at
-     ) VALUES (?, '2026-09-08', ?, 'GH', ?, 0, ?, ?, 2026, ?, 'AU-G-C-000832', ?, ?, ?)`,
+       license_value, born_from, planned_dryspc, created_at, updated_at
+     ) VALUES (?, '2026-09-08', ?, 'GH', ?, 0, ?, ?, 2026, ?, 'AU-G-C-000832', ?, ?, ?, ?)`,
     over.id,
     over.farm ?? "ARL",
     over.strainId ?? "98cf3164-344e-414a-9f1c-1526fde445ac",
@@ -110,9 +112,16 @@ export function seedBatch(
     over.serial,
     over.status ?? "open",
     over.born ?? "app",
+    over.silo ?? null,
     T0,
     T0
   );
+  // A floor seeded before 0087 (`until`) has no material_form column yet; the column's own default is bucked.
+  try {
+    m.run(`UPDATE harvest_batches SET material_form = ? WHERE id = ?`, over.form ?? "bucked", over.id);
+  } catch {
+    // pre-0087 shape
+  }
   return over.id;
 }
 

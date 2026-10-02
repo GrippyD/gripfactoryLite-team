@@ -395,7 +395,7 @@ describe("inventory tile (owner ruling 2026-08-31, sheet 2026-09-01)", () => {
 });
 
 describe("wet weight header form (owner ruling 2026-08-28)", () => {
-  it("carries Team Lead (canon 0.30.67), Move To, single line Notes, and Start lot; no weight fields", () => {
+  it("carries Team Lead (canon 0.30.67), single line Notes, and Start lot; no weight fields, no Move To, no form (canon 0.30.341)", () => {
     const station = stationByKey("wet_weight")!;
     // THE SUPERVISOR AND THE TEAM LEAD (canon 0.30.67): the header's typed field is the Team Lead.
     expect(station.personLabel).toBe("Team Lead");
@@ -403,16 +403,20 @@ describe("wet weight header form (owner ruling 2026-08-28)", () => {
     const fields = station.fields;
     expect(fields.find((f) => f.name === "weight_grams")).toBeUndefined();
     expect(fields.find((f) => f.name === "wet_spear_weight_grams")).toBeUndefined();
-    const moveTo = fields.find((f) => f.name === "actual_dryspc");
-    expect(moveTo?.label).toBe("Move To");
-    expect(moveTo?.input).toBe("move_to");
-    expect(moveTo && "required" in moveTo && moveTo.required).toBe(true);
+    // THE HBN ENTRY (canon 0.30.341; the owner: "remove "move-to" altogether"):
+    // Move To and the Spear or Bucked radio left the header; the HBN decides both.
+    expect(fields.find((f) => f.name === "actual_dryspc")).toBeUndefined();
+    expect(fields.find((f) => f.name === "material_form")).toBeUndefined();
     expect(fields.find((f) => f.name === "dry_space_id")).toBeUndefined();
     expect(fields.find((f) => f.name === "notes")?.input).toBe("text");
-    // Owner ruling 2026-09-07 (canon 0.29.1): the spear/buck toggle lives here.
-    const materialForm = fields.find((f) => f.name === "material_form");
+    // The HBN carries the radio, Bucked by default, above its required Silo.
+    const acquire = stationByKey("acquire_hbn")!.fields;
+    const materialForm = acquire.find((f) => f.name === "material_form");
     expect(materialForm?.input).toBe("radio");
-    expect(materialForm && "default" in materialForm && materialForm.default).toBe("spear");
+    expect(materialForm && "default" in materialForm && materialForm.default).toBe("bucked");
+    const silo = acquire.find((f) => f.name === "planned_dryspc");
+    expect(silo).toMatchObject({ label: "Silo", input: "lookup", lookup: "silo_number", required: true });
+    expect(acquire.indexOf(materialForm!)).toBe(acquire.indexOf(silo!) - 1);
   });
 
   it("declares the wet_weights ledger", () => {
@@ -729,11 +733,11 @@ describe("left pane farm groups (owner ruling 2026-08-28)", () => {
 });
 
 describe("truck number after the ledger ruling (owner ruling 2026-08-28)", () => {
-  it("Truck # is free text on the header; Move To is still not a truck (canon 0.30.226)", () => {
+  it("Truck # is free text on the header; Move To is gone (canon 0.30.226, 0.30.341)", () => {
     const fields = stationByKey("wet_weight")!.fields;
     const truck = fields.find((f) => f.name === "truck_number");
     expect(truck?.input).toBe("text");
-    expect(fields.find((f) => f.name === "actual_dryspc")?.input).toBe("move_to");
+    expect(fields.find((f) => f.name === "actual_dryspc")).toBeUndefined();
   });
 
   it("the column stays on the edit page and the Dry Space Queue for older rows", () => {
@@ -757,7 +761,7 @@ describe("wet weight header render (owner ruling 2026-08-28)", () => {
   // catalog trucks and the batch's own numbers arrive as truckOptions.
   const ledgerCtx: StationLedgerCtx = {
     farmName: "Arlington",
-    moveToOptions: [{ value: "ds6", label: "Arlington Dry Room" }],
+    landing: { form: "bucked", spaceName: "Silo 3", hbnId: "hb1" },
     truckOptions: ["1"],
     resumeLots: [],
   };
@@ -785,27 +789,32 @@ describe("wet weight header render (owner ruling 2026-08-28)", () => {
     expect(html).toContain("Team Lead");
     expect(html).not.toContain('name="weight_grams"');
     expect(html).not.toContain('name="wet_spear_weight_grams"');
-    expect(html).toContain("Move To");
-    expect(html).toContain("Add a truck");
-    expect(html).toContain('action="/station/wet_weight/add_truck"');
+    // THE HBN ENTRY (canon 0.30.341): no Move To, no form radio, no Add a truck; the landing line under the HBN.
+    expect(html).not.toContain('name="actual_dryspc"');
+    expect(html).not.toContain('name="material_form"');
+    expect(html).not.toContain("Add a truck");
     expect(html).toContain("Start lot");
   });
 
-  it("filters Move To to the passed options", () => {
+  it("reads the picked HBN's landing line under the HBN, with the link to the HBN's pencil (canon 0.30.341)", () => {
     const html = render(ledgerCtx);
-    expect(html).toContain("Arlington Dry Room");
-    expect(html).not.toContain("Silo");
+    expect(html).toContain('<input type="hidden" name="harvest_batch_id" value="hb1"><p class="lot-landing" data-lot-landing="bucked" data-lot-landing-space="Silo 3">Bucked: lands in Silo 3 as WIP <a class="muted" href="/record/harvest_batches/hb1/edit?back=');
+    expect(html).toContain(">change on the HBN</a></p>");
+    const spear = render({ ...ledgerCtx, landing: { form: "spear", spaceName: "Hang in Place", hbnId: "hb1" } });
+    expect(spear).toContain('data-lot-landing="spear" data-lot-landing-space="Hang in Place">Spear: hangs in Hang in Place as SPR ');
+    const noSilo = render({ ...ledgerCtx, landing: { form: "bucked", spaceName: null, hbnId: "hb1" } });
+    expect(noSilo).toContain('data-lot-landing-space="">Bucked: This HBN has no silo. Set it on the HBN first. ');
   });
 
   it("lists weighing lots as resume links above the form, each in local time with its Move To, Team Lead and total (canon 0.30.89)", () => {
     const html = render({
       ...ledgerCtx,
       resumeLots: [
-        { id: "lot1", created_at: "2026-08-31T00:00:00.000Z", weight_grams: 12.5, truck_number: "4", dry_space_name: "Truck", team_lead: "Plutarco" },
+        { id: "lot1", created_at: "2026-08-31T00:00:00.000Z", weight_grams: 12.5, truck_number: "4", dry_space_name: "Truck", team_lead: "Test Lead" },
         { id: "lot2", created_at: "2026-08-31T00:00:06.000Z", weight_grams: 0, truck_number: null, dry_space_name: "Silo 1", team_lead: null },
       ],
     });
-    expect(html).toContain('href="/station/wet_weight?lot=lot1"><time datetime="2026-08-31T00:00:00.000Z" data-local>2026-08-31T00:00:00.000Z</time> · Truck 4 · Plutarco (total 13 g)</a>');
+    expect(html).toContain('href="/station/wet_weight?lot=lot1"><time datetime="2026-08-31T00:00:00.000Z" data-local>2026-08-31T00:00:00.000Z</time> · Truck 4 · Test Lead (total 13 g)</a>');
     expect(html).toContain('href="/station/wet_weight?lot=lot2"><time datetime="2026-08-31T00:00:06.000Z" data-local>2026-08-31T00:00:06.000Z</time> · Silo 1 (total 0 g)</a>');
     expect(html).toContain("time[data-local]");
     expect(html.indexOf("Lots in progress")).toBeLessThan(html.indexOf("<form class=\"stack\""));
@@ -863,7 +872,6 @@ describe("record-borne truck options (owner ruling 2026-08-31)", () => {
   const queuesByKey: Record<string, QueueDef> = { hbn_queue: queueByKey("hbn_queue")! };
   const base: StationLedgerCtx = {
     farmName: "Arlington",
-    moveToOptions: [{ value: "ds6", label: "Arlington Dry Room" }],
     truckOptions: [],
     resumeLots: [],
   };
@@ -879,23 +887,24 @@ describe("record-borne truck options (owner ruling 2026-08-31)", () => {
       ctx
     );
 
-  it("renders each derived truck as the encoded truck-<n> with a numbered label", () => {
+  // THE HBN ENTRY (canon 0.30.341): with Move To gone from the header, no truck
+  // option and no Add a truck button render any more; the Truck # text field
+  // is the truck's record. The staged number still rides the sibling form.
+  it("renders no truck option on the header: Move To is gone (canon 0.30.341)", () => {
     const html = render({ ...base, truckOptions: ["1", "2"] });
-    expect(html).toContain('<option value="truck-1">Truck 1</option>');
-    expect(html).toContain('<option value="truck-2">Truck 2</option>');
+    expect(html).not.toContain('value="truck-');
+    expect(html).toContain('name="truck_number"');
   });
 
-  it("starts a batch with zero truck options but keeps the Add a truck control", () => {
+  it("starts a batch with zero truck options and no Add a truck control", () => {
     const html = render(base);
     expect(html).not.toContain('value="truck-');
-    expect(html).toContain("Add a truck");
-    expect(html).toContain('action="/station/wet_weight/add_truck"');
+    expect(html).not.toContain("Add a truck");
   });
 
-  it("preselects the staged option and carries it into the sibling form", () => {
+  it("carries a staged number into the sibling form and renders no option for it", () => {
     const html = render({ ...base, truckOptions: ["1"], stagedTruck: "2" });
-    expect(html).toContain('<option value="truck-1">Truck 1</option>');
-    expect(html).toContain('<option value="truck-2" selected>Truck 2</option>');
+    expect(html).not.toContain('value="truck-');
     expect(html).toContain('<input type="hidden" name="truck" value="2">');
   });
 

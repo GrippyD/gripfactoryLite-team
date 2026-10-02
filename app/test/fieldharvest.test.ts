@@ -28,7 +28,8 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
   it("mints the weighing lot at the first tote and lands the next tote on it", async () => {
     const m = await migratedDb();
     const person = seedPerson(m);
-    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26201", serial: 6201, farm: "ARL" });
+    // THE HBN ENTRY (canon 0.30.341): a Spear HBN's totes hang in the destination's holding space, as before.
+    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26201", serial: 6201, farm: "ARL", form: "spear" });
     const started = await startFieldLoad(
       m.db,
       formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNN" })
@@ -58,7 +59,7 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
   it("an Arlington destination holds the lot in the Arlington Dry Room", async () => {
     const m = await migratedDb();
     const person = seedPerson(m);
-    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26202", serial: 6202, farm: "ARL" });
+    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26202", serial: 6202, farm: "ARL", form: "spear" });
     const started = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "ARL" }));
     const loadId = new URL("http://local" + started.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, loadId, formOf({ person_id: person, weight_grams: "4", harvest_batch_id: "hb-arl" }));
@@ -147,8 +148,8 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
   it("Finish Load NO sends the load and leaves the HBN open; YES finishes without a pass", async () => {
     const m = await migratedDb();
     const person = seedPerson(m);
-    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26221", serial: 6221, farm: "ARL" });
-    seedBatch(m, { id: "hb-pns", hbn: "26244-PNS-GH-027-0-NA-26222", serial: 6222, farm: "PNS" });
+    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26221", serial: 6221, farm: "ARL", form: "spear" });
+    seedBatch(m, { id: "hb-pns", hbn: "26244-PNS-GH-027-0-NA-26222", serial: 6222, farm: "PNS", form: "spear" });
     const first = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNN" }));
     const load1 = new URL("http://local" + first.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, load1, formOf({ person_id: person, weight_grams: "10", harvest_batch_id: "hb-arl" }));
@@ -181,7 +182,7 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     const m = await migratedDb();
     const person = seedPerson(m);
     const pin = await pinOf(m);
-    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26231", serial: 6231, farm: "ARL" });
+    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26231", serial: 6231, farm: "ARL", form: "spear" });
     const started = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "ARL" }));
     const loadId = new URL("http://local" + started.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, loadId, formOf({ person_id: person, weight_grams: "8", harvest_batch_id: "hb-arl" }));
@@ -203,8 +204,8 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     const m = await migratedDb();
     const person = seedPerson(m);
     const pin = await pinOf(m);
-    seedBatch(m, { id: "hb-a", hbn: "26244-PNS-GH-027-0-NA-26241", serial: 6241, farm: "PNS" });
-    seedBatch(m, { id: "hb-b", hbn: "26244-PNS-GH-027-0-NA-26242", serial: 6242, farm: "PNS" });
+    seedBatch(m, { id: "hb-a", hbn: "26244-PNS-GH-027-0-NA-26241", serial: 6241, farm: "PNS", form: "spear" });
+    seedBatch(m, { id: "hb-b", hbn: "26244-PNS-GH-027-0-NA-26242", serial: 6242, farm: "PNS", form: "spear" });
     const started = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNN" }));
     const loadId = new URL("http://local" + started.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, loadId, formOf({ person_id: person, weight_grams: "9", harvest_batch_id: "hb-a" }));
@@ -225,8 +226,8 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
   it("refuses a missing destination, a fractional gram, a closed load, an empty send, and a foreign HBN", async () => {
     const m = await migratedDb();
     const person = seedPerson(m);
-    seedBatch(m, { id: "hb-pnn", hbn: "26244-PNN-GH-027-0-NA-26251", serial: 6251, farm: "PNN" });
-    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26252", serial: 6252, farm: "ARL" });
+    seedBatch(m, { id: "hb-pnn", hbn: "26244-PNN-GH-027-0-NA-26251", serial: 6251, farm: "PNN", form: "spear" });
+    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26252", serial: 6252, farm: "ARL", form: "spear" });
     await expect(startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand" }))).rejects.toMatchObject({
       message: "Destination is required.",
     });
@@ -268,12 +269,14 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
       T0,
       T0
     );
-    // a lot finished today (a pass earlier today): the HBN stays for the day's later loads
+    // a lot finished today (a pass earlier today): the HBN stays for the day's later loads.
+    // THE HBN ENTRY (canon 0.30.341): the finish's instant, finished_at, is what the rule reads now.
     m.run(
-      `INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, effective_date, created_at, updated_at)
-       VALUES ('lot-today', 'hb-today', 11, ?, 'drying', ?, ?, ?)`,
+      `INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, effective_date, finished_at, created_at, updated_at)
+       VALUES ('lot-today', 'hb-today', 11, ?, 'drying', ?, ?, ?, ?)`,
       ROOM,
       today,
+      nowIso(),
       T0,
       T0
     );
@@ -315,8 +318,8 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
   it("a sent load exposes each HBN and a second load merges under the weighing lot", async () => {
     const m = await migratedDb();
     const person = seedPerson(m);
-    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26271", serial: 6271, farm: "ARL" });
-    seedBatch(m, { id: "hb-pns", hbn: "26244-PNS-GH-027-0-NA-26272", serial: 6272, farm: "PNS" });
+    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26271", serial: 6271, farm: "ARL", form: "spear" });
+    seedBatch(m, { id: "hb-pns", hbn: "26244-PNS-GH-027-0-NA-26272", serial: 6272, farm: "PNS", form: "spear" });
     const started = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNN" }));
     const load1 = new URL("http://local" + started.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, load1, formOf({ person_id: person, weight_grams: "100", harvest_batch_id: "hb-arl" }));
@@ -361,8 +364,8 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
   it("the pass finishes the weighing lot and receives a load only when every HBN on it is passed", async () => {
     const m = await migratedDb();
     const person = seedPerson(m);
-    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26281", serial: 6281, farm: "ARL" });
-    seedBatch(m, { id: "hb-pns", hbn: "26244-PNS-GH-027-0-NA-26282", serial: 6282, farm: "PNS" });
+    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26281", serial: 6281, farm: "ARL", form: "spear" });
+    seedBatch(m, { id: "hb-pns", hbn: "26244-PNS-GH-027-0-NA-26282", serial: 6282, farm: "PNS", form: "spear" });
     const first = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "PNN" }));
     const load1 = new URL("http://local" + first.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, load1, formOf({ person_id: person, weight_grams: "100", harvest_batch_id: "hb-arl" }));
@@ -415,8 +418,8 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
   it("YES closes the HBN and the Demote of its lot reopens the select", async () => {
     const m = await migratedDb();
     const person = seedPerson(m);
-    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26291", serial: 6291, farm: "ARL" });
-    seedBatch(m, { id: "hb-pns", hbn: "26244-PNS-GH-027-0-NA-26292", serial: 6292, farm: "PNS" });
+    seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26291", serial: 6291, farm: "ARL", form: "spear" });
+    seedBatch(m, { id: "hb-pns", hbn: "26244-PNS-GH-027-0-NA-26292", serial: 6292, farm: "PNS", form: "spear" });
     const started = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "PNN" }));
     const loadId = new URL("http://local" + started.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, loadId, formOf({ person_id: person, weight_grams: "9", harvest_batch_id: "hb-arl" }));
