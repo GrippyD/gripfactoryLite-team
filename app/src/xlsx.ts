@@ -204,33 +204,9 @@ function sheetXml(sheet: XlsxSheet): string {
 </worksheet>`;
 }
 
-const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
-  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
-</Types>`;
-
 const ROOT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
-</Relationships>`;
-
-function workbookXml(sheetName: string): string {
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <sheets>
-    <sheet name="${xmlEsc(sheetName)}" sheetId="1" r:id="rId1"/>
-  </sheets>
-</workbook>`;
-}
-
-const WORKBOOK_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>`;
 
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -271,13 +247,52 @@ export const XLSX_PART_NAMES = [
 
 /** Build a real .xlsx (uncompressed OOXML zip) with a bold header and gram formats. */
 export function buildXlsx(sheet: XlsxSheet): Uint8Array {
+  return buildXlsxBook([sheet]);
+}
+
+/** Several sheets in one stored .xlsx. Sheet names come from each sheet's sheetName. */
+export function buildXlsxBook(sheets: XlsxSheet[]): Uint8Array {
+  const list = sheets.length > 0 ? sheets : [{ headers: [], rows: [] }];
+  const styleRid = `rId${list.length + 1}`;
+  const sheetTags = list
+    .map((sheet, i) => `<sheet name="${xmlEsc(sheet.sheetName ?? `Sheet${i + 1}`)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`)
+    .join("");
+  const rels = list
+    .map(
+      (_, i) =>
+        `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`
+    )
+    .join("");
+  const overrides = list
+    .map(
+      (_, i) =>
+        `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
+    )
+    .join("");
+  const content = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  ${overrides}
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`;
+  const book = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>${sheetTags}</sheets>
+</workbook>`;
+  const bookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  ${rels}
+  <Relationship Id="${styleRid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
   const files: ZipFile[] = [
-    { name: "[Content_Types].xml", data: te.encode(CONTENT_TYPES) },
+    { name: "[Content_Types].xml", data: te.encode(content) },
     { name: "_rels/.rels", data: te.encode(ROOT_RELS) },
-    { name: "xl/workbook.xml", data: te.encode(workbookXml(sheet.sheetName ?? "Report")) },
-    { name: "xl/_rels/workbook.xml.rels", data: te.encode(WORKBOOK_RELS) },
+    { name: "xl/workbook.xml", data: te.encode(book) },
+    { name: "xl/_rels/workbook.xml.rels", data: te.encode(bookRels) },
     { name: "xl/styles.xml", data: te.encode(STYLES) },
-    { name: "xl/worksheets/sheet1.xml", data: te.encode(sheetXml(sheet)) },
+    ...list.map((sheet, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: te.encode(sheetXml(sheet)) })),
   ];
   return writeStoreZip(files);
 }
@@ -286,4 +301,253 @@ export function xlsxHasParts(bytes: Uint8Array): boolean {
   if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) return false;
   const text = new TextDecoder("latin1").decode(bytes);
   return XLSX_PART_NAMES.every((name) => text.includes(name));
+}
+
+/** The same grid `readXlsbSheets` yields. `row` is zero-based. Cached cell values only. */
+export type XlsxGridRow = { row: number; cells: (string | number | boolean | null)[] };
+
+type ZipEntry = { name: string; method: number; data: Uint8Array; compressed: Uint8Array };
+
+function readU16(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+function readU32(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)) >>> 0;
+}
+
+function findEocd(bytes: Uint8Array): number {
+  const start = Math.max(0, bytes.length - 22 - 65535);
+  for (let i = bytes.length - 22; i >= start; i--) {
+    if (bytes[i] === 0x50 && bytes[i + 1] === 0x4b && bytes[i + 2] === 0x05 && bytes[i + 3] === 0x06) return i;
+  }
+  throw new Error("The workbook is not a zip.");
+}
+
+async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
+  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function deflateRawBytes(data: Uint8Array): Promise<Uint8Array> {
+  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/** Central directory, then each local payload. Method 0 is stored. Method 8 is deflate. */
+export async function readZip(bytes: Uint8Array): Promise<ZipEntry[]> {
+  const eocd = findEocd(bytes);
+  const count = readU16(bytes, eocd + 10);
+  let cursor = readU32(bytes, eocd + 16);
+  const entries: ZipEntry[] = [];
+  for (let n = 0; n < count; n++) {
+    if (readU32(bytes, cursor) !== 0x02014b50) throw new Error("The workbook zip is unreadable.");
+    const method = readU16(bytes, cursor + 10);
+    const compSize = readU32(bytes, cursor + 20);
+    const nameLen = readU16(bytes, cursor + 28);
+    const extraLen = readU16(bytes, cursor + 30);
+    const commentLen = readU16(bytes, cursor + 32);
+    const localAt = readU32(bytes, cursor + 42);
+    const name = new TextDecoder().decode(bytes.subarray(cursor + 46, cursor + 46 + nameLen));
+    const localName = readU16(bytes, localAt + 26);
+    const localExtra = readU16(bytes, localAt + 28);
+    const dataAt = localAt + 30 + localName + localExtra;
+    const compressed = bytes.subarray(dataAt, dataAt + compSize);
+    const data = method === 8 ? await inflateRaw(compressed) : compressed;
+    entries.push({ name: name.replaceAll("\\", "/"), method, data, compressed });
+    cursor += 46 + nameLen + extraLen + commentLen;
+  }
+  return entries;
+}
+
+function writeZip(entries: ZipEntry[]): Uint8Array {
+  const locals: Uint8Array[] = [];
+  const centrals: Uint8Array[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const nameBytes = te.encode(entry.name);
+    const payload = entry.method === 8 ? entry.compressed : entry.data;
+    const crc = crc32(entry.data);
+    const local = concatBytes([
+      te.encode("PK\u0003\u0004"),
+      u16(20),
+      u16(0),
+      u16(entry.method),
+      u16(0),
+      u16(0),
+      u32(crc),
+      u32(payload.length),
+      u32(entry.data.length),
+      u16(nameBytes.length),
+      u16(0),
+      nameBytes,
+      payload,
+    ]);
+    const central = concatBytes([
+      te.encode("PK\u0001\u0002"),
+      u16(20),
+      u16(20),
+      u16(0),
+      u16(entry.method),
+      u16(0),
+      u16(0),
+      u32(crc),
+      u32(payload.length),
+      u32(entry.data.length),
+      u16(nameBytes.length),
+      u16(0),
+      u16(0),
+      u16(0),
+      u16(0),
+      u32(0),
+      u32(offset),
+      nameBytes,
+    ]);
+    locals.push(local);
+    centrals.push(central);
+    offset += local.length;
+  }
+  const centralBytes = concatBytes(centrals);
+  const eocd = concatBytes([
+    te.encode("PK\u0005\u0006"),
+    u16(0),
+    u16(0),
+    u16(entries.length),
+    u16(entries.length),
+    u32(centralBytes.length),
+    u32(offset),
+    u16(0),
+  ]);
+  return concatBytes([...locals, centralBytes, eocd]);
+}
+
+/** Recompress one stored part so a reader is proved on deflate-raw as well as store. */
+export async function deflateZipPart(bytes: Uint8Array, name: string): Promise<Uint8Array> {
+  const entries = await readZip(bytes);
+  const hit = entries.find((entry) => entry.name === name);
+  if (!hit) throw new Error(`The zip has no ${name}.`);
+  hit.compressed = await deflateRawBytes(hit.data);
+  hit.method = 8;
+  return writeZip(entries);
+}
+
+function xmlText(value: string): string {
+  return value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
+}
+
+function sharedStringList(xml: string): string[] {
+  const out: string[] = [];
+  const si = /<si\b[^>]*>([\s\S]*?)<\/si>/g;
+  let match: RegExpExecArray | null;
+  while ((match = si.exec(xml))) {
+    const parts: string[] = [];
+    const texts = /<t\b[^>]*>([\s\S]*?)<\/t>/g;
+    let text: RegExpExecArray | null;
+    while ((text = texts.exec(match[1]))) parts.push(xmlText(text[1]));
+    out.push(parts.join(""));
+  }
+  return out;
+}
+
+function colIndex(letters: string): number {
+  let n = 0;
+  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+function sheetGrid(xml: string, strings: readonly string[]): XlsxGridRow[] {
+  const byRow = new Map<number, Map<number, string | number | boolean | null>>();
+  const cells = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  let match: RegExpExecArray | null;
+  while ((match = cells.exec(xml))) {
+    const attrs = match[1];
+    const body = match[2] ?? "";
+    const ref = /r="([A-Z]+)(\d+)"/.exec(attrs);
+    if (!ref) continue;
+    const kind = /t="([^"]*)"/.exec(attrs)?.[1] ?? "";
+    const row = Number(ref[2]) - 1;
+    const col = colIndex(ref[1]);
+    let value: string | number | boolean | null = null;
+    const cached = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(body)?.[1];
+    if (kind === "inlineStr") {
+      const parts: string[] = [];
+      const texts = /<t\b[^>]*>([\s\S]*?)<\/t>/g;
+      let text: RegExpExecArray | null;
+      while ((text = texts.exec(body))) parts.push(xmlText(text[1]));
+      value = parts.join("");
+    } else if (kind === "s") {
+      value = strings[Number(cached ?? "")] ?? "";
+    } else if (kind === "b") {
+      value = cached === "1";
+    } else if (kind === "str") {
+      value = cached == null ? "" : xmlText(cached);
+    } else if (cached != null && cached !== "") {
+      const n = Number(cached);
+      value = Number.isFinite(n) ? n : xmlText(cached);
+    }
+    const line = byRow.get(row) ?? new Map();
+    line.set(col, value);
+    byRow.set(row, line);
+  }
+  return [...byRow.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([row, cols]) => {
+      const width = cols.size === 0 ? 0 : Math.max(...cols.keys()) + 1;
+      const cells: (string | number | boolean | null)[] = Array.from({ length: width }, () => null);
+      for (const [col, value] of cols) cells[col] = value;
+      return { row, cells };
+    });
+}
+
+function sheetNames(workbookXml: string): Array<{ name: string; rel: string }> {
+  const out: Array<{ name: string; rel: string }> = [];
+  const re = /<sheet\b([^>]*)\/?>/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(workbookXml))) {
+    const name = /name="([^"]*)"/.exec(match[1])?.[1] ?? "";
+    const rel = /r:id="([^"]*)"/.exec(match[1])?.[1] ?? "";
+    if (name && rel) out.push({ name: xmlText(name), rel });
+  }
+  return out;
+}
+
+function relTargets(xml: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const re = /<Relationship\b([^>]*)\/?>/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(xml))) {
+    const id = /Id="([^"]*)"/.exec(match[1])?.[1] ?? "";
+    const target = /Target="([^"]*)"/.exec(match[1])?.[1] ?? "";
+    if (id && target) out.set(id, target.replaceAll("\\", "/"));
+  }
+  return out;
+}
+
+/** Named sheets from an .xlsx zip. Cached values only. Dates stay Excel serials. */
+export async function readXlsxSheets(bytes: Uint8Array, only?: readonly string[]): Promise<Map<string, XlsxGridRow[]>> {
+  const entries = await readZip(bytes);
+  const file = (name: string) => entries.find((entry) => entry.name === name)?.data;
+  const book = file("xl/workbook.xml");
+  const rels = file("xl/_rels/workbook.xml.rels");
+  if (!book || !rels) throw new Error("The workbook has no sheet list.");
+  const stringsRaw = file("xl/sharedStrings.xml");
+  const strings = stringsRaw ? sharedStringList(new TextDecoder().decode(stringsRaw)) : [];
+  const targets = relTargets(new TextDecoder().decode(rels));
+  const wanted = only ? new Set(only) : null;
+  const out = new Map<string, XlsxGridRow[]>();
+  for (const sheet of sheetNames(new TextDecoder().decode(book))) {
+    if (wanted && !wanted.has(sheet.name)) continue;
+    const target = targets.get(sheet.rel);
+    if (!target) continue;
+    const part = target.startsWith("xl/") ? target : `xl/${target.replace(/^\.\//, "")}`;
+    const xml = file(part);
+    if (!xml) continue;
+    out.set(sheet.name, sheetGrid(new TextDecoder().decode(xml), strings));
+  }
+  return out;
 }

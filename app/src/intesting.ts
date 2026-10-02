@@ -5,7 +5,7 @@
  */
 
 import { nowIso } from "./audit";
-import { normHeader } from "./compliance";
+import { normHeader, outcomeOf } from "./compliance";
 import { CONFIG_KEYS, DEFAULT_LAB_TEST_BATCH, roundGrams, SYSTEM_REASON } from "./config";
 import { insertLog, logsForInsert } from "./db";
 import { readGraphItem, sheetSourceKind, type SheetSyncEnv, type SheetSyncTrigger } from "./sheetsync";
@@ -67,9 +67,6 @@ const STORED_HEADERS = [
   "Notes",
 ] as const;
 
-const PASSED = new Set(["passed", "pass", "passed - retest", "remediated"]);
-const FAILED = new Set(["failed", "fail"]);
-
 export function parseAliasList(raw: string | null | undefined): Map<string, string> {
   const out = new Map<string, string>();
   for (const part of String(raw ?? "").split(";")) {
@@ -91,12 +88,7 @@ export function panelOf(tab: string, required: string | null, rndTab: string): S
   return null;
 }
 
-export function outcomeOf(status: string | null): DeskOutcome {
-  const name = normHeader(status ?? "");
-  if (PASSED.has(name)) return "passed";
-  if (FAILED.has(name)) return "failed";
-  return "open";
-}
+export { outcomeOf };
 
 export function sheetDate(value: XlsbCell): string | null {
   if (value == null || value === "") return null;

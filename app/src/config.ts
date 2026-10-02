@@ -455,6 +455,13 @@ export const CONFIG_KEYS = {
   // Trim Bogey on its first save; TRIM_BOGEY_DEFAULT until then.
   trim_bogey_pct: "trim_bogey_pct",
   max_tote_lbs: "max_tote_lbs",
+  // THE CURE CAPS (canon 0.30.341). Owner, 2026-10-02: "New Admin lookup: CSA Lot Cap and CSB Lot Cap"
+  // and "Default caps are CSA: 36, and CSB: 8". Whole lots, seeded by migration 0088.
+  csa_lot_cap: "csa_lot_cap",
+  csb_lot_cap: "csb_lot_cap",
+  // POST HARVEST PUZZLES (canon 0.30.351). Bud and trim dollars per pound for $PP.
+  php_bud_price_per_lb: "php_bud_price_per_lb",
+  php_trim_price_per_lb: "php_trim_price_per_lb",
   // THE FARM DAY BEGINS AT SIX (canon 0.30.151). Owner, 2026-09-20: "Second
   // shift ends the next day, how can I have the report date treat the start of
   // the shift a the date?"; his pick "6:00 AM". The Eastern hour at which the
@@ -1537,6 +1544,43 @@ export function maxToteLbsOf(raw: unknown): number | null {
 /** The stored Max Tote Weight in pounds; the default when the row is missing or unreadable. */
 export function parseMaxToteLbs(raw: string | null | undefined): number {
   return maxToteLbsOf(raw) ?? MAX_TOTE_LBS_DEFAULT;
+}
+
+/** THE CURE CAPS (canon 0.30.341): CSA holds 36 lots and CSB holds 8 until a hand saves another. */
+export const CSA_LOT_CAP_DEFAULT = 36;
+export const CSB_LOT_CAP_DEFAULT = 8;
+
+/** A typed lot cap: a whole number of lots, 1 to 999; null for anything else, so the form refuses it in words. */
+export function lotCapOf(raw: unknown): number | null {
+  const text = String(raw ?? "").trim();
+  if (!/^\d{1,3}$/.test(text)) return null;
+  const n = Number(text);
+  return n >= 1 && n <= 999 ? n : null;
+}
+
+/** The stored lot cap. A whole number above 0 stands; anything else (including the cure-rooms list a fake read returns) is the default. */
+export function parseLotCap(raw: string | null | undefined, fallback: number): number {
+  const text = String(raw ?? "").trim();
+  if (!/^\d+$/.test(text)) return fallback;
+  const n = Number(text);
+  return n > 0 ? n : fallback;
+}
+
+/** POST HARVEST PUZZLES (canon 0.30.351): Bud $/lb is 150 and Trim $/lb is 30 until a hand saves another. */
+export const PHP_BUD_PRICE_DEFAULT = 150;
+export const PHP_TRIM_PRICE_DEFAULT = 30;
+
+/** A typed price per pound: 0 to 10,000, two decimals at most. A leading $ is tolerated. */
+export function phpPriceOf(raw: unknown): number | null {
+  const text = String(raw ?? "").trim().replace(/^\$/, "").trim();
+  if (!/^\d{1,5}(\.\d{1,2})?$/.test(text)) return null;
+  const n = Number(text);
+  return n >= 0 && n <= 10000 ? n : null;
+}
+
+/** The stored price; the default when the row is missing or unreadable. */
+export function parsePhpPrice(raw: string | null | undefined, fallback: number): number {
+  return phpPriceOf(raw) ?? fallback;
 }
 
 /** THE CRYO CATEGORIES (canon 0.30.112): the product categories a cryo line

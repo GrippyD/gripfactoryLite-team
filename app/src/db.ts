@@ -25,6 +25,7 @@ import {
   SCHEDULE_STATUS,
   TERP_RECIPE_STATUS,
   NON_TRIM_SOURCE_SQL,
+  shortLotId,
   WIP_SOURCE,
   WIP_STATUS,
   type ScheduleStage,
@@ -5262,4 +5263,128 @@ export async function newestRadGrey(db: D1Database): Promise<number | null> {
     .prepare(`SELECT grey FROM rad_runs WHERE deleted_at IS NULL ORDER BY scheduled_at DESC, id DESC LIMIT 1`)
     .first<{ grey: number }>();
   return row ? Number(row.grey) : null;
+}
+
+export type LinePackageRow = {
+  line: "Trim" | "Prepack" | "Cryo" | "Rad";
+  enteredIso: string;
+  lot: string;
+  tag: string;
+  type: string;
+  grams: number;
+  effective: string;
+  operator: string;
+};
+
+/** THE LINE PACKAGES REPORT (canon 0.30.344). The window is [start, end) on created_at, or the Rad run's started_at. */
+export async function listLinePackages(
+  db: D1Database,
+  input: { startIso: string; endIso: string; line: string; operator: string }
+): Promise<LinePackageRow[]> {
+  const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour));
+  const bound = [input.startIso, input.endIso];
+  const trim = await db
+    .prepare(
+      `SELECT p.created_at, p.package_code, p.package_type_code, p.weight_grams, p.trim_date, p.trim_operator, b.hbn
+       FROM wip_packages p
+       LEFT JOIN wet_weight_entries w ON w.id = p.wet_weight_entry_id
+       LEFT JOIN harvest_batches b ON b.id = COALESCE(p.harvest_batch_id, w.harvest_batch_id)
+       WHERE p.deleted_at IS NULL AND ${NON_TRIM_SOURCE_SQL}
+         AND p.created_at >= ? AND p.created_at < ?`
+    )
+    .bind(...bound)
+    .all<{ created_at: string; package_code: string; package_type_code: string; weight_grams: number; trim_date: string | null; trim_operator: string | null; hbn: string | null }>();
+  const cryo = await db
+    .prepare(
+      `SELECT p.created_at, p.package_code, p.package_type_code, p.weight_grams, p.cryo_date, p.cryo_operator, b.hbn
+       FROM wip_packages p
+       LEFT JOIN production_schedules ps ON ps.id = p.cryo_run_id AND ps.deleted_at IS NULL
+       LEFT JOIN harvest_batches b ON b.id = COALESCE(ps.harvest_batch_id, p.harvest_batch_id)
+       WHERE p.deleted_at IS NULL AND p.source = 'cryo'
+         AND p.created_at >= ? AND p.created_at < ?`
+    )
+    .bind(...bound)
+    .all<{ created_at: string; package_code: string; package_type_code: string; weight_grams: number; cryo_date: string | null; cryo_operator: string | null; hbn: string | null }>();
+  const prepack = await db
+    .prepare(
+      `SELECT l.created_at, l.tag, l.unit_grams, l.bags, l.grams, l.work_date, pe.display_name AS operator, b.hbn
+       FROM prepack_lines l
+       LEFT JOIN people pe ON pe.id = l.created_by AND pe.deleted_at IS NULL
+       LEFT JOIN wip_packages parent ON parent.id = l.parent_package_id
+       LEFT JOIN wet_weight_entries w ON w.id = parent.wet_weight_entry_id
+       LEFT JOIN production_schedules ps ON ps.id = parent.cryo_run_id AND ps.deleted_at IS NULL
+       LEFT JOIN harvest_batches b ON b.id = COALESCE(parent.harvest_batch_id, w.harvest_batch_id, ps.harvest_batch_id)
+       WHERE l.deleted_at IS NULL AND l.created_at >= ? AND l.created_at < ?`
+    )
+    .bind(...bound)
+    .all<{ created_at: string; tag: string; unit_grams: number; bags: number; grams: number; work_date: string | null; operator: string | null; hbn: string | null }>();
+  const rad = await db
+    .prepare(
+      `SELECT r.started_at, r.grey, p.tag, p.item_type, p.grams, pe.display_name AS operator
+       FROM rad_run_packages p
+       JOIN rad_runs r ON r.id = p.run_id AND r.deleted_at IS NULL
+       LEFT JOIN people pe ON pe.id = r.started_by AND pe.deleted_at IS NULL
+       WHERE p.deleted_at IS NULL AND r.started_at IS NOT NULL
+         AND r.started_at >= ? AND r.started_at < ?`
+    )
+    .bind(...bound)
+    .all<{ started_at: string; grey: number; tag: string; item_type: string | null; grams: number | null; operator: string | null }>();
+  const rows: LinePackageRow[] = [];
+  for (const row of trim.results ?? []) {
+    rows.push({
+      line: "Trim",
+      enteredIso: row.created_at,
+      lot: row.hbn ? shortLotId(row.hbn, null) : "",
+      tag: row.package_code,
+      type: row.package_type_code,
+      grams: Number(row.weight_grams),
+      effective: row.trim_date ?? "",
+      operator: row.trim_operator ?? "",
+    });
+  }
+  for (const row of cryo.results ?? []) {
+    rows.push({
+      line: "Cryo",
+      enteredIso: row.created_at,
+      lot: row.hbn ?? "",
+      tag: row.package_code,
+      type: row.package_type_code,
+      grams: Number(row.weight_grams),
+      effective: row.cryo_date ?? "",
+      operator: row.cryo_operator ?? "",
+    });
+  }
+  for (const row of prepack.results ?? []) {
+    rows.push({
+      line: "Prepack",
+      enteredIso: row.created_at,
+      lot: row.hbn ?? "",
+      tag: row.tag,
+      type: `${row.unit_grams} g x ${row.bags}`,
+      grams: Number(row.grams),
+      effective: row.work_date ?? "",
+      operator: row.operator ?? "",
+    });
+  }
+  for (const row of rad.results ?? []) {
+    const item = String(row.item_type ?? "").trim();
+    rows.push({
+      line: "Rad",
+      enteredIso: row.started_at,
+      lot: "",
+      tag: row.tag,
+      type: item ? `${item}, ${row.grey} Gy` : `${row.grey} Gy`,
+      grams: Number(row.grams ?? 0),
+      effective: farmDay(row.started_at, startHour),
+      operator: row.operator ?? "",
+    });
+  }
+  const want = input.line;
+  const lined =
+    want === "trim" ? rows.filter((row) => row.line === "Trim")
+    : want === "prepack" ? rows.filter((row) => row.line === "Prepack")
+    : want === "cryo_rad" ? rows.filter((row) => row.line === "Cryo" || row.line === "Rad")
+    : rows;
+  const needle = input.operator.trim().toLowerCase();
+  return needle ? lined.filter((row) => row.operator.toLowerCase().includes(needle)) : lined;
 }

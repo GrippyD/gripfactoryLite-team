@@ -771,13 +771,17 @@ export function reportPage(
         .join(" ");
   // Canon 0.30.23: a view with groupBy heads each run of rows with the group
   // value (the site the material sits at) and drops that column from the cells.
-  const visibleCols = bodyColumns(view);
+  const pageView =
+    view.key === "line_packages"
+      ? { ...view, rows: view.rows.filter((row) => row._total !== 1 && row._total !== "1") }
+      : view;
+  const visibleCols = bodyColumns(pageView);
   const head = visibleCols.map((c) => `<th>${esc(t(locale, c.label))}</th>`).join("");
   const body =
-    view.rows.length === 0
-      ? `<tr><td colspan="${visibleCols.length}">${esc(t(locale, view.empty ?? "No rows."))}</td></tr>`
+    pageView.rows.length === 0
+      ? `<tr><td colspan="${visibleCols.length}">${esc(t(locale, pageView.empty ?? "No rows."))}</td></tr>`
       : groupedRowsHtml(
-          view,
+          pageView,
           (c, row) => {
             const raw = row[c.key];
             return `<td>${esc(reportCellText(c, raw as string | number | null | undefined))}</td>`;
@@ -2022,6 +2026,8 @@ export function adminHomePage(locale: Locale = "en"): string {
     { href: "/admin/uploads", kind: "Admin", title: "Pending Data Uploads" },
     // Owner ruling 2026-09-02: [Import Data], the multipurpose upload queue.
     { href: "/admin/imports", kind: "Admin", title: "Import Data" },
+    // THE TESTING OVERRIDE (canon 0.30.341). Owner, 2026-10-02: "Admin new button: [Testing Override]".
+    { href: "/admin/testing-override", kind: "Admin", title: "Testing Override" },
     // THE RECONCILE LEDGER LOCATION (canon 0.30.135). Owner, 2026-09-20: "add a
     // new button to Admin: [Reconcile Ledger Location]".
     { href: LEDGER_LOCATION_PATH, kind: "Admin", title: "Reconcile Ledger Location" },

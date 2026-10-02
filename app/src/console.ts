@@ -1734,13 +1734,20 @@ export function gatePackageGrams(
   return null;
 }
 
-/** The sheet's hbn prefix names the harvest year. The entered date is the
- * fallback when the hbn does not start with two digits. */
+/** THE TESTING OVERRIDE (canon 0.30.341). The lot token names the harvest year:
+ * the HBN's seventh segment (YY###, so 26001 is 2026), else the first segment's
+ * two leading digits, else the Entered Testing year. None of the three, the row
+ * is out of the season. */
 export function sheetInSeason(row: { hbn: string | null; entered_testing: string | null }, year: number): boolean {
-  const hbn = String(row.hbn ?? "").trim();
-  const prefix = /^(\d{2})/.exec(hbn);
-  if (prefix) return Number(prefix[1]) === year % 100;
-  return String(row.entered_testing ?? "").trim().slice(0, 4) === String(year);
+  const yy = year % 100;
+  const parts = String(row.hbn ?? "").trim().split("-");
+  const seventh = /^(\d{2})/.exec(parts.length >= 7 ? parts[6].trim() : "");
+  if (seventh) return Number(seventh[1]) === yy;
+  const first = /^(\d{2})/.exec((parts[0] ?? "").trim());
+  if (first && (parts[0] ?? "").trim()) return Number(first[1]) === yy;
+  const entered = /^(\d{4})/.exec(String(row.entered_testing ?? "").trim());
+  if (entered) return Number(entered[1]) === year;
+  return false;
 }
 
 export type TestingGatePane = {
@@ -2133,7 +2140,7 @@ export function testingSection(figures: TestingFigures, opts: { locale?: Locale;
           </div>
         </div>`;
   const year = tFill(locale, "Harvest year {year}", { year: String(opts.year) });
-  return `<details class="hc-section" data-hc-section="testing" data-hc-testing-year="${esc(String(opts.year))}" open>
+  return `<details class="hc-section" id="testing" data-hc-section="testing" data-hc-testing-year="${esc(String(opts.year))}" open>
       <summary>${esc(t(locale, "Testing"))} <span class="muted hc-year">${esc(year)}</span></summary>
       <div class="hc-gate" data-hc-inventory-gate>${gates}</div>
       <h3>${esc(t(locale, "Quality Stats"))}</h3>
@@ -2332,6 +2339,8 @@ const OPEN_SQL = TEST_OPEN_STATUSES.map((status) => `'${status}'`).join(",");
  * the desk's open orders. The stats and the pie read the season's first-time
  * rows on the In Testing sheet. The console's picked day is not an input. */
 export async function loadTestingSection(db: D1Database, year: number): Promise<TestingFigures> {
+  const rndRaw = await getConfigValue(db, CONFIG_KEYS.in_testing_rnd_tab);
+  const rndLike = `${(rndRaw ?? "").trim() || "R&D"}|%`;
   const [typesRaw, unitsRaw, mirror, cryo, rad, orders, sheet, batches] = await Promise.all([
     getConfigValue(db, CONFIG_KEYS.gate_type_codes),
     getConfigValue(db, CONFIG_KEYS.gate_unit_grams),
@@ -2357,10 +2366,17 @@ export async function loadTestingSection(db: D1Database, year: number): Promise<
       .all<{ id: string; tag: string; status: string; batch_grams: number | null }>(),
     db
       .prepare(
-        `SELECT strain, hbn, entered_testing, status, failure_mode, batch_weight_grams, attempt
-         FROM external_test_results
-         WHERE deleted_at IS NULL AND attempt = 1`
+        `SELECT e.strain, e.hbn, e.entered_testing, e.status, e.failure_mode, e.batch_weight_grams, e.attempt
+         FROM external_test_results e
+         WHERE e.deleted_at IS NULL AND e.attempt = 1
+           AND (e.source <> 'sheet' OR e.on_sheet = 1)
+           AND NOT EXISTS (
+             SELECT 1 FROM test_orders o
+             WHERE o.deleted_at IS NULL AND o.sheet_key = e.sheet_key AND o.panel = 'rnd'
+           )
+           AND (e.sheet_key IS NULL OR e.sheet_key NOT LIKE ?)`
       )
+      .bind(rndLike)
       .all<{
         strain: string | null;
         hbn: string | null;

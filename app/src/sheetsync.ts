@@ -43,7 +43,7 @@ declare global {
   }
 }
 
-export type SheetSyncTrigger = "cron" | "admin" | "upload";
+export type SheetSyncTrigger = "cron" | "admin" | "upload" | "override";
 export type SheetSyncStatus = "ok" | "skipped" | "failed";
 
 export type SheetSyncEnv = {

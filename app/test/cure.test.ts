@@ -160,6 +160,7 @@ describe("THE CURE PANES (canon 0.30.164)", () => {
     expect(data.csa[0].moistureAt?.text).toBe("11.4 %");
     expect(data.csa[0].moistureLatest?.text).toBe("10 %");
     expect(data.csa[0].shortId).toBe("26021");
+    expect(data.caps).toEqual({ CSA: 36, CSB: 8 });
     const html = curePanes(data, "en");
     expect(html).toContain('data-cure-pane="CSA"');
     expect(html).toContain('data-cure-pane="CSB"');
@@ -230,6 +231,7 @@ describe("THE CURE PANES (canon 0.30.164)", () => {
         csb: [],
         readings: { CSA: { temperatureF: 60, humidityPct: 70, readAt: "2026-09-21T14:00:00.000Z" }, CSB: null },
         nowIso: NOW,
+        caps: { CSA: 36, CSB: 8 },
       } satisfies CurePanesData,
       "en"
     );

@@ -90,7 +90,8 @@ export function asStoredBytes(content: unknown): Uint8Array {
 
 /**
  * Kind and size rules for a queued file. Does not read the bytes. Throws 400
- * with a clear line for a wrong extension or a file over the 1 MB cap.
+ * with a clear line for a wrong extension, a file over the 1 MB queue cap, or an
+ * .xlsb or .xlsm over the 8 MB cap.
  */
 export function assertImportUpload(filename: string, byteSize: number): ImportKind {
   const kind = importKindFromFilename(filename);
@@ -99,7 +100,7 @@ export function assertImportUpload(filename: string, byteSize: number): ImportKi
   }
   const cap = kind === "xlsb" || kind === "xlsm" ? XLSB_MAX_BYTES : IMPORT_MAX_BYTES;
   if (byteSize > cap) {
-    if (kind === "xlsm") throw refusal(400, { key: "That file is over the cap.", vars: {} });
+    if (kind === "xlsb" || kind === "xlsm") throw refusal(400, { key: "That file is over the 8 MB cap.", vars: {} });
     throw new HttpError(
       400,
       "That file is over the 1 MB cap. Larger files wait until the parser lands."

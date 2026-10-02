@@ -10,9 +10,10 @@
  */
 
 import { HttpError } from "./audit";
-import { CONFIG_KEYS, formatGrams, SCHEDULE_STATUS, shortLotId } from "./config";
+import { CONFIG_KEYS, CSA_LOT_CAP_DEFAULT, CSB_LOT_CAP_DEFAULT, formatGrams, parseLotCap, SCHEDULE_STATUS, shortLotId } from "./config";
 import { formatLbs } from "./compliance";
-import { t, type Locale } from "./i18n";
+import { getConfigValue } from "./db";
+import { t, tFill, type Locale } from "./i18n";
 import { listEnvironmentFlags } from "./environment";
 import { esc } from "./ui";
 
@@ -52,6 +53,7 @@ export type CurePanesData = {
   readings: { CSA: CureReading | null; CSB: CureReading | null };
   nowIso: string;
   flags?: Record<string, string[]>;
+  caps: { CSA: number; CSB: number };
 };
 
 type LotSql = {
@@ -219,7 +221,11 @@ export async function listCurePanes(db: D1Database, nowIso: string, locale: Loca
   const byId = (a: CureLot, b: CureLot) => a.shortId.localeCompare(b.shortId) || a.id.localeCompare(b.id);
   csa.sort(byId);
   csb.sort(byId);
-  return { csa, csb, readings, nowIso, flags };
+  const caps = {
+    CSA: parseLotCap(await getConfigValue(db, CONFIG_KEYS.csa_lot_cap), CSA_LOT_CAP_DEFAULT),
+    CSB: parseLotCap(await getConfigValue(db, CONFIG_KEYS.csb_lot_cap), CSB_LOT_CAP_DEFAULT),
+  };
+  return { csa, csb, readings, nowIso, flags, caps };
 }
 
 function matchesLot(row: TestSql, hbn: string | null, tag: string | null): boolean {
@@ -348,15 +354,29 @@ function lotRow(lot: CureLot, nowIso: string, locale: Locale): string {
     </details>`;
 }
 
-function paneCard(name: CurePaneName, lots: CureLot[], reading: CureReading | null, nowIso: string, locale: Locale, flags: string[]): string {
+/** Lots over the cap. Empty is clear; the first lot tints; the cap is near-solid; past the cap stays solid. */
+export function cureShadeOpacity(n: number, cap: number): string {
+  if (n <= 0) return (0).toFixed(3);
+  const pct = cap > 0 ? n / cap : 0;
+  return (0.15 + 0.7 * Math.min(pct, 1)).toFixed(3);
+}
+
+function paneCard(name: CurePaneName, lots: CureLot[], cap: number, reading: CureReading | null, nowIso: string, locale: Locale, flags: string[]): string {
   const cond = conditionsLine(reading, nowIso, locale);
   const alert = flags.length > 0;
   const text = alert ? `${cond.text} · ${flags.join(" ")}` : cond.text;
+  const n = lots.length;
+  const pct = cap > 0 ? n / cap : 0;
+  const pctShown = Math.round(pct * 100);
+  const over = n > cap;
+  const count = tFill(locale, "{n} of {cap} lots, {pct}% full", { n: String(n), cap: String(cap), pct: String(pctShown) });
   const body = lots.length
     ? lots.map((lot) => lotRow(lot, nowIso, locale)).join("")
     : `<p class="muted" data-cure-empty>${esc(t(locale, "No lots."))}</p>`;
   return `<div class="inv-gauge cure-pane" data-cure-pane="${name}">
+      <div class="cure-shade" style="opacity:${cureShadeOpacity(n, cap)}" data-cure-shade></div>
       <div class="inv-gauge-name">${name}</div>
+      <p class="cure-count${over ? " cure-over" : ""}" data-cure-count="${n}" data-cure-cap="${cap}" data-cure-pct="${pctShown}">${esc(count)}</p>
       <p class="cure-conditions${cond.stale || alert ? " cure-stale" : ""}" data-cure-conditions>${esc(text)}</p>
       ${body}
     </div>`;
@@ -394,9 +414,10 @@ export function cureClockScript(): string {
  * drying row after the FFZ cube, the width of the tiles beside them. */
 export function curePanes(data: CurePanesData, locale: Locale = "en"): string {
   const flags = data.flags ?? {};
-  return `${paneCard("CSA", data.csa, data.readings.CSA, data.nowIso, locale, flags.CSA ?? [])}${paneCard(
+  return `${paneCard("CSA", data.csa, data.caps.CSA, data.readings.CSA, data.nowIso, locale, flags.CSA ?? [])}${paneCard(
     "CSB",
     data.csb,
+    data.caps.CSB,
     data.readings.CSB,
     data.nowIso,
     locale,

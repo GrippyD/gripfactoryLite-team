@@ -341,6 +341,96 @@ export function maxToteWeightPage(value: number, stored: boolean, locale: Locale
     </form>`;
 }
 
+/** THE CURE CAPS (canon 0.30.341): one whole number of lots for CSA or CSB, saved under a reason. */
+export function lotCapPage(room: "CSA" | "CSB", value: number, stored: boolean, locale: Locale = "en", ok?: string): string {
+  const key = room === "CSA" ? "csa_lot_cap" : "csb_lot_cap";
+  const title = room === "CSA" ? "CSA Lot Cap" : "CSB Lot Cap";
+  const flash = ok === "saved" ? `<p class="banner ok" data-lot-cap-flash>${esc(t(locale, "Lot cap saved."))}</p>` : "";
+  const unset = stored
+    ? ""
+    : `<p class="muted" data-lot-cap-default>${esc(tFill(locale, "Not saved yet: the tile reads the default, {n} lots.", { n: String(value) }))}</p>`;
+  return `<h1>${esc(t(locale, title))}</h1>
+    <p class="muted">${esc(tFill(locale, "The number of lots {room} holds; the tile on the Harvest Console fills green by lots over this cap.", { room }))}</p>
+    ${flash}${unset}
+    <form class="stack" method="post" action="/admin/lookups/${key}" data-lot-cap="${room}">
+      <label class="field">${esc(t(locale, "Lot cap"))} <input type="text" name="lot_cap" inputmode="numeric" pattern="[0-9]{1,3}" required value="${esc(String(value))}" data-lot-cap-value></label>
+      <label class="field">${esc(t(locale, "Reason"))} <input type="text" name="reason" required></label>
+      <button type="submit">${esc(t(locale, "Save"))}</button>
+    </form>`;
+}
+
+/** POST HARVEST PUZZLES (canon 0.30.351): dollars per pound, saved under a reason. */
+export function phpPricePage(which: "Bud" | "Trim", value: number, stored: boolean, locale: Locale = "en", ok?: string): string {
+  const key = which === "Bud" ? "php_bud_price_per_lb" : "php_trim_price_per_lb";
+  const title = which === "Bud" ? "Bud $/lb" : "Trim $/lb";
+  const fallback = which === "Bud" ? "150" : "30";
+  const flash = ok === "saved" ? `<p class="banner ok" data-php-price-flash>${esc(t(locale, "Saved."))}</p>` : "";
+  const unset = stored
+    ? ""
+    : `<p class="muted" data-php-price-default>${esc(tFill(locale, "Not saved yet: the report reads {n}.", { n: fallback }))}</p>`;
+  return `<h1>${esc(t(locale, title))}</h1>
+    <p class="muted">${esc(t(locale, "Dollars per pound on Post Harvest Puzzles."))}</p>
+    ${flash}${unset}
+    <form class="stack" method="post" action="/admin/lookups/${key}" data-php-price="${which}">
+      <label class="field">${esc(t(locale, title))} <input type="text" name="price" inputmode="decimal" required value="${esc(String(value))}" data-php-price-value></label>
+      <label class="field">${esc(t(locale, "Reason"))} <input type="text" name="reason" required></label>
+      <button type="submit">${esc(t(locale, "Save"))}</button>
+    </form>`;
+}
+
+/** THE TESTING OVERRIDE (canon 0.30.341): one .xlsb drop. The sheet becomes the picture. */
+export function testingOverridePage(input: {
+  locale?: Locale;
+  last: { time: string; trigger: string; seen: number; landed: number; changed: number; skipped: number } | null;
+  flash?: string;
+  skips?: string;
+}): string {
+  const locale = input.locale ?? "en";
+  const flash = input.flash ? `<p class="banner ok" data-testing-override-flash>${esc(input.flash)}</p>` : "";
+  const skips = input.skips ? `<p data-testing-override-skips>${esc(tFill(locale, "Skipped: {reasons}", { reasons: input.skips }))}</p>` : "";
+  const last = input.last
+    ? tFill(locale, "Last run: {time}, {trigger}, {seen} seen, {landed} landed, {changed} changed, {skipped} skipped.", {
+        time: input.last.time,
+        trigger: t(locale, input.last.trigger),
+        seen: String(input.last.seen),
+        landed: String(input.last.landed),
+        changed: String(input.last.changed),
+        skipped: String(input.last.skipped),
+      })
+    : t(locale, "Last run: never");
+  return `<h1>${esc(t(locale, "Testing Override"))}</h1>
+    ${flash}${skips}
+    <p class="muted">${esc(t(locale, "The sheet is parsed as Import Data parses it. What it says is what the Compliance Console and the Harvest Console's Testing section picture: a row the sheet no longer carries leaves the picture and stays in the table, marked no longer on the sheet."))}</p>
+    <p data-testing-override-last>${esc(last)}</p>
+    <div data-testing-override>
+      <form class="stack" method="post" action="/admin/testing-override" enctype="multipart/form-data">
+        <label class="field">${esc(t(locale, "Drop the In Testing workbook (.xlsb) here, or pick it"))} <input type="file" name="file" accept=".xlsb" required data-testing-override-file></label>
+        <button type="submit">${esc(t(locale, "Override testing from this sheet"))}</button>
+      </form>
+    </div>
+    <p><a href="/harvest#testing">${esc(t(locale, "Testing on the Harvest Console"))}</a> · <a href="/compliance">${esc(t(locale, "Compliance Console"))}</a></p>
+    <script>
+(function () {
+  var pane = document.querySelector("[data-testing-override]");
+  if (!pane) return;
+  var form = pane.querySelector("form");
+  var input = pane.querySelector("input[type=file]");
+  ["dragenter", "dragover"].forEach(function (name) {
+    pane.addEventListener(name, function (ev) { ev.preventDefault(); });
+  });
+  pane.addEventListener("drop", function (ev) {
+    ev.preventDefault();
+    var file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+    if (!file || !input || !form) return;
+    var transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    form.submit();
+  });
+})();
+    </script>`;
+}
+
 /** The harvest year the page opens on: the asked four digits, else the farm day's year. */
 export function plantCountYear(asked: string | null | undefined, today: string): string {
   const text = String(asked ?? "").trim();

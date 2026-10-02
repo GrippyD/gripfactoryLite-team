@@ -38,6 +38,15 @@ import {
   trimBogeyOf,
   parseMaxToteLbs,
   maxToteLbsOf,
+  parseLotCap,
+  lotCapOf,
+  CSA_LOT_CAP_DEFAULT,
+  CSB_LOT_CAP_DEFAULT,
+  parseBtrTypeCodes,
+  parsePhpPrice,
+  phpPriceOf,
+  PHP_BUD_PRICE_DEFAULT,
+  PHP_TRIM_PRICE_DEFAULT,
   sumGrams,
   truckNumberFromPick,
   ADMIN_SHEET_SYNC_PATH,
@@ -58,12 +67,17 @@ import {
 } from "./identity";
 import { SERVICE_IDENTITY, SERVICE_REFUSAL, isAccessFronted, isServiceRoute, loginEmailOf } from "./service";
 import { farmDayStartHour, farmToday } from "./effective";
+import { dayAfter, etInstant, parseFarmDayStartHour } from "./farmday";
+import { radLotByTag } from "./rad";
+import { importPostHarvest, loadPuzzlePage, postHarvestHtml, postHarvestView, savePostHarvestPlan } from "./puzzles";
 import {
   addDrySpace,
   addGrowMethod,
   addLookupValue,
   saveTrimBogey,
   saveMaxToteLbs,
+  saveLotCap,
+  savePhpPrice,
   saveFarmPlantCounts,
   addLotWeight,
   addPackageType,
@@ -113,6 +127,7 @@ import {
   markUploaded,
   packageUploadCsv,
   queueImport,
+  overrideTesting,
   recallHarvestBatch,
   runQueueControl,
   savePlantTags,
@@ -336,6 +351,7 @@ import {
   listFinishedExternalAudits,
   listInternalTestingReport,
   listLaborHours,
+  listLinePackages,
   listLabelTemplates,
   listLabelPackages,
   latestFinalizedPotency,
@@ -411,7 +427,7 @@ import {
   schedulingLanding,
   schedulingPage,
 } from "./scheduling";
-import { editPage, logPage, lookupSectionPage, lookupsLandingPage, manualHbnPage, plantCountPage, plantCountYear, trimBogeyPage, maxToteWeightPage, voidPage } from "./pages";
+import { editPage, logPage, lookupSectionPage, lookupsLandingPage, lotCapPage, manualHbnPage, phpPricePage, plantCountPage, plantCountYear, testingOverridePage, trimBogeyPage, maxToteWeightPage, voidPage } from "./pages";
 import { LOOKUP_VALUE_SECTIONS } from "./lookups";
 import {
   aggregateTatDays,
@@ -425,6 +441,7 @@ import {
   internalTestingView,
   laborHoursDefaultWindow,
   laborHoursView,
+  linePackagesView,
   productMixView,
   reportCsv,
   reportFileStamp,
@@ -456,7 +473,7 @@ import { anyPlantCount, queueRowsToCsv, toCsv, wetWeightsCsv, wetWeightsCsvWithC
 import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePasteurizationHours, savePrepackHours, saveTrimHours } from "./console";
 import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { terpRecipesPage } from "./terps";
-import { fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
+import { easternStamp, fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
 import { loadMetrcAdmin, metrcApiPage, runMetrcSweep, testMetrcConnection } from "./metrcapi";
 import { inTestingFixtureWorkbook, runInTestingSync } from "./intesting";
 import { listMetrcAdoptions } from "./metrc";
@@ -848,6 +865,16 @@ app.get("/reports", async (c) => {
   return html(c, s, "Reports", reportsPage(s.locale));
 });
 
+app.post("/reports/post_harvest_puzzles/import", async (c) => {
+  const result = await importPostHarvest(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/reports/post_harvest_puzzles/plan", async (c) => {
+  const result = await savePostHarvestPlan(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
 app.get("/reports/:key", async (c) => {
   const key = c.req.param("key");
   if (!isReportKey(key)) return c.notFound();
@@ -858,9 +885,29 @@ app.get("/reports/:key", async (c) => {
     if (!url.searchParams.get("from")) url.searchParams.set("from", window.from);
     if (!url.searchParams.get("to")) url.searchParams.set("to", window.to);
   }
-  const format = url.searchParams.get("format");
   const s = await shell(c);
-  const view = await buildReportView(c.env.DB, key, url.searchParams);
+  if (key === "line_packages") {
+    if (!url.searchParams.get("date")) url.searchParams.set("date", await farmToday(c.env.DB, nowIso()));
+    if (!url.searchParams.get("start")) url.searchParams.set("start", `${String(s.farmDayStart).padStart(2, "0")}:00`);
+    if (!url.searchParams.get("line")) url.searchParams.set("line", "all");
+  }
+  const format = url.searchParams.get("format");
+  if (key === "post_harvest_puzzles" && format !== "csv" && format !== "xlsx" && format !== "pdf") {
+    const puzzle = await loadPuzzlePage(c.env.DB, url.searchParams.get("year"), url.searchParams.get("farm"));
+    const flash =
+      url.searchParams.get("ok") === "saved"
+        ? t(s.locale, "Plan saved.")
+        : url.searchParams.get("ok") === "imported"
+          ? tFill(s.locale, "Imported {year}: {lots} lots, {tests} tests, {plan} plan rows.", {
+              year: url.searchParams.get("imported_year") ?? "",
+              lots: url.searchParams.get("lots") ?? "0",
+              tests: url.searchParams.get("tests") ?? "0",
+              plan: url.searchParams.get("plan") ?? "0",
+            })
+          : "";
+    return html(c, s, "Post Harvest Puzzles", postHarvestHtml(puzzle, s.locale, flash || undefined));
+  }
+  const view = await buildReportView(c.env.DB, key, url.searchParams, s.locale);
   if (view.reserved) {
     return html(c, s, view.title, reportPage(view, reportFilterForm(key, url.searchParams, s.locale), reportQuery(url.searchParams), s.locale));
   }
@@ -2017,6 +2064,59 @@ app.post("/admin/imports", async (c) => {
   return c.redirect(result.redirect, 303);
 });
 
+app.get("/admin/testing-override", async (c) => {
+  const s = await shell(c);
+  const last = await c.env.DB
+    .prepare(
+      `SELECT started_at, trigger, rows_seen, rows_landed, rows_changed, rows_skipped
+       FROM sheet_sync_runs WHERE source = 'in_testing' ORDER BY started_at DESC LIMIT 1`
+    )
+    .first<{
+      started_at: string;
+      trigger: string;
+      rows_seen: number | null;
+      rows_landed: number | null;
+      rows_changed: number | null;
+      rows_skipped: number | null;
+    }>();
+  const seen = c.req.query("seen");
+  const flash =
+    c.req.query("ok") === "in_testing" && seen != null
+      ? t(s.locale, "In testing sheet: {seen} seen, {landed} landed, {changed} changed, {skipped} skipped.")
+          .replace("{seen}", seen)
+          .replace("{landed}", c.req.query("landed") ?? "0")
+          .replace("{changed}", c.req.query("changed") ?? "0")
+          .replace("{skipped}", c.req.query("skipped") ?? "0")
+      : "";
+  const skips = c.req.query("message") ? translateSheetMessage(c.req.query("message") ?? "", s.locale) : "";
+  return html(
+    c,
+    s,
+    "Testing Override",
+    testingOverridePage({
+      locale: s.locale,
+      last: last
+        ? {
+            time: easternStamp(last.started_at),
+            trigger: last.trigger,
+            seen: Number(last.rows_seen ?? 0),
+            landed: Number(last.rows_landed ?? 0),
+            changed: Number(last.rows_changed ?? 0),
+            skipped: Number(last.rows_skipped ?? 0),
+          }
+        : null,
+      flash,
+      skips,
+    })
+  );
+});
+
+app.post("/admin/testing-override", async (c) => {
+  const form = actorForm(c, await c.req.formData());
+  const result = await overrideTesting(c.env.DB, form);
+  return c.redirect(result.redirect, 303);
+});
+
 app.get("/admin/imports/:id/download", async (c) => {
   const row = await getRow(c.env.DB, "import_queue", c.req.param("id"));
   if (!row || row.deleted_at) return c.body("Not found", 404);
@@ -3016,6 +3116,20 @@ app.get("/admin/lookups/:section", async (c) => {
     const raw = await getConfigValue(c.env.DB, CONFIG_KEYS.max_tote_lbs);
     return html(c, s, "Max Tote Weight", maxToteWeightPage(parseMaxToteLbs(raw), maxToteLbsOf(raw) != null, s.locale, c.req.query("ok") || undefined));
   }
+  if (section === "php_bud_price_per_lb" || section === "php_trim_price_per_lb") {
+    const which = section === "php_bud_price_per_lb" ? "Bud" : "Trim";
+    const key = which === "Bud" ? CONFIG_KEYS.php_bud_price_per_lb : CONFIG_KEYS.php_trim_price_per_lb;
+    const fallback = which === "Bud" ? PHP_BUD_PRICE_DEFAULT : PHP_TRIM_PRICE_DEFAULT;
+    const raw = await getConfigValue(c.env.DB, key);
+    return html(c, s, which === "Bud" ? "Bud $/lb" : "Trim $/lb", phpPricePage(which, parsePhpPrice(raw, fallback), phpPriceOf(raw) != null, s.locale, c.req.query("ok") || undefined));
+  }
+  if (section === "csa_lot_cap" || section === "csb_lot_cap") {
+    const room = section === "csa_lot_cap" ? "CSA" : "CSB";
+    const key = room === "CSA" ? CONFIG_KEYS.csa_lot_cap : CONFIG_KEYS.csb_lot_cap;
+    const fallback = room === "CSA" ? CSA_LOT_CAP_DEFAULT : CSB_LOT_CAP_DEFAULT;
+    const raw = await getConfigValue(c.env.DB, key);
+    return html(c, s, room === "CSA" ? "CSA Lot Cap" : "CSB Lot Cap", lotCapPage(room, parseLotCap(raw, fallback), lotCapOf(raw) != null, s.locale, c.req.query("ok") || undefined));
+  }
   if (section === "terp_recipes") {
     const recipes = await listTerpRecipes(c.env.DB);
     return html(c, s, "Terp Recipes", terpRecipesPage({ recipes, showRetired: c.req.query("retired") === "1", locale: s.locale }));
@@ -3063,6 +3177,8 @@ app.post("/admin/lookups/:table", async (c) => {
   if (table === "testing_labs") result = await saveTestingLab(c.env.DB, form);
   else if (table === "trim_bogey") result = await saveTrimBogey(c.env.DB, form);
   else if (table === "max_tote_lbs") result = await saveMaxToteLbs(c.env.DB, form);
+  else if (table === "csa_lot_cap" || table === "csb_lot_cap") result = await saveLotCap(c.env.DB, form, table);
+  else if (table === "php_bud_price_per_lb" || table === "php_trim_price_per_lb") result = await savePhpPrice(c.env.DB, form, table);
   else if (table === "terp_recipes" && action === "retire") result = await retireTerpRecipe(c.env.DB, form);
   else if (table === "terp_recipes") result = await saveTerpRecipe(c.env.DB, form);
   else if (table === "plant_count") result = await saveFarmPlantCounts(c.env.DB, form);
@@ -3341,6 +3457,15 @@ function reportFilterForm(key: string, params: URLSearchParams, locale: Locale):
     return `<label class="field">${t(locale, "From")} <input type="date" name="from" value="${escQuery(params.get("from"))}"></label>
       <label class="field">${t(locale, "To")} <input type="date" name="to" value="${escQuery(params.get("to"))}"></label>`;
   }
+  if (key === "line_packages") {
+    const line = params.get("line") || "all";
+    const opt = (value: string, label: string) => `<option value="${value}"${line === value ? " selected" : ""}>${t(locale, label)}</option>`;
+    return `<label class="field">${t(locale, "Line")} <select name="line">${opt("all", "All")}${opt("trim", "Trim")}${opt("prepack", "Prepack")}${opt("cryo_rad", "Cryo/Rad")}</select></label>
+      <label class="field">${t(locale, "Date")} <input type="date" name="date" value="${escQuery(params.get("date"))}"></label>
+      <label class="field">${t(locale, "Date start")} <input type="time" name="start" step="60" value="${escQuery(params.get("start"))}"></label>
+      <p class="muted">${t(locale, "The day runs from this time to the same time next day, Eastern. The default is Admin's farm day start hour.")}</p>
+      <label class="field">${t(locale, "Operator")} <input type="text" name="operator" value="${escQuery(params.get("operator"))}"></label>`;
+  }
   if (key === "internal_testing") {
     return `<label class="field">${t(locale, "Year")} <input type="text" name="year" value="${escQuery(params.get("year"))}"></label>
       <label class="field">${t(locale, "Strain")} <input type="text" name="strain" value="${escQuery(params.get("strain"))}"></label>`;
@@ -3359,7 +3484,8 @@ function escQuery(value: string | null): string {
 async function buildReportView(
   db: D1Database,
   key: string,
-  params: URLSearchParams
+  params: URLSearchParams,
+  locale: Locale = "en"
 ): Promise<ReportView> {
   if (key === "inventory_by_location") {
     return inventoryByLocationView(await listInventoryByLocation(db));
@@ -3414,6 +3540,29 @@ async function buildReportView(
   if (key === "rf") return rfReportView();
   if (key === "labor_hours") {
     return laborHoursView(await listLaborHours(db, params.get("from") ?? "", params.get("to") ?? ""));
+  }
+  if (key === "post_harvest_puzzles") {
+    return postHarvestView(await loadPuzzlePage(db, params.get("year"), params.get("farm")));
+  }
+  if (key === "line_packages") {
+    const date = params.get("date") ?? "";
+    const typed = (params.get("start") ?? "").trim();
+    const fallback = `${String(parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour))).padStart(2, "0")}:00`;
+    const ok = /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(typed);
+    const start = ok ? typed : fallback;
+    const rows = await listLinePackages(db, {
+      startIso: etInstant(date, start),
+      endIso: etInstant(dayAfter(date), start),
+      line: params.get("line") || "all",
+      operator: params.get("operator") ?? "",
+    });
+    const radTags = rows.filter((row) => row.line === "Rad").map((row) => row.tag);
+    if (radTags.length > 0) {
+      const lots = await radLotByTag(db, radTags);
+      for (const row of rows) if (row.line === "Rad") row.lot = lots.get(row.tag) ?? "";
+    }
+    const budCodes = parseBtrTypeCodes(await getConfigValue(db, CONFIG_KEYS.btr_type_codes));
+    return linePackagesView(rows, { budCodes, startWarned: typed !== "" && !ok, startUsed: start, locale });
   }
   if (key === "internal_testing") {
     const raw = await listInternalTestingReport(db, {

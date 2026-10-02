@@ -218,9 +218,9 @@ describe("import helpers (owner ruling 2026-09-02)", () => {
       throw new Error("expected refuse");
     } catch (err) {
       expect(err).toBeInstanceOf(HttpError);
-      expect((err as HttpError).message).toBe("That file is over the cap.");
+      expect((err as HttpError).message).toBe("That file is over the 8 MB cap.");
     }
-    expect(t("es", "That file is over the cap.")).toBe("Ese archivo supera el tope.");
+    expect(t("es", "That file is over the 8 MB cap.")).toBe("Ese archivo supera el tope de 8 MB.");
     expect(t("es", "Only csv, xlsx, xlsb, and xlsm files can be queued.")).toContain("xlsm");
   });
 
@@ -358,6 +358,6 @@ describe("import queue HTTP (owner ruling 2026-09-02)", () => {
     const huge = new FormData();
     huge.set("person_id", person);
     huge.set("file", new File([new Uint8Array(XLSB_MAX_BYTES + 1)], "too-big.xlsm"));
-    await expect(queueImport(m.db, huge)).rejects.toMatchObject({ message: "That file is over the cap." });
+    await expect(queueImport(m.db, huge)).rejects.toMatchObject({ message: "That file is over the 8 MB cap." });
   });
 });

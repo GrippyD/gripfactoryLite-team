@@ -115,7 +115,7 @@ import { hbnWithSeq, wetWeightsFilename } from "./csv";
 import { backRedirect, HttpError, nowIso, parseGrams, parsePlantCount, refusal, requireReason, requireText, textOrNull } from "./audit";
 import { EFFECTIVE_DATE_FIELD, EFFECTIVE_DATE_REASON, effectiveOverrideLog, farmDayStartHour, farmToday, resolveEffectiveDate } from "./effective";
 import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmInstant, farmInstantFromInput, wallClock24From12 } from "./farmday";
-import { capacityUomOf, drySpaceTypeOf, spaceHoldsOneLot, trimBogeyOf, maxToteLbsOf, parseMaxToteLbs, GRAMS_PER_LB, DRY_SPACE_TYPES, CAPACITY_UOMS } from "./config";
+import { capacityUomOf, drySpaceTypeOf, spaceHoldsOneLot, trimBogeyOf, maxToteLbsOf, parseMaxToteLbs, lotCapOf, phpPriceOf, GRAMS_PER_LB, DRY_SPACE_TYPES, CAPACITY_UOMS } from "./config";
 import { assertHbnAvailable, formatLotToken, harvestYearFromEntryDate, hbnFromMetrcName, HbnCollisionError, mintHbn, nextLotSerial } from "./mint";
 import { RAD_RUN_STATUS } from "./config";
 import { newestRadGrey } from "./db";
@@ -5204,6 +5204,33 @@ export async function addPackageType(db: D1Database, form: FormData): Promise<Ac
   return { redirect: "/admin/lookups/package_types?ok=type" };
 }
 
+/** THE TESTING OVERRIDE (canon 0.30.341). The same parser as Import Data, recorded as trigger override. */
+export async function overrideTesting(db: D1Database, form: FormData): Promise<ActionOk> {
+  const file = form.get("file");
+  if (!(file instanceof File)) throw refusal(400, { key: "Drop the In Testing workbook, an .xlsb file.", vars: {} });
+  const filename = importBasename(file.name);
+  if (!filename.toLowerCase().endsWith(".xlsb")) {
+    throw refusal(400, { key: "Drop the In Testing workbook, an .xlsb file.", vars: {} });
+  }
+  const buf = new Uint8Array(await file.arrayBuffer());
+  assertImportUpload(filename, buf.byteLength);
+  let counts;
+  try {
+    counts = await applyInTestingBytes(db, buf, "override");
+  } catch (err) {
+    throw new HttpError(400, err instanceof Error ? err.message : "The workbook could not be read.");
+  }
+  const q = new URLSearchParams({
+    ok: "in_testing",
+    seen: String(counts.rows_seen),
+    landed: String(counts.rows_landed),
+    changed: String(counts.rows_changed),
+    skipped: String(counts.rows_skipped),
+  });
+  if (counts.message) q.set("message", counts.message);
+  return { redirect: `/admin/testing-override?${q.toString()}` };
+}
+
 /** Owner ruling 2026-09-02: queue a csv or xlsx as raw bytes. No parsing. */
 export async function queueImport(db: D1Database, form: FormData): Promise<ActionOk> {
   const actor = await requireActor(db, personIdFrom(form));
@@ -6257,6 +6284,27 @@ export async function saveMaxToteLbs(db: D1Database, form: FormData): Promise<Ac
   if (value == null) throw refusal(400, { key: "Max Tote Weight is pounds from 1 to 500.", vars: {} });
   const reason = requireReason(textOrNull(form.get("reason")));
   return saveConfigNumber(db, actor, CONFIG_KEYS.max_tote_lbs, String(value), reason, "/admin/lookups/max_tote_lbs?ok=saved");
+}
+
+/** POST HARVEST PUZZLES (canon 0.30.351): Bud or Trim dollars per pound, 0 to 10,000. */
+export async function savePhpPrice(db: D1Database, form: FormData, key: string): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const value = phpPriceOf(form.get("price"));
+  const which = key === CONFIG_KEYS.php_bud_price_per_lb ? "Bud" : "Trim";
+  if (value == null) {
+    throw refusal(400, { key: "{which} $/lb is a number from 0 to 10,000, with up to two decimals.", vars: { which } });
+  }
+  const reason = requireReason(textOrNull(form.get("reason")));
+  return saveConfigNumber(db, actor, key, String(value), reason, `/admin/lookups/${key}?ok=saved`);
+}
+
+/** THE CURE CAPS (canon 0.30.341): CSA or CSB's lot cap, a whole number 1 to 999, logged like the Trim Bogey. */
+export async function saveLotCap(db: D1Database, form: FormData, key: string): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const value = lotCapOf(form.get("lot_cap"));
+  if (value == null) throw refusal(400, { key: "Lot cap must be a whole number of lots, 1 to 999.", vars: {} });
+  const reason = requireReason(textOrNull(form.get("reason")));
+  return saveConfigNumber(db, actor, key, String(value), reason, `/admin/lookups/${key}?ok=saved`);
 }
 
 /** THE MAX TOTE WEIGHT (canon 0.30.350): a wet weight above the Admin limit is refused, in words, before it is saved. */
