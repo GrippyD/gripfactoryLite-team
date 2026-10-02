@@ -53,8 +53,8 @@
  * His picks (AskUserQuestion, 2026-09-16): the shifts are the operators, "Olga
  * = Days, Victor = Afternoons" (the trim operator typed on each package names
  * its shift; the lists live in app_config), and "WPR means SMALLS" (SHA is
- * SHAKE), so BTR counts BUD, SMALLS and SHAKE over all weight ran. Yesterday's
- * packages are the trim room's entries dated yesterday (trim_date). The
+ * SHAKE), so BTR counts BUD, SMALLS and SHAKE over all weight ran. The day's
+ * packages are the trim room's entries dated that day (trim_date). The
  * pictograph is a waffle of 100 cells, one per percent of the weight ran, the
  * BUD share filled from the bottom up, the numbers beside it.
  *
@@ -71,21 +71,22 @@
  * per-plant averages read the season's finished lots that carry a count. New
  * here: the Cutting and Bucking hours are typed on the console itself, one
  * number per farm per day (harvest_labor_hours, migration 0049), and
- * Weight/DLH Yesterday divides the wet grams weighed yesterday (the farm's
- * day, Eastern time) by yesterday's hours.
+ * Weight/DLH divides the wet grams weighed on the day under view (the farm's
+ * day, Eastern time) by that day's hours.
  *
- * THE FARM DAY BEGINS AT SIX (canon 0.30.151): the console's today and yesterday
- * are farm days (the day rolls at app_config farm_day_start_hour, Eastern), and
- * the windows they draw run from start hour to start hour.
+ * THE FARM DAY BEGINS AT SIX (canon 0.30.151): the console's today and the day
+ * under view are farm days (the day rolls at app_config farm_day_start_hour,
+ * Eastern), and the windows they draw run from start hour to start hour.
  *
  * THE CONSOLE DAY (canon 0.30.152). Owner, 2026-09-20, verbatim: "on the
  * dashboard, can we do a universal date override?  It defaults to "yesterday"
- * and I can change it to any other day?" One date control at the top of the
- * console (?day=YYYY-MM-DD): it defaults to yesterday (the farm day before
- * today), takes any day up to today, and every yesterday pane follows it (the
- * Cutting and Bucking hours, Weight/DLH, the whole Trimming section), the hours
- * typed landing on that day; the Plants figures stay the season's and the
- * drying strip stays live. The labels name the day beside the pane titles.
+ * and I can change it to any other day?" BRIEF V17 moved that default to the
+ * farm's today. One date control at the top of the console (?day=YYYY-MM-DD):
+ * it defaults to today, takes any earlier day as a pick, and every per-day pane
+ * follows it (the Cutting and Bucking hours, Weight/DLH, the whole Trimming
+ * section), the hours typed landing on that day; the Plants figures stay the
+ * season's and the drying strip stays live. The labels name the day beside the
+ * pane titles.
  *
  * THE TRIM LINE PICTURE (canon 0.30.154). Owner, 2026-09-21, with his machine
  * picture (a circle TRIM above a box T-0, T-0 joined left to SORTER then to
@@ -109,8 +110,10 @@
  * denominator is the grams weighed that shift plus the WIP left in the lots it
  * finished (a lot finished under the adjustment gate with Recorded short of its
  * dry weight leaves that difference as WIP, landing on the shift whose operator
- * cut its last package); the input lbs box is per shift, beside the DLH box
- * (trim_line_inputs, migration 0065). The picture replaces the waffle in each
+ * cut its last package); the input lbs box was per shift, beside the DLH box
+ * (trim_line_inputs, migration 0065). BRIEF V17 removed that box, the picture's
+ * input line, the route and the flash; the table stays in data. The picture
+ * replaces the waffle in each
  * shift card; the flow bars carry the continuum tubes' green stripes and move
  * only while the line runs; Other also gathers MIX, KIEF, WASTE and any other
  * type so the converging total stays honest.
@@ -147,7 +150,6 @@ import {
   HARVEST_HOURS_PATH,
   HARVEST_PATH,
   HARVEST_TRIM_HOURS_PATH,
-  HARVEST_TRIM_INPUT_PATH,
   HARVEST_PREPACK_HOURS_PATH,
   HARVEST_PASTEURIZATION_HOURS_PATH,
   parsePrepackUnits,
@@ -176,7 +178,6 @@ import { fulfillmentSection, emptyFulfillment, type FulfillmentDay } from "./ful
 import { dayBefore, etClockMinutes, etDate, etDayBounds, FARM_DAY_START_HOUR_DEFAULT, FARM_TIME_ZONE, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHour } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
 import { type SiloLive, dryingTotalsMarkup, type DryingTotals } from "./silo";
-import { latestSheetSync, sheetSyncLineText, type SheetSyncView } from "./sheetsync";
 import { outcomeOf } from "./intesting";
 import { consoleIconSvg, type ConsoleIconName } from "./consoleicons";
 import { loadRadRunning, type RadRunningView } from "./rad";
@@ -185,7 +186,7 @@ import { esc } from "./ui";
 export const CONSOLE_FARMS = ["PNN", "ARL", "PNS"] as const;
 export type ConsoleFarm = (typeof CONSOLE_FARMS)[number];
 export const CONSOLE_TIME_ZONE = FARM_TIME_ZONE;
-export { HARVEST_PATH, HARVEST_HOURS_PATH, HARVEST_TRIM_HOURS_PATH, HARVEST_TRIM_INPUT_PATH, HARVEST_PASTEURIZATION_HOURS_PATH };
+export { HARVEST_PATH, HARVEST_HOURS_PATH, HARVEST_TRIM_HOURS_PATH, HARVEST_PASTEURIZATION_HOURS_PATH };
 
 /* --------------------------------------------------------------- the day */
 
@@ -202,10 +203,10 @@ export type ConsoleLot = { farm: string | null; wet_grams: number; dry_grams: nu
 export type HarvestConsoleInput = {
   /** The farm's day today (by the start hour in data), YYYY-MM-DD, and the harvest year. */
   today: string;
-  /** THE CONSOLE DAY (canon 0.30.152): the day under view, yesterday by default or the picked day;
-   * every "yesterday" pane, window and hours box reads it. */
-  yesterday: string;
-  /** True when the day under view is the picked one, not the default yesterday. */
+  /** THE CONSOLE DAY: the day under view, the farm's today by default or a picked day before it.
+   * Every per-day pane, window and hours box reads it. */
+  day: string;
+  /** True when the day under view is a picked day before today, not the default. */
   dayPicked: boolean;
   year: number;
   /** Live plants in the mirror (gone_at NULL) by the farm of the license. */
@@ -214,24 +215,23 @@ export type HarvestConsoleInput = {
   seasonHarvested: FarmCount[];
   /** Finished lots of the harvest year, for the per-plant averages. */
   seasonLots: ConsoleLot[];
-  /** Wet grams weighed yesterday (the farm's day), by farm. */
-  yesterdayWet: FarmGrams[];
-  /** Yesterday's Cutting and Bucking hours typed per farm; null when none typed.
+  /** Wet grams weighed on the console day, by farm. */
+  dayWet: FarmGrams[];
+  /** The harvest year's wet grams, every tote weighed, weighing lots included, by farm. */
+  yearWet?: FarmGrams[];
+  /** Cutting and Bucking hours typed per farm for the day under view; null when none typed.
    * The Total pane reads harvestHoursAll when that row stands, else the sum of these. */
   hours: Record<ConsoleFarm, number | null>;
   /** THE HARVEST HOURS (canon 0.30.310): the one typed row, farm_code ALL, for the day under view. */
   harvestHoursAll?: number | null;
   /** Farm Plant Count for the harvest year: the constant denominator, null when none is saved. */
   plantCounts: Record<ConsoleFarm, number | null>;
-  /** THE TRIMMING SECTION (canon 0.30.88): yesterday's trim room, by shift; absent renders the section empty. */
+  /** THE TRIMMING SECTION (canon 0.30.88): the console day's trim room, by shift; absent renders the section empty. */
   trim?: TrimInput;
   /** THE RIGHT NOW PANE (canon 0.30.310): today's farm day so far, every operator. Absent reads as nothing today. */
   trimLive?: TrimInput;
   /** The instant of the last package weighed at the trim node, any day. Null when none was ever weighed. */
   lastWeighedAt?: string | null;
-  /** THE SHEET SYNC (canon 0.30.162): the last run of the sheet sync (ok, skipped or failed), null before any run;
-   * the second line under the sheet hours reads it. */
-  sheetSync?: SheetSyncView | null;
   /** BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): the day picked's cryo outputs and finished runs by shift; absent renders the panes empty. */
   pasteurization?: PasteurizationInput;
   /** Today's farm day so far, every operator, with the open runs' remainders; absent reads as nothing today. */
@@ -251,7 +251,7 @@ export const TRIM_SHIFTS: readonly { key: TrimShiftKey; label: string; configKey
   { key: "second", label: "Second Shift", configKey: CONFIG_KEYS.trim_shift_second_operators },
 ];
 
-/** One trim room package dated yesterday: its type, grams and the operator who typed it. */
+/** One trim room package dated the console day: its type, grams and the operator who typed it. */
 export type TrimPackageRow = { type_code: string | null; weight_grams: number; trim_operator: string | null };
 
 /** THE TRIM LINE PICTURE (canon 0.30.154): a lot finished on the trim line
@@ -293,21 +293,19 @@ export const BUD_CELLS: ReadonlyArray<readonly [number, number, number]> = [
 ];
 
 export type TrimInput = {
-  /** Yesterday's non-voided packages from Trim Packages Entry (trim_date = yesterday). */
+  /** The day's non-voided packages from Trim Packages Entry (trim_date = the console day). */
   packages: TrimPackageRow[];
   /** The package type codes that count as BUD (app_config btr_type_codes). */
   budCodes: string[];
   /** The trim operators of each shift (app_config trim_shift_day_operators, trim_shift_second_operators). */
   operators: Record<TrimShiftKey, string[]>;
-  /** Yesterday's typed DLH per shift; null when none typed. */
+  /** The day's typed DLH per shift; null when none typed. */
   hours: Record<TrimShiftKey, number | null>;
   /** THE TRIM LINE PICTURE (canon 0.30.154): the BUD-set types whose product category is WPR
    * (app_config cryo_type_categories, SMALLS by default): his Prepack Bud. The rest of the set is Bulk Bud. */
   prepackCodes?: string[];
   /** Lots finished on the trim line within the day's window; their WIP left lands on Other. */
   finishedLots?: TrimFinishedLot[];
-  /** The typed input pounds per shift (trim_line_inputs); null when none typed. */
-  inputLbs?: Record<TrimShiftKey, number | null>;
   /** Packages weighed in the last TRIM_RUNNING_MINUTES, any day: the shifts they light. */
   recent?: TrimRecentRow[];
   /** THE LINE RUNS ON THE CLOCK (canon 0.30.163): lots standing in the Unloaded Queue for trim now. */
@@ -354,8 +352,6 @@ export type TrimShiftFigures = {
   finishedLots: number;
   /** The shift total the endpoints converge on: grams weighed plus the WIP left. */
   totalGrams: number;
-  /** The typed input pounds (total lbs run through T-0); null when none typed. */
-  inputLbs: number | null;
   /** RUNNING: the clock is inside this shift's hours and a lot stands in the Unloaded Queue for trim,
    * or one of this shift's operators weighed a package in the last 30 minutes. */
   running: boolean;
@@ -478,7 +474,6 @@ export function trimFigures(input: TrimInput): TrimFigures {
       wipLeftGrams,
       finishedLots: a.finished,
       totalGrams: roundGrams(total),
-      inputLbs: input.inputLbs?.[shift.key] ?? null,
       running: a.running || (onDuty[shift.key] && queueLots > 0),
       onDuty: onDuty[shift.key],
       hours_window: windows[shift.key],
@@ -549,7 +544,6 @@ export function liveTrimLine(input: TrimInput): TrimShiftFigures {
     wipLeftGrams: roundGrams(wip),
     finishedLots: finished,
     totalGrams: roundGrams(total),
-    inputLbs: null,
     running,
     onDuty: duty != null,
     hours_window: duty ? windows[duty] : "",
@@ -595,11 +589,10 @@ function trimLineFlowPattern(id: string, axis: "x" | "y", to: number, running: b
   return `<pattern id="${id}" patternUnits="userSpaceOnUse" width="20" height="20"><rect class="hc-flow-b" width="20" height="20"/><polygon class="hc-flow-a" points="0,0 10,0 0,10"/><polygon class="hc-flow-a" points="20,0 20,10 10,20 0,20"/>${anim}</pattern>`;
 }
 
-export function trimLinePicture(shift: TrimShiftFigures, locale: Locale = "en", opts?: { showInput?: boolean; totalLabel?: string; flowId?: string }): string {
+export function trimLinePicture(shift: TrimShiftFigures, locale: Locale = "en", opts?: { totalLabel?: string; flowId?: string }): string {
   const lb = (grams: number) => `${formatLbs(grams)} lb`;
   const g = (grams: number) => `${formatGrams(roundGrams(grams))} g`;
   const k = esc(opts?.flowId ?? shift.key);
-  const showInput = opts?.showInput !== false;
   const totalWord = opts?.totalLabel ?? "Shift total";
   const down = `hc-flow-down-${k}`;
   const left = `hc-flow-left-${k}`;
@@ -607,12 +600,8 @@ export function trimLinePicture(shift: TrimShiftFigures, locale: Locale = "en", 
   const w = TRIM_LINE_BAR_WIDTH;
   // The rest of Other rides the TRIM circle (his correction): the TRIM stream, the WIP left, every other type.
   const trimGrams = roundGrams(shift.trimGrams + shift.restGrams + shift.wipLeftGrams);
-  const input = shift.inputLbs == null ? t(locale, "input lbs") : `${t(locale, "input")} ${shift.inputLbs.toFixed(2)} lb`;
   const total = `${lb(shift.totalGrams)} · ${g(shift.totalGrams)}`;
   const label = `${t(locale, totalWord)} ${total}`;
-  const inputLine = showInput
-    ? `<text class="hc-node-sub${shift.inputLbs == null ? " hc-node-muted" : ""}" data-hc-node-value="t0-input" x="849" y="362">${esc(input)}</text>`
-    : "";
   return `<svg class="hc-trimline" viewBox="0 0 1000 704" role="img" aria-label="${esc(label)}" data-hc-trimline data-hc-trimline-running="${shift.running ? "1" : "0"}" data-hc-trimline-total="${esc(String(shift.totalGrams))}">
       <defs>${trimLineFlowPattern(down, "y", 20, shift.running)}${trimLineFlowPattern(left, "x", -20, shift.running)}${trimLineFlowPattern(up, "y", -20, shift.running)}</defs>
       <g class="hc-flows" data-hc-flows>
@@ -638,7 +627,6 @@ export function trimLinePicture(shift: TrimShiftFigures, locale: Locale = "en", 
         <text class="hc-node-label hc-node-label-big" x="849" y="272">T-0</text>
         <text class="hc-node-value" data-hc-node-value="t0" x="849" y="308">${esc(lb(shift.grams))}</text>
         <text class="hc-node-sub" x="849" y="334">${esc(`${g(shift.grams)} · ${shift.packages} ${t(locale, "packages")}`)}</text>
-        ${inputLine}
         <rect class="hc-node" data-hc-node="sorter" x="394" y="258" width="252" height="86"/>
         <text class="hc-node-label hc-node-label-big" x="520" y="316">SORTER</text>
         <rect class="hc-node" data-hc-node="marvel" x="162" y="220" width="156" height="142"/>
@@ -702,7 +690,7 @@ export function budWaffle(btr: number | null, locale: Locale = "en", bogeyPct: n
   const empty = btr == null;
   const lit = empty ? 0 : Math.max(0, Math.min(BUD_CELLS.length, Math.round(btr * 100)));
   const consumed = empty ? 0 : BUD_CELLS.length - lit;
-  const label = empty ? t(locale, "no packages yesterday") : `BTR ${fmtPct(btr)}`;
+  const label = empty ? t(locale, "no packages on the day") : `BTR ${fmtPct(btr)}`;
   const product = Number.isFinite(bogeyPct) ? Math.max(0, Math.min(BUD_CELLS.length, Math.round(bogeyPct))) : BUD_PRODUCT_CELLS;
   const cells = BUD_CELLS.map(([row, col, n]) => {
     const order = 101 - n;
@@ -748,8 +736,16 @@ export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"):
       const typed = input.plantCounts[farm];
       return typed == null ? farmRemaining(farm) + farmHarvested(farm) : typed;
     };
+    // THE PLANTS FROM ADMIN'S TOTAL (canon 0.30.346). Owner, 2026-10-02, verbatim: "the plants
+    // harvested should be the total plants defined in Admin minus what remains.  That should
+    // drive the percentage complete as well." A farm with a typed total reads that total less
+    // the mirror's remaining (never below zero); a farm with none keeps the lots' plant counts.
+    const farmHarvestedNow = (farm: ConsoleFarm) => {
+      const typed = input.plantCounts[farm];
+      return typed == null ? farmHarvested(farm) : Math.max(0, typed - farmRemaining(farm));
+    };
     const remaining = f == null ? CONSOLE_FARMS.reduce((n, farm) => n + farmRemaining(farm), 0) : farmRemaining(f);
-    const harvested = f == null ? CONSOLE_FARMS.reduce((n, farm) => n + farmHarvested(farm), 0) : farmHarvested(f);
+    const harvested = f == null ? CONSOLE_FARMS.reduce((n, farm) => n + farmHarvestedNow(farm), 0) : farmHarvestedNow(f);
     const total = f == null ? CONSOLE_FARMS.reduce((n, farm) => n + farmTotal(farm), 0) : farmTotal(f);
     const pct = total > 0 ? harvested / total : null;
     const counted = input.seasonLots.filter((l) => (f == null || farmOf(l.farm) === f) && Number(l.plant_count ?? 0) >= 1);
@@ -759,15 +755,20 @@ export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"):
     const dried = counted.filter((l) => l.dry_grams != null && Number(l.dry_grams) > 0);
     const dryPlants = plantsIn(dried);
     const dryPerPlant = dryPlants > 0 ? dried.reduce((n, l) => n + Number(l.dry_grams ?? 0), 0) / dryPlants : null;
-    const wetYesterday = sumBy(input.yesterdayWet, f, (r) => r.wet_grams, (r) => r.farm);
+    const wetDay = sumBy(input.dayWet, f, (r) => r.wet_grams, (r) => r.farm);
+    const wetYear = sumBy(input.yearWet ?? [], f, (r) => r.wet_grams, (r) => r.farm);
     const metrics: ConsoleMetric[] = [
       { key: "remaining_total", label: "Plants Remaining/Total Plants", value: `${fmtCount(remaining)} / ${fmtCount(total)}` },
       { key: "harvested", label: "Plants Harvested", value: fmtCount(harvested) },
       { key: "pct", label: "% Complete", value: pct == null ? NA : fmtPct(pct) },
       { key: "wet_per_plant", label: "Wet Weight/plant AVG", ...(wetPerPlant == null ? { value: NA } : weightPair(wetPerPlant)) },
       { key: "dry_per_plant", label: "Dry Weight/plant AVG", ...(dryPerPlant == null ? { value: NA } : weightPair(dryPerPlant)) },
-      { key: "weight_harvested", label: "Weight Harvested", ...weightPair(wetYesterday) },
+      { key: "weight_harvested", label: "Weight Harvested", ...weightPair(wetDay) },
     ];
+    // THE YEAR PANE (canon 0.30.346, his words): "in its own pane within the farm pane", under
+    // Weight Harvested on each farm, and on Total "beneath the lbs/DLH metric".
+    const yearPane: ConsoleMetric = { key: "weight_harvested_year", label: "Harvest Year Total", ...weightPair(wetYear) };
+    if (f != null) metrics.push(yearPane);
     if (f == null) {
       let hours: number | null;
       if (input.harvestHoursAll != null) hours = input.harvestHoursAll;
@@ -783,14 +784,15 @@ export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"):
         }
         hours = any ? sum : null;
       }
-      const perDlh = hours != null && hours > 0 ? wetYesterday / hours : null;
+      const perDlh = hours != null && hours > 0 ? wetDay / hours : null;
       metrics.push(
-        { key: "hours", label: "Harvest Hours Yesterday", value: hours == null ? NA : String(hours) },
+        { key: "hours", label: "Harvest Hours", value: hours == null ? NA : String(hours) },
         {
           key: "weight_per_dlh",
-          label: "Weight/DLH Yesterday",
+          label: "Weight/DLH",
           ...(perDlh == null ? { value: hours == null ? t(locale, "type hours") : NA } : weightPair(perDlh, "/h")),
-        }
+        },
+        yearPane
       );
     }
     return { farm: f ?? "Total", pct, metrics };
@@ -822,19 +824,13 @@ export type HarvestConsolePageInput = {
 function hoursBox(input: HarvestConsoleInput, locale: Locale, value: number | null): string {
   return `<form method="post" action="${esc(HARVEST_HOURS_PATH)}" class="hc-hours" data-hc-hours="ALL">
               <input type="hidden" name="farm" value="ALL">
-              <input type="hidden" name="work_date" value="${esc(input.yesterday)}">
+              <input type="hidden" name="work_date" value="${esc(input.day)}">
               <input type="hidden" name="day_picked" value="${input.dayPicked ? "1" : ""}">
               <input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="${value == null ? "" : esc(String(value))}" placeholder="${esc(
                 t(locale, "hours")
-              )}" aria-label="${esc(t(locale, "Harvest Hours Yesterday"))}" data-hc-hours-input>
+              )}" aria-label="${esc(t(locale, "Harvest Hours"))}" data-hc-hours-input>
               <button type="submit" class="secondary">${esc(t(locale, "Save"))}</button>
             </form>`;
-}
-
-function sheetSyncLine(input: HarvestConsoleInput, locale: Locale): string {
-  const view = input.sheetSync ?? null;
-  const status = view?.status ?? "never";
-  return `<dd class="hc-sheet-sync muted" data-hc-sheet-sync="${esc(status)}" data-hc-sheet-sync-line>${esc(sheetSyncLineText(view, locale))}</dd>`;
 }
 
 function farmBox(box: ConsoleBox, input: HarvestConsoleInput, locale: Locale): string {
@@ -845,9 +841,14 @@ function farmBox(box: ConsoleBox, input: HarvestConsoleInput, locale: Locale): s
         m.key === "hours" && box.farm === "Total"
           ? hoursBox(input, locale, m.value === "" ? null : Number(m.value))
           : `<span class="hc-value" data-hc="${esc(m.key)}">${esc(m.value)}</span>${m.sub ? `<span class="hc-sub muted">${esc(m.sub)}</span>` : ""}`;
-      const dateNote = m.key === "hours" || m.key === "weight_per_dlh" || m.key === "weight_harvested" ? ` <span class="hc-date muted">${esc(input.yesterday)}</span>` : "";
-      const sync = m.key === "hours" && box.farm === "Total" ? sheetSyncLine(input, locale) : "";
-      return `<div class="hc-metric" data-hc-metric="${esc(m.key)}"><dt>${esc(t(locale, m.label))}${dateNote}</dt><dd>${value}</dd>${sync}</div>`;
+      const dateNote =
+        m.key === "hours" || m.key === "weight_per_dlh" || m.key === "weight_harvested"
+          ? ` <span class="hc-date muted">${esc(input.day)}</span>`
+          : m.key === "weight_harvested_year"
+            ? ` <span class="hc-date muted">${esc(String(input.year))}</span>`
+            : "";
+      const cls = m.key === "weight_harvested_year" ? "hc-metric hc-year-pane" : "hc-metric";
+      return `<div class="${cls}" data-hc-metric="${esc(m.key)}"><dt>${esc(t(locale, m.label))}${dateNote}</dt><dd>${value}</dd></div>`;
     })
     .join("");
   return `<div class="hc-farm${box.farm === "Total" ? " hc-total" : ""}" data-hc-farm="${esc(box.farm)}" data-hc-pct="${Math.round(pct * 100)}">
@@ -906,33 +907,17 @@ function foldScript(): string {
 function trimHoursBox(shift: TrimShiftFigures, input: HarvestConsoleInput, locale: Locale): string {
   return `<form method="post" action="${esc(HARVEST_TRIM_HOURS_PATH)}" class="hc-hours" data-hc-trim-hours="${esc(shift.key)}">
               <input type="hidden" name="shift" value="${esc(shift.key)}">
-              <input type="hidden" name="work_date" value="${esc(input.yesterday)}">
+              <input type="hidden" name="work_date" value="${esc(input.day)}">
               <input type="hidden" name="day_picked" value="${input.dayPicked ? "1" : ""}">
               <input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="${shift.hours == null ? "" : esc(String(shift.hours))}" placeholder="${esc(
                 t(locale, "hours")
-              )}" aria-label="${esc(`${t(locale, "DLH Yesterday")} ${t(locale, shift.label)}`)}" data-hc-hours-input>
+              )}" aria-label="${esc(`${t(locale, "DLH")} ${t(locale, shift.label)}`)}" data-hc-hours-input>
               <button type="submit" class="secondary">${esc(t(locale, "Save"))}</button>
             </form>`;
 }
 
-/** THE TRIM LINE PICTURE (canon 0.30.154): "input lbs (total lbs ran through
- * T-0)", one number per shift per day, under the hours, beside the DLH box. */
-function trimInputBox(shift: TrimShiftFigures, input: HarvestConsoleInput, locale: Locale): string {
-  return `<form method="post" action="${esc(HARVEST_TRIM_INPUT_PATH)}" class="hc-hours" data-hc-trim-input="${esc(shift.key)}">
-              <input type="hidden" name="shift" value="${esc(shift.key)}">
-              <input type="hidden" name="work_date" value="${esc(input.yesterday)}">
-              <input type="hidden" name="day_picked" value="${input.dayPicked ? "1" : ""}">
-              <input type="number" name="lbs" min="0" step="0.01" inputmode="decimal" value="${shift.inputLbs == null ? "" : esc(shift.inputLbs.toFixed(2))}" placeholder="${esc(
-                t(locale, "lbs")
-              )}" aria-label="${esc(`${t(locale, "Input lbs")} ${t(locale, shift.label)}`)}" data-hc-input-lbs>
-              <button type="submit" class="secondary">${esc(t(locale, "Save"))}</button>
-            </form>`;
-}
-
-/** One shift's card: the trim line picture beside the bud waffle, then his
- * lines (Other, Bulk Bud, Prepack Bud, Total Bud, BTR, the weight ran, the
- * DLH box, Lbs/DLH), the day's hours from the sheet, and the input lbs box
- * under them. */
+/** One shift's card: the bud waffle, then his lines (Other, Bulk Bud, Prepack Bud,
+ * Total Bud, BTR, the weight ran, the DLH box, Lbs/DLH). */
 function trimShiftCard(shift: TrimShiftFigures, input: HarvestConsoleInput, locale: Locale): string {
   const lbs = (grams: number) => `${formatLbs(grams)} lb`;
   const g = (grams: number) => `${formatGrams(roundGrams(grams))} g`;
@@ -954,13 +939,13 @@ function trimShiftCard(shift: TrimShiftFigures, input: HarvestConsoleInput, loca
     { key: "trim_btr", label: "BTR", value: shift.btr == null ? NA : fmtPct(shift.btr), sub: t(locale, "Total Bud / shift total (weighed + WIP left)") },
     {
       key: "trim_lbs",
-      label: "Lbs Produced Yesterday",
+      label: "Lbs Produced",
       value: lbs(shift.grams),
       sub: `${g(shift.grams)} · ${shift.packages} ${t(locale, "packages")}${
         shift.wipLeftGrams > 0 ? ` · ${t(locale, "shift total")} ${g(shift.totalGrams)}` : ""
       }`,
     },
-    { key: "trim_dlh", label: "DLH Yesterday", value: shift.hours == null ? NA : String(shift.hours), html: trimHoursBox(shift, input, locale) },
+    { key: "trim_dlh", label: "DLH", value: shift.hours == null ? NA : String(shift.hours), html: trimHoursBox(shift, input, locale) },
     { key: "trim_lbs_per_dlh", label: "Lbs/DLH", ...perDlh },
   ];
   const lines = metrics
@@ -969,20 +954,17 @@ function trimShiftCard(shift: TrimShiftFigures, input: HarvestConsoleInput, loca
       return `<div class="hc-metric" data-hc-metric="${esc(m.key)}"><dt>${esc(t(locale, m.label))}</dt><dd>${value}</dd></div>`;
     })
     .join("");
-  const inputLine = `<div class="hc-metric" data-hc-metric="trim_input"><dt>${esc(t(locale, "Input lbs"))} <span class="hc-date muted">${esc(
-    t(locale, "total lbs run through T-0")
-  )}</span></dt><dd>${trimInputBox(shift, input, locale)}</dd></div>`;
   const operators = shift.operators.length ? shift.operators.join(", ") : t(locale, "no operators named");
   const running = shift.running ? `<span class="hc-running" data-hc-running>${esc(t(locale, "RUNNING"))}</span>` : "";
   const btrRead =
     shift.btr == null
-      ? esc(t(locale, "no packages yesterday"))
+      ? esc(t(locale, "no packages on the day"))
       : `<strong>${esc(fmtPct(shift.btr))}</strong> ${esc(t(locale, "BTR"))}`;
   return `<div class="hc-shift" data-hc-shift="${esc(shift.key)}" data-hc-shift-grams="${esc(String(shift.grams))}" data-hc-shift-running="${shift.running ? "1" : "0"}">
           <div class="hc-shift-head">
             <span class="hc-shift-name">${esc(t(locale, shift.label))}</span>
             <span class="hc-shift-ops muted" data-hc-shift-operators>${esc(operators)}</span>
-            <span class="hc-date muted">${esc(input.yesterday)}</span>
+            <span class="hc-date muted">${esc(input.day)}</span>
             ${running}
           </div>
           <div class="hc-shift-body hc-shift-stack">
@@ -993,7 +975,7 @@ function trimShiftCard(shift: TrimShiftFigures, input: HarvestConsoleInput, loca
             <div class="hc-legend"><span class="hc-swatch hc-swatch-bud"></span>${esc(t(locale, "bud"))} <span class="hc-swatch hc-swatch-consumed"></span>${esc(t(locale, "byproduct"))} <span class="hc-swatch hc-swatch-waste"></span>${esc(t(locale, "waste"))}</div>
             </div>
             </div>
-            <dl class="hc-metrics">${lines}${inputLine}</dl>
+            <dl class="hc-metrics">${lines}</dl>
           </div>
         </div>`;
 }
@@ -1025,7 +1007,7 @@ function trimTotalsLine(figures: TrimFigures, locale: Locale): string {
       ${cell("lbs", "Total Lbs", lbs.value, lbs.sub)}
       ${cell("hours", "Total Hours", hours == null ? t(locale, "type hours") : String(hours))}
       ${cell("per", "Lbs/DLH", per == null ? (hours == null ? t(locale, "type hours") : NA) : `${formatLbs(per)} lb/h`, per == null ? "" : `${formatGrams(roundGrams(per))} g/h`)}
-      ${cell("btr", "Weighted BTR", btr == null ? t(locale, "no packages yesterday") : fmtPct(btr), btr == null ? "" : t(locale, "both shifts, Total Bud over the shift totals"))}
+      ${cell("btr", "Weighted BTR", btr == null ? t(locale, "no packages on the day") : fmtPct(btr), btr == null ? "" : t(locale, "both shifts, Total Bud over the shift totals"))}
     </div>`;
 }
 
@@ -1053,7 +1035,7 @@ function trimRightNow(input: HarvestConsoleInput, locale: Locale): string {
         <span class="muted" data-hc-trim-duty>${esc(dutyText)}</span>
         ${status}
       </div>
-      ${trimLinePicture(line, locale, { showInput: false, totalLabel: "Line total", flowId: "now" })}
+      ${trimLinePicture(line, locale, { totalLabel: "Line total", flowId: "now" })}
       ${btrBar(line.btr, bogey, locale)}
     </div>`;
 }
@@ -1065,7 +1047,7 @@ export function trimmingSection(input: HarvestConsoleInput, locale: Locale = "en
   const unassigned =
     figures.unassignedGrams > 0
       ? `<p class="muted hc-note" data-hc-trim-unassigned>${esc(
-          `${formatGrams(figures.unassignedGrams)} g ${t(locale, "yesterday by operators on neither shift")}${
+          `${formatGrams(figures.unassignedGrams)} g ${t(locale, "on the day by operators on neither shift")}${
             figures.unassignedOperators.length ? `: ${figures.unassignedOperators.join(", ")}` : ""
           }. ${t(locale, "Name the shifts' operators in Admin, Lookups, app_config.")}`
         )}</p>`
@@ -1113,19 +1095,19 @@ export function trimmingSection(input: HarvestConsoleInput, locale: Locale = "en
 
 export type PasteurizationShiftKey = TrimShiftKey;
 
-/** One cryo output on the day: the category it was entered under (its package type code), its grams and the operator who typed it. */
-export type PasteurizationOutputRow = { type_code: string | null; weight_grams: number; cryo_operator: string | null };
+/** One cryo output on the day: the category it was entered under (its package type code), its grams, the operator who typed it, and the instant it was entered. */
+export type PasteurizationOutputRow = { type_code: string | null; weight_grams: number; cryo_operator: string | null; created_at?: string | null };
 
-/** A cryo run finished within the window: the grams its inputs carried, the grams its live outputs carry, and the operator of its last output (the shift its waste lands on). */
-export type CryoFinishedRun = { run_id: string; in_grams: number; out_grams: number; last_operator: string | null };
+/** A cryo run finished within the window: the grams its inputs carried, the grams its live outputs carry, the operator of its last output (the shift its waste lands on), and the instant it finished. */
+export type CryoFinishedRun = { run_id: string; in_grams: number; out_grams: number; last_operator: string | null; completed_at?: string | null };
 
 /** A scheduled cryo run still open: once its first output is entered, its inputs above its outputs
  * is weight not yet entered out. A run with no output yet is queued, not held (his word at the V10
  * gate, canon 0.30.338: started runs only). */
 export type CryoOpenRun = { run_id: string; in_grams: number; out_grams: number };
 
-/** An output entered in the last PASTEURIZATION_RUNNING_MINUTES, any day: the operator who typed it (the shift it lights). */
-export type CryoRecentRow = { cryo_operator: string | null };
+/** An output entered in the last PASTEURIZATION_RUNNING_MINUTES, any day: the operator who typed it (the shift it lights) and the instant. */
+export type CryoRecentRow = { cryo_operator: string | null; created_at?: string | null };
 
 export type PasteurizationInput = {
   /** The day's live cryo outputs (cryo_date = the day, or created within its bounds when the date is null). */
@@ -1232,20 +1214,35 @@ export type PasteurizationShiftFigures = {
 
 export type PasteurizationFigures = {
   shifts: PasteurizationShiftFigures[];
-  /** Grams by operators named on neither shift (their outputs and the waste of the runs they finished), so nothing disappears in silence. */
+  /** Grams no list and no clock could place (no instant, or an instant outside both windows). */
   unassignedGrams: number;
   unassignedOperators: string[];
-  /** RUNNING by an operator on neither shift: the line runs, no card can flash it. */
+  /** RUNNING by a recent row with no listed operator and no instant: the line runs, no card can flash it. */
   unassignedRunning: boolean;
+  /** Grams counted by the clock (an unlisted operator whose entry instant falls in a shift window) and those operators, sorted. */
+  clockGrams: number;
+  clockOperators: string[];
 };
 
+/** The shift whose window holds an Eastern clock, Day first when both hold. Blank or unparseable stays unset. */
+function pasteurizationClockShift(input: PasteurizationInput, instant: string | null | undefined): PasteurizationShiftKey | undefined {
+  const raw = String(instant ?? "").trim();
+  if (!raw || !Number.isFinite(Date.parse(raw))) return undefined;
+  const minutes = etClockMinutes(raw);
+  const windows = pasteurizationWindows(input);
+  if (shiftWindowHolds(parseShiftWindow(windows.day, PASTEURIZATION_SHIFT_HOURS_DEFAULT.day), minutes)) return "day";
+  if (shiftWindowHolds(parseShiftWindow(windows.second, PASTEURIZATION_SHIFT_HOURS_DEFAULT.second), minutes)) return "second";
+  return undefined;
+}
+
 /** The shift panes' figures for the day picked, pure: each output lands on the
- * shift whose list names its operator (case-insensitive, trimmed), its grams on
- * Bulk Bud, Prepack or Shake by its category; a finished run's waste (inputs
- * less outputs, above zero) lands on the shift whose list names the operator of
- * its last output (the trim finished lot's rule); Total is the four summed;
- * Lbs/DLH divides Total by the typed hours; RUNNING lights the shift whose
- * operator entered an output lately. */
+ * shift whose list names its operator (case-insensitive, trimmed), and when no
+ * list names the operator, on the shift whose window holds the Eastern clock of
+ * its entry instant (a named operator wins over the clock). A finished run's
+ * waste follows the same two steps from its last operator and its finish instant.
+ * A row with no instant and no listed operator stays unassigned. Total is the
+ * four summed; Lbs/DLH divides Total by the typed hours; RUNNING lights the
+ * shift the same way, and a recent row with no instant lights the unassigned note. */
 export function pasteurizationFigures(input: PasteurizationInput): PasteurizationFigures {
   const categories = input.typeCategories ?? parseCryoTypeCategories(null);
   const shiftOf = new Map<string, PasteurizationShiftKey>();
@@ -1256,34 +1253,60 @@ export function pasteurizationFigures(input: PasteurizationInput): Pasteurizatio
   const acc: Record<PasteurizationShiftKey, PastAcc> = { day: freshPast(), second: freshPast() };
   let unassignedGrams = 0;
   const unassigned = new Set<string>();
+  let clockGrams = 0;
+  const clockOperators = new Set<string>();
+  const place = (operator: string, instant: string | null | undefined): { key: PasteurizationShiftKey | undefined; byClock: boolean } => {
+    const listed = keyOf(operator);
+    if (listed) return { key: listed, byClock: false };
+    const byClock = pasteurizationClockShift(input, instant);
+    if (byClock) return { key: byClock, byClock: true };
+    return { key: undefined, byClock: false };
+  };
   for (const o of input.outputs) {
     const grams = Number(o.weight_grams ?? 0);
     const operator = String(o.cryo_operator ?? "").trim();
-    const key = keyOf(operator);
-    if (!key) {
+    const placed = place(operator, o.created_at);
+    if (!placed.key) {
       unassignedGrams += grams;
       if (operator) unassigned.add(operator);
       continue;
     }
-    addCryoOutput(acc[key], cryoCategoryOf(o.type_code, categories), grams);
+    addCryoOutput(acc[placed.key], cryoCategoryOf(o.type_code, categories), grams);
+    if (placed.byClock) {
+      clockGrams += grams;
+      if (operator) clockOperators.add(operator);
+    }
   }
   for (const run of input.finishedRuns) {
     const waste = cryoRunLeft(run);
     const operator = String(run.last_operator ?? "").trim();
-    const key = keyOf(operator);
-    if (!key) {
+    const placed = place(operator, run.completed_at);
+    if (!placed.key) {
       unassignedGrams += waste;
       if (operator && waste > 0) unassigned.add(operator);
       continue;
     }
-    acc[key].finished += 1;
-    acc[key].waste += waste;
+    acc[placed.key].finished += 1;
+    acc[placed.key].waste += waste;
+    if (placed.byClock) {
+      clockGrams += waste;
+      if (operator && waste > 0) clockOperators.add(operator);
+    }
   }
   let unassignedRunning = false;
   for (const r of input.recent ?? []) {
-    const key = keyOf(r.cryo_operator);
-    if (key) acc[key].running = true;
-    else unassignedRunning = true;
+    const operator = String(r.cryo_operator ?? "").trim();
+    const listed = keyOf(operator);
+    if (listed) {
+      acc[listed].running = true;
+      continue;
+    }
+    const byClock = pasteurizationClockShift(input, r.created_at);
+    if (byClock) {
+      acc[byClock].running = true;
+      continue;
+    }
+    if (!String(r.created_at ?? "").trim()) unassignedRunning = true;
   }
   const clock = input.nowIso ? etClockMinutes(input.nowIso) : null;
   const windows = pasteurizationWindows(input);
@@ -1310,7 +1333,14 @@ export function pasteurizationFigures(input: PasteurizationInput): Pasteurizatio
       hours_window: windows[shift.key],
     };
   });
-  return { shifts, unassignedGrams: roundGrams(unassignedGrams), unassignedOperators: [...unassigned].sort(), unassignedRunning };
+  return {
+    shifts,
+    unassignedGrams: roundGrams(unassignedGrams),
+    unassignedOperators: [...unassigned].sort(),
+    unassignedRunning,
+    clockGrams: roundGrams(clockGrams),
+    clockOperators: [...clockOperators].sort(),
+  };
 }
 
 export type PasteurizationLive = {
@@ -1543,7 +1573,7 @@ const PASTEURIZATION_FIGURES: ReadonlyArray<{ key: string; icon: ConsoleIconName
 function pasteurizationHoursBox(shift: PasteurizationShiftFigures, input: HarvestConsoleInput, locale: Locale): string {
   return `<form method="post" action="${esc(HARVEST_PASTEURIZATION_HOURS_PATH)}" class="hc-hours" data-hc-past-hours="${esc(shift.key)}">
               <input type="hidden" name="shift" value="${esc(shift.key)}">
-              <input type="hidden" name="work_date" value="${esc(input.yesterday)}">
+              <input type="hidden" name="work_date" value="${esc(input.day)}">
               <input type="hidden" name="day_picked" value="${input.dayPicked ? "1" : ""}">
               <input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="${shift.hours == null ? "" : esc(String(shift.hours))}" placeholder="${esc(
                 t(locale, "hours")
@@ -1574,7 +1604,7 @@ function pasteurizationShiftCard(shift: PasteurizationShiftFigures, input: Harve
           <div class="hc-shift-head">
             <span class="hc-shift-name">${esc(t(locale, shift.label))}</span>
             <span class="hc-shift-ops muted" data-hc-past-operators>${esc(operators)}</span>
-            <span class="hc-date muted">${esc(input.yesterday)}</span>
+            <span class="hc-date muted">${esc(input.day)}</span>
             ${running}
           </div>
           <div class="hc-gate hc-past-figures" data-hc-past-figures>${figures}</div>
@@ -1598,6 +1628,14 @@ function pasteurizationLineScript(): string {
 export function pasteurizationSection(input: HarvestConsoleInput, locale: Locale = "en", open = true): string {
   const figures = pasteurizationFigures(input.pasteurization ?? emptyPasteurizationInput());
   const cards = figures.shifts.map((shift) => pasteurizationShiftCard(shift, input, locale)).join("");
+  const clock =
+    figures.clockGrams > 0
+      ? `<p class="muted hc-note" data-hc-past-clock>${esc(
+          `${formatGrams(figures.clockGrams)} g ${t(locale, "on the day by operators on neither list, counted by the clock")}${
+            figures.clockOperators.length ? `: ${figures.clockOperators.join(", ")}` : ""
+          }. ${t(locale, "Name the shifts' operators in Admin, Lookups, app_config.")}`
+        )}</p>`
+      : "";
   const unassigned =
     figures.unassignedGrams > 0
       ? `<p class="muted hc-note" data-hc-past-unassigned>${esc(
@@ -1615,19 +1653,19 @@ export function pasteurizationSection(input: HarvestConsoleInput, locale: Locale
       <summary>${esc(t(locale, "Pasteurization"))}</summary>
       ${pasteurizationRightNow(input, locale)}
       <div class="hc-shifts">${cards}</div>
-      ${unassigned}${unassignedRunning}
+      ${clock}${unassigned}${unassignedRunning}
       ${pasteurizationLineScript()}
     </details>`;
 }
 
 /** The day's live cryo outputs, dated by the typed cryo date (a row without one by its entry instant), the trim queries' shape. */
-const PASTEURIZATION_OUTPUTS_SQL = `SELECT p.package_type_code AS type_code, p.weight_grams, p.cryo_operator
+const PASTEURIZATION_OUTPUTS_SQL = `SELECT p.package_type_code AS type_code, p.weight_grams, p.cryo_operator, p.created_at
          FROM wip_packages p
          WHERE p.deleted_at IS NULL AND p.source = 'cryo'
            AND (p.cryo_date = ? OR (p.cryo_date IS NULL AND p.created_at >= ? AND p.created_at < ?))`;
 
 /** A cryo run (an HBN-level production_schedules row, canon 0.30.110) with the grams its inputs carried, the grams its live outputs carry, and the operator of its last output. */
-const CRYO_RUN_SUMS_SQL = `SELECT ps.id AS run_id,
+const CRYO_RUN_SUMS_SQL = `SELECT ps.id AS run_id, ps.completed_at,
                 (SELECT COALESCE(SUM(i.weight_grams), 0) FROM cryo_run_inputs i WHERE i.run_id = ps.id) AS in_grams,
                 (SELECT COALESCE(SUM(o.weight_grams), 0) FROM wip_packages o WHERE o.cryo_run_id = ps.id AND o.deleted_at IS NULL) AS out_grams,
                 (SELECT o2.cryo_operator FROM wip_packages o2
@@ -2112,30 +2150,25 @@ export function testingSection(figures: TestingFigures, opts: { locale?: Locale;
 }
 
 /** The console sections. Plants, Trimming, Pasteurization, Testing, Prepack and Fulfillment start open. Drying starts closed. */
-/** THE CONSOLE DAY (canon 0.30.152): the date control, yesterday by default, any day up to today. */
+/** THE CONSOLE DAY: the date control, today by default, any day up to today. */
 export function consoleDayControl(input: HarvestConsoleInput, locale: Locale): string {
-  const yesterday = dayBefore(input.today);
-  const viewingToday = input.yesterday === input.today;
-  const state = viewingToday
-    ? t(locale, "today so far; the panes below read today up to now")
-    : input.dayPicked
-      ? t(locale, "picked; the panes below read this day")
-      : t(locale, "yesterday, the default");
+  const state = input.dayPicked
+    ? t(locale, "picked; the panes below read this day")
+    : t(locale, "today so far; the panes below read today up to now");
   return `<form class="hc-day" method="get" action="${HARVEST_PATH}" data-hc-day>
       <label class="field">${esc(t(locale, "Day"))}
-        <input type="date" name="day" value="${esc(input.yesterday)}" max="${esc(input.today)}" data-hc-day-input onchange="this.form.submit()">
+        <input type="date" name="day" value="${esc(input.day)}" max="${esc(input.today)}" data-hc-day-input onchange="this.form.submit()">
       </label>
       <span class="muted" data-hc-day-state>${esc(state)}</span>
-      ${viewingToday ? "" : `<a class="secondary" href="${HARVEST_PATH}?day=${esc(input.today)}" data-hc-day-today>${esc(t(locale, "Today so far"))}</a>`}
-      ${input.dayPicked ? `<a class="secondary" href="${HARVEST_PATH}" data-hc-day-reset>${esc(t(locale, "Back to yesterday"))}</a>` : ""}
+      ${input.dayPicked ? `<a class="secondary" href="${HARVEST_PATH}" data-hc-day-reset>${esc(t(locale, "Back to today"))}</a>` : ""}
       <noscript><button type="submit" class="secondary">${esc(t(locale, "Show"))}</button></noscript>
-      <span class="muted">${esc(t(locale, "Yesterday is"))} ${esc(yesterday)}; ${esc(t(locale, "the hours you type land on the day shown."))}</span>
+      <span class="muted">${esc(t(locale, "Today is"))} ${esc(input.today)}; ${esc(t(locale, "the hours you type land on the day shown."))}</span>
     </form>`;
 }
 
 /** The query that keeps the picked day through a redirect; empty on the default. */
-export function consoleDayQuery(input: { yesterday: string; dayPicked: boolean }): string {
-  return input.dayPicked ? `&day=${encodeURIComponent(input.yesterday)}` : "";
+export function consoleDayQuery(input: { day: string; dayPicked: boolean }): string {
+  return input.dayPicked ? `&day=${encodeURIComponent(input.day)}` : "";
 }
 
 export type PrepackConsole = {
@@ -2164,9 +2197,9 @@ function prepackSection(figures: PrepackConsole, input: HarvestConsoleInput, loc
       <p data-prepack-lbs>${esc(t(locale, "Lbs produced"))}: <span data-hc="prepack_lbs">${esc(formatLbs(figures.grams))}</span></p>
       <p data-prepack-jobs>${esc(t(locale, "Jobs finished"))}: <span data-hc="prepack_jobs">${esc(String(figures.jobs))}</span></p>
       <form method="post" action="${esc(HARVEST_PREPACK_HOURS_PATH)}" class="hc-hours" data-hc-prepack-hours>
-        <input type="hidden" name="work_date" value="${esc(input.yesterday)}">
+        <input type="hidden" name="work_date" value="${esc(input.day)}">
         <input type="hidden" name="day_picked" value="${input.dayPicked ? "1" : ""}">
-        <label class="field">${esc(t(locale, "DLH Yesterday"))}
+        <label class="field">${esc(t(locale, "DLH"))}
           <input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="${hoursValue}" placeholder="${esc(t(locale, "hours"))}" data-hc-prepack-hours-input>
         </label>
         <button type="submit" class="secondary">${esc(t(locale, "Save"))}</button>
@@ -2258,9 +2291,7 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
   const flash =
     page.ok === "hours" || page.ok === "trim_hours" || page.ok === "pasteurization_hours" || page.ok === "prepack_hours"
       ? `<p class="banner ok" data-hc-flash>${esc(t(locale, "Hours saved."))}</p>`
-      : page.ok === "trim_input"
-        ? `<p class="banner ok" data-hc-flash>${esc(t(locale, "Input lbs saved."))}</p>`
-        : "";
+      : "";
   return `<h1>${esc(t(locale, "Harvest Console"))}</h1>
     ${flash}
     ${consoleDayControl(page.input, locale)}
@@ -2279,7 +2310,7 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
       locale,
       year: page.input.year,
     })}
-    ${prepackSection(page.prepack ?? emptyPrepack(page.input.yesterday), page.input, locale)}
+    ${prepackSection(page.prepack ?? emptyPrepack(page.input.day), page.input, locale)}
     ${fulfillmentSection(page.fulfillment ?? emptyFulfillment(), locale)}
     ${hoursScript()}${foldScript()}`;
 }
@@ -2287,12 +2318,11 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
 /* ------------------------------------------------------------ the loaders */
 
 /** The console's inputs from the floor. Every query is Postgres-portable SQL. */
-/** THE CONSOLE DAY (canon 0.30.152): the day the console reads. A picked day
- * must be a real calendar day no later than today; anything else reads yesterday. */
+/** THE CONSOLE DAY: the day the console reads. A blank, invalid, future or
+ * equal-to-today pick reads today. Any real day before today is a pick. */
 export function consoleDayOf(picked: string | null | undefined, today: string): { day: string; dayPicked: boolean } {
-  const yesterday = dayBefore(today);
   const value = String(picked ?? "").trim();
-  if (!value || !isCalendarDate(value) || value > today || value === yesterday) return { day: yesterday, dayPicked: false };
+  if (!value || !isCalendarDate(value) || value > today || value === today) return { day: today, dayPicked: false };
   return { day: value, dayPicked: true };
 }
 
@@ -2368,12 +2398,12 @@ export async function loadTestingSection(db: D1Database, year: number): Promise<
 }
 
 export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDay: string | null = null): Promise<HarvestConsoleInput> {
-  // THE FARM DAY BEGINS AT SIX (canon 0.30.151): today and yesterday are farm days.
+  // THE FARM DAY BEGINS AT SIX (canon 0.30.151): today and the day under view are farm days.
   const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour));
   const today = farmDay(atIso, startHour);
-  const { day: yesterday, dayPicked } = consoleDayOf(pickedDay, today);
+  const { day, dayPicked } = consoleDayOf(pickedDay, today);
   const year = Number(today.slice(0, 4));
-  const bounds = farmDayBounds(yesterday, startHour);
+  const bounds = farmDayBounds(day, startHour);
   const todayBounds = farmDayBounds(today, startHour);
   // THE TRIM LINE PICTURE (canon 0.30.154): RUNNING is a package weighed in the last 30 minutes.
   const recentSince = new Date(Date.parse(atIso) - TRIM_RUNNING_MINUTES * 60_000).toISOString();
@@ -2383,7 +2413,8 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     remaining,
     seasonHarvested,
     seasonLots,
-    yesterdayWet,
+    dayWet,
+    yearWet,
     hoursRows,
     trimPackages,
     trimHoursRows,
@@ -2391,13 +2422,11 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     dayOpsRaw,
     secondOpsRaw,
     finishedRows,
-    inputRows,
     recentRows,
     typeCatsRaw,
     queueRow,
     dayHoursRaw,
     secondHoursRaw,
-    syncView,
     bogeyRaw,
     plantCountRows,
     livePackages,
@@ -2457,10 +2486,21 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
       .bind(bounds.startIso, bounds.endIso)
       .all<FarmGrams>(),
     db
+      .prepare(
+        `SELECT b.farm_code AS farm, COALESCE(SUM(x.weight_grams), 0) AS wet_grams
+         FROM wet_weights x
+         JOIN wet_weight_entries w ON w.id = x.wet_weight_entry_id AND w.deleted_at IS NULL
+         JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
+         WHERE x.deleted_at IS NULL AND b.harvest_year = ?
+         GROUP BY b.farm_code`
+      )
+      .bind(year)
+      .all<FarmGrams>(),
+    db
       .prepare(`SELECT farm_code, hours FROM harvest_labor_hours WHERE work_date = ?`)
-      .bind(yesterday)
+      .bind(day)
       .all<{ farm_code: string; hours: number }>(),
-    // THE TRIMMING SECTION (canon 0.30.88): yesterday's trim room packages,
+    // THE TRIMMING SECTION (canon 0.30.88): the console day's trim room packages,
     // dated by the typed trim date (a row without one by its entry instant).
     db
       .prepare(
@@ -2469,9 +2509,9 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
          WHERE p.deleted_at IS NULL AND ${NON_TRIM_SOURCE_SQL}
            AND (p.trim_date = ? OR (p.trim_date IS NULL AND p.created_at >= ? AND p.created_at < ?))`
       )
-      .bind(yesterday, bounds.startIso, bounds.endIso)
+      .bind(day, bounds.startIso, bounds.endIso)
       .all<TrimPackageRow>(),
-    db.prepare(`SELECT shift, hours FROM trim_labor_hours WHERE work_date = ?`).bind(yesterday).all<{ shift: string; hours: number }>(),
+    db.prepare(`SELECT shift, hours FROM trim_labor_hours WHERE work_date = ?`).bind(day).all<{ shift: string; hours: number }>(),
     getConfigValue(db, CONFIG_KEYS.btr_type_codes),
     getConfigValue(db, CONFIG_KEYS.trim_shift_day_operators),
     getConfigValue(db, CONFIG_KEYS.trim_shift_second_operators),
@@ -2497,7 +2537,6 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
       )
       .bind(bounds.startIso, bounds.endIso)
       .all<TrimFinishedLot>(),
-    db.prepare(`SELECT shift, lbs FROM trim_line_inputs WHERE work_date = ?`).bind(yesterday).all<{ shift: string; lbs: number }>(),
     db
       .prepare(
         `SELECT p.trim_operator FROM wip_packages p
@@ -2515,8 +2554,6 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
       .first<{ n: number | null; grams: number | null }>(),
     getConfigValue(db, CONFIG_KEYS.trim_shift_day_hours),
     getConfigValue(db, CONFIG_KEYS.trim_shift_second_hours),
-    // THE SHEET SYNC (canon 0.30.162): the last run, for the line under the sheet hours.
-    latestSheetSync(db),
     // THE TRIM BOGEY (canon 0.30.249): the plume's product line, Admin, Lookups.
     getConfigValue(db, CONFIG_KEYS.trim_bogey_pct),
     db
@@ -2558,13 +2595,13 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     // waste is inputs less outputs, counted when the run is finished), the open
     // runs' remainders, the outputs entered lately, the last output ever entered,
     // the shifts' own operators and windows, the typed hours, and the run in the Rad.
-    db.prepare(PASTEURIZATION_OUTPUTS_SQL).bind(yesterday, bounds.startIso, bounds.endIso).all<PasteurizationOutputRow>(),
+    db.prepare(PASTEURIZATION_OUTPUTS_SQL).bind(day, bounds.startIso, bounds.endIso).all<PasteurizationOutputRow>(),
     db.prepare(PASTEURIZATION_OUTPUTS_SQL).bind(today, todayBounds.startIso, atIso).all<PasteurizationOutputRow>(),
     db.prepare(CRYO_RUNS_FINISHED_SQL).bind(bounds.startIso, bounds.endIso).all<CryoFinishedRun>(),
     db.prepare(CRYO_RUNS_FINISHED_SQL).bind(todayBounds.startIso, atIso).all<CryoFinishedRun>(),
     db.prepare(CRYO_RUNS_OPEN_SQL).all<CryoOpenRun>(),
     db
-      .prepare(`SELECT p.cryo_operator FROM wip_packages p WHERE p.deleted_at IS NULL AND p.source = 'cryo' AND p.created_at >= ?`)
+      .prepare(`SELECT p.cryo_operator, p.created_at FROM wip_packages p WHERE p.deleted_at IS NULL AND p.source = 'cryo' AND p.created_at >= ?`)
       .bind(cryoRecentSince)
       .all<CryoRecentRow>(),
     db
@@ -2574,16 +2611,12 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     getConfigValue(db, CONFIG_KEYS.pasteurization_shift_second_operators),
     getConfigValue(db, CONFIG_KEYS.pasteurization_shift_day_hours),
     getConfigValue(db, CONFIG_KEYS.pasteurization_shift_second_hours),
-    db.prepare(`SELECT shift, hours FROM pasteurization_labor_hours WHERE work_date = ?`).bind(yesterday).all<{ shift: string; hours: number }>(),
+    db.prepare(`SELECT shift, hours FROM pasteurization_labor_hours WHERE work_date = ?`).bind(day).all<{ shift: string; hours: number }>(),
     loadRadRunning(db),
   ]);
   const trimHours: Record<TrimShiftKey, number | null> = { day: null, second: null };
   for (const row of trimHoursRows.results ?? []) {
     if (row.shift === "day" || row.shift === "second") trimHours[row.shift] = Number(row.hours);
-  }
-  const inputLbs: Record<TrimShiftKey, number | null> = { day: null, second: null };
-  for (const row of inputRows.results ?? []) {
-    if (row.shift === "day" || row.shift === "second") inputLbs[row.shift] = Number(row.lbs);
   }
   const trim: TrimInput = {
     packages: (trimPackages.results ?? []).map((r) => ({
@@ -2601,7 +2634,6 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
       recorded_grams: Number(r.recorded_grams ?? 0),
       last_operator: r.last_operator,
     })),
-    inputLbs,
     recent: (recentRows.results ?? []).map((r) => ({ trim_operator: r.trim_operator })),
     queueLots: Number(queueRow?.n ?? 0),
     queueGrams: Number(queueRow?.grams ?? 0),
@@ -2654,13 +2686,19 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     if (row.shift === "day" || row.shift === "second") pastHours[row.shift] = Number(row.hours);
   }
   const pastOutputRows = (rows: { results?: PasteurizationOutputRow[] }): PasteurizationOutputRow[] =>
-    (rows.results ?? []).map((r) => ({ type_code: r.type_code, weight_grams: Number(r.weight_grams ?? 0), cryo_operator: r.cryo_operator }));
+    (rows.results ?? []).map((r) => ({ type_code: r.type_code, weight_grams: Number(r.weight_grams ?? 0), cryo_operator: r.cryo_operator, created_at: r.created_at ?? null }));
   const pastRunRows = (rows: { results?: CryoFinishedRun[] }): CryoFinishedRun[] =>
-    (rows.results ?? []).map((r) => ({ run_id: r.run_id, in_grams: Number(r.in_grams ?? 0), out_grams: Number(r.out_grams ?? 0), last_operator: r.last_operator }));
+    (rows.results ?? []).map((r) => ({
+      run_id: r.run_id,
+      in_grams: Number(r.in_grams ?? 0),
+      out_grams: Number(r.out_grams ?? 0),
+      last_operator: r.last_operator,
+      completed_at: r.completed_at ?? null,
+    }));
   const pasteurization: PasteurizationInput = {
     outputs: pastOutputRows(pastOutputs),
     finishedRuns: pastRunRows(pastFinished),
-    recent: (pastRecent.results ?? []).map((r) => ({ cryo_operator: r.cryo_operator })),
+    recent: (pastRecent.results ?? []).map((r) => ({ cryo_operator: r.cryo_operator, created_at: r.created_at ?? null })),
     typeCategories: parseCryoTypeCategories(typeCatsRaw),
     operators: { day: parseNameList(pastDayOpsRaw), second: parseNameList(pastSecondOpsRaw) },
     hours: pastHours,
@@ -2682,7 +2720,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
   };
   return {
     today,
-    yesterday,
+    day,
     dayPicked,
     year,
     remaining: (remaining.results ?? []).map((r) => ({ farm: r.farm, plants: Number(r.plants ?? 0) })),
@@ -2693,14 +2731,14 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
       dry_grams: r.dry_grams == null ? null : Number(r.dry_grams),
       plant_count: r.plant_count == null ? null : Number(r.plant_count),
     })),
-    yesterdayWet: (yesterdayWet.results ?? []).map((r) => ({ farm: r.farm, wet_grams: Number(r.wet_grams ?? 0) })),
+    dayWet: (dayWet.results ?? []).map((r) => ({ farm: r.farm, wet_grams: Number(r.wet_grams ?? 0) })),
+    yearWet: (yearWet.results ?? []).map((r) => ({ farm: r.farm, wet_grams: Number(r.wet_grams ?? 0) })),
     hours,
     harvestHoursAll,
     plantCounts,
     trim,
     trimLive,
     lastWeighedAt: lastWeighed?.weighed_at ?? null,
-    sheetSync: syncView,
     pasteurization,
     pasteurizationLive,
     lastCryoOutputAt: lastCryoOutput?.entered_at ?? null,
@@ -2907,70 +2945,4 @@ export async function savePasteurizationHours(db: D1Database, form: FormData): P
   }
   if (stmts.length) await db.batch(stmts);
   return { redirect: `${HARVEST_PATH}?ok=pasteurization_hours${textOrNull(form.get("day_picked")) ? `&day=${encodeURIComponent(workDate)}` : ""}` };
-}
-
-/** THE TRIM LINE PICTURE (canon 0.30.154): the typed input pounds, zero or
- * more, two decimals; blank clears the shift's number. */
-export function parseInputLbs(raw: string | null): number | null {
-  const text = (raw ?? "").trim().replace(/,/g, "");
-  if (text === "") return null;
-  const n = Number(text);
-  if (!Number.isFinite(n) || n < 0 || n > 1_000_000) throw new HttpError(400, "Input lbs must be a number of pounds, zero or more.");
-  return Math.round(n * 100) / 100;
-}
-
-/** Save (or clear) one shift's input lbs for one day (total lbs run through
- * T-0); the change lands in record_change_log under trim_line_inputs. */
-export async function saveTrimInputLbs(db: D1Database, form: FormData): Promise<{ redirect: string }> {
-  const actorId = textOrNull(form.get("person_id"));
-  const shiftRaw = textOrNull(form.get("shift"));
-  const shift = TRIM_SHIFTS.find((s) => s.key === shiftRaw)?.key;
-  if (!shift) throw new HttpError(400, "Pick a shift.");
-  const workDate = textOrNull(form.get("work_date")) ?? "";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(workDate) || !Number.isFinite(Date.parse(`${workDate}T00:00:00.000Z`))) {
-    throw new HttpError(400, "Work date must be YYYY-MM-DD.");
-  }
-  const lbs = parseInputLbs(textOrNull(form.get("lbs")));
-  const ts = nowIso();
-  const existing = await db
-    .prepare(`SELECT id, lbs FROM trim_line_inputs WHERE work_date = ? AND shift = ?`)
-    .bind(workDate, shift)
-    .first<{ id: string; lbs: number }>();
-  const log = (id: string, oldValue: string | null, newValue: string | null) =>
-    insertLog(db, {
-      record_table: "trim_line_inputs",
-      record_id: id,
-      field: "lbs",
-      old_value: oldValue,
-      new_value: newValue,
-      actor_person_id: actorId,
-      reason: SYSTEM_REASON.labor_hours,
-      changed_at: ts,
-    });
-  const stmts: D1PreparedStatement[] = [];
-  if (lbs == null) {
-    if (existing) {
-      stmts.push(db.prepare(`DELETE FROM trim_line_inputs WHERE id = ?`).bind(existing.id), log(existing.id, String(existing.lbs), null));
-    }
-  } else if (existing) {
-    if (Number(existing.lbs) !== lbs) {
-      stmts.push(
-        db.prepare(`UPDATE trim_line_inputs SET lbs = ?, updated_at = ?, updated_by = ? WHERE id = ?`).bind(lbs, ts, actorId, existing.id),
-        log(existing.id, String(existing.lbs), String(lbs))
-      );
-    }
-  } else {
-    const id = crypto.randomUUID();
-    stmts.push(
-      db
-        .prepare(
-          `INSERT INTO trim_line_inputs (id, work_date, shift, lbs, created_at, created_by, updated_at, updated_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .bind(id, workDate, shift, lbs, ts, actorId, ts, actorId),
-      log(id, null, String(lbs))
-    );
-  }
-  if (stmts.length) await db.batch(stmts);
-  return { redirect: `${HARVEST_PATH}?ok=trim_input${textOrNull(form.get("day_picked")) ? `&day=${encodeURIComponent(workDate)}` : ""}` };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HttpError } from "../src/audit";
 import { resolveLoadedAt } from "../src/actions";
-import { consoleDayControl, consoleDayOf, consoleDayQuery, harvestConsolePage, loadHarvestConsole, saveHarvestHours, saveTrimHours, saveTrimInputLbs, type HarvestConsoleInput } from "../src/console";
+import { consoleDayControl, consoleDayOf, consoleDayQuery, harvestConsolePage, loadHarvestConsole, saveHarvestHours, saveTrimHours, type HarvestConsoleInput } from "../src/console";
 import { CONFIG_KEYS } from "../src/config";
 import { effectiveDateField, farmDayStartHour, farmToday, resolveEffectiveDate } from "../src/effective";
 import {
@@ -163,50 +163,49 @@ describe("THE FARM DAY BEGINS AT SIX (canon 0.30.151; owner: \"Second shift ends
 
 const baseInput: HarvestConsoleInput = {
   today: "2026-09-21",
-  yesterday: "2026-09-20",
+  day: "2026-09-21",
   dayPicked: false,
   year: 2026,
   remaining: [],
   seasonHarvested: [],
   seasonLots: [],
-  yesterdayWet: [],
+  dayWet: [],
   hours: { PNN: null, ARL: null, PNS: null },
   plantCounts: { PNN: null, ARL: null, PNS: null },
 };
 
 describe("THE CONSOLE DAY (canon 0.30.152; owner: \"on the dashboard, can we do a universal date override?  It defaults to \\\"yesterday\\\" and I can change it to any other day?\")", () => {
-  it("the day under view: yesterday by default; any real day up to today when picked; a bad, future or yesterday pick reads yesterday", () => {
-    expect(consoleDayOf(null, "2026-09-21")).toEqual({ day: "2026-09-20", dayPicked: false });
-    expect(consoleDayOf("", "2026-09-21")).toEqual({ day: "2026-09-20", dayPicked: false });
-    expect(consoleDayOf("2026-09-20", "2026-09-21")).toEqual({ day: "2026-09-20", dayPicked: false });
+  it("the day under view: today by default; any real day before today when picked; a blank, bad, future or today pick reads today", () => {
+    expect(consoleDayOf(null, "2026-09-21")).toEqual({ day: "2026-09-21", dayPicked: false });
+    expect(consoleDayOf("", "2026-09-21")).toEqual({ day: "2026-09-21", dayPicked: false });
+    expect(consoleDayOf("2026-09-20", "2026-09-21")).toEqual({ day: "2026-09-20", dayPicked: true });
     expect(consoleDayOf("2026-09-18", "2026-09-21")).toEqual({ day: "2026-09-18", dayPicked: true });
-    expect(consoleDayOf("2026-09-21", "2026-09-21")).toEqual({ day: "2026-09-21", dayPicked: true });
-    expect(consoleDayOf("2026-09-22", "2026-09-21")).toEqual({ day: "2026-09-20", dayPicked: false });
-    expect(consoleDayOf("09/18/2026", "2026-09-21")).toEqual({ day: "2026-09-20", dayPicked: false });
-    expect(consoleDayQuery({ yesterday: "2026-09-18", dayPicked: true })).toBe("&day=2026-09-18");
-    expect(consoleDayQuery({ yesterday: "2026-09-20", dayPicked: false })).toBe("");
+    expect(consoleDayOf("2026-09-21", "2026-09-21")).toEqual({ day: "2026-09-21", dayPicked: false });
+    expect(consoleDayOf("2026-09-22", "2026-09-21")).toEqual({ day: "2026-09-21", dayPicked: false });
+    expect(consoleDayOf("09/18/2026", "2026-09-21")).toEqual({ day: "2026-09-21", dayPicked: false });
+    expect(consoleDayQuery({ day: "2026-09-18", dayPicked: true })).toBe("&day=2026-09-18");
+    expect(consoleDayQuery({ day: "2026-09-21", dayPicked: false })).toBe("");
   });
 
-  it("the loader reads the farm day for today and yesterday, bounds the window from six to six, and takes the picked day", async () => {
+  it("the loader reads the farm day for today, bounds the window from six to six, and takes the picked day", async () => {
     const db = fakeDb({ farm_day_start_hour: "6" });
     const input = await loadHarvestConsole(db as unknown as D1Database, SMALL_HOURS);
-    // 1:30 AM on the 21st: the farm's today is the 20th, yesterday the 19th.
+    // 1:30 AM on the 21st: the farm's today is the 20th, and the console reads it.
     expect(input.today).toBe("2026-09-20");
-    expect(input.yesterday).toBe("2026-09-19");
+    expect(input.day).toBe("2026-09-20");
     expect(input.dayPicked).toBe(false);
-    const wet = db.seen.find((q) => q.sql.includes("FROM wet_weights x"));
-    expect(wet?.args).toEqual(["2026-09-19T10:00:00.000Z", "2026-09-20T10:00:00.000Z"]);
+    const wet = db.seen.find((q) => q.sql.includes("FROM wet_weights x") && q.sql.includes("x.created_at"));
+    expect(wet?.args).toEqual(["2026-09-20T10:00:00.000Z", "2026-09-21T10:00:00.000Z"]);
+    const yearWet = db.seen.find((q) => q.sql.includes("FROM wet_weights x") && q.sql.includes("b.harvest_year"));
+    expect(yearWet?.args).toEqual([2026]);
     const trim = db.seen.find((q) => q.sql.includes("p.trim_date = ?"));
-    expect(trim?.args).toEqual(["2026-09-19", "2026-09-19T10:00:00.000Z", "2026-09-20T10:00:00.000Z"]);
+    expect(trim?.args).toEqual(["2026-09-20", "2026-09-20T10:00:00.000Z", "2026-09-21T10:00:00.000Z"]);
     const hours = db.seen.find((q) => q.sql.includes("FROM harvest_labor_hours WHERE work_date = ?"));
-    expect(hours?.args).toEqual(["2026-09-19"]);
-    // THE TRIM LINE PICTURE (canon 0.30.154): the input lbs read the day, the finished lots the day's window,
-    // and RUNNING the last 30 minutes before the instant, whatever day is under view.
-    expect(db.seen.find((q) => q.sql.includes("FROM trim_line_inputs WHERE work_date = ?"))?.args).toEqual(["2026-09-19"]);
-    expect(db.seen.find((q) => q.sql.includes("l.new_value = 'trimmed'"))?.args).toEqual(["2026-09-19T10:00:00.000Z", "2026-09-20T10:00:00.000Z"]);
-    expect(db.seen.find((q) => q.sql.includes("p.created_at >= ?") && !q.sql.includes("trim_date"))?.args).toEqual(["2026-09-21T05:00:00.000Z"]);
+    expect(hours?.args).toEqual(["2026-09-20"]);
+    expect(db.seen.find((q) => q.sql.includes("FROM trim_line_inputs"))).toBeUndefined();
+    expect(db.seen.find((q) => q.sql.includes("l.new_value = 'trimmed'"))?.args).toEqual(["2026-09-20T10:00:00.000Z", "2026-09-21T10:00:00.000Z"]);
+    expect(db.seen.find((q) => q.sql.includes("p.created_at >= ?") && !q.sql.includes("trim_date") && !q.sql.includes("source = 'cryo'"))?.args).toEqual(["2026-09-21T05:00:00.000Z"]);
     expect(input.trim?.prepackCodes).toEqual(["SMALLS"]);
-    expect(input.trim?.inputLbs).toEqual({ day: null, second: null });
     // THE LINE RUNS ON THE CLOCK (canon 0.30.163): the queue count, the instant and the hours ride the input.
     expect(db.seen.find((q) => q.sql.includes("w.status = 'unloaded'") && q.sql.includes("COUNT(*) AS n"))).toBeTruthy();
     expect(input.trim?.nowIso).toBe(SMALL_HOURS);
@@ -216,28 +215,29 @@ describe("THE CONSOLE DAY (canon 0.30.152; owner: \"on the dashboard, can we do 
     const picked = fakeDb({ farm_day_start_hour: "6" });
     const pickedInput = await loadHarvestConsole(picked as unknown as D1Database, MORNING, "2026-09-15");
     expect(pickedInput.today).toBe("2026-09-21");
-    expect(pickedInput.yesterday).toBe("2026-09-15");
+    expect(pickedInput.day).toBe("2026-09-15");
     expect(pickedInput.dayPicked).toBe(true);
     expect(picked.seen.find((q) => q.sql.includes("FROM wet_weights x"))?.args).toEqual(["2026-09-15T10:00:00.000Z", "2026-09-16T10:00:00.000Z"]);
     expect(picked.seen.find((q) => q.sql.includes("FROM trim_labor_hours WHERE work_date = ?"))?.args).toEqual(["2026-09-15"]);
   });
 
-  it("the control: a date box under the title, yesterday by default, capped at today, the picked state named, a way back", () => {
+  it("the control: a date box under the title, today by default, capped at today, the picked state named, a way back", () => {
     const dflt = consoleDayControl(baseInput, "en");
     expect(dflt).toContain('<form class="hc-day" method="get" action="/harvest" data-hc-day>');
-    expect(dflt).toContain('<input type="date" name="day" value="2026-09-20" max="2026-09-21" data-hc-day-input onchange="this.form.submit()">');
-    expect(dflt).toContain("yesterday, the default");
+    expect(dflt).toContain('<input type="date" name="day" value="2026-09-21" max="2026-09-21" data-hc-day-input onchange="this.form.submit()">');
+    expect(dflt).toContain("today so far; the panes below read today up to now");
     expect(dflt).not.toContain("data-hc-day-reset");
-    expect(dflt).toContain("Yesterday is 2026-09-20; the hours you type land on the day shown.");
-    const picked = consoleDayControl({ ...baseInput, yesterday: "2026-09-15", dayPicked: true }, "en");
+    expect(dflt).toContain("Today is 2026-09-21; the hours you type land on the day shown.");
+    const picked = consoleDayControl({ ...baseInput, day: "2026-09-15", dayPicked: true }, "en");
     expect(picked).toContain('value="2026-09-15" max="2026-09-21"');
     expect(picked).toContain("picked; the panes below read this day");
-    expect(picked).toContain('<a class="secondary" href="/harvest" data-hc-day-reset>Back to yesterday</a>');
-    expect(consoleDayControl(baseInput, "es")).toContain("ayer, el valor por defecto");
+    expect(picked).toContain('<a class="secondary" href="/harvest" data-hc-day-reset>Back to today</a>');
+    expect(consoleDayControl(baseInput, "es")).toContain("hoy hasta ahora; los paneles de abajo leen hoy hasta este momento");
+    expect(consoleDayControl({ ...baseInput, day: "2026-09-15", dayPicked: true }, "es")).toContain("Volver a hoy");
   });
 
   it("the page carries the control and the hours forms carry the picked day home", () => {
-    const html = harvestConsolePage({ input: { ...baseInput, yesterday: "2026-09-15", dayPicked: true }, live: [], nowIso: MORNING });
+    const html = harvestConsolePage({ input: { ...baseInput, day: "2026-09-15", dayPicked: true }, live: [], nowIso: MORNING });
     expect(html).toContain("data-hc-day");
     expect(html).toContain('<input type="hidden" name="work_date" value="2026-09-15">');
     expect(html).toContain('<input type="hidden" name="day_picked" value="1">');
@@ -254,14 +254,5 @@ describe("THE CONSOLE DAY (canon 0.30.152; owner: \"on the dashboard, can we do 
     expect(dflt.redirect).toBe("/harvest?ok=hours");
     const trim = await saveTrimHours(db as unknown as D1Database, fd({ person_id: "p1", shift: "day", work_date: "2026-09-15", hours: "6", day_picked: "1" }));
     expect(trim.redirect).toBe("/harvest?ok=trim_hours&day=2026-09-15");
-    // THE TRIM LINE PICTURE (canon 0.30.154): the input lbs box follows the same road.
-    const lbs = await saveTrimInputLbs(db as unknown as D1Database, fd({ person_id: "p1", shift: "second", work_date: "2026-09-15", lbs: "12.5", day_picked: "1" }));
-    expect(lbs.redirect).toBe("/harvest?ok=trim_input&day=2026-09-15");
-    expect(db.seen.find((q) => q.sql.includes("FROM trim_line_inputs WHERE work_date = ? AND shift = ?"))?.args).toEqual(["2026-09-15", "second"]);
-    const lbsDflt = await saveTrimInputLbs(db as unknown as D1Database, fd({ person_id: "p1", shift: "day", work_date: "2026-09-20", lbs: "", day_picked: "" }));
-    expect(lbsDflt.redirect).toBe("/harvest?ok=trim_input");
-    await expect(saveTrimInputLbs(db as unknown as D1Database, fd({ person_id: "p1", shift: "night", work_date: "2026-09-20", lbs: "1" }))).rejects.toThrow(HttpError);
-    await expect(saveTrimInputLbs(db as unknown as D1Database, fd({ person_id: "p1", shift: "day", work_date: "20-09-2026", lbs: "1" }))).rejects.toThrow(HttpError);
-    await expect(saveTrimInputLbs(db as unknown as D1Database, fd({ person_id: "p1", shift: "day", work_date: "2026-09-20", lbs: "-4" }))).rejects.toThrow(HttpError);
   });
 });

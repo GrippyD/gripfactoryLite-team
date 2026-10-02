@@ -212,7 +212,7 @@ describe("THE CRYO RUN: the Cryo Weight Entry page", () => {
     // The line: tag, the product category (blank until picked, his order), weight, plus; the Effective Date and the operator above it.
     expect(html).toContain('action="/station/cryo_weight/run/run-1/add"');
     expect(html).toContain('<details class="effective-date" data-effective-date>');
-    expect(html).toContain('name="cryo_operator" required autocomplete="off" value="Austin"');
+    expect(html).toContain('name="cryo_operator" required autocomplete="off" data-keep-operator value="Austin"');
     expect(html).toContain(
       '<select name="package_type_code" id="cryo-plus-type" required data-cryo-category><option value=""></option><option value="WPR">WPR</option><option value="BUD">BUD</option><option value="SHA">SHA</option></select>'
     );

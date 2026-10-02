@@ -10,7 +10,6 @@ import {
   barnLocationForSite,
   HARVEST_HOURS_PATH,
   HARVEST_TRIM_HOURS_PATH,
-  HARVEST_TRIM_INPUT_PATH,
   HARVEST_PREPACK_HOURS_PATH,
   HARVEST_PASTEURIZATION_HOURS_PATH,
   PREPACK_STATION_PATH,
@@ -451,7 +450,7 @@ import {
   type StationDef,
 } from "./pipeline";
 import { anyPlantCount, queueRowsToCsv, toCsv, wetWeightsCsv, wetWeightsCsvWithCounts, wetWeightsCsvWithTags, wetWeightsFilename } from "./csv";
-import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePasteurizationHours, savePrepackHours, saveTrimHours, saveTrimInputLbs } from "./console";
+import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePasteurizationHours, savePrepackHours, saveTrimHours } from "./console";
 import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { terpRecipesPage } from "./terps";
 import { fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
@@ -1479,15 +1478,15 @@ app.post(`${ADMIN_METRC_API_PATH}/test`, async (c) => {
 app.get(HARVEST_PATH, async (c) => {
   const s = await shell(c);
   const now = nowIso();
-  // THE CONSOLE DAY (canon 0.30.152): ?day=YYYY-MM-DD picks the day the yesterday panes read.
+  // THE CONSOLE DAY: ?day=YYYY-MM-DD picks a day before today; a blank reads today.
   // THE TESTING GATE (canon 0.30.293): the four panes are live. The stats and the pie read the harvest year. ?thc= is ignored.
   const input = await loadHarvestConsole(c.env.DB, now, c.req.query("day") ?? null);
   const [silos, cure, testing, prepack, fulfillment] = await Promise.all([
     loadSiloVisuals(c.env.DB),
     listCurePanes(c.env.DB, now, s.locale),
     loadTestingSection(c.env.DB, input.year),
-    loadPrepackSection(c.env.DB, input.yesterday),
-    loadFulfillmentSection(c.env.DB, input.yesterday),
+    loadPrepackSection(c.env.DB, input.day),
+    loadFulfillmentSection(c.env.DB, input.day),
   ]);
   const checkedLive = await attachLoadChecks(c.env.DB, silos.live, now);
   return html(
@@ -1574,13 +1573,6 @@ app.post(HARVEST_PREPACK_HOURS_PATH, async (c) => {
 
 app.post(HARVEST_TRIM_HOURS_PATH, async (c) => {
   const result = await saveTrimHours(c.env.DB, actorForm(c, await c.req.formData()));
-  return c.redirect(result.redirect, 303);
-});
-
-// THE TRIM LINE PICTURE (canon 0.30.154): "input lbs (total lbs ran through
-// T-0)", one number per shift per day, behind the console's PIN like the DLH.
-app.post(HARVEST_TRIM_INPUT_PATH, async (c) => {
-  const result = await saveTrimInputLbs(c.env.DB, actorForm(c, await c.req.formData()));
   return c.redirect(result.redirect, 303);
 });
 
@@ -2526,7 +2518,9 @@ app.get("/station/field_harvest", async (c) => {
     const load = await getFieldLoad(c.env.DB, loadId);
     if (load && load.status === "open") {
       const [totes, hbnOptions] = await Promise.all([listFieldLoadTotes(c.env.DB, load.id), listFieldHbns(c.env.DB)]);
-      const carry = url.searchParams.get("carry") === "1" ? totes[0]?.harvest_batch_id ?? null : null;
+      // THE HBN KEPT (canon 0.30.346): the load's newest tote's HBN is the pick on every load of the page, not
+      // only after a "+" (the carry flag was lost on every other link and on refresh).
+      const carry = totes[0]?.harvest_batch_id ?? null;
       picked = { load, totes, hbnOptions, carryId: carry, finish, warnIds: url.searchParams.getAll("hbn") };
     }
   }

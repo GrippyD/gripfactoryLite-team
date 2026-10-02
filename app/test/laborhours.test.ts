@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SYSTEM_REASON } from "../src/config";
-import { saveHarvestHours, savePrepackHours, saveTrimHours, saveTrimInputLbs } from "../src/console";
+import { saveHarvestHours, savePrepackHours, saveTrimHours } from "../src/console";
 import { listLaborHours } from "../src/db";
 import { dayBefore } from "../src/farmday";
 import { laborHoursDefaultWindow, laborHoursView } from "../src/reports";
@@ -25,9 +25,6 @@ describe("THE HOURS PROVED AND THE LABOR HOURS REPORT (canon 0.30.288)", () => {
     await saveTrimHours(m.db, formOf({ shift: "day", work_date: DAY, hours: "6" }));
     await saveTrimHours(m.db, formOf({ shift: "day", work_date: DAY, hours: "6.5" }));
     expect(m.all(`SELECT work_date, shift, hours FROM trim_labor_hours`)).toEqual([{ work_date: DAY, shift: "day", hours: 6.5 }]);
-    await saveTrimInputLbs(m.db, formOf({ shift: "day", work_date: DAY, lbs: "12.5" }));
-    await saveTrimInputLbs(m.db, formOf({ shift: "day", work_date: DAY, lbs: "13" }));
-    expect(m.all(`SELECT work_date, shift, lbs FROM trim_line_inputs`)).toEqual([{ work_date: DAY, shift: "day", lbs: 13 }]);
     await savePrepackHours(m.db, formOf({ work_date: DAY, hours: "2" }));
     await savePrepackHours(m.db, formOf({ work_date: DAY, hours: "2.25" }));
     expect(m.all(`SELECT work_date, hours FROM prepack_labor_hours`)).toEqual([{ work_date: DAY, hours: 2.25 }]);
@@ -41,26 +38,18 @@ describe("THE HOURS PROVED AND THE LABOR HOURS REPORT (canon 0.30.288)", () => {
       { record_table: "harvest_labor_hours", n: 3 },
       { record_table: "prepack_labor_hours", n: 2 },
       { record_table: "trim_labor_hours", n: 2 },
-      { record_table: "trim_line_inputs", n: 2 },
     ]);
     await saveHarvestHours(m.db, formOf({ farm: "PNN", work_date: DAY, hours: "" }));
     await saveTrimHours(m.db, formOf({ shift: "day", work_date: DAY, hours: "" }));
-    await saveTrimInputLbs(m.db, formOf({ shift: "day", work_date: DAY, lbs: "" }));
     await savePrepackHours(m.db, formOf({ work_date: DAY, hours: "" }));
     expect(m.get(`SELECT COUNT(*) AS n FROM harvest_labor_hours WHERE farm_code = 'PNN'`)).toEqual({ n: 0 });
     expect(m.get(`SELECT COUNT(*) AS n FROM trim_labor_hours`)).toEqual({ n: 0 });
-    expect(m.get(`SELECT COUNT(*) AS n FROM trim_line_inputs`)).toEqual({ n: 0 });
     expect(m.get(`SELECT COUNT(*) AS n FROM prepack_labor_hours`)).toEqual({ n: 0 });
     const cleared = m.all(
       `SELECT record_table, new_value FROM record_change_log WHERE reason = ? AND new_value IS NULL ORDER BY record_table`,
       SYSTEM_REASON.labor_hours
     );
-    expect(cleared.map((row) => row.record_table)).toEqual([
-      "harvest_labor_hours",
-      "prepack_labor_hours",
-      "trim_labor_hours",
-      "trim_line_inputs",
-    ]);
+    expect(cleared.map((row) => row.record_table)).toEqual(["harvest_labor_hours", "prepack_labor_hours", "trim_labor_hours"]);
   });
 
   it("lists newest date first, one row per saved value, and filters the window", async () => {
@@ -68,7 +57,10 @@ describe("THE HOURS PROVED AND THE LABOR HOURS REPORT (canon 0.30.288)", () => {
     await saveHarvestHours(m.db, formOf({ farm: "PNN", work_date: DAY, hours: "9" }));
     await saveHarvestHours(m.db, formOf({ farm: "ARL", work_date: PRIOR, hours: "4" }));
     await saveTrimHours(m.db, formOf({ shift: "day", work_date: DAY, hours: "6.5" }));
-    await saveTrimInputLbs(m.db, formOf({ shift: "second", work_date: DAY, lbs: "13" }));
+    m.run(
+      `INSERT INTO trim_line_inputs (id, work_date, shift, lbs, created_at, updated_at) VALUES ('in-1', ?, 'second', 13, '2026-09-15T12:00:00.000Z', '2026-09-15T12:00:00.000Z')`,
+      DAY
+    );
     await savePrepackHours(m.db, formOf({ work_date: DAY, hours: "2.25" }));
     const rows = await listLaborHours(m.db, PRIOR, DAY);
     expect(rows.map((row) => `${row.work_date}|${row.operation}|${row.value}|${row.unit}`)).toEqual([

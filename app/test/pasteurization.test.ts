@@ -37,13 +37,13 @@ import { formOf, migratedDb, seedBatch, seedLot, seedMirror, seedPerson } from "
 
 const base: HarvestConsoleInput = {
   today: "2026-09-21",
-  yesterday: "2026-09-20",
+  day: "2026-09-20",
   dayPicked: false,
   year: 2026,
   remaining: [],
   seasonHarvested: [],
   seasonLots: [],
-  yesterdayWet: [],
+  dayWet: [],
   hours: { PNN: null, ARL: null, PNS: null },
   plantCounts: { PNN: null, ARL: null, PNS: null },
 };
@@ -149,6 +149,8 @@ describe("BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): the figures
     expect(figures.unassignedGrams).toBe(50);
     expect(figures.unassignedOperators).toEqual(["Hand Three"]);
     expect(figures.unassignedRunning).toBe(true);
+    expect(figures.clockGrams).toBe(0);
+    expect(figures.clockOperators).toEqual([]);
   });
 
   it("nothing on the day: zeros, null Lbs/DLH, no RUNNING, no unassigned; typed hours over nothing read zero", () => {
@@ -159,6 +161,7 @@ describe("BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): the figures
     expect(figures.shifts.every((s) => !s.running)).toBe(true);
     expect(figures.unassignedGrams).toBe(0);
     expect(figures.unassignedRunning).toBe(false);
+    expect(figures.clockGrams).toBe(0);
   });
 
   it("the duty reads the shifts' own windows: second at 2 AM Eastern, none in a gap of custom hours", () => {
@@ -169,6 +172,71 @@ describe("BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): the figures
     expect(livePasteurization(custom).duty).toBeNull();
     expect(pasteurizationFigures(custom).shifts.every((s) => !s.onDuty)).toBe(true);
     expect(pasteurizationDuty({ ...day, nowIso: undefined })).toBeNull();
+  });
+
+  it("an unlisted operator counts by the entry clock, a named operator wins, and a row with no instant stays unassigned", () => {
+    const morning = "2026-09-21T14:30:00.000Z";
+    const night = "2026-09-22T03:15:00.000Z";
+    const unnamed = pasteurizationFigures({
+      ...emptyPasteurizationInput(),
+      operators: { day: [], second: [] },
+      outputs: [
+        { type_code: "BUD", weight_grams: 100, cryo_operator: "Hand One", created_at: morning },
+        { type_code: "SHA", weight_grams: 40, cryo_operator: "Hand Two", created_at: night },
+        { type_code: "WPR", weight_grams: 7, cryo_operator: "Hand Three", created_at: null },
+      ],
+      finishedRuns: [{ run_id: "r", in_grams: 50, out_grams: 10, last_operator: "Hand One", completed_at: night }],
+      recent: [
+        { cryo_operator: "Hand Two", created_at: morning },
+        { cryo_operator: "Hand Three" },
+      ],
+    });
+    const [dayShift, second] = unnamed.shifts;
+    expect(dayShift.budGrams).toBe(100);
+    expect(dayShift.packages).toBe(1);
+    expect(dayShift.running).toBe(true);
+    expect(second.shakeGrams).toBe(40);
+    expect(second.wasteGrams).toBe(40);
+    expect(second.running).toBe(false);
+    expect(unnamed.clockGrams).toBe(180);
+    expect(unnamed.clockOperators).toEqual(["Hand One", "Hand Two"]);
+    expect(unnamed.unassignedGrams).toBe(7);
+    expect(unnamed.unassignedOperators).toEqual(["Hand Three"]);
+    expect(unnamed.unassignedRunning).toBe(true);
+    const named = pasteurizationFigures({
+      ...emptyPasteurizationInput(),
+      operators: { day: ["Hand One"], second: [] },
+      outputs: [{ type_code: "BUD", weight_grams: 100, cryo_operator: "Hand One", created_at: night }],
+      finishedRuns: [{ run_id: "r", in_grams: 20, out_grams: 0, last_operator: "Hand One", completed_at: night }],
+      recent: [{ cryo_operator: "Hand One", created_at: night }],
+    });
+    expect(named.shifts[0].budGrams).toBe(100);
+    expect(named.shifts[0].wasteGrams).toBe(20);
+    expect(named.shifts[0].running).toBe(true);
+    expect(named.shifts[1].totalGrams).toBe(0);
+    expect(named.clockGrams).toBe(0);
+    expect(named.unassignedGrams).toBe(0);
+    expect(named.unassignedRunning).toBe(false);
+    const overlap = pasteurizationFigures({
+      ...emptyPasteurizationInput(),
+      operators: { day: [], second: [] },
+      shiftHours: { day: "06:00-20:00", second: "18:00-06:00" },
+      outputs: [{ type_code: "BUD", weight_grams: 11, cryo_operator: "Hand Two", created_at: "2026-09-21T23:30:00.000Z" }],
+    });
+    expect(overlap.shifts[0].budGrams).toBe(11);
+    expect(overlap.shifts[1].budGrams).toBe(0);
+    const html = pasteurizationSection({
+      ...base,
+      pasteurization: {
+        ...emptyPasteurizationInput(),
+        operators: { day: [], second: [] },
+        outputs: [{ type_code: "BUD", weight_grams: 88, cryo_operator: "Hand One", created_at: morning }],
+      },
+    });
+    expect(html).toContain(
+      'data-hc-past-clock>88 g on the day by operators on neither list, counted by the clock: Hand One. Name the shifts\' operators in Admin, Lookups, app_config.</p>'
+    );
+    expect(html).not.toContain("data-hc-past-unassigned");
   });
 
   it("the live line: every operator in one line, CRYO = BUD + WPR + WASTE, AMAPS = BUD + WPR, UV = SHA, the open runs' remainders shown and never counted", () => {
@@ -324,7 +392,7 @@ describe("BRIEF V10 (canon 0.30.334): the section rendered", () => {
     expect(second).toContain('data-hc="past_lbs_per_dlh">type hours</span>');
     expect(html).toContain("data-hc-past-unassigned>50 g on the day by operators on neither shift: Hand Three. Name the shifts' operators in Admin, Lookups, app_config.</p>");
     expect(html).toContain('data-hc-past-running-unassigned><span class="hc-running">RUNNING</span> an output was entered in the last 30 minutes by an operator on neither shift.</p>');
-    const picked = pasteurizationSection({ ...page, yesterday: "2026-09-08", dayPicked: true });
+    const picked = pasteurizationSection({ ...page, day: "2026-09-08", dayPicked: true });
     expect(picked).toContain('<input type="hidden" name="work_date" value="2026-09-08">');
     expect(picked).toContain('<input type="hidden" name="day_picked" value="1">');
   });
@@ -553,19 +621,21 @@ describe("BRIEF V10 (canon 0.30.334): the hours saved, the Rad read, the console
     const loaded = await loadHarvestConsole(m.db, AT, DAY);
     expect(loaded.dayPicked).toBe(true);
     expect([...(loaded.pasteurization?.outputs ?? [])].sort((a, b) => a.weight_grams - b.weight_grams)).toEqual([
-      { type_code: "SHA", weight_grams: 10, cryo_operator: "Hand One" },
-      { type_code: "WPR", weight_grams: 300, cryo_operator: "Hand One" },
-      { type_code: "BUD", weight_grams: 500, cryo_operator: "Hand One" },
+      { type_code: "SHA", weight_grams: 10, cryo_operator: "Hand One", created_at: "2026-09-15T15:29:00.000Z" },
+      { type_code: "WPR", weight_grams: 300, cryo_operator: "Hand One", created_at: "2026-09-08T19:00:00.000Z" },
+      { type_code: "BUD", weight_grams: 500, cryo_operator: "Hand One", created_at: "2026-09-08T18:00:00.000Z" },
     ]);
-    expect(loaded.pasteurization?.finishedRuns).toEqual([{ run_id: "run-done", in_grams: 1000, out_grams: 810, last_operator: "Hand One" }]);
+    expect(loaded.pasteurization?.finishedRuns).toEqual([
+      { run_id: "run-done", in_grams: 1000, out_grams: 810, last_operator: "Hand One", completed_at: "2026-09-08T20:00:00.000Z" },
+    ]);
     expect(loaded.pasteurization?.hours).toEqual({ day: 7.5, second: null });
     expect(loaded.pasteurization?.operators).toEqual({ day: ["Hand One", "Hand Two"], second: [] });
     expect(loaded.pasteurization?.shiftHours).toEqual({ day: "07:00-19:00", second: "18:00-06:00" });
-    expect(loaded.pasteurization?.recent).toEqual([{ cryo_operator: "Hand Two" }]);
+    expect(loaded.pasteurization?.recent).toEqual([{ cryo_operator: "Hand Two", created_at: "2026-09-15T15:50:00.000Z" }]);
     expect(loaded.pasteurization?.typeCategories?.get("SMALLS")).toBe("WPR");
     expect(loaded.pasteurization?.nowIso).toBe(AT);
     expect(loaded.pasteurization?.startHour).toBe(6);
-    expect(loaded.pasteurizationLive?.outputs).toEqual([{ type_code: "SHA", weight_grams: 100, cryo_operator: "Hand Two" }]);
+    expect(loaded.pasteurizationLive?.outputs).toEqual([{ type_code: "SHA", weight_grams: 100, cryo_operator: "Hand Two", created_at: "2026-09-15T15:50:00.000Z" }]);
     expect(loaded.pasteurizationLive?.finishedRuns).toEqual([]);
     expect(loaded.pasteurizationLive?.openRuns).toEqual([{ run_id: "run-open", in_grams: 300, out_grams: 100 }]);
     expect(loaded.pasteurizationLive?.hours).toEqual({ day: null, second: null });
@@ -589,9 +659,10 @@ describe("BRIEF V10 (canon 0.30.334): the hours saved, the Rad read, the console
     const html = harvestConsolePage({ input: loaded, live: [], nowIso: AT });
     expect(html).toContain('data-hc-cryo-open-grams="200">1 open run holds 0.45 lb not yet entered out</p>');
     expect(html).toContain('value="7.5" placeholder="hours" aria-label="Total Hours Day shift" data-hc-hours-input>');
-    // Today picked reads today's own outputs on the cards and the open run's line still.
+    // A pick equal to today reads today's own outputs on the cards and the open run's line still.
     const today = await loadHarvestConsole(m.db, AT, "2026-09-15");
-    expect(today.pasteurization?.outputs).toEqual([{ type_code: "SHA", weight_grams: 100, cryo_operator: "Hand Two" }]);
+    expect(today.dayPicked).toBe(false);
+    expect(today.pasteurization?.outputs).toEqual([{ type_code: "SHA", weight_grams: 100, cryo_operator: "Hand Two", created_at: "2026-09-15T15:50:00.000Z" }]);
     expect(today.pasteurization?.finishedRuns).toEqual([]);
   });
 });

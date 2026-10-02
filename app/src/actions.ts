@@ -879,8 +879,8 @@ async function splitTruckIfNeeded(
           .prepare(
             `INSERT INTO wet_weight_entries (
               id, harvest_batch_id, weight_grams, wet_spear_weight_grams, actual_dryspc, actual_start_time, truck_number, material_form, lead_person_id, team_lead, notes, status, effective_date, plant_count, harvest_file_seq,
-              created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-            ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+              finished_at, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+            ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
           )
           .bind(
             rowId,
@@ -897,6 +897,8 @@ async function splitTruckIfNeeded(
             header.effective_date,
             plantCount,
             seq,
+            // THE FINISH STAMP (canon 0.30.346): a split child is finished the moment it is born.
+            ts,
             ts,
             actorId,
             ts,
@@ -1306,7 +1308,8 @@ export async function startFieldLoad(db: D1Database, form: FormData): Promise<Ac
   if (!destinations.some((row) => row.code === destination)) {
     throw new HttpError(400, "That farm is not a destination.");
   }
-  const operator = textOrNull(form.get("operator_name"));
+  // THE OPERATOR KEPT (canon 0.30.346): the operator is mandatory on the field node's load.
+  const operator = requireText(form.get("operator_name"), "Operator");
   const ts = nowIso();
   const day = await farmToday(db, ts);
   const id = crypto.randomUUID();

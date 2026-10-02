@@ -1218,24 +1218,22 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "% Complete": { en: "% Complete", es: "% completado" },
   "Wet Weight/plant AVG": { en: "Wet Weight/plant AVG", es: "Peso humedo/planta PROM" },
   "Dry Weight/plant AVG": { en: "Dry Weight/plant AVG", es: "Peso seco/planta PROM" },
-  "Harvest Hours Yesterday": { en: "Harvest Hours Yesterday", es: "Horas de cosecha de ayer" },
-  "Weight/DLH Yesterday": { en: "Weight/DLH Yesterday", es: "Peso/hora de trabajo de ayer" },
+  "Harvest Hours": { en: "Harvest Hours", es: "Horas de cosecha" },
+  "Weight/DLH": { en: "Weight/DLH", es: "Peso/hora de trabajo" },
   "Weight Harvested": { en: "Weight Harvested", es: "Peso cosechado" },
+  "Harvest Year Total": { en: "Harvest Year Total", es: "Total del año de cosecha" },
   "type hours": { en: "type hours", es: "escriba las horas" },
-  "yesterday": { en: "yesterday", es: "ayer" },
   "hours": { en: "hours", es: "horas" },
   "Hours saved.": { en: "Hours saved.", es: "Horas guardadas." },
   // THE CONSOLE DAY (canon 0.30.152).
   "Day": { en: "Day", es: "Dia" },
   "picked; the panes below read this day": { en: "picked; the panes below read this day", es: "elegido; los paneles de abajo leen este dia" },
-  "yesterday, the default": { en: "yesterday, the default", es: "ayer, el valor por defecto" },
-  "Back to yesterday": { en: "Back to yesterday", es: "Volver a ayer" },
-  "Today so far": { en: "Today so far", es: "Hoy hasta ahora" },
+  "Back to today": { en: "Back to today", es: "Volver a hoy" },
   "today so far; the panes below read today up to now": {
     en: "today so far; the panes below read today up to now",
     es: "hoy hasta ahora; los paneles de abajo leen hoy hasta este momento",
   },
-  "Yesterday is": { en: "Yesterday is", es: "Ayer es" },
+  "Today is": { en: "Today is", es: "Hoy es" },
   "the hours you type land on the day shown.": { en: "the hours you type land on the day shown.", es: "las horas que escribas caen en el dia mostrado." },
   // THE FOUR START TAPS (canon 0.30.89).
   "That lot was already started a moment ago; you are on it. No second lot was made.": {
@@ -1245,8 +1243,8 @@ export const DICT: Record<string, { en: string; es: string }> = {
   // THE TRIMMING SECTION (canon 0.30.88).
   "Day shift": { en: "Day shift", es: "Turno de dia" },
   "Second Shift": { en: "Second Shift", es: "Segundo turno" },
-  "Lbs Produced Yesterday": { en: "Lbs Produced Yesterday", es: "Libras producidas ayer" },
-  "DLH Yesterday": { en: "DLH Yesterday", es: "Horas directas ayer" },
+  "Lbs Produced": { en: "Lbs Produced", es: "Libras producidas" },
+  "DLH": { en: "DLH", es: "Horas directas" },
   "Lbs/DLH": { en: "Lbs/DLH", es: "Libras/hora directa" },
   "BTR": { en: "BTR", es: "BTR" },
   // THE BUD WAFFLE (canon 0.30.157).
@@ -1280,9 +1278,8 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "OTHER": { en: "OTHER", es: "OTROS" },
   "(BUD+WPR+SHA) / all weight ran": { en: "(BUD+WPR+SHA) / all weight ran", es: "(BUD+WPR+SHA) / todo el peso procesado" },
   "all other": { en: "all other", es: "todo lo demas" },
-  "no packages yesterday": { en: "no packages yesterday", es: "sin paquetes ayer" },
+  "no packages on the day": { en: "no packages on the day", es: "sin paquetes en el dia" },
   "no operators named": { en: "no operators named", es: "sin operadores nombrados" },
-  "yesterday by operators on neither shift": { en: "yesterday by operators on neither shift", es: "ayer de operadores sin turno" },
   "Name the shifts' operators in Admin, Lookups, app_config.": {
     en: "Name the shifts' operators in Admin, Lookups, app_config.",
     es: "Nombre los operadores de cada turno en Admin, Lookups, app_config.",
@@ -1318,11 +1315,6 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "a package was weighed in the last 30 minutes by an operator on neither shift.",
     es: "un paquete se peso en los ultimos 30 minutos por un operador sin turno.",
   },
-  "Input lbs": { en: "Input lbs", es: "Libras de entrada" },
-  "input lbs": { en: "input lbs", es: "libras de entrada" },
-  "input": { en: "input", es: "entrada" },
-  "total lbs run through T-0": { en: "total lbs run through T-0", es: "libras totales que pasaron por T-0" },
-  "Input lbs saved.": { en: "Input lbs saved.", es: "Libras de entrada guardadas." },
   // BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): the Right now pane's two halves, the cryo list, the shift panes' notes. ASCII.
   "Rad": { en: "Rad", es: "Rad" },
   "Cryo": { en: "Cryo", es: "Cryo" },
@@ -1339,22 +1331,22 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Waste": { en: "Waste", es: "Desperdicio" },
   "WASTE": { en: "WASTE", es: "DESPERDICIO" },
   "on the day by operators on neither shift": { en: "on the day by operators on neither shift", es: "en el dia de operadores sin turno" },
+  "on the day by operators on neither list, counted by the clock": {
+    en: "on the day by operators on neither list, counted by the clock",
+    es: "en el dia de operadores en ninguna lista, contados por el reloj",
+  },
   "an output was entered in the last 30 minutes by an operator on neither shift.": {
     en: "an output was entered in the last 30 minutes by an operator on neither shift.",
     es: "una salida se registro en los ultimos 30 minutos por un operador sin turno.",
   },
-  "The day's packages from Trim Packages Entry, each on the shift its operator is named on. Total Bud is BUD, SHAKE (bulk) and SMALLS as WPR (prepack); Other is TRIM, BIO, the WIP left in the packages the shift finished, and every other type; BTR is Total Bud over the shift total. RUNNING means the clock is inside the shift's hours (Day 6:00 AM to 6:00 PM, Second 6:00 PM to 6:00 AM Eastern) with a lot standing in the Unloaded Queue for trim, or a package weighed in the last 30 minutes. The type lists, the shift operators and the shift hours are values in Admin, Lookups, app_config. DLH and input lbs are typed here per shift per day.": {
-    en: "The day's packages from Trim Packages Entry, each on the shift its operator is named on. Total Bud is BUD, SHAKE (bulk) and SMALLS as WPR (prepack); Other is TRIM, BIO, the WIP left in the packages the shift finished, and every other type; BTR is Total Bud over the shift total. RUNNING means the clock is inside the shift's hours (Day 6:00 AM to 6:00 PM, Second 6:00 PM to 6:00 AM Eastern) with a lot standing in the Unloaded Queue for trim, or a package weighed in the last 30 minutes. The type lists, the shift operators and the shift hours are values in Admin, Lookups, app_config. DLH and input lbs are typed here per shift per day.",
-    es: "Los paquetes del dia de Trim Packages Entry, cada uno en el turno de su operador. La flor total es BUD, SHAKE (granel) y SMALLS como WPR (preempacada); Otros es TRIM, BIO, el WIP restante en los paquetes que el turno termino y todo otro tipo; BTR es la flor total sobre el total del turno. EN MARCHA significa que el reloj esta dentro de las horas del turno (Dia de 6:00 AM a 6:00 PM, Segundo de 6:00 PM a 6:00 AM, hora del este) con un lote en la cola de descarga para recorte, o un paquete pesado en los ultimos 30 minutos. Las listas de tipos, los operadores y las horas por turno son valores en Admin, Lookups, app_config. Las horas directas y las libras de entrada se escriben aqui por turno y dia.",
+  "The day's packages from Trim Packages Entry, each on the shift its operator is named on. Total Bud is BUD, SHAKE (bulk) and SMALLS as WPR (prepack); Other is TRIM, BIO, the WIP left in the packages the shift finished, and every other type; BTR is Total Bud over the shift total. RUNNING means the clock is inside the shift's hours (Day 6:00 AM to 6:00 PM, Second 6:00 PM to 6:00 AM Eastern) with a lot standing in the Unloaded Queue for trim, or a package weighed in the last 30 minutes. The type lists, the shift operators and the shift hours are values in Admin, Lookups, app_config. DLH is typed here per shift per day.": {
+    en: "The day's packages from Trim Packages Entry, each on the shift its operator is named on. Total Bud is BUD, SHAKE (bulk) and SMALLS as WPR (prepack); Other is TRIM, BIO, the WIP left in the packages the shift finished, and every other type; BTR is Total Bud over the shift total. RUNNING means the clock is inside the shift's hours (Day 6:00 AM to 6:00 PM, Second 6:00 PM to 6:00 AM Eastern) with a lot standing in the Unloaded Queue for trim, or a package weighed in the last 30 minutes. The type lists, the shift operators and the shift hours are values in Admin, Lookups, app_config. DLH is typed here per shift per day.",
+    es: "Los paquetes del dia de Trim Packages Entry, cada uno en el turno de su operador. La flor total es BUD, SHAKE (granel) y SMALLS como WPR (preempacada); Otros es TRIM, BIO, el WIP restante en los paquetes que el turno termino y todo otro tipo; BTR es la flor total sobre el total del turno. EN MARCHA significa que el reloj esta dentro de las horas del turno (Dia de 6:00 AM a 6:00 PM, Segundo de 6:00 PM a 6:00 AM, hora del este) con un lote en la cola de descarga para recorte, o un paquete pesado en los ultimos 30 minutos. Las listas de tipos, los operadores y las horas por turno son valores en Admin, Lookups, app_config. Las horas directas se escriben aqui por turno y dia.",
   },
   // THE SHEET SYNC (canon 0.30.162) with THE LINE RUNS ON THE CLOCK (0.30.163): the Trimming footnote as console.ts speaks it, both hands' sentences.
-  "The day's packages from Trim Packages Entry, each on the shift its operator is named on. Total Bud is BUD, SHAKE (bulk) and SMALLS as WPR (prepack); Other is TRIM, BIO, the WIP left in the packages the shift finished, and every other type; BTR is Total Bud over the shift total. RUNNING means the clock is inside the shift's hours (Day 6:00 AM to 6:00 PM, Second 6:00 PM to 6:00 AM Eastern) with a lot standing in the Unloaded Queue for trim, or a package weighed in the last 30 minutes. The type lists, the shift operators and the shift hours are values in Admin, Lookups, app_config. DLH and input lbs are typed here per shift per day. The sheet is the source of the cutting and bucking hours and replaces a typed number at the next hour.": {
-    en: "The day's packages from Trim Packages Entry, each on the shift its operator is named on. Total Bud is BUD, SHAKE (bulk) and SMALLS as WPR (prepack); Other is TRIM, BIO, the WIP left in the packages the shift finished, and every other type; BTR is Total Bud over the shift total. RUNNING means the clock is inside the shift's hours (Day 6:00 AM to 6:00 PM, Second 6:00 PM to 6:00 AM Eastern) with a lot standing in the Unloaded Queue for trim, or a package weighed in the last 30 minutes. The type lists, the shift operators and the shift hours are values in Admin, Lookups, app_config. DLH and input lbs are typed here per shift per day. The sheet is the source of the cutting and bucking hours and replaces a typed number at the next hour.",
-    es: "Los paquetes del dia de Trim Packages Entry, cada uno en el turno de su operador. La flor total es BUD, SHAKE (granel) y SMALLS como WPR (preempacada); Otros es TRIM, BIO, el WIP restante en los paquetes que el turno termino y todo otro tipo; BTR es la flor total sobre el total del turno. EN MARCHA significa que el reloj esta dentro de las horas del turno (Dia de 6:00 AM a 6:00 PM, Segundo de 6:00 PM a 6:00 AM, hora del este) con un lote en la cola de descarga para recorte, o un paquete pesado en los ultimos 30 minutos. Las listas de tipos, los operadores y las horas por turno son valores en Admin, Lookups, app_config. Las horas directas y las libras de entrada se escriben aqui por turno y dia. La hoja es la fuente de las horas de corte y deshoje y reemplaza un numero escrito en la hora siguiente.",
-  },
-  "Yesterday's packages from Trim Packages Entry, each on the shift its operator is named on. BTR is BUD (BUD, SMALLS as WPR, SHAKE as SHA) over all weight ran; the type list and the shift operators are values in Admin, Lookups, app_config. DLH is typed here per shift per day.": {
-    en: "Yesterday's packages from Trim Packages Entry, each on the shift its operator is named on. BTR is BUD (BUD, SMALLS as WPR, SHAKE as SHA) over all weight ran; the type list and the shift operators are values in Admin, Lookups, app_config. DLH is typed here per shift per day.",
-    es: "Los paquetes de ayer de Trim Packages Entry, cada uno en el turno de su operador. BTR es BUD (BUD, SMALLS como WPR, SHAKE como SHA) sobre todo el peso procesado; la lista de tipos y los operadores por turno son valores en Admin, Lookups, app_config. Las horas directas se escriben aqui por turno y dia.",
+  "The day's packages from Trim Packages Entry, each on the shift its operator is named on. Total Bud is BUD, SHAKE (bulk) and SMALLS as WPR (prepack); Other is TRIM, BIO, the WIP left in the packages the shift finished, and every other type; BTR is Total Bud over the shift total. RUNNING means the clock is inside the shift's hours (Day 6:00 AM to 6:00 PM, Second 6:00 PM to 6:00 AM Eastern) with a lot standing in the Unloaded Queue for trim, or a package weighed in the last 30 minutes. The type lists, the shift operators and the shift hours are values in Admin, Lookups, app_config. DLH is typed here per shift per day. The sheet is the source of the cutting and bucking hours and replaces a typed number at the next hour.": {
+    en: "The day's packages from Trim Packages Entry, each on the shift its operator is named on. Total Bud is BUD, SHAKE (bulk) and SMALLS as WPR (prepack); Other is TRIM, BIO, the WIP left in the packages the shift finished, and every other type; BTR is Total Bud over the shift total. RUNNING means the clock is inside the shift's hours (Day 6:00 AM to 6:00 PM, Second 6:00 PM to 6:00 AM Eastern) with a lot standing in the Unloaded Queue for trim, or a package weighed in the last 30 minutes. The type lists, the shift operators and the shift hours are values in Admin, Lookups, app_config. DLH is typed here per shift per day. The sheet is the source of the cutting and bucking hours and replaces a typed number at the next hour.",
+    es: "Los paquetes del dia de Trim Packages Entry, cada uno en el turno de su operador. La flor total es BUD, SHAKE (granel) y SMALLS como WPR (preempacada); Otros es TRIM, BIO, el WIP restante en los paquetes que el turno termino y todo otro tipo; BTR es la flor total sobre el total del turno. EN MARCHA significa que el reloj esta dentro de las horas del turno (Dia de 6:00 AM a 6:00 PM, Segundo de 6:00 PM a 6:00 AM, hora del este) con un lote en la cola de descarga para recorte, o un paquete pesado en los ultimos 30 minutos. Las listas de tipos, los operadores y las horas por turno son valores en Admin, Lookups, app_config. Las horas directas se escriben aqui por turno y dia. La hoja es la fuente de las horas de corte y deshoje y reemplaza un numero escrito en la hora siguiente.",
   },
   "Harvest year": { en: "Harvest year", es: "Año de cosecha" },
   "Farm Plant Count": { en: "Farm Plant Count", es: "Conteo de plantas de la finca" },
@@ -1376,15 +1368,6 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Stub: this section waits on the owner's definition.": {
     en: "Stub: this section waits on the owner's definition.",
     es: "Pendiente: esta seccion espera la definicion del propietario.",
-  },
-  "Plants remaining are the live plants in the METRC mirror under each farm's licenses; harvested adds the plant counts typed on the farm's finished lots this season; the per-plant averages read the season's counted lots. Hours are typed here per farm per day; Weight/DLH divides yesterday's weighed wet grams by them.": {
-    en: "Plants remaining are the live plants in the METRC mirror under each farm's licenses; harvested adds the plant counts typed on the farm's finished lots this season; the per-plant averages read the season's counted lots. Hours are typed here per farm per day; Weight/DLH divides yesterday's weighed wet grams by them.",
-    es: "Las plantas restantes son las plantas vivas del espejo METRC bajo las licencias de cada granja; las cosechadas suman los conteos de plantas escritos en los lotes terminados de la granja esta temporada; los promedios por planta leen los lotes contados de la temporada. Las horas se escriben aqui por granja y por dia; Peso/hora divide los gramos humedos pesados ayer entre ellas.",
-  },
-  // THE SHEET SYNC (canon 0.30.162): the Plants note as console.ts speaks it, with the sheet sentence.
-  "Plants remaining are the live plants in the METRC mirror under each farm's licenses; harvested adds the plant counts typed on the farm's finished lots this season; the per-plant averages read the season's counted lots. Hours are typed here per farm per day; Weight/DLH divides yesterday's weighed wet grams by them. The sheet is the source of the cutting and bucking hours and replaces a typed number at the next hour.": {
-    en: "Plants remaining are the live plants in the METRC mirror under each farm's licenses; harvested adds the plant counts typed on the farm's finished lots this season; the per-plant averages read the season's counted lots. Hours are typed here per farm per day; Weight/DLH divides yesterday's weighed wet grams by them. The sheet is the source of the cutting and bucking hours and replaces a typed number at the next hour.",
-    es: "Las plantas restantes son las plantas vivas del espejo METRC bajo las licencias de cada granja; las cosechadas suman los conteos de plantas escritos en los lotes terminados de la granja esta temporada; los promedios por planta leen los lotes contados de la temporada. Las horas se escriben aqui por granja y por dia; Peso/hora divide los gramos humedos pesados ayer entre ellas. La hoja es la fuente de las horas de corte y deshoje y reemplaza un numero escrito en la hora siguiente.",
   },
   // THE UNLOADING SILO (canon 0.30.77): the state word and the cap change line.
   "unloading": { en: "unloading", es: "descargando" },
