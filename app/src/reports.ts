@@ -3,10 +3,10 @@
  * TAT metric definitions are provisional (Scribe-derived from the pipeline).
  */
 
-import { dayBefore } from "./farmday";
+import { dayBefore, etWallClock } from "./farmday";
 import { formatLbs, gramsToLbs, isPotencyAnalyte } from "./compliance";
 import { formatGrams, ITEM_KIND_WET_TOTAL, round2, roundGrams } from "./config";
-import { t, type Locale } from "./i18n";
+import { t, tFill, type Locale } from "./i18n";
 import { agedDays } from "./marketplace";
 import { buildXlsx, type XlsxCell, type XlsxSheet } from "./xlsx";
 
@@ -32,6 +32,8 @@ export const REPORT_KEYS = [
   "rf",
   "internal_testing",
   "labor_hours",
+  "line_packages",
+  "post_harvest_puzzles",
 ] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
@@ -330,6 +332,16 @@ export const REPORT_CARDS: Array<{ key: ReportKey; title: string; blurb: string 
     key: "labor_hours",
     title: "Labor hours",
     blurb: "Every hour and input lb typed on the console, by date and operation.",
+  },
+  {
+    key: "line_packages",
+    title: "Line packages",
+    blurb: "Every package a line put out on a day: Trim, Prepack, Cryo/Rad; the day read from its start time.",
+  },
+  {
+    key: "post_harvest_puzzles",
+    title: "Post Harvest Puzzles",
+    blurb: "One row per strain for a harvest year: the 2025 history from the workbook, later years from the lots.",
   },
 ];
 
@@ -789,6 +801,93 @@ export function harvestsView(
       wet_grams: r.wet_grams,
       dry_grams: r.dry_grams,
     })),
+  };
+}
+
+const LINE_PACKAGE_ORDER = ["Trim", "Prepack", "Cryo", "Rad"] as const;
+
+export type LinePackageInput = {
+  line: string;
+  enteredIso: string;
+  lot: string;
+  tag: string;
+  type: string;
+  grams: number;
+  effective: string;
+  operator: string;
+};
+
+/** THE LINE PACKAGES REPORT (canon 0.30.344). Totals ride the footnote and a _total row the page hides. */
+export function linePackagesView(
+  rows: LinePackageInput[],
+  opts: { budCodes: readonly string[]; startWarned: boolean; startUsed: string; locale?: Locale }
+): ReportView {
+  const order = new Map<string, number>(LINE_PACKAGE_ORDER.map((line, index) => [line, index]));
+  const sorted = [...rows].sort(
+    (a, b) => (order.get(a.line) ?? 9) - (order.get(b.line) ?? 9) || a.enteredIso.localeCompare(b.enteredIso) || a.tag.localeCompare(b.tag)
+  );
+  const locale = opts.locale ?? "en";
+  const bud = new Set(opts.budCodes.map((code) => code.toUpperCase()));
+  const body: ReportView["rows"] = [];
+  const notes: string[] = [];
+  if (opts.startWarned) notes.push(tFill(locale, "Date start was not HH:MM, so the report used {start}.", { start: opts.startUsed }));
+  for (const line of LINE_PACKAGE_ORDER) {
+    const group = sorted.filter((row) => row.line === line);
+    if (group.length === 0) continue;
+    for (const row of group) {
+      body.push({
+        line,
+        entered: etWallClock(row.enteredIso),
+        lot: row.lot,
+        tag: row.tag,
+        type: row.type,
+        grams: row.grams,
+        lbs: row.grams,
+        effective: row.effective,
+        operator: row.operator,
+      });
+    }
+    const grams = group.reduce((sum, row) => sum + row.grams, 0);
+    let sentence = tFill(locale, "{line}: {n} packages, {g} g ({lb} lb)", {
+      line: t(locale, line),
+      n: String(group.length),
+      g: formatGrams(grams),
+      lb: formatLbs(grams),
+    });
+    if (line === "Trim") {
+      const of = (code: string) => group.filter((row) => row.type.toUpperCase() === code).reduce((sum, row) => sum + row.grams, 0);
+      const budGrams = group.filter((row) => bud.has(row.type.toUpperCase())).reduce((sum, row) => sum + row.grams, 0);
+      const pct = grams === 0 ? "0.0" : ((budGrams / grams) * 100).toFixed(1);
+      sentence += "; " + tFill(locale, "TRIM {trim} g, BUD {bud} g, SMALLS {smalls} g, SHAKE {shake} g, WASTE {waste} g; bud {pct}% by the console's law", {
+        trim: formatGrams(of("TRIM")),
+        bud: formatGrams(of("BUD")),
+        smalls: formatGrams(of("SMALLS")),
+        shake: formatGrams(of("SHAKE")),
+        waste: formatGrams(of("WASTE")),
+        pct,
+      });
+    }
+    notes.push(sentence);
+    body.push({ line, entered: sentence, lot: "", tag: "", type: "", grams: "", lbs: "", effective: "", operator: "", _total: "1" });
+  }
+  return {
+    key: "line_packages",
+    title: "Line packages",
+    columns: [
+      { key: "line", label: "Line" },
+      { key: "entered", label: "Entered" },
+      { key: "lot", label: "Lot" },
+      { key: "tag", label: "Package tag" },
+      { key: "type", label: "Type" },
+      { key: "grams", label: "Weight (g)", grams: true },
+      { key: "lbs", label: "Weight (lb)", lbs: true },
+      { key: "effective", label: "Effective date" },
+      { key: "operator", label: "Operator" },
+    ],
+    rows: body,
+    groupBy: "line",
+    empty: "No packages on this line in this window.",
+    footnote: notes.join(" ") || undefined,
   };
 }
 

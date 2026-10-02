@@ -16,7 +16,7 @@ import {
   newestFinishedInternalAudit,
   requireActor,
 } from "./db";
-import { auditUpToDate, ftqRate, internalAuditIntervalDays, lbsInTesting, paretoFromFailures } from "./compliance";
+import { auditUpToDate, ftqRate, internalAuditIntervalDays, lbsInTesting, outcomeOf, paretoFromFailures } from "./compliance";
 
 export type ActionOk = { redirect: string };
 
@@ -24,33 +24,51 @@ function personIdFrom(form: FormData): string | null {
   return textOrNull(form.get("person_id"));
 }
 
+/** A sheet row off the latest drop leaves the picture. An R&D row (desk panel rnd, or a sheet key from the R&D tab) leaves the quality figures. */
+const TESTING_QUALITY_SQL = `e.deleted_at IS NULL
+  AND (e.source <> 'sheet' OR e.on_sheet = 1)
+  AND NOT EXISTS (
+    SELECT 1 FROM test_orders o
+    WHERE o.deleted_at IS NULL AND o.sheet_key = e.sheet_key AND o.panel = 'rnd'
+  )
+  AND (e.sheet_key IS NULL OR e.sheet_key NOT LIKE ?)`;
+
 export async function loadComplianceKpis(db: D1Database) {
+  const rndRaw = await getConfigValue(db, CONFIG_KEYS.in_testing_rnd_tab);
+  const rndLike = `${(rndRaw ?? "").trim() || "R&D"}|%`;
   const unfinished = await db
     .prepare(
       `SELECT net_weight_grams, batch_weight_grams FROM external_test_results
-       WHERE deleted_at IS NULL AND (finished_testing IS NULL OR trim(finished_testing) = '')`
+       WHERE deleted_at IS NULL AND (source <> 'sheet' OR on_sheet = 1)
+         AND (finished_testing IS NULL OR trim(finished_testing) = '')`
     )
     .all<{ net_weight_grams: number | null; batch_weight_grams: number | null }>();
   const queue = await listWipPackagesByStatus(db, WIP_STATUS.testing_queue);
   const lbs = lbsInTesting(unfinished.results ?? [], queue.map((r) => Number(r.weight_grams)));
   const failed = await db
     .prepare(
-      `SELECT failure_mode FROM external_test_results
-       WHERE deleted_at IS NULL AND status = 'Failed' AND failure_mode IS NOT NULL`
+      `SELECT e.status, e.failure_mode FROM external_test_results e
+       WHERE ${TESTING_QUALITY_SQL}
+         AND e.failure_mode IS NOT NULL AND trim(e.failure_mode) <> ''`
     )
-    .all<{ failure_mode: string }>();
+    .bind(rndLike)
+    .all<{ status: string | null; failure_mode: string }>();
   const ftqRows = await db
     .prepare(
-      `SELECT sample_tag, attempt, status FROM external_test_results
-       WHERE deleted_at IS NULL AND sample_tag IS NOT NULL AND trim(sample_tag) <> ''`
+      `SELECT e.sample_tag, e.attempt, e.status FROM external_test_results e
+       WHERE ${TESTING_QUALITY_SQL}
+         AND e.sample_tag IS NOT NULL AND trim(e.sample_tag) <> ''`
     )
+    .bind(rndLike)
     .all<{ sample_tag: string; attempt: number; status: string | null }>();
   const interval = internalAuditIntervalDays(
     await getConfigValue(db, CONFIG_KEYS.internal_audit_interval_days)
   );
   return {
     lbs,
-    pareto: paretoFromFailures((failed.results ?? []).map((r) => r.failure_mode)),
+    pareto: paretoFromFailures(
+      (failed.results ?? []).filter((row) => outcomeOf(row.status) === "failed").map((row) => row.failure_mode)
+    ),
     ftq: ftqRate(ftqRows.results ?? []),
     audit: auditUpToDate(await newestFinishedInternalAudit(db), interval),
   };

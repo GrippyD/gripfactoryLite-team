@@ -84,6 +84,32 @@ export function listTables(dbName) {
   return rows.map((r) => r.name);
 }
 
+/** THE PAGED DUMP (canon 0.30.353): record_change_log passed 806k rows and one SELECT * of it
+ * failed twice with Cloudflare's code 7500 on 2026-10-02, so every table is read by rowid in pages,
+ * each page tried twice; the rows and their column order are the single query's. */
+export const DUMP_PAGE_ROWS = 50000;
+
+export function dumpTable(dbName, table, pageRows = DUMP_PAGE_ROWS) {
+  const rows = [];
+  let after = null;
+  for (;;) {
+    const where = after == null ? "" : ` WHERE rowid > ${after}`;
+    const sql = `SELECT rowid AS snapshot_rowid, * FROM ${table}${where} ORDER BY rowid LIMIT ${pageRows}`;
+    let page;
+    try {
+      page = d1Query(dbName, sql);
+    } catch {
+      page = d1Query(dbName, sql);
+    }
+    for (const row of page) {
+      after = row.snapshot_rowid;
+      delete row.snapshot_rowid;
+      rows.push(row);
+    }
+    if (page.length < pageRows) return rows;
+  }
+}
+
 /** Dump every table to <dir>/<table>.json plus _manifest.json; returns the manifest. */
 export function dumpAll(dbName, dir, { label = "" } = {}) {
   mkdirSync(dir, { recursive: true });
@@ -91,7 +117,7 @@ export function dumpAll(dbName, dir, { label = "" } = {}) {
   const manifest = { database: dbName, label, dumped_at: new Date().toISOString(), tables: {} };
   for (const t of tables) {
     try {
-      const rows = d1Query(dbName, `SELECT * FROM ${t}`);
+      const rows = dumpTable(dbName, t);
       writeFileSync(join(dir, `${t}.json`), JSON.stringify(rows, null, 1), "utf8");
       manifest.tables[t] = { rows: rows.length };
       console.log(`  ${t}: ${rows.length} rows`);

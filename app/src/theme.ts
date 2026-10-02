@@ -336,8 +336,21 @@ select option[data-occupied] { color: var(--text-dim, #888); }
    (owner, 2026-09-22: "in line with drying spaces, in the void after FFZ Inventory set the same size").
    A pane is an inv-gauge tile; its children are the silo drawing's width (11.2rem), so the tile
    computes the same width as the silo and FFZ tiles beside it. */
-.cure-pane { flex: 0 0 auto; width: auto; min-width: 0; font-size: 0.8rem; }
+.cure-pane { flex: 0 0 auto; width: auto; min-width: 0; font-size: 0.8rem; position: relative; overflow: hidden; }
 .cure-pane > * { width: 11.2rem; }
+/* THE CURE CAPS (canon 0.30.341): a green shade under the tile's content, light at the first lot and near-solid at the cap. */
+.cure-pane > .cure-shade { position: absolute; inset: 0; width: auto; background: #2e9e4f; pointer-events: none; }
+.cure-pane > :not(.cure-shade) { position: relative; }
+.cure-count { margin: 0.1rem 0 0.35rem; font-weight: 600; }
+.cure-over { color: #7c1b1b; }
+/* POST HARVEST PUZZLES (canon 0.30.351): the ten best and the ten worst. */
+.php-best { background: #C6EFCE; color: #006100; }
+.php-worst { background: #FFC7CE; color: #9C0006; }
+.php-key { margin: 0.4rem 0 0; }
+@media (prefers-color-scheme: dark) {
+  .php-best { background: color-mix(in srgb, var(--ok, #7fb494) 28%, transparent); color: var(--ok, #7fb494); }
+  .php-worst { background: color-mix(in srgb, var(--danger, #ef8a6f) 28%, transparent); color: var(--danger, #ef8a6f); }
+}
 .cure-conditions { margin: 0.2rem 0 0.45rem; font-variant-numeric: tabular-nums; }
 /* THE DRYING TOTALS AND THE STRAIN ON THE LOT LINE (canon 0.30.183): three figures under the dry
    space tiles on the console; the strain under each lot number on the tiles. */
@@ -1826,7 +1839,9 @@ body.device-phone .ops-map-phone .ops-node { width: 100%; max-width: 18rem; }
   .tile, button, .btn, .queue-pane a.queue-pane-item, .maintenance-link, .admin-link, .reports-link, .ops-node { transition: none; }
   .tile:focus, .tile:hover, button:hover, .btn:hover, .admin-link:hover, .reports-link:hover, .ops-node:hover { transform: none; }
 }
-${walkSliceChrome("co")}`;
+${walkSliceChrome("co")}
+.php-best { background: var(--ok-soft); color: var(--ok); }
+.php-worst { background: var(--alert-soft); color: var(--alert); }`;
 }
 
 /** The Cerberus view stylesheet (owner ruling 2026-09-01). Order matters: the
@@ -2512,6 +2527,10 @@ body.device-phone .ops-map-phone {
 }
 body.device-phone .ops-map-phone .ops-node { width: 100%; max-width: 18rem; }
 ${walkSliceChrome("cerberus")}
+.php-best { background: color-mix(in srgb, var(--ok, #3ecf6b) 28%, transparent); color: var(--ok, #3ecf6b); }
+.php-worst { background: color-mix(in srgb, #ba2929 28%, transparent); color: #ba2929; }
+.cure-pane > .cure-shade { background: #3ecf6b; }
+.cure-over { color: #ba2929; }
 /* =====================================================================
    BOOT SCRAWL (owner ruling 2026-09-01)
    Adapted from the theme prompt's PLATO datapad boot; the referenced

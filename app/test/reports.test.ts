@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatGrams } from "../src/config";
 import { formatLbs } from "../src/compliance";
-import { productMixView, reportCsv, reportPdfHtml, reportXlsx } from "../src/reports";
+import { linePackagesView, productMixView, reportCsv, reportPdfHtml, reportXlsx } from "../src/reports";
 
 const SHOT = [
   ["BIO", 314583],
@@ -51,5 +51,57 @@ describe("PRODUCT MIX TOTALS AND POUNDS (canon 0.30.307)", () => {
     expect(view.rows).toEqual([]);
     expect(reportCsv(view)).toBe("Package type,Grams,Lbs,Percent\r\n");
     expect(reportPdfHtml(view, "", "Gripfactory Lite", "2026-09-29")).not.toContain('class="report-total"');
+  });
+});
+
+describe("THE LINE PACKAGES REPORT (canon 0.30.344)", () => {
+  const budCodes = ["BUD", "SMALLS", "SHAKE"];
+  const row = (over: Partial<{ line: string; enteredIso: string; lot: string; tag: string; type: string; grams: number; effective: string; operator: string }>) => ({
+    line: "Trim",
+    enteredIso: "2026-10-02T15:00:00.000Z",
+    lot: "26002",
+    tag: "T1",
+    type: "BUD",
+    grams: 448,
+    effective: "2026-10-01",
+    operator: "Tester",
+    ...over,
+  });
+
+  it("sorts the four lines, totals Trim by the console's bud law, and hides nothing from the CSV", () => {
+    const view = linePackagesView(
+      [
+        row({ line: "Rad", tag: "R1", type: "WPR, 1500 Gy", grams: 100, enteredIso: "2026-10-02T16:00:00.000Z" }),
+        row({ line: "Cryo", tag: "C1", type: "BUD", grams: 200, enteredIso: "2026-10-02T15:30:00.000Z" }),
+        row({ line: "Prepack", tag: "P1", type: "28 g x 2", grams: 56, enteredIso: "2026-10-02T15:10:00.000Z" }),
+        row({ line: "Trim", tag: "BUD-1", type: "BUD", grams: 332518 }),
+        row({ line: "Trim", tag: "SHAKE-1", type: "SHAKE", grams: 16666, enteredIso: "2026-10-02T15:01:00.000Z" }),
+        row({ line: "Trim", tag: "SMALLS-1", type: "SMALLS", grams: 225294, enteredIso: "2026-10-02T15:02:00.000Z" }),
+        row({ line: "Trim", tag: "TRIM-1", type: "TRIM", grams: 930950, enteredIso: "2026-10-02T15:03:00.000Z" }),
+      ],
+      { budCodes, startWarned: false, startUsed: "06:00" }
+    );
+    const data = view.rows.filter((item) => item._total !== "1");
+    expect(data.map((item) => item.line)).toEqual(["Trim", "Trim", "Trim", "Trim", "Prepack", "Cryo", "Rad"]);
+    expect(data.map((item) => item.tag)).toEqual(["BUD-1", "SHAKE-1", "SMALLS-1", "TRIM-1", "P1", "C1", "R1"]);
+    expect(view.groupBy).toBe("line");
+    expect(view.columns.map((c) => c.label)).toEqual(["Line", "Entered", "Lot", "Package tag", "Type", "Weight (g)", "Weight (lb)", "Effective date", "Operator"]);
+    expect(view.columns.find((c) => c.key === "lbs")?.lbs).toBe(true);
+    const trimGrams = 332518 + 16666 + 225294 + 930950;
+    const budGrams = 332518 + 16666 + 225294;
+    expect(view.footnote).toContain(`Trim: 4 packages, ${formatGrams(trimGrams)} g (${formatLbs(trimGrams)} lb)`);
+    expect(view.footnote).toContain(`bud ${((budGrams / trimGrams) * 100).toFixed(1)}% by the console's law`);
+    expect(view.rows.filter((item) => item._total === "1").map((item) => item.line)).toEqual(["Trim", "Prepack", "Cryo", "Rad"]);
+    const csv = reportCsv(view);
+    expect(csv).toContain("Trim: 4 packages");
+    const pdf = reportPdfHtml(view, view.footnote ?? "", "Gripfactory Lite", "2026-10-02");
+    expect(pdf).toContain('class="report-total"');
+    const one = linePackagesView([row({ grams: 448 })], { budCodes, startWarned: false, startUsed: "06:00" });
+    expect(one.footnote).toContain("1.00 lb");
+    expect(reportPdfHtml(one, one.footnote ?? "", "Gripfactory Lite", "2026-10-02")).toContain("1.00");
+    const empty = linePackagesView([], { budCodes, startWarned: true, startUsed: "06:00" });
+    expect(empty.rows).toEqual([]);
+    expect(empty.empty).toBe("No packages on this line in this window.");
+    expect(empty.footnote).toContain("Date start was not HH:MM, so the report used 06:00.");
   });
 });

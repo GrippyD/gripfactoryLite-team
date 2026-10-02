@@ -409,8 +409,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 87 migration(s)")) {
-      throw new Error(`from-zero apply must say 87 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 89 migration(s)")) {
+      throw new Error(`from-zero apply must say 89 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -776,6 +776,7 @@ async function run() {
     assert(reportsOpen.body.includes("/reports/external_audits"), "reports landing missing External Audits");
     assert(reportsOpen.body.includes("/reports/rf"), "reports landing missing RF report");
     assert(reportsOpen.body.includes("/reports/internal_testing"), "reports landing missing Internal testing");
+    assert(reportsOpen.body.includes("/reports/line_packages") && reportsOpen.body.includes("Line packages"), "reports landing missing Line packages");
     assert(!reportsOpen.body.includes("Enter PIN"), "reports must not sit behind the PIN");
     const gatedCompliance = await text("/compliance");
     assert(gatedCompliance.res.status === 401, `gated compliance expected 401 got ${gatedCompliance.res.status}`);
@@ -2085,9 +2086,30 @@ async function run() {
       const next = rest.indexOf('data-cure-pane="', 20);
       return next < 0 ? rest : rest.slice(0, next);
     };
+    const cureShadeOf = (n, cap) => (n <= 0 ? (0).toFixed(3) : (0.15 + 0.7 * Math.min(n / cap, 1)).toFixed(3));
+    const cureStats = (html, name) => {
+      const pane = cureOf(html, name);
+      const lots = (pane.match(/data-cure-lot="/g) || []).length;
+      const tag = pane.match(/data-cure-count="(\d+)" data-cure-cap="(\d+)" data-cure-pct="(\d+)"/);
+      const shade = pane.match(/class="cure-shade" style="opacity:([0-9.]+)"/);
+      return {
+        pane,
+        lots,
+        n: tag ? Number(tag[1]) : NaN,
+        cap: tag ? Number(tag[2]) : NaN,
+        pct: tag ? Number(tag[3]) : NaN,
+        opacity: shade ? shade[1] : "",
+      };
+    };
     const consoleUnloaded = await text("/harvest");
     const dryingUnloaded = await text("/ops/drying_ops");
     assert(cureOf(consoleUnloaded.body, "CSA").includes(`data-cure-lot="${wetLotId}"`), "the console CSA pane must list the unloaded lot");
+    // THE CURE CAPS (canon 0.30.341): the shade and the count, lots over the seeded cap.
+    const csaUnloaded = cureStats(consoleUnloaded.body, "CSA");
+    const csbUnloaded = cureStats(consoleUnloaded.body, "CSB");
+    assert(csaUnloaded.pane.includes("data-cure-shade") && csbUnloaded.pane.includes("data-cure-shade"), "each cure pane must carry a shade");
+    assert(csaUnloaded.n === csaUnloaded.lots && csaUnloaded.cap === 36 && csaUnloaded.pct === Math.round((csaUnloaded.n / 36) * 100) && csaUnloaded.opacity === cureShadeOf(csaUnloaded.n, 36), `CSA must count its lots against 36, got ${csaUnloaded.n} of ${csaUnloaded.cap} at ${csaUnloaded.pct}% opacity ${csaUnloaded.opacity}`);
+    assert(csbUnloaded.cap === 8 && csbUnloaded.n === csbUnloaded.lots, `CSB must count its lots against 8, got ${csbUnloaded.n}`);
     // THE ROW FOLDS ON THE LOT NUMBER (owner, 2026-09-22): the lot's row is a folded details element, the id and the time in on its summary.
     {
       const csa = cureOf(consoleUnloaded.body, "CSA");
@@ -2110,6 +2132,8 @@ async function run() {
     }
     assert(!cureOf(consoleUnloaded.body, "CSB").includes(`data-cure-lot="${wetLotId}"`), "CSB must not list a lot that is not scheduled for trim");
     assert(cureOf(dryingUnloaded.body, "CSA").includes(`data-cure-lot="${wetLotId}"`), "a drying page CSA pane must list the unloaded lot");
+    const dryingCsa = cureStats(dryingUnloaded.body, "CSA");
+    assert(dryingCsa.n === csaUnloaded.n && dryingCsa.cap === 36 && dryingUnloaded.body.includes(`${csaUnloaded.n} of 36 lots,`), "a drying page must carry the same CSA count line");
     const sensorOk = await req("/sensors/readings", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2307,6 +2331,31 @@ async function run() {
     };
     assert(cureOfSched(consoleScheduled.body, "CSB").includes(`data-cure-lot="${wetLotId}"`), "scheduling trim must move the lot to CSB");
     assert(!cureOfSched(consoleScheduled.body, "CSA").includes(`data-cure-lot="${wetLotId}"`), "CSA must empty once the lot is scheduled for trim");
+    const csaScheduled = cureStats(consoleScheduled.body, "CSA");
+    const csbScheduled = cureStats(consoleScheduled.body, "CSB");
+    assert(csaScheduled.n === csaUnloaded.n - 1, `scheduling must drop CSA by one, ${csaUnloaded.n} to ${csaScheduled.n}`);
+    assert(csbScheduled.n === csbUnloaded.n + 1, `scheduling must raise CSB by one, ${csbUnloaded.n} to ${csbScheduled.n}`);
+    const capPage = await text("/admin/lookups/csb_lot_cap");
+    assert(capPage.res.status === 200 && capPage.body.includes('value="8" data-lot-cap-value'), "CSB Lot Cap must show 8");
+    const saveCap = await req("/admin/lookups/csb_lot_cap", { method: "POST", body: form({ lot_cap: "1", reason: "smoke: one lot fills the room" }) });
+    assert(saveCap.status === 303, `saving the CSB lot cap expected 303 got ${saveCap.status} ${await saveCap.text()}`);
+    assert((saveCap.headers.get("location") || "").endsWith("/admin/lookups/csb_lot_cap?ok=saved"), `saving the cap must return to its page, got ${saveCap.headers.get("location")}`);
+    const capSaved = await text("/admin/lookups/csb_lot_cap?ok=saved");
+    assert(capSaved.body.includes("Lot cap saved."), "saving the cap must flash Lot cap saved.");
+    const capLog = await text("/log");
+    assert(/<td>app_config<\/td>\s*<td>csb_lot_cap<\/td>\s*<td>value<\/td>\s*<td>8<\/td>\s*<td>1<\/td>/.test(capLog.body), "the change log must carry app_config csb_lot_cap from 8 to 1");
+    const harvestCapped = await text("/harvest");
+    const csbCapped = cureStats(harvestCapped.body, "CSB");
+    if (csbCapped.n > 1) {
+      assert(csbCapped.pane.includes("cure-over") && csbCapped.opacity === "0.850", `CSB over a cap of 1 must letter in red on a solid shade, got ${csbCapped.n} opacity ${csbCapped.opacity}`);
+    } else {
+      assert(csbCapped.n === 1 && csbCapped.cap === 1 && csbCapped.pct === 100 && csbCapped.opacity === "0.850", `one lot on a cap of 1 must read 100% on a solid shade, got ${csbCapped.n} of ${csbCapped.cap} at ${csbCapped.pct}%`);
+    }
+    const badLotCap = await req("/admin/lookups/csb_lot_cap", { method: "POST", body: form({ lot_cap: "0", reason: "smoke" }) });
+    assert(badLotCap.status === 400, `a lot cap of 0 expected 400 got ${badLotCap.status}`);
+    assert((await badLotCap.text()).includes("Lot cap must be a whole number of lots, 1 to 999."), "a lot cap of 0 must refuse in words");
+    const restoreCap = await req("/admin/lookups/csb_lot_cap", { method: "POST", body: form({ lot_cap: "8", reason: "smoke: restore the cap" }) });
+    assert(restoreCap.status === 303, `restoring the CSB lot cap expected 303 got ${restoreCap.status} ${await restoreCap.text()}`);
     assert(
       trimWorking.body.includes(`<h3 class="schedule-hbn-label">${pickedHbn}</h3>`),
       `the working group must head with the HBN ${pickedHbn}`
@@ -5031,6 +5080,18 @@ async function run() {
     // shaded boxes, the hours numbox that saves and divides, and the strip with
     // the wire box and the FFZ cube.
     const adminConsoleTiles = await text("/admin");
+    assert(adminConsoleTiles.body.includes('<a class="tile" href="/admin/testing-override">'), "Admin must carry the [Testing Override] button");
+    assert(adminConsoleTiles.body.indexOf('href="/admin/imports"') < adminConsoleTiles.body.indexOf('href="/admin/testing-override"'), "Testing Override must stand beside Import Data");
+    const overridePage = await text("/admin/testing-override");
+    assert(overridePage.res.status === 200, `GET the Testing Override pane expected 200 got ${overridePage.res.status}`);
+    assert(overridePage.body.includes("Last run: never"), "the Testing Override pane must say never before any drop");
+    assert(overridePage.body.includes('href="/harvest#testing"') && overridePage.body.includes('href="/compliance"'), "the pane must link the Testing section and the Compliance Console");
+    assert(overridePage.body.includes("dragover") && overridePage.body.includes("drop"), "the pane must take a drop");
+    const csvOverride = new FormData();
+    csvOverride.append("file", new File(["a,b\n1,2\n"], "notes.csv", { type: "text/csv" }));
+    const badOverride = await req("/admin/testing-override", { method: "POST", body: csvOverride });
+    assert(badOverride.status === 400, `a non-xlsb drop expected 400 got ${badOverride.status}`);
+    assert((await badOverride.text()).includes("Drop the In Testing workbook, an .xlsb file."), "a non-xlsb drop must refuse in words");
     assert(adminConsoleTiles.body.includes('<a class="tile" href="/harvest">'), "Admin must carry the [Harvest Console] button");
     assert(adminConsoleTiles.body.includes('<span class="tile-title">Harvest Console</span>'), "the button must read Harvest Console");
     assert(adminConsoleTiles.body.includes('<span class="tile-title">Harvest Console Lite</span>'), "the vendored planting app's tile must read Harvest Console Lite");
@@ -5375,6 +5436,10 @@ async function run() {
     assert(saveMaxTote.status === 303, `saving the Max Tote Weight expected 303 got ${saveMaxTote.status} ${await saveMaxTote.text()}`);
     const maxToteSaved = await text("/admin/lookups/max_tote_lbs?ok=saved");
     assert(maxToteSaved.body.includes('value="500" data-max-tote-value'), "the saved Max Tote Weight must read 500");
+    const budPrice = await text("/admin/lookups/php_bud_price_per_lb");
+    const trimPrice = await text("/admin/lookups/php_trim_price_per_lb");
+    assert(budPrice.res.status === 200 && budPrice.body.includes('value="150" data-php-price-value'), "Bud $/lb must read 150");
+    assert(trimPrice.res.status === 200 && trimPrice.body.includes('value="30" data-php-price-value'), "Trim $/lb must read 30");
     assert(trimSection.includes("data-hc-trim-unassigned>1 g on the day by operators on neither shift: Les. Name the shifts' operators in Admin, Lookups, app_config.</p>"), "grams by an operator on neither shift must be named, never dropped");
     const badShift = await req("/harvest/trim-hours", { method: "POST", body: form({ shift: "night", work_date: trimCardDay, hours: "5", day_picked: "1" }) });
     assert(badShift.status === 400, `an unknown shift expected 400 got ${badShift.status}`);
@@ -7044,7 +7109,11 @@ async function run() {
     const capUp = new FormData();
     capUp.append("file", new File([new Uint8Array(8_000_001)], "too-big.xlsm", { type: "application/vnd.ms-excel.sheet.macroEnabled.12" }));
     const capPosted = await req("/admin/imports", { method: "POST", body: capUp });
-    assert(capPosted.status === 400 && (await capPosted.text()).includes("That file is over the cap."), `an xlsm over the cap must refuse, got ${capPosted.status}`);
+    assert(capPosted.status === 400 && (await capPosted.text()).includes("That file is over the 8 MB cap."), `an xlsm over the cap must refuse with the 8 MB words, got ${capPosted.status}`);
+    const xlsbCap = new FormData();
+    xlsbCap.append("file", new File([new Uint8Array(8_000_001)], "too-big.xlsb", { type: "application/vnd.ms-excel.sheet.binary.macroEnabled.12" }));
+    const xlsbCapPosted = await req("/admin/testing-override", { method: "POST", body: xlsbCap });
+    assert(xlsbCapPosted.status === 400 && (await xlsbCapPosted.text()).includes("That file is over the 8 MB cap."), `an xlsb over the cap must refuse with the 8 MB words, got ${xlsbCapPosted.status}`);
     const seededConsole = await text("/harvest");
     assert(
       seededConsole.body.includes("Seed Fail") && seededConsole.body.includes("Coliforms") && seededConsole.body.includes('data-hc="first_tests">3<') && seededConsole.body.includes('data-hc="first_fails">2<') && seededConsole.body.includes('data-hc="ftq">33.3%<'),
@@ -7070,9 +7139,23 @@ async function run() {
       const dropped = readFileSync(dropsPath);
       const real = new FormData();
       real.append("file", new File([dropped], "In Testing (2026).xlsb", { type: "application/vnd.ms-excel.sheet.binary.macroEnabled.12" }));
-      const realUp = await req("/admin/imports", { method: "POST", body: real });
+      const realUp = await req("/admin/testing-override", { method: "POST", body: real });
       const realLoc = realUp.headers.get("location") || "";
       console.log(`DROPS In Testing upload ${realUp.status} ${realLoc}`);
+      assert(realUp.status === 303 && realLoc.includes("ok=in_testing") && realLoc.includes("seen="), `the override must read the counts back, got ${realUp.status} ${realLoc}`);
+      const realPage = await text(realLoc);
+      assert(realPage.body.includes("In testing sheet:"), "the override pane must say the counts in words");
+      if (realLoc.includes("message=")) assert(realPage.body.includes("Skipped:"), "the override pane must print the skip reasons");
+      const realConsole = await text("/harvest");
+      const realTests = Number((realConsole.body.match(/data-hc="first_tests">([^<]*)</) || [])[1]);
+      assert(realTests > 0, `the Testing section must read first_tests above zero after the override, got ${realTests}`);
+      const realFails = Number((realConsole.body.match(/data-hc="first_fails">([^<]*)</) || [])[1]);
+      const realTesting = realConsole.body.slice(realConsole.body.indexOf('data-hc-section="testing"'), realConsole.body.indexOf('data-hc-section="prepack"'));
+      if (realFails > 0) assert(realTesting.includes("data-hc-pie"), "a season with fails must draw the pie");
+      else assert(realTesting.includes("No failed first-time tests on the sheet this season."), "a season with no fails must say so");
+      const realCompliance = await text("/compliance");
+      assert(realCompliance.body.includes('data-kpi="ftq"'), "the Compliance Console must still read an FTQ");
+      assert(realPage.body.includes("override") || realPage.body.includes("anulacion"), "the last run must name the override trigger");
     } else {
       console.log("DROPS In Testing workbook absent; smoke skipped that upload");
     }
@@ -8711,6 +8794,63 @@ async function run() {
     assert(radStartEmpty.status === 400 && (await radStartEmpty.text()).includes("A run needs a package before it starts."), "an empty run must refuse Start");
     const radStart = await req(`/compliance/rad_operation/run/${radRunB}/start`, { method: "POST", body: form({}) });
     assert(radStart.status === 303, `Start expected 303 got ${radStart.status} ${await radStart.text()}`);
+    const linePackages = await text("/reports/line_packages");
+    assert(linePackages.res.status === 200, `GET line packages expected 200 got ${linePackages.res.status}`);
+    assert(/name="start"[^>]*value="06:00"/.test(linePackages.body), "the date start must default to 06:00");
+    assert(/name="date"[^>]*value="\d{4}-\d{2}-\d{2}"/.test(linePackages.body), "the date must default to a day");
+    assert(linePackages.body.includes("BUD-SMOKE-1") && linePackages.body.includes('data-report-group="Trim"'), "the Trim group must list a package entered in this run");
+    assert(linePackages.body.includes("2026-09-08"), "the Effective date column must keep the day the smoke typed");
+    assert(linePackages.body.includes('data-report-group="Cryo"') && linePackages.body.includes('data-report-group="Prepack"') && linePackages.body.includes('data-report-group="Rad"'), "Cryo, Prepack and Rad must each group");
+    assert(linePackages.body.includes("g x "), "a prepack row must read unit grams by bags");
+    const lineDate = (linePackages.body.match(/name="date" value="(\d{4}-\d{2}-\d{2})"/) || [])[1];
+    const lineLes = await text(`/reports/line_packages?line=trim&operator=Les&date=${lineDate}`);
+    assert(lineLes.body.includes("BUD-SMOKE-1") && lineLes.body.includes("Trim:"), "the operator filter must keep Les's trim rows and count them");
+    assert(!lineLes.body.includes('data-report-group="Cryo"'), "the trim filter must leave Cryo off");
+    const lineLate = await text(`/reports/line_packages?date=${lineDate}&start=23:00`);
+    const lineNow = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date());
+    const lineHour = Number((lineNow.find((part) => part.type === "hour") || {}).value || "0");
+    const lineMinute = Number((lineNow.find((part) => part.type === "minute") || {}).value || "0");
+    if (lineHour * 60 + lineMinute < 23 * 60) assert(!lineLate.body.includes("BUD-SMOKE-1"), "a package entered before 23:00 Eastern must leave a day that starts at 23:00");
+    else assert(lineLate.body.includes("BUD-SMOKE-1"), "a package entered after 23:00 Eastern must stay on a day that starts at 23:00");
+    const lineCsv = await text(`/reports/line_packages?date=${lineDate}&format=csv`);
+    assert(lineCsv.body.includes("Trim:"), "the CSV must carry the line total");
+    const linePdf = await text(`/reports/line_packages?date=${lineDate}&format=pdf`);
+    assert(linePdf.res.status === 200 && linePdf.body.includes('data-report-print="1"') && linePdf.body.includes('class="report-total"'), "the PDF must render the group total");
+    const puzzles = await text("/reports/post_harvest_puzzles?year=2026");
+    assert(puzzles.res.status === 200, `GET Post Harvest Puzzles expected 200 got ${puzzles.res.status}`);
+    const phpCols = [...puzzles.body.matchAll(/data-php-col="([^"]*)"/g)].map((match) => match[1]);
+    const phpWant = ["Strain", "Plants", "Wet lbs", "Dry lbs", "Dry %", "Total Bud", "Total Trim/Bio", "Wet #s PP", "Dry #s PP", "BTR", "BPP", "TPP", "$PP", "Average THC", "TYM Fails", "# Tests", "TYM% Failed", "Harvest Date", "27 Allocation", "TC or IH"];
+    assert(phpCols.join("|") === phpWant.join("|"), `Post Harvest columns must stand in order, got ${phpCols.join("|")}`);
+    const phpBook = readFileSync(join(appRoot, "test", "fixtures", "post-harvest-synthetic.xlsx"));
+    const phpUp = new FormData();
+    phpUp.append("file", new File([phpBook], "post-harvest-synthetic.xlsx"));
+    phpUp.append("reason", "smoke import");
+    const phpPosted = await req("/reports/post_harvest_puzzles/import", { method: "POST", body: phpUp });
+    assert(phpPosted.status === 303, `the puzzle import expected 303 got ${phpPosted.status} ${await phpPosted.text()}`);
+    const phpLoc = phpPosted.headers.get("location") || "";
+    assert(phpLoc.includes("lots=1") && phpLoc.includes("imported_year=2025"), `the import must land its lot as 2025, got ${phpLoc}`);
+    const phpImported = await text(phpLoc);
+    assert(phpImported.body.includes("Imported 2025: 1 lots, 1 tests, 1 plan rows."), "the import pane must report the counts");
+    assert(phpImported.body.includes('<option value="2025"'), "2025 must appear in the harvest year select");
+    const phpStrain = (puzzles.body.match(/data-php-strain="([^"]*)"/) || [])[1];
+    const phpSave = new FormData();
+    if (phpStrain) {
+      phpSave.append("harvest_year", "2026");
+      phpSave.append("strain_name", phpStrain);
+      phpSave.append("allocation", "7");
+      phpSave.append("tc_ih", "TC");
+      phpSave.append("reason", "smoke allocation");
+    } else {
+      phpSave.append("harvest_year", "2026");
+      phpSave.append("strain_name", "Fixture Strain");
+      phpSave.append("allocation", "7");
+      phpSave.append("is_new", "1");
+      phpSave.append("reason", "smoke allocation");
+    }
+    const phpSaved = await req("/reports/post_harvest_puzzles/plan", { method: "POST", body: phpSave });
+    assert(phpSaved.status === 303, `saving an allocation expected 303 got ${phpSaved.status} ${await phpSaved.text()}`);
+    const phpBack = await text(phpSaved.headers.get("location") || "/reports/post_harvest_puzzles?year=2026");
+    assert(phpBack.body.includes('value="7" data-php-allocation') || phpBack.body.includes('data-php-new="Fixture Strain"'), "the typed allocation must read back");
     const radStartAgain = await req(`/compliance/rad_operation/run/${radRunA}/start`, { method: "POST", body: form({}) });
     assert(radStartAgain.status === 400 && (await radStartAgain.text()).includes("The Rad is running another run."), "a second Start must be refused");
     const radOp = await text("/compliance/rad_operation");

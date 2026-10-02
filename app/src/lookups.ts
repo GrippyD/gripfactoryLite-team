@@ -67,6 +67,21 @@ export const LOOKUP_LANDING: LookupLandingSection[] = [
         description: "Hours between aW checks and between MC checks. The first row is from the start of the silo. Later rows are from the last check.",
         lookupFieldName: "Internal Silo Testing Interval",
       },
+      {
+        // THE CURE CAPS (canon 0.30.341): lots CSA holds, and how full its console tile paints.
+        key: "csa_lot_cap",
+        title: "CSA Lot Cap",
+        href: "/admin/lookups/csa_lot_cap",
+        description: "The number of lots CSA holds. The Harvest Console tile fills green by lots over this cap.",
+        lookupFieldName: "CSA Lot Cap",
+      },
+      {
+        key: "csb_lot_cap",
+        title: "CSB Lot Cap",
+        href: "/admin/lookups/csb_lot_cap",
+        description: "The number of lots CSB holds. The Harvest Console tile fills green by lots over this cap.",
+        lookupFieldName: "CSB Lot Cap",
+      },
     ],
   },
   {
@@ -94,6 +109,20 @@ export const LOOKUP_LANDING: LookupLandingSection[] = [
         href: "/admin/lookups/max_tote_lbs",
         description: "The most one wet weight may be, in pounds: Penn North Harvest and Penn South/Arlington Harvest refuse anything heavier.",
         lookupFieldName: "Max Tote Weight",
+      },
+      {
+        key: "php_bud_price_per_lb",
+        title: "Bud $/lb",
+        href: "/admin/lookups/php_bud_price_per_lb",
+        description: "Dollars per pound of bud on Post Harvest Puzzles. The report reads 150 until this is saved.",
+        lookupFieldName: "Bud $/lb",
+      },
+      {
+        key: "php_trim_price_per_lb",
+        title: "Trim $/lb",
+        href: "/admin/lookups/php_trim_price_per_lb",
+        description: "Dollars per pound of trim on Post Harvest Puzzles. The report reads 30 until this is saved.",
+        lookupFieldName: "Trim $/lb",
       },
       {
         // TERP RECIPES (canon 0.30.321): blends for the Pasteurization schedule. Saved whole, retired, never edited.

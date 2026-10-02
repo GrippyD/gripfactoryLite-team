@@ -315,6 +315,19 @@ function mirrorLabel(tag: string, stored: RadPackageRecord, catalog: Map<string,
  * numbers" under the Rad on the console: the app batch's hbn where the
  * catalog's lineage names one (hbnId), else the HBN the METRC harvest name
  * yields through hbnFromMetrcName, else the tag's last five. */
+/** Lot numbers for the line packages report: the catalog lineage, else the tag's last five. */
+export async function radLotByTag(db: D1Database, tags: readonly string[]): Promise<Map<string, string>> {
+  const [catalog, batches] = await Promise.all([listRadCatalog(db), listRadBatchGrows(db)]);
+  const byTag = new Map(catalog.map((row) => [row.tag.toUpperCase(), row]));
+  const hbnById = new Map(batches.map((row) => [row.id, row.hbn]));
+  const out = new Map<string, string>();
+  for (const tag of tags) {
+    const key = tag.trim().toUpperCase();
+    out.set(tag, radLotNumber(key, byTag.get(key), hbnById));
+  }
+  return out;
+}
+
 export function radLotNumber(tag: string, row: RadAvailableRow | undefined, hbnById: ReadonlyMap<string, string>): string {
   if (row?.hbnId) {
     const hbn = String(hbnById.get(row.hbnId) ?? "").trim();

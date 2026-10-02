@@ -45,11 +45,14 @@ describe("THE TESTING GATE parsers (canon 0.30.293)", () => {
     expect(gatePackageGrams("lb", 1, "BUD", {})).toBeNull();
   });
 
-  it("lets the hbn prefix name the year, and the entered date fill in", () => {
+  it("lets the lot token name the year, then the first segment, then the entered date", () => {
+    expect(sheetInSeason({ hbn: "46223-ARL-GH-015-0-NA-26001", entered_testing: "2026-08-10" }, 2026)).toBe(true);
+    expect(sheetInSeason({ hbn: "46223-ARL-GH-015-0-NA-25001", entered_testing: "2026-08-10" }, 2026)).toBe(false);
     expect(sheetInSeason({ hbn: "26901-ARL-GH-001", entered_testing: "2025-01-01" }, 2026)).toBe(true);
     expect(sheetInSeason({ hbn: "25999-PNN-GH-001", entered_testing: "2026-06-01" }, 2026)).toBe(false);
     expect(sheetInSeason({ hbn: null, entered_testing: "2026-04-01" }, 2026)).toBe(true);
     expect(sheetInSeason({ hbn: "", entered_testing: "2025-12-01" }, 2026)).toBe(false);
+    expect(sheetInSeason({ hbn: "ARL-only", entered_testing: null }, 2026)).toBe(false);
     expect(isPasteurizedTag("1a4050300000000000000c01", new Set(["1A4050300000000000000C01"]))).toBe(true);
     expect(isPasteurizedTag("nope", new Set(["1A4050300000000000000C01"]))).toBe(false);
   });

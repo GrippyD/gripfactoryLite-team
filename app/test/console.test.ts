@@ -85,7 +85,9 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(isReportKey("harvest_dashboard")).toBe(false);
     expect(REPORT_CARDS.map((c) => c.key)).not.toContain("harvest_dashboard");
     expect(REPORT_CARDS[0].key).toBe("inventory");
-    expect(REPORT_KEYS).toHaveLength(10);
+    expect(REPORT_KEYS).toContain("line_packages");
+    expect(REPORT_KEYS).toContain("post_harvest_puzzles");
+    expect(REPORT_KEYS).toHaveLength(12);
   });
 
   it("names the page and the hours post, and knows the three farms", () => {
@@ -176,7 +178,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(html).toContain(`<summary>Pasteurization</summary>`);
     expect(html).toContain("data-hc-past-rightnow");
     expect(html).toContain('data-hc-rad-state="empty"');
-    expect(html).toContain(`<details class="hc-section" data-hc-section="testing" data-hc-testing-year="`);
+    expect(html).toContain(`<details class="hc-section" id="testing" data-hc-section="testing" data-hc-testing-year="`);
     expect(html).toContain(`<summary>Testing <span class="muted hc-year">Harvest year 2026</span></summary>`);
     expect(html).toContain('data-hc-gate="ready"');
     expect(html).toContain('data-hc-icon="ready"');

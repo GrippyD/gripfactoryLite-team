@@ -247,6 +247,17 @@ export type FtqInput = { sample_tag: string; attempt: number; status: string | n
 
 export type FtqResult = { rate: number | null; n: number; passed: number };
 
+const TESTING_PASSED = new Set(["passed", "pass", "passed - retest", "remediated"]);
+const TESTING_FAILED = new Set(["failed", "fail"]);
+
+/** The console's word list (canon 0.30.341): passed, pass, passed - retest, remediated; failed, fail; anything else is open. */
+export function outcomeOf(status: string | null): "passed" | "failed" | "open" {
+  const name = normHeader(status ?? "");
+  if (TESTING_PASSED.has(name)) return "passed";
+  if (TESTING_FAILED.has(name)) return "failed";
+  return "open";
+}
+
 export function ftqRate(rows: readonly FtqInput[]): FtqResult {
   const first = new Map<string, FtqInput>();
   for (const row of rows) {
@@ -255,12 +266,15 @@ export function ftqRate(rows: readonly FtqInput[]): FtqResult {
     if (!tag) continue;
     if (!first.has(tag)) first.set(tag, row);
   }
-  const n = first.size;
-  if (n === 0) return { rate: null, passed: 0, n: 0 };
+  let n = 0;
   let passed = 0;
   for (const row of first.values()) {
-    if ((row.status ?? "").trim() === "Passed") passed += 1;
+    const outcome = outcomeOf(row.status);
+    if (outcome === "open") continue;
+    n += 1;
+    if (outcome === "passed") passed += 1;
   }
+  if (n === 0) return { rate: null, passed: 0, n: 0 };
   return { rate: Math.round((passed * 1000) / n) / 10, passed, n };
 }
 
