@@ -5368,6 +5368,13 @@ async function run() {
     const bogeyBack = await req("/admin/lookups/trim_bogey", { method: "POST", body: form({ trim_bogey_pct: "40", reason: "smoke: back to the default" }) });
     assert(bogeyBack.status === 303, `restoring the bogey expected 303 got ${bogeyBack.status}`);
     await bogeyBack.text();
+    // THE MAX TOTE WEIGHT (canon 0.30.350): the Admin page reads 50 lb until saved; the smoke walks 200 lb freezer totes, so it saves 500.
+    const maxTotePage = await text("/admin/lookups/max_tote_lbs");
+    assert(maxTotePage.res.status === 200 && maxTotePage.body.includes('value="50" data-max-tote-value'), "the Max Tote Weight page reads its default, 50 lb");
+    const saveMaxTote = await req("/admin/lookups/max_tote_lbs", { method: "POST", body: form({ max_tote_lbs: "500", reason: "smoke: the freezer walk weighs 200 lb at once" }) });
+    assert(saveMaxTote.status === 303, `saving the Max Tote Weight expected 303 got ${saveMaxTote.status} ${await saveMaxTote.text()}`);
+    const maxToteSaved = await text("/admin/lookups/max_tote_lbs?ok=saved");
+    assert(maxToteSaved.body.includes('value="500" data-max-tote-value'), "the saved Max Tote Weight must read 500");
     assert(trimSection.includes("data-hc-trim-unassigned>1 g on the day by operators on neither shift: Les. Name the shifts' operators in Admin, Lookups, app_config.</p>"), "grams by an operator on neither shift must be named, never dropped");
     const badShift = await req("/harvest/trim-hours", { method: "POST", body: form({ shift: "night", work_date: trimCardDay, hours: "5", day_picked: "1" }) });
     assert(badShift.status === 400, `an unknown shift expected 400 got ${badShift.status}`);
@@ -8408,6 +8415,9 @@ async function run() {
       body: form({ weight_grams: "1.5", harvest_batch_id: fieldArlId }),
     });
     assert(fieldBadGram.status === 400 && (await fieldBadGram.text()).includes("Weight must be a whole gram, zero or more."), "a fractional gram must refuse");
+    // THE MAX TOTE WEIGHT (canon 0.30.350): one weight above the Admin limit (500 lb here, 224,000 g) refuses before it is saved.
+    const fieldHuge = await req(`/station/field_harvest/load/${fieldLoad1}/weights`, { method: "POST", body: form({ weight_grams: "64668712", harvest_batch_id: fieldArlId }) });
+    assert(fieldHuge.status === 400 && (await fieldHuge.text()).includes("64,668,712 g is over the Max Tote Weight (500 lb, 224,000 g)."), "a tote over the Max Tote Weight must refuse in words");
     const addFieldTote = async (loadId, hbnId, grams) => {
       const res = await req(`/station/field_harvest/load/${loadId}/weights`, {
         method: "POST",

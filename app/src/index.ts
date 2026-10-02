@@ -36,6 +36,8 @@ import {
   plantSplitJitterPct,
   parseTrimBogey,
   trimBogeyOf,
+  parseMaxToteLbs,
+  maxToteLbsOf,
   sumGrams,
   truckNumberFromPick,
   ADMIN_SHEET_SYNC_PATH,
@@ -61,6 +63,7 @@ import {
   addGrowMethod,
   addLookupValue,
   saveTrimBogey,
+  saveMaxToteLbs,
   saveFarmPlantCounts,
   addLotWeight,
   addPackageType,
@@ -408,7 +411,7 @@ import {
   schedulingLanding,
   schedulingPage,
 } from "./scheduling";
-import { editPage, logPage, lookupSectionPage, lookupsLandingPage, manualHbnPage, plantCountPage, plantCountYear, trimBogeyPage, voidPage } from "./pages";
+import { editPage, logPage, lookupSectionPage, lookupsLandingPage, manualHbnPage, plantCountPage, plantCountYear, trimBogeyPage, maxToteWeightPage, voidPage } from "./pages";
 import { LOOKUP_VALUE_SECTIONS } from "./lookups";
 import {
   aggregateTatDays,
@@ -3009,6 +3012,10 @@ app.get("/admin/lookups/:section", async (c) => {
     const raw = await getConfigValue(c.env.DB, CONFIG_KEYS.trim_bogey_pct);
     return html(c, s, "Trim Bogey", trimBogeyPage(parseTrimBogey(raw), trimBogeyOf(raw) != null, s.locale, c.req.query("ok") || undefined));
   }
+  if (section === "max_tote_lbs") {
+    const raw = await getConfigValue(c.env.DB, CONFIG_KEYS.max_tote_lbs);
+    return html(c, s, "Max Tote Weight", maxToteWeightPage(parseMaxToteLbs(raw), maxToteLbsOf(raw) != null, s.locale, c.req.query("ok") || undefined));
+  }
   if (section === "terp_recipes") {
     const recipes = await listTerpRecipes(c.env.DB);
     return html(c, s, "Terp Recipes", terpRecipesPage({ recipes, showRetired: c.req.query("retired") === "1", locale: s.locale }));
@@ -3055,6 +3062,7 @@ app.post("/admin/lookups/:table", async (c) => {
   let result;
   if (table === "testing_labs") result = await saveTestingLab(c.env.DB, form);
   else if (table === "trim_bogey") result = await saveTrimBogey(c.env.DB, form);
+  else if (table === "max_tote_lbs") result = await saveMaxToteLbs(c.env.DB, form);
   else if (table === "terp_recipes" && action === "retire") result = await retireTerpRecipe(c.env.DB, form);
   else if (table === "terp_recipes") result = await saveTerpRecipe(c.env.DB, form);
   else if (table === "plant_count") result = await saveFarmPlantCounts(c.env.DB, form);

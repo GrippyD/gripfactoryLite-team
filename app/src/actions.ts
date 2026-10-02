@@ -115,7 +115,7 @@ import { hbnWithSeq, wetWeightsFilename } from "./csv";
 import { backRedirect, HttpError, nowIso, parseGrams, parsePlantCount, refusal, requireReason, requireText, textOrNull } from "./audit";
 import { EFFECTIVE_DATE_FIELD, EFFECTIVE_DATE_REASON, effectiveOverrideLog, farmDayStartHour, farmToday, resolveEffectiveDate } from "./effective";
 import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmInstant, farmInstantFromInput, wallClock24From12 } from "./farmday";
-import { capacityUomOf, drySpaceTypeOf, spaceHoldsOneLot, trimBogeyOf, DRY_SPACE_TYPES, CAPACITY_UOMS } from "./config";
+import { capacityUomOf, drySpaceTypeOf, spaceHoldsOneLot, trimBogeyOf, maxToteLbsOf, parseMaxToteLbs, GRAMS_PER_LB, DRY_SPACE_TYPES, CAPACITY_UOMS } from "./config";
 import { assertHbnAvailable, formatLotToken, harvestYearFromEntryDate, hbnFromMetrcName, HbnCollisionError, mintHbn, nextLotSerial } from "./mint";
 import { RAD_RUN_STATUS } from "./config";
 import { newestRadGrey } from "./db";
@@ -722,6 +722,7 @@ export async function addLotWeight(
       `That lot is not ${ledger.lotStatus}. Weights land on ${ledger.lotStatus} lots only.`
     );
   }
+  if (ledger.table === "wet_weights") await assertToteWeight(db, grams);
   const id = crypto.randomUUID();
   const ts = nowIso();
   let sessionId: string | null = null;
@@ -1345,6 +1346,7 @@ export async function addFieldLoadWeight(db: D1Database, loadId: string, form: F
   if (!load) throw new HttpError(404, "Unknown load.");
   if (load.status !== FIELD_LOAD_STATUS.open) throw new HttpError(400, "That load is not open.");
   const grams = parseWholeGrams(form.get("weight_grams"));
+  await assertToteWeight(db, grams);
   const hbnId = requireText(form.get("harvest_batch_id"), "HBN");
   const options = await listFieldHbns(db);
   if (!options.some((row) => row.id === hbnId)) throw new HttpError(400, "That HBN is not on this list.");
@@ -6245,14 +6247,45 @@ export async function saveTrimBogey(db: D1Database, form: FormData): Promise<Act
   const value = trimBogeyOf(form.get("trim_bogey_pct"));
   if (value == null) throw refusal(400, { key: "Trim Bogey is a whole percent from 0 to 100.", vars: {} });
   const reason = requireReason(textOrNull(form.get("reason")));
-  const key = CONFIG_KEYS.trim_bogey_pct;
-  const text = String(value);
+  return saveConfigNumber(db, actor, CONFIG_KEYS.trim_bogey_pct, String(value), reason, "/admin/lookups/trim_bogey?ok=saved");
+}
+
+/** THE MAX TOTE WEIGHT (canon 0.30.350): pounds, under a reason, logged like the Trim Bogey. */
+export async function saveMaxToteLbs(db: D1Database, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const value = maxToteLbsOf(form.get("max_tote_lbs"));
+  if (value == null) throw refusal(400, { key: "Max Tote Weight is pounds from 1 to 500.", vars: {} });
+  const reason = requireReason(textOrNull(form.get("reason")));
+  return saveConfigNumber(db, actor, CONFIG_KEYS.max_tote_lbs, String(value), reason, "/admin/lookups/max_tote_lbs?ok=saved");
+}
+
+/** THE MAX TOTE WEIGHT (canon 0.30.350): a wet weight above the Admin limit is refused, in words, before it is saved. */
+export async function assertToteWeight(db: D1Database, grams: number): Promise<void> {
+  const lbs = parseMaxToteLbs(await getConfigValue(db, CONFIG_KEYS.max_tote_lbs));
+  const limit = Math.round(lbs * GRAMS_PER_LB);
+  if (grams > limit) {
+    throw refusal(400, {
+      key: "{g} g is over the Max Tote Weight ({lb} lb, {limit} g). Check the scale reading and type it again.",
+      vars: { g: formatGrams(grams), lb: String(lbs), limit: formatGrams(limit) },
+    });
+  }
+}
+
+/** One app_config number saved under a reason: update, revive a voided row, or insert, each change logged. */
+async function saveConfigNumber(
+  db: D1Database,
+  actor: { id: string },
+  key: string,
+  text: string,
+  reason: string,
+  redirect: string
+): Promise<ActionOk> {
   const ts = nowIso();
   const existing = await db
     .prepare(`SELECT value, deleted_at FROM app_config WHERE key = ?`)
     .bind(key)
     .first<{ value: string; deleted_at: string | null }>();
-  const done = { redirect: "/admin/lookups/trim_bogey?ok=saved" };
+  const done = { redirect };
   if (existing && existing.deleted_at == null) {
     if (existing.value === text) return done;
     await db.batch([

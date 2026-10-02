@@ -88,6 +88,14 @@ export const LOOKUP_LANDING: LookupLandingSection[] = [
         lookupFieldName: "Trim Bogey",
       },
       {
+        // THE MAX TOTE WEIGHT (canon 0.30.350): one wet weight above it is refused before it is saved.
+        key: "max_tote_lbs",
+        title: "Max Tote Weight",
+        href: "/admin/lookups/max_tote_lbs",
+        description: "The most one wet weight may be, in pounds: Penn North Harvest and Penn South/Arlington Harvest refuse anything heavier.",
+        lookupFieldName: "Max Tote Weight",
+      },
+      {
         // TERP RECIPES (canon 0.30.321): blends for the Pasteurization schedule. Saved whole, retired, never edited.
         key: "terp_recipes",
         title: "Terp Recipes",
