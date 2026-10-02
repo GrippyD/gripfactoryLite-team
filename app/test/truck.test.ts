@@ -200,19 +200,24 @@ describe("THE TRUCK RECORD (canon 0.30.226)", () => {
     seedBatch(m, { id: "hb-today", hbn: "26244-ARL-GH-027-0-NA-26041", serial: 541 });
     seedBatch(m, { id: "hb-yest", hbn: "26244-ARL-GH-027-0-NA-26042", serial: 542 });
     seedBatch(m, { id: "hb-open", hbn: "26244-ARL-GH-027-0-NA-26043", serial: 543 });
+    // THE HBN ENTRY (canon 0.30.341): the rule reads finished_at, the finish's
+    // instant, against the start of the farm's today; the day the lot started
+    // (effective_date) no longer decides.
     m.run(
-      `INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, effective_date, created_at, updated_at)
-       VALUES ('lot-today', 'hb-today', 100, ?, 'drying', ?, ?, ?)`,
+      `INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, effective_date, finished_at, created_at, updated_at)
+       VALUES ('lot-today', 'hb-today', 100, ?, 'drying', ?, ?, ?, ?)`,
       SILO,
-      today,
+      yesterday,
+      nowIso(),
       T0,
       T0
     );
     m.run(
-      `INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, effective_date, created_at, updated_at)
-       VALUES ('lot-yest', 'hb-yest', 100, ?, 'drying', ?, ?, ?)`,
+      `INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, effective_date, finished_at, created_at, updated_at)
+       VALUES ('lot-yest', 'hb-yest', 100, ?, 'drying', ?, ?, ?, ?)`,
       SILO,
-      yesterday,
+      today,
+      `${yesterday}T12:00:00.000Z`,
       T0,
       T0
     );
@@ -276,7 +281,8 @@ describe("Penn North Harvest (canon 0.30.317)", () => {
     const person = seedPerson(m);
     seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26101", serial: 6101, farm: "ARL" });
     seedBatch(m, { id: "hb-pns", hbn: "26244-PNS-GH-027-0-NA-26102", serial: 6102, farm: "PNS" });
-    seedBatch(m, { id: "hb-pnn", hbn: "26244-PNN-GH-027-0-NA-26103", serial: 6103, farm: "PNN" });
+    // THE HBN ENTRY (canon 0.30.341): a Bucked HBN's lots weigh into its silo; this one plans Silo 1.
+    seedBatch(m, { id: "hb-pnn", hbn: "26244-PNN-GH-027-0-01-26103", serial: 6103, farm: "PNN", silo: "1" });
     const queue = queueByKey("hbn_queue");
     if (!queue) throw new Error("hbn queue missing");
     const rows = await listPaneRows(m.db, queue, "no_finished_lot", ["PNN"]);
@@ -291,6 +297,8 @@ describe("Penn North Harvest (canon 0.30.317)", () => {
       formOf({ person_id: person, team_lead: "Lead", harvest_batch_id: "hb-pnn", actual_dryspc: HANG })
     );
     expect(started.redirect).toContain("lot=");
+    // The posted actual_dryspc is ignored: the HBN's silo decides.
+    expect(m.get(`SELECT actual_dryspc, material_form FROM wet_weight_entries WHERE harvest_batch_id = 'hb-pnn'`)).toEqual({ actual_dryspc: SILO, material_form: "bucked" });
   });
 
   it("a finish writes one Internal Logistics pass, and a later part of that HBN writes none", async () => {

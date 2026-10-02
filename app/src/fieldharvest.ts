@@ -31,10 +31,12 @@ function hbnSelect(
 ): string {
   const known = options.some((row) => row.id === selected);
   const blankOpt = blank ? `<option value=""${known ? "" : " selected"}></option>` : "";
+  // THE HBN ENTRY (canon 0.30.341): each HBN's form and silo ride its option text ("... Bucked Silo 1").
   const opts = options
     .map((row) => {
       const on = row.id === selected ? " selected" : "";
-      return `<option value="${esc(row.id)}"${on}>${esc(row.label)} (${esc(row.hbn)})</option>`;
+      const landing = row.form ? ` ${t(locale, row.form === "bucked" ? "Bucked" : "Spear")}${row.silo ? ` ${row.silo}` : ""}` : "";
+      return `<option value="${esc(row.id)}"${on}>${esc(row.label)} (${esc(row.hbn)})${esc(landing)}</option>`;
     })
     .join("");
   if (!caption) return `<select name="${esc(name)}" aria-label="${esc(t(locale, "HBN"))}">${blankOpt}${opts}</select>`;

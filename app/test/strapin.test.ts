@@ -105,8 +105,9 @@ describe("crew feedback laws (canon 0.22.0)", () => {
 describe("planned_dryspc and 24h start", () => {
   it("stores Silo # as planned_dryspc lookup and Start Time as 24h text", () => {
     const acquire = stationByKey("acquire_hbn")!;
+    // THE HBN ENTRY (canon 0.30.341): the Silo is required; it decides where a Bucked HBN's lots land.
     const silo = acquire.fields.find((f) => f.name === "planned_dryspc");
-    expect(silo).toMatchObject({ label: "Silo # (planned, optional)", input: "lookup", lookup: "silo_number" });
+    expect(silo).toMatchObject({ label: "Silo", input: "lookup", lookup: "silo_number", required: true });
     const start = acquire.fields.find((f) => f.name === "start_time");
     expect(start).toMatchObject({
       label: "Start Time (planned, optional, 24h)",
@@ -118,7 +119,7 @@ describe("planned_dryspc and 24h start", () => {
     expect(isTime24("24:00")).toBe(false);
     expect(isTime24("7:30")).toBe(false);
     const wet = stationByKey("wet_weight")!;
-    expect(wet.fields.find((f) => f.name === "actual_dryspc")?.input).toBe("move_to");
+    expect(wet.fields.find((f) => f.name === "actual_dryspc")).toBeUndefined();
     expect(wet.fields.find((f) => f.name === "dry_space_id")).toBeUndefined();
   });
 });

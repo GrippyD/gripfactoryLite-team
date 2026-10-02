@@ -285,7 +285,10 @@ import {
   listInTransitFieldLoads,
   listDryQueueLots,
   listChangeLog,
-  listDrySpacesByKinds,
+  listSiloSequence,
+  nextSiloNumber,
+  siloSpaceOfNumber,
+  fieldHoldingSpace,
   listHarvestsByYear,
   listLocalInventory,
   listLookup,
@@ -2630,11 +2633,16 @@ app.get("/station/:key", async (c) => {
   }
   const lookups = await lookupsForStation(c.env.DB, station);
   const queueOptions = await queueOptionsForStation(c.env.DB, station);
+  // THE HBN ENTRY (canon 0.30.341): the Silo select opens on the next silo with
+  // room (advice, no lock); a recall's own silo wins when it carries one.
   const acquireCtx =
     station.key === "acquire_hbn"
       ? {
           recallRows: await listRecallableBatches(c.env.DB),
-          prefill: recallPrefillFromQuery(new URL(c.req.url).searchParams),
+          prefill: {
+            planned_dryspc: String(await nextSiloNumber(c.env.DB)),
+            ...recallPrefillFromQuery(new URL(c.req.url).searchParams),
+          },
         }
       : undefined;
   let pickId = "";
@@ -2741,10 +2749,19 @@ app.get("/station/:key", async (c) => {
               302
             );
           }
+          // THE HBN ENTRY (canon 0.30.341): the HBN decides the lot's form and
+          // its space; the header reads them back as one landing line.
+          const landingBatch = await c.env.DB.prepare(`SELECT material_form, planned_dryspc FROM harvest_batches WHERE id = ?`)
+            .bind(picked.id)
+            .first<{ material_form: string | null; planned_dryspc: string | null }>();
+          const landingForm = landingBatch?.material_form === "spear" ? "spear" : "bucked";
+          const landingSpace =
+            landingForm === "bucked"
+              ? siloSpaceOfNumber(await listSiloSequence(c.env.DB), landingBatch?.planned_dryspc)?.name ?? null
+              : (await fieldHoldingSpace(c.env.DB, LANDING_FARM))?.name ?? null;
           ledgerCtx = {
             farmName: await farmDisplayName(c.env.DB, farmCode),
-            // THE BLANK SLATE (canon 0.30.108): every HBN's Move To is the landing site's spaces.
-            moveToOptions: await listDrySpacesByKinds(c.env.DB, kinds, LANDING_FARM),
+            landing: { form: landingForm, spaceName: landingSpace, hbnId: picked.id },
             truckOptions,
             stagedTruck,
             resumeLots,
@@ -2974,6 +2991,9 @@ app.get("/admin/manual-hbn", async (c) => {
     licenses: await listLookup(c.env.DB, "license"),
     grow_methods: await listLookup(c.env.DB, "grow_methods"),
     strains: await listLookup(c.env.DB, "strains"),
+    // THE HBN ENTRY (canon 0.30.341): the same Silo and Spear or Bucked fields as Acquire.
+    silo_number: await listLookup(c.env.DB, "silo_number"),
+    next_silo: String(await nextSiloNumber(c.env.DB)),
   };
   return html(c, s, "Manual HBN", manualHbnPage(lookups, s.locale, c.req.query("ok") || undefined));
 });

@@ -409,8 +409,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 86 migration(s)")) {
-      throw new Error(`from-zero apply must say 86 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 87 migration(s)")) {
+      throw new Error(`from-zero apply must say 87 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -1500,6 +1500,23 @@ async function run() {
       "Silo # help must name its Admin Data Lookups path"
     );
     assert(acquireGet.body.includes('name="planned_dryspc"'), "acquire form missing planned_dryspc");
+    // THE HBN ENTRY (canon 0.30.341): the Spear or Bucked radio sits right above
+    // the required Silo, Bucked checked; the Silo opens on the next silo with
+    // room. The from-zero floor's tiles all read empty on /harvest, so the
+    // lowest free one is 1.
+    const emptyConsole = await text("/harvest");
+    assert(emptyConsole.res.status === 200, `GET /harvest expected 200 got ${emptyConsole.res.status}`);
+    const emptyTiles = (emptyConsole.body.match(/data-silo="[^"]+" data-silo-state="empty"/g) || []).length;
+    assert(emptyTiles === 7, `the from-zero console must show its seven spaces empty, saw ${emptyTiles} empty`);
+    assert(acquireGet.body.includes('name="material_form" value="bucked" checked'), "the Acquire radio must open on Bucked");
+    assert(acquireGet.body.includes('name="material_form" value="spear"'), "the Acquire radio must offer Spear");
+    assert(acquireGet.body.indexOf('name="material_form"') < acquireGet.body.indexOf('name="planned_dryspc"'), "the radio must sit above the Silo");
+    assert(acquireGet.body.includes('<select name="planned_dryspc" required>'), "the Silo select must be required");
+    assert(acquireGet.body.includes('<option value="1" selected>1</option>'), "the Silo must open on 1, the lowest free silo");
+    assert(acquireGet.body.includes('<option value="6">6 Arlington Dry Room</option>') && acquireGet.body.includes('<option value="7">7 Blast Freezer(s)</option>'), "the Silo list must carry 6 and 7 with their words");
+    assert(!acquireGet.body.includes('<option value="NA">'), "NA left the Silo list");
+    assert(acquireGet.body.includes("The next silo with room is picked for you"), "the Silo help must say the next silo with room is picked");
+    assert(acquireGet.body.includes("Bucked lots are weighed into the silo as WIP."), "the radio help must say what Bucked and Spear do");
     assert(acquireGet.body.includes("Start Time (planned, optional, 24h)"), "acquire form missing the planned 24h start time label");
     assert(acquireGet.body.includes("data-time24-mask"), "acquire start time missing the #### mask hook");
     assert(acquireGet.body.includes('name="license_value"'), "acquire form missing the required license select");
@@ -1512,6 +1529,8 @@ async function run() {
         grow_method_code: "GH",
         strain_id: optionValue(acquireGet.body, "Fruity Pebbles"),
         start_time: "0730",
+        planned_dryspc: "1",
+        material_form: "bucked",
       }),
     });
     assert(rawDigits.status === 400, `raw #### start time must still refuse 400 got ${rawDigits.status}`);
@@ -1523,12 +1542,25 @@ async function run() {
         grow_method_code: "GH",
         strain_id: optionValue(acquireGet.body, "Fruity Pebbles"),
         start_time: "7:00 AM",
+        planned_dryspc: "1",
+        material_form: "bucked",
       }),
     });
     assert(badTime.status === 400, `24h refusal expected 400 got ${badTime.status}`);
     const badTimeBody = await badTime.text();
     assert(badTimeBody.includes("HH:MM"), "24h refusal must name the format");
     const strainId = optionValue(acquireGet.body, "Fruity Pebbles");
+    // A Save with the silo cleared refuses in words; so does one with no form.
+    const noSilo = await req("/station/acquire_hbn", {
+      method: "POST",
+      body: form({ entry_date: "2026-09-01", farm_code: "ARL", grow_method_code: "GH", strain_id: strainId, planned_dryspc: "", material_form: "bucked" }),
+    });
+    assert(noSilo.status === 400 && (await noSilo.text()).includes("Pick a silo."), `a cleared silo expected 400 Pick a silo. got ${noSilo.status}`);
+    const noForm = await req("/station/acquire_hbn", {
+      method: "POST",
+      body: form({ entry_date: "2026-09-01", farm_code: "ARL", grow_method_code: "GH", strain_id: strainId, planned_dryspc: "1" }),
+    });
+    assert(noForm.status === 400 && (await noForm.text()).includes("Pick Spear or Bucked."), `a missing form expected 400 Pick Spear or Bucked. got ${noForm.status}`);
     const create = await req("/station/acquire_hbn", {
       method: "POST",
       body: form({
@@ -1537,13 +1569,16 @@ async function run() {
         grow_method_code: "GH",
         strain_id: strainId,
         start_time: "07:00",
+        planned_dryspc: "1",
+        material_form: "bucked",
       }),
     });
     if (create.status !== 303) fail("acquire HBN", `status ${create.status} ${await create.text()}`);
     const minted = new URL(create.headers.get("location") || "", base).searchParams.get("minted");
     // THE FIRST LOT TOKEN (canon 0.30.55): migration 0044 seeds first_lot_token 26010,
     // so a from-zero floor mints its first 2026 lot at serial 010, not 001.
-    assert(minted === "26244-ARL-GH-027-0-NA-26010", `unexpected HBN ${minted}`);
+    // THE HBN ENTRY (canon 0.30.341): the sixth segment is the silo number.
+    assert(minted === "26244-ARL-GH-027-0-01-26010", `unexpected HBN ${minted}`);
     const cfgPage = await text("/admin/lookups/app_config");
     assert(
       cfgPage.body.includes("first_lot_token") && cfgPage.body.includes("26010"),
@@ -1554,6 +1589,10 @@ async function run() {
     assert(counts.hbn === 1, `hbn after acquire expected 1 got ${counts.hbn}`);
     assert(counts.dry === 0, `dry after acquire expected 0 got ${counts.dry}`);
 
+    // With Silo 1 planned by the open HBN, the next GET advises 2.
+    const acquireAfterOne = await text("/station/acquire_hbn");
+    assert(acquireAfterOne.body.includes('<option value="2" selected>2</option>'), "after the first HBN plans Silo 1 the Silo must open on 2");
+    assert(!acquireAfterOne.body.includes('<option value="1" selected>'), "Silo 1 is planned, so it is not the advice");
     const second = await req("/station/acquire_hbn", {
       method: "POST",
       body: form({
@@ -1561,29 +1600,37 @@ async function run() {
         farm_code: "ARL",
         grow_method_code: "GH",
         strain_id: strainId,
+        planned_dryspc: "2",
+        material_form: "bucked",
       }),
     });
     if (second.status !== 303) fail("second mint", `status ${second.status}`);
     const minted2 = new URL(second.headers.get("location") || "", base).searchParams.get("minted");
-    assert(minted2 === "26244-ARL-GH-027-0-NA-26011", `unexpected second HBN ${minted2}`);
+    assert(minted2 === "26244-ARL-GH-027-0-02-26011", `unexpected second HBN ${minted2}`);
 
     counts = await homeCounts();
     assert(counts.hbn === 2, `hbn after second mint expected 2 got ${counts.hbn}`);
 
     // Penn North Harvest takes PNN batches only. Two PNN mints feed the pane;
-    // the ARL batches minted above stay off it.
-    const mintPnn = async () => {
+    // the ARL batches minted above stay off it. THE HBN ENTRY (canon
+    // 0.30.341): the HBN's silo is where its lots land, so the first PNN HBN
+    // plans Silo 2 (the sheet drying lot below) and the second, the pane's
+    // newest, Silo 1 (the main walk's lots). The advice before the second is
+    // 3 (1 and 2 are planned); the hand overrides it, no lock.
+    const mintPnn = async (silo) => {
       const mk = await req("/station/acquire_hbn", {
         method: "POST",
-        body: form({ entry_date: "2026-09-01", farm_code: "PNN", grow_method_code: "GH", strain_id: strainId }),
+        body: form({ entry_date: "2026-09-01", farm_code: "PNN", grow_method_code: "GH", strain_id: strainId, planned_dryspc: silo, material_form: "bucked" }),
       });
       assert(mk.status === 303, `PNN acquire expected 303 got ${mk.status} ${await mk.text()}`);
       return new URL(mk.headers.get("location") || "", base).searchParams.get("minted");
     };
-    const mintedPnn = await mintPnn();
-    const mintedPnn2 = await mintPnn();
-    assert(mintedPnn === "26244-PNN-GH-027-0-NA-26012", `unexpected PNN HBN ${mintedPnn}`);
-    assert(mintedPnn2 === "26244-PNN-GH-027-0-NA-26013", `unexpected second PNN HBN ${mintedPnn2}`);
+    const mintedPnn = await mintPnn("2");
+    const acquireAfterTwo = await text("/station/acquire_hbn");
+    assert(acquireAfterTwo.body.includes('<option value="3" selected>3</option>'), "with 1 and 2 planned the Silo must open on 3");
+    const mintedPnn2 = await mintPnn("1");
+    assert(mintedPnn === "26244-PNN-GH-027-0-02-26012", `unexpected PNN HBN ${mintedPnn}`);
+    assert(mintedPnn2 === "26244-PNN-GH-027-0-01-26013", `unexpected second PNN HBN ${mintedPnn2}`);
 
     const wetPage = await text("/station/wet_weight");
     if (wetPage.res.status !== 200) fail("GET /station/wet_weight", `status ${wetPage.res.status}`);
@@ -1636,25 +1683,22 @@ async function run() {
     // never ARL's own room and never a truck; the Add a truck control is gone;
     // a truck pick, staged or hand-built, refuses in words.
     assert(!pickedPage.body.includes("Add a truck"), "the Add a truck control left with the trucks");
-    // The Move To select alone (the shell's theme names the Arlington Dry Room in a comment).
-    const moveToSelect = (pickedPage.body.match(/<select name="actual_dryspc"[^>]*>([^]*?)<\/select>/) || [])[1];
-    assert(moveToSelect, "the picked page must carry the Move To select");
-    assert(moveToSelect.includes(">Silo 1<"), "an ARL HBN's Move To must offer PNN's silos (everything lands in PNN's barn)");
-    assert(moveToSelect.includes("Hang in Place"), "an ARL HBN's Move To must offer PNN's rooms");
-    assert(moveToSelect.includes("Blast Freezer(s)"), "an ARL HBN's Move To must offer the Blast Freezer(s)");
-    assert(!moveToSelect.includes("Arlington Dry Room"), "ARL's own room is not a landing space; nothing loads at ARL now");
-    assert(!moveToSelect.includes('value="truck-'), "no truck options may render");
-    assert(!moveToSelect.includes(">Truck</option>"), "the bare sentinel Truck must never render");
+    // THE HBN ENTRY (canon 0.30.341; the owner: "remove "move-to" altogether"):
+    // the header carries no Move To and no Spear or Bucked radio; one read-only
+    // landing line under the HBN says where this HBN's lots land, with the
+    // link to the HBN's pencil. This Bucked HBN plans Silo 1.
+    assert(!pickedPage.body.includes('name="actual_dryspc"'), "the header must carry no Move To");
+    assert(!pickedPage.body.includes('name="material_form"'), "the header must carry no Spear or Bucked radio");
+    assert(!pickedPage.body.includes('value="truck-'), "no truck options may render");
+    assert(
+      pickedPage.body.includes(`<input type="hidden" name="harvest_batch_id" value="${batchId}"><p class="lot-landing" data-lot-landing="bucked" data-lot-landing-space="Silo 1">Bucked: lands in Silo 1 as WIP <a class="muted" href="/record/harvest_batches/${batchId}/edit?back=`),
+      "the picked page must carry the landing line under the HBN"
+    );
+    assert(pickedPage.body.includes(">change on the HBN</a></p>"), "the landing line must link to the HBN's pencil");
     const stage = await req("/station/wet_weight/add_truck", { method: "POST", body: form({ pick: batchId }) });
     if (stage.status !== 303) fail("add truck stage", `status ${stage.status}`);
     const stagedPage = await text(stage.headers.get("location") || "");
     assert(stagedPage.res.status === 200 && !stagedPage.body.includes('value="truck-'), "a staged truck number must not surface a truck option");
-    const truckRefused = await req("/station/wet_weight", {
-      method: "POST",
-      body: form({ team_lead: "Smoke Lead", harvest_batch_id: batchId, actual_dryspc: "truck-1", material_form: "bucked", notes: "truck lot" }),
-    });
-    assert(truckRefused.status === 400, `a truck pick expected 400 got ${truckRefused.status}`);
-    assert((await truckRefused.text()).includes("Trucks left the Move To list; every lot lands in PNN's barn. Pick a silo or a room."), "the truck pick must refuse in words");
     counts = await homeCounts();
     assert(counts.inbound === 0, `inbound stays 0 with the trucks gone, got ${counts.inbound}`);
 
@@ -1713,8 +1757,35 @@ async function run() {
     const headerAgain = await text(`/station/wet_weight?pick=${batchId}&new=1`);
     assert(headerAgain.body.includes('action="/station/wet_weight" data-lock-on-submit>'), "the header form must lock its button on submit");
     assert(headerAgain.body.includes("form[data-lock-on-submit]"), "the lock script must ride the header form");
-    // The resume list names the lot in local time with its Move To and Team Lead.
-    assert(/<time datetime="[^"]+" data-local>[^<]+<\/time> · Silo 1 · Smoke Lead \(total 0 g\)/.test(headerAgain.body), "the resume list must name the lot by local time, Move To and Team Lead");
+    // The resume list names the lot in local time with its space and Team Lead.
+    assert(/<time datetime="[^"]+" data-local>[^<]+<\/time> · Silo 1 · Smoke Lead \(total 0 g\)/.test(headerAgain.body), "the resume list must name the lot by local time, its space and Team Lead");
+    // THE HBN ENTRY (canon 0.30.341; the floor lead: "The first harvest batch
+    // from today is no longer on this list but an HBN from Monday is"): a lot
+    // weighing since before yesterday's farm day flags its HBN's row with
+    // ", weighing since <day>"; the PIN's backdate makes one, then it is voided
+    // so the main walk keeps its one lot. The lot lands in the HBN's silo, the
+    // posted fields being gone.
+    const backdatedStart = await req("/station/wet_weight", {
+      method: "POST",
+      body: form({ team_lead: "Backdate Lead", harvest_batch_id: batchId, effective_date: "2026-09-08", effective_pin: ADMIN_PIN, notes: "weighing since" }),
+    });
+    assert(backdatedStart.status === 303, `a PIN-backdated Start lot expected 303 got ${backdatedStart.status} ${await backdatedStart.text()}`);
+    const backdatedLotId = new URL(backdatedStart.headers.get("location") || "", base).searchParams.get("lot");
+    assert(backdatedLotId, "the backdated start must name its lot");
+    const flaggedPane = await text(`/station/wet_weight?pick=${batchId}&new=1`);
+    assert(
+      new RegExp(`href="/station/wet_weight\\?pick=${batchId}">[^<]*<span class="muted" data-weighing-since="2026-09-08">, weighing since 2026-09-08</span></a>`).test(flaggedPane.body),
+      "the HBN's queue row must read weighing since 2026-09-08"
+    );
+    const backdatedLotView = await text(`/station/wet_weight?lot=${backdatedLotId}`);
+    assert(backdatedLotView.body.includes("<dd>Silo 1</dd>") && backdatedLotView.body.includes("<dt>Material</dt><dd>Bucked</dd>"), "the backdated lot must land in the HBN's silo as Bucked");
+    const voidBackdated = await req(`/record/wet_weight_entries/${backdatedLotId}/void`, {
+      method: "POST",
+      body: form({ reason: "smoke: the flag was seen" }),
+    });
+    assert(voidBackdated.status === 303, `voiding the backdated lot expected 303 got ${voidBackdated.status} ${await voidBackdated.text()}`);
+    const unflaggedPane = await text(`/station/wet_weight?pick=${batchId}&new=1`);
+    assert(!unflaggedPane.body.includes("weighing since"), "the flag leaves with the voided lot");
     let lotView = await text(`/station/wet_weight?lot=${wetLotId}`);
     if (lotView.res.status !== 200) fail("GET lot page", `status ${lotView.res.status}`);
     assert(lotView.body.includes("Weights"), "lot page missing the Weights pane");
@@ -3399,6 +3470,8 @@ async function run() {
         zone: "Z9",
         rows_text: "7-8",
         metrc_harvest_tag: "1A4RECALL",
+        planned_dryspc: "3",
+        material_form: "spear",
       }),
     });
     if (recallMint.status !== 303) fail("recall mint", `status ${recallMint.status}`);
@@ -3424,6 +3497,9 @@ async function run() {
     assert(recalledPage.body.includes('name="entry_date" value="2026-09-01"'), "form must prefill date");
     assert(recalledPage.body.includes('name="zone" value="Z9"'), "form must prefill zone");
     assert(recalledPage.body.includes('name="start_time" value="08:15"'), "form must prefill start time");
+    // THE HBN ENTRY (canon 0.30.341): the recall carries the HBN's silo and form back onto the form.
+    assert(recalledPage.body.includes('<option value="3" selected>3</option>'), "form must prefill the recalled silo");
+    assert(recalledPage.body.includes('name="material_form" value="spear" checked'), "form must prefill the recalled form");
     assert(recalledPage.body.includes('name="metrc_harvest_tag" value="1A4RECALL"'), "form must prefill the tag");
     assert(!recalledPage.body.includes(minted3), "recalled HBN must leave the pane");
     counts = await homeCounts();
@@ -3440,6 +3516,8 @@ async function run() {
         farm_code: "ARL",
         grow_method_code: "GH",
         strain_id: recallStrain,
+        planned_dryspc: "3",
+        material_form: "bucked",
       }),
     });
     if (remint.status !== 303) fail("remint after recall", `status ${remint.status}`);
@@ -3471,8 +3549,21 @@ async function run() {
       "station HTML must send cache-control no-store"
     );
     assert(!guardFresh.body.includes("Start another lot"), "a lotless pick must show the plain header form");
-    // Owner ruling 2026-09-07 (canon 0.29.1): this lot weighs in BUCKED at the
-    // wet weight entry screen; the unload below derives its mode from the lot.
+    // THE HBN ENTRY (canon 0.30.341; the floor lead: "26082 needs to be moved
+    // to Silo 1"): the HBN's silo moves on its Admin pencil with a reason, the
+    // HBN string never re-minted; this HBN (Silo 1) moves to Silo 2 and its
+    // next lot lands there. The pencil's lookup carries no NA.
+    const guardMove = await req(`/record/harvest_batches/${guardBatchId}/edit`, {
+      method: "POST",
+      body: form({ planned_dryspc: "2", reason: "smoke: needs to be moved to Silo 2" }),
+    });
+    assert(guardMove.status === 303, `moving the HBN to Silo 2 expected 303 got ${guardMove.status} ${await guardMove.text()}`);
+    const guardMoved = await text(`/station/wet_weight?pick=${guardBatchId}`);
+    assert(guardMoved.body.includes('data-lot-landing="bucked" data-lot-landing-space="Silo 2">Bucked: lands in Silo 2 as WIP'), "the landing line must follow the HBN's new silo");
+    assert(guardMoved.body.includes(`<p class="muted">${mintedPnn}</p>`) || guardMoved.body.includes(`<p class="muted">${mintedPnn2}</p>`), "the HBN string is never re-minted by the pencil");
+    // Owner ruling 2026-09-07 (canon 0.29.1) as THE HBN ENTRY reads it: the lot
+    // weighs in BUCKED into the HBN's silo; the unload below derives its mode
+    // from the lot.
     const guardStart = await req("/station/wet_weight", {
       method: "POST",
       body: form({
@@ -3617,9 +3708,12 @@ async function run() {
 
     const siloLookup = await text("/admin/lookups/silo_number");
     assert(siloLookup.res.status === 200, `silo lookup expected 200 got ${siloLookup.res.status}`);
-    for (const v of ["1", "2", "3", "4", "5", "NA"]) {
+    // THE HBN ENTRY (canon 0.30.341): 6 and 7 joined the Silo list with their words; NA retired from it (kept in data).
+    for (const v of ["1", "2", "3", "4", "5", "6", "7"]) {
       assert(siloLookup.body.includes(`>${v}<`) || siloLookup.body.includes(`>${v}</`), `silo lookup missing ${v}`);
     }
+    assert(siloLookup.body.includes("6 Arlington Dry Room") && siloLookup.body.includes("7 Blast Freezer(s)"), "the Silo list must carry the sixth and seventh words");
+    assert(!siloLookup.body.includes(">NA<") && !siloLookup.body.includes(">NA</"), "NA retired from the Silo list");
     const locLookup = await text("/admin/lookups/licenses");
     assert(locLookup.body.includes("AU-G-C-000832"), "license lookup missing AU-G-C-000832");
     assert(locLookup.body.includes("AU-P-000694"), "license lookup missing AU-P-000694");
@@ -4493,7 +4587,7 @@ async function run() {
     // simple wet queue items, inbound trucks on Receiving).
     const acquire220 = await text("/station/acquire_hbn");
     assert(acquire220.body.includes('name="market_strain"'), "acquire missing market_strain");
-    assert(acquire220.body.includes("Silo # (planned, optional)"), "acquire silo label must say planned, optional");
+    assert(!acquire220.body.includes("Silo # (planned, optional)") && acquire220.body.includes('name="planned_dryspc" required'), "acquire silo is the required Silo now (canon 0.30.341)");
     assert(acquire220.body.includes("Start Time (planned, optional, 24h)"), "acquire start label must say planned");
     // THE LOADING SILO (canon 0.30.81): this ARL HBN plans Silo 5; under THE
     // BLANK SLATE (canon 0.30.108) its lot weighs into Silo 5 and its package is
@@ -4507,6 +4601,7 @@ async function run() {
         strain_id: optionValue(acquire220.body, "Fruity Pebbles"),
         market_strain: "Rainbow Candies",
         planned_dryspc: "5",
+        material_form: "bucked",
       }),
     });
     assert(mk.status === 303, `market-strain acquire expected 303 got ${mk.status}`);
@@ -4528,31 +4623,12 @@ async function run() {
     assert(pick220, `the wet pane must list the minted ARL HBN ${mkBatch}`);
     const batchId220 = (pick220.body.match(/name="harvest_batch_id" value="([a-f0-9-]{36})"/) || [])[1];
     assert(batchId220, "no picked batch id for the 0.22.0 walk");
-    // Owner ruling 2026-09-07 (canon 0.29.1): the spear/buck toggle lives on
-    // the wet weight entry screen, spear checked as the one-tap default; a
-    // value outside spear/bucked refuses in words.
-    assert(
-      pick220.body.includes('name="material_form" value="spear" checked'),
-      "the wet weight header must carry the Spear/Bucked toggle, spear checked"
-    );
-    assert(
-      pick220.body.includes('name="material_form" value="bucked"'),
-      "the wet weight header must offer Bucked"
-    );
+    // THE HBN ENTRY (canon 0.30.341): the toggle left the header for the HBN;
+    // the header reads the HBN's landing line, Silo 5 here.
+    assert(!pick220.body.includes('name="material_form"'), "the wet weight header carries no Spear/Bucked toggle");
+    assert(!pick220.body.includes('name="actual_dryspc"'), "the wet weight header carries no Move To");
     const silo5Id = drySpaceIdByName(lookupsPage.body, "Silo 5");
-    // The ARL HBN's Move To offers PNN's Silo 5 (the planned one) among the landing site's spaces.
-    assert(pick220.body.includes(`<option value="${silo5Id}">Silo 5</option>`), "PNN's Silo 5 must be offered to the ARL HBN");
-    const badForm = await req("/station/wet_weight", {
-      method: "POST",
-      body: form({
-        harvest_batch_id: batchId220,
-        actual_dryspc: silo5Id,
-        team_lead: "Smoke Lead",
-        material_form: "silo",
-        notes: "bad form",
-      }),
-    });
-    assert(badForm.status === 400, `a garbage material form expected 400 got ${badForm.status}`);
+    assert(pick220.body.includes('data-lot-landing="bucked" data-lot-landing-space="Silo 5">Bucked: lands in Silo 5 as WIP'), "the HBN planned Silo 5, so its lots land there");
     const start220 = await req(`/station/wet_weight`, {
       method: "POST",
       body: form({
@@ -4713,6 +4789,8 @@ async function run() {
         farm_code: "PNN",
         grow_method_code: "GH",
         strain_id: optionValue(acquirePns.body, "Fruity Pebbles"),
+        planned_dryspc: "3",
+        material_form: "bucked",
       }),
     });
     assert(mkPns.status === 303, `PNS acquire expected 303 got ${mkPns.status}`);
@@ -4793,6 +4871,8 @@ async function run() {
         license_value: "GR-C-001132",
         grow_method_code: "GH",
         strain_id: optionValue(acquire1132.body, "Fruity Pebbles"),
+        planned_dryspc: "4",
+        material_form: "bucked",
       }),
     });
     assert(mk1132.status === 303, `GR-C-001132 acquire expected 303 got ${mk1132.status}`);
@@ -5475,6 +5555,8 @@ async function run() {
         license_value: "AU-G-C-000832",
         grow_method_code: "GH",
         strain_id: optionValue(acquireSecond.body, "Fruity Pebbles"),
+        planned_dryspc: "4",
+        material_form: "bucked",
       }),
     });
     assert(mkSecond.status === 303, `second PNN acquire expected 303 got ${mkSecond.status}`);
@@ -5617,7 +5699,25 @@ async function run() {
     assert(manualPage.res.status === 200, `manual hbn page expected 200 got ${manualPage.res.status}`);
     assert(manualPage.body.includes('name="hbn"'), "manual hbn page missing the HBN field");
     assert(manualPage.body.includes('name="reason"'), "manual hbn demands a reason");
+    // THE HBN ENTRY (canon 0.30.341): the manual mint takes the same Spear or Bucked radio and Silo select, Bucked and the next silo with room by default.
+    assert(manualPage.body.includes('<input type="radio" name="material_form" value="bucked" checked>'), "manual hbn must carry the radio, Bucked checked");
+    assert(/<select name="planned_dryspc" required><option value=""><\/option><option value="1"( selected)?>1<\/option>/.test(manualPage.body), "manual hbn must carry the Silo select");
+    assert(/name="planned_dryspc" required>[\s\S]*?<option value="\d" selected>/.test(manualPage.body), "manual hbn's Silo must open on the next silo with room");
     const manualStrain = optionValue(manualPage.body, "Fruity Pebbles");
+    const manualNoSilo = await req("/admin/manual-hbn", {
+      method: "POST",
+      body: form({
+        hbn: "26250-ARL-GH-027-0-NA-26900",
+        entry_date: "2026-09-07",
+        farm_code: "ARL",
+        license_value: "AU-G-C-001509",
+        grow_method_code: "GH",
+        strain_id: manualStrain,
+        material_form: "bucked",
+        reason: "smoke: no silo",
+      }),
+    });
+    assert(manualNoSilo.status === 400 && (await manualNoSilo.text()).includes("Pick a silo."), `a manual mint without a silo expected 400 got ${manualNoSilo.status}`);
     const manualPost = await req("/admin/manual-hbn", {
       method: "POST",
       body: form({
@@ -5627,6 +5727,8 @@ async function run() {
         license_value: "AU-G-C-001509",
         grow_method_code: "GH",
         strain_id: manualStrain,
+        planned_dryspc: "1",
+        material_form: "bucked",
         reason: "smoke: the system failed",
       }),
     });
@@ -5640,6 +5742,8 @@ async function run() {
         license_value: "AU-G-C-001509",
         grow_method_code: "GH",
         strain_id: manualStrain,
+        planned_dryspc: "1",
+        material_form: "bucked",
         reason: "smoke: dupe serial",
       }),
     });
@@ -5841,7 +5945,7 @@ async function run() {
     const acquireTag = await text("/station/acquire_hbn");
     const mkTag = await req("/station/acquire_hbn", {
       method: "POST",
-      body: form({ entry_date: "2026-09-01", farm_code: "PNN", grow_method_code: "ID", strain_id: optionValue(acquireTag.body, "Fruity Pebbles") }),
+      body: form({ entry_date: "2026-09-01", farm_code: "PNN", grow_method_code: "ID", strain_id: optionValue(acquireTag.body, "Fruity Pebbles"), planned_dryspc: "5", material_form: "bucked" }),
     });
     assert(mkTag.status === 303, `tagged-lot HBN acquire expected 303 got ${mkTag.status} ${await mkTag.text()}`);
     const tagHbn = new URL(mkTag.headers.get("location") || "", base).searchParams.get("minted");
@@ -6306,10 +6410,29 @@ async function run() {
     const badAdd = await req("/admin/lookups/dry_spaces", { method: "POST", body: form({ action: "add", name: "Smoke Freezer", kind: "silo", farm_code: "PNN", space_type: "freezer", capacity: "500", capacity_uom: "" }) });
     assert(badAdd.status === 400 && (await badAdd.text()).includes("Capacity and its UOM go together."), "a capacity without its UOM must refuse in words");
 
+    // THE HBN ENTRY (canon 0.30.341): an HBN saved with Silo 7 reads the
+    // segment 07 and plans the Blast Freezer(s) (the seventh of the sequence
+    // while no eighth kind-silo space stands): its pencil opens on 7 Blast
+    // Freezer(s) with the radio on Bucked. Minted here, after the walks that
+    // pin lot serials by number, so none of them shifts.
+    const mkSeven = await req("/station/acquire_hbn", {
+      method: "POST",
+      body: form({ entry_date: "2026-09-01", farm_code: "ARL", grow_method_code: "GH", strain_id: strainId, planned_dryspc: "7", material_form: "bucked" }),
+    });
+    assert(mkSeven.status === 303, `Silo 7 acquire expected 303 got ${mkSeven.status} ${await mkSeven.text()}`);
+    const mintedSeven = new URL(mkSeven.headers.get("location") || "", base).searchParams.get("minted");
+    assert(mintedSeven && mintedSeven.includes("-ARL-GH-027-0-07-"), `unexpected Silo 7 HBN ${mintedSeven}`);
+    const acquireWithSeven = await text("/station/acquire_hbn");
+    const sevenId = firstInputValue(acquireWithSeven.body, "id");
+    const sevenPencil = await text(`/record/harvest_batches/${sevenId}/edit`);
+    assert(sevenPencil.res.status === 200, `the HBN pencil expected 200 got ${sevenPencil.res.status}`);
+    assert(sevenPencil.body.includes('<option value="7" selected>7 Blast Freezer(s)</option>'), "the Silo 7 HBN's pencil must open on 7 Blast Freezer(s)");
+    assert(sevenPencil.body.includes('<input type="radio" name="material_form" value="bucked" checked>'), "the HBN pencil must carry the Spear or Bucked radio, Bucked checked");
+    assert(!sevenPencil.body.includes("Silo # (planned, optional)"), "the pencil's Silo label lost its planned, optional words");
     const acquireBf = await text("/station/acquire_hbn");
     const mkBf = await req("/station/acquire_hbn", {
       method: "POST",
-      body: form({ entry_date: "2026-09-16", farm_code: "PNN", grow_method_code: "GH", strain_id: optionValue(acquireBf.body, "Fruity Pebbles") }),
+      body: form({ entry_date: "2026-09-16", farm_code: "PNN", grow_method_code: "GH", strain_id: optionValue(acquireBf.body, "Fruity Pebbles"), planned_dryspc: "7", material_form: "bucked" }),
     });
     assert(mkBf.status === 303, `freezer HBN acquire expected 303 got ${mkBf.status} ${await mkBf.text()}`);
     const bfHbn = new URL(mkBf.headers.get("location") || "", base).searchParams.get("minted");
@@ -6328,7 +6451,8 @@ async function run() {
       }
     }
     assert(bfBatchId && bfPicked, "the wet pane must list the freezer HBN among the PNN rows");
-    assert(bfPicked.body.includes(`<option value="${bfId}"`) && bfPicked.body.includes(">Blast Freezer(s)</option>"), "Move To at PNN must offer the Blast Freezer(s)");
+    // THE HBN ENTRY (canon 0.30.341): the HBN on 7 lands its lots in the Blast Freezer(s), the seventh of the sequence.
+    assert(bfPicked.body.includes('data-lot-landing="bucked" data-lot-landing-space="Blast Freezer(s)">Bucked: lands in Blast Freezer(s) as WIP'), "an HBN on Silo 7 must land in the Blast Freezer(s)");
     const startBf = await req("/station/wet_weight", {
       method: "POST",
       body: form({ team_lead: "Smoke Lead", harvest_batch_id: bfBatchId, actual_dryspc: bfId, notes: "0.30.106 freezer" }),
@@ -6382,7 +6506,7 @@ async function run() {
     const acquireBf2 = await text("/station/acquire_hbn");
     const mkBf2 = await req("/station/acquire_hbn", {
       method: "POST",
-      body: form({ entry_date: "2026-09-16", farm_code: "PNN", grow_method_code: "GH", strain_id: optionValue(acquireBf2.body, "Fruity Pebbles") }),
+      body: form({ entry_date: "2026-09-16", farm_code: "PNN", grow_method_code: "GH", strain_id: optionValue(acquireBf2.body, "Fruity Pebbles"), planned_dryspc: "7", material_form: "bucked" }),
     });
     assert(mkBf2.status === 303, `second freezer HBN acquire expected 303 got ${mkBf2.status} ${await mkBf2.text()}`);
     const bfHbn2 = new URL(mkBf2.headers.get("location") || "", base).searchParams.get("minted");
@@ -6409,6 +6533,10 @@ async function run() {
     assert(wBf2.status === 303, `second freezer lot weight expected 303 got ${wBf2.status}`);
     const finBf2 = await req(`/station/wet_weight/lot/${bfLot2}/finish`, { method: "POST", body: form({ plant_count: "5" }) });
     assert(finBf2.status === 303, `second freezer lot finish expected 303 got ${finBf2.status} ${await finBf2.text()}`);
+    // THE HBN ENTRY (canon 0.30.341): the Internal Logistics line (the Penn North finish passes it at once, so it stands Scheduled) reads the planned silo through the sequence, 7 being the Blast Freezer(s).
+    const bfLogistics = await text("/logistics/internal");
+    const bfLine = bfLogistics.body.match(new RegExp(`<li class="schedule-item"[^>]*data-logistics-hbn="${bfHbn2}"[\\s\\S]*?</li>`))?.[0] || "";
+    assert(bfLine.includes("Planned silo: Blast Freezer(s)"), "the Dry Queue must read the HBN on 7 as planned for the Blast Freezer(s)");
     await passEntry(bfLot2);
     const pickBf2 = await text(`/station/load_silo?pick=${bfLot2}`);
     assert(pickBf2.res.status === 200, `second freezer lot pick expected 200 got ${pickBf2.res.status}`);
@@ -6500,7 +6628,8 @@ async function run() {
     const acquireStray = await text("/station/acquire_hbn");
     const mkStray = await req("/station/acquire_hbn", {
       method: "POST",
-      body: form({ entry_date: "2026-09-17", farm_code: "PNN", grow_method_code: "GH", strain_id: optionValue(acquireStray.body, "Fruity Pebbles") }),
+      // THE HBN ENTRY (canon 0.30.341): with Silo 6 added, the sixth place of the sequence is Silo 6 (the Arlington Dry Room moves to 7, the Blast Freezer(s) past the seven).
+      body: form({ entry_date: "2026-09-17", farm_code: "PNN", grow_method_code: "GH", strain_id: optionValue(acquireStray.body, "Fruity Pebbles"), planned_dryspc: "6", material_form: "bucked" }),
     });
     assert(mkStray.status === 303, `stray HBN acquire expected 303 got ${mkStray.status} ${await mkStray.text()}`);
     const strayHbn = new URL(mkStray.headers.get("location") || "", base).searchParams.get("minted");
@@ -6525,6 +6654,9 @@ async function run() {
     assert(wStray.status === 303, `stray weight expected 303 got ${wStray.status}`);
     const finStray = await req(`/station/wet_weight/lot/${strayLot}/finish`, { method: "POST", body: form({ plant_prompt: "skip" }) });
     assert(finStray.status === 303, `stray finish expected 303 got ${finStray.status} ${await finStray.text()}`);
+    const strayLogistics = await text("/logistics/internal");
+    const strayLine = strayLogistics.body.match(new RegExp(`<li class="schedule-item"[^>]*data-logistics-hbn="${strayHbn}"[\\s\\S]*?</li>`))?.[0] || "";
+    assert(strayLine.includes("Planned silo: Silo 6"), "the Dry Queue must read the HBN on 6 as planned for the sixth space, Silo 6");
     await passEntry(strayLot);
     const loadStray = await req("/station/load_silo/load", {
       method: "POST",
@@ -6853,10 +6985,11 @@ async function run() {
     const sheetExport = (await text("/export/harvest_batches.csv")).body.split(/\r?\n/);
     const aliasLine = sheetExport.find((line) => line.includes(aliasMetrc)) || "";
     const agreeLine = sheetExport.find((line) => line.includes(agreeHbn)) || "";
+    // The sync renames the app batch to the sheet's text (THE HBN FOLLOWS METRC), so its 01 segment reads NA here; its silo column is untouched.
     const knownLine = sheetExport.find((line) => line.includes("26244-ARL-GH-027-0-NA-26010")) || "";
-    assert(aliasLine.endsWith(",sheet,,") && !sheetExport.some((line) => line.includes(aliasSheet)), `serial 80 must be minted under METRC's text, got ${aliasLine}`);
-    assert(agreeLine.endsWith(",sheet,,"), `the agreeing lot must keep the sheet's text, got ${agreeLine}`);
-    assert(knownLine.includes("Smoke Cream") && knownLine.endsWith(",app,,"), `the app batch must take the sheet's market strain and stay app-born, got ${knownLine}`);
+    assert(aliasLine.endsWith(",sheet,,,bucked") && !sheetExport.some((line) => line.includes(aliasSheet)), `serial 80 must be minted under METRC's text, got ${aliasLine}`);
+    assert(agreeLine.endsWith(",sheet,,,bucked"), `the agreeing lot must keep the sheet's text, got ${agreeLine}`);
+    assert(knownLine.includes("Smoke Cream") && knownLine.endsWith(",app,,,bucked"), `the app batch must take the sheet's market strain and stay app-born, got ${knownLine}`);
     const sheetLog = await text("/log");
     assert(sheetLog.body.includes("<td>harvest details (sync)</td>") && sheetLog.body.includes("<td>Smoke Cream</td>"), "the market strain change must be logged under harvest details (sync)");
     const sheetId = aliasLine.split(",")[0];
@@ -7227,11 +7360,11 @@ async function run() {
     // born_from is followed by the in-transit close columns (0083), empty until YES.
     const batchesCsv = (await text("/export/harvest_batches.csv")).body.split(/\r?\n/);
     const newLine = batchesCsv.find((line) => line.includes(NEW_HBN)) || "";
-    assert(batchesCsv[0].endsWith(",born_from,field_closed_at,field_closed_by") && newLine.endsWith(",metrc,,"), `the minted batch must be born from METRC, got ${newLine}`);
+    assert(batchesCsv[0].endsWith(",born_from,field_closed_at,field_closed_by,material_form") && newLine.endsWith(",metrc,,,bucked"), `the minted batch must be born from METRC, got ${newLine}`);
     assert(newLine.includes(",2026,open,") || newLine.includes(",7,2026,"), `the minted batch must carry 2026 serial 7, got ${newLine}`);
     const newBatchId = newLine.split(",")[0];
     const appLines = batchesCsv.filter((line) => line.includes(pickedHbn));
-    assert(appLines.length === 1 && appLines[0].endsWith(",app,,"), "the app's own batch must stay born from the app");
+    assert(appLines.length === 1 && appLines[0].endsWith(",app,,,bucked"), "the app's own batch must stay born from the app");
     const queuesNew = await text("/admin/queues");
     assert(!queuesNew.body.includes(NEW_HBN), "the HBN Queue must leave the METRC-born batch out");
     const wetNew = await text("/station/wet_weight");
@@ -7273,7 +7406,7 @@ async function run() {
     assert(histWork.includes(`data-schedule-tag="${HIST}" data-schedule-hbn="${aliasMetrc}">`) && histWork.includes("Sheet Apple - 33 g"), "the adopted package must read the sheet's market strain");
     const batchesAfterHist = (await text("/export/harvest_batches.csv")).body;
     assert(batchesAfterHist.split(aliasMetrc).length === batchesBeforeHist.split(aliasMetrc).length, ">> on a known lot must mint nothing");
-    assert((batchesAfterHist.split(/\r?\n/).find((line) => line.includes(aliasMetrc)) || "").endsWith(",sheet,,"), "the historical lot stays sheet-born");
+    assert((batchesAfterHist.split(/\r?\n/).find((line) => line.includes(aliasMetrc)) || "").endsWith(",sheet,,,bucked"), "the historical lot stays sheet-born");
 
     const queuesFold = await text("/admin/queues");
     assert(queuesFold.body.includes('data-fold="hbn_queue" open') && queuesFold.body.includes('data-fold="logistics_moves" open'), "Data Queues folds must render open");
@@ -7460,6 +7593,13 @@ async function run() {
     assert(headerPick.body.includes('name="truck_number"'), "the wet header must carry Truck #");
     const spaces = await text("/admin/lookups/dry_spaces");
     const truckSilo = drySpaceIdByName(spaces.body, "Silo 1");
+    // THE HBN ENTRY (canon 0.30.341): the lot lands in the HBN's silo, so the header HBN is moved to Silo 1 on its pencil (already there is no change).
+    const truckMove = await req(`/record/harvest_batches/${truckHeaderId}/edit`, {
+      method: "POST",
+      body: form({ planned_dryspc: "1", material_form: "bucked", reason: "smoke: the truck's HBN lands in Silo 1" }),
+    });
+    const truckMoveBody = truckMove.status === 303 ? "" : await truckMove.text();
+    assert(truckMove.status === 303 || (truckMove.status === 400 && truckMoveBody.includes("No fields changed.")), `moving the truck HBN to Silo 1 expected 303 got ${truckMove.status} ${truckMoveBody}`);
     const startTruck = await req("/station/wet_weight", {
       method: "POST",
       body: form({
@@ -7585,7 +7725,7 @@ async function run() {
     const twoAcquire = await text("/station/acquire_hbn");
     const twoMint = await req("/station/acquire_hbn", {
       method: "POST",
-      body: form({ entry_date: "2026-09-26", farm_code: "PNN", grow_method_code: "GH", strain_id: optionValue(twoAcquire.body, "Fruity Pebbles") }),
+      body: form({ entry_date: "2026-09-26", farm_code: "PNN", grow_method_code: "GH", strain_id: optionValue(twoAcquire.body, "Fruity Pebbles"), planned_dryspc: "1", material_form: "bucked" }),
     });
     assert(twoMint.status === 303, `two-part HBN expected 303 got ${twoMint.status} ${await twoMint.text()}`);
     const twoHbn = new URL(twoMint.headers.get("location") || "", base).searchParams.get("minted");
@@ -7778,7 +7918,8 @@ async function run() {
         const acquire = await text("/station/acquire_hbn");
         const mk = await req("/station/acquire_hbn", {
           method: "POST",
-          body: form({ entry_date: "2026-09-18", farm_code: "PNN", grow_method_code: "GH", strain_id: optionValue(acquire.body, "Fruity Pebbles") }),
+          // THE HBN ENTRY (canon 0.30.341): the room is the seventh place of the sequence while the stray Silo 6 stands sixth; a Bucked HBN on 7 lands its lots in the room.
+          body: form({ entry_date: "2026-09-18", farm_code: "PNN", grow_method_code: "GH", strain_id: optionValue(acquire.body, "Fruity Pebbles"), planned_dryspc: "7", material_form: "bucked" }),
         });
         assert(mk.status === 303, `joint walk HBN acquire expected 303 got ${mk.status} ${await mk.text()}`);
         const hbn = new URL(mk.headers.get("location") || "", base).searchParams.get("minted");
@@ -7933,7 +8074,7 @@ async function run() {
     const pairStrain = optionValue(pairAcquire.body, "Fruity Pebbles");
     const pairMint = await req("/station/acquire_hbn", {
       method: "POST",
-      body: form({ entry_date: "2026-09-01", farm_code: "PNN", grow_method_code: "GH", strain_id: pairStrain }),
+      body: form({ entry_date: "2026-09-01", farm_code: "PNN", grow_method_code: "GH", strain_id: pairStrain, planned_dryspc: "1", material_form: "bucked" }),
     });
     assert(pairMint.status === 303, `pair mint expected 303 got ${pairMint.status} ${await pairMint.text()}`);
     const pairHbn = new URL(pairMint.headers.get("location") || "", base).searchParams.get("minted");
@@ -8204,23 +8345,28 @@ async function run() {
     assert(fieldNoDest.status === 400 && (await fieldNoDest.text()).includes("Destination is required."), "a start without a destination must refuse in words");
     const acquireField = await text("/station/acquire_hbn");
     const fieldStrain = optionValue(acquireField.body, "Fruity Pebbles");
-    const mintField = async (farm) => {
+    // THE HBN ENTRY (canon 0.30.341): the HBN decides the tote's lot. The ARL
+    // HBN is Bucked on Silo 2 (its totes weigh into a Silo 2 lot and the send
+    // mints WIP); the PNS HBNs are Spear on 7 (their totes hang in Hang in
+    // Place and the schedule plans the seventh space, which is the Arlington
+    // Dry Room while the stray Silo 6 of the 0.30.116 walk stands sixth).
+    const mintField = async (farm, silo, materialForm) => {
       const mk = await req("/station/acquire_hbn", {
         method: "POST",
-        body: form({ entry_date: "2026-09-18", farm_code: farm, grow_method_code: "GH", strain_id: fieldStrain }),
+        body: form({ entry_date: "2026-09-18", farm_code: farm, grow_method_code: "GH", strain_id: fieldStrain, planned_dryspc: silo, material_form: materialForm }),
       });
       assert(mk.status === 303, `field HBN acquire ${farm} expected 303 got ${mk.status} ${await mk.text()}`);
       const hbn = new URL(mk.headers.get("location") || "", base).searchParams.get("minted");
       const id = new URL(mk.headers.get("location") || "", base).searchParams.get("id") || "";
       return { hbn, id };
     };
-    const fieldArl = await mintField("ARL");
-    const fieldPns = await mintField("PNS");
-    const fieldPns2 = await mintField("PNS");
-    assert(fieldArl.hbn && fieldArl.hbn.includes("-ARL-"), `field ARL HBN missing, got ${fieldArl.hbn}`);
-    assert(fieldPns.hbn && fieldPns.hbn.includes("-PNS-"), `field PNS HBN missing, got ${fieldPns.hbn}`);
+    const fieldArl = await mintField("ARL", "2", "bucked");
+    const fieldPns = await mintField("PNS", "7", "spear");
+    const fieldPns2 = await mintField("PNS", "7", "spear");
+    assert(fieldArl.hbn && fieldArl.hbn.includes("-ARL-") && fieldArl.hbn.includes("-0-02-"), `field ARL HBN missing or off Silo 2, got ${fieldArl.hbn}`);
+    assert(fieldPns.hbn && fieldPns.hbn.includes("-PNS-") && fieldPns.hbn.includes("-0-07-"), `field PNS HBN missing or off 7, got ${fieldPns.hbn}`);
     const optionId = (body, hbn) => {
-      const match = [...body.matchAll(/<option value="([^"]+)">[^<]*\(([^)]+)\)<\/option>/g)].find((row) => row[2] === hbn);
+      const match = [...body.matchAll(/<option value="([^"]+)">[^<]*\(([^)]+)\)[^<]*<\/option>/g)].find((row) => row[2] === hbn);
       assert(match, `the field select must offer ${hbn}`);
       return match[1];
     };
@@ -8245,6 +8391,9 @@ async function run() {
     const fieldArlId = optionId(fieldOpened.body, fieldArl.hbn);
     const fieldPnsId = optionId(fieldOpened.body, fieldPns.hbn);
     const fieldPns2Id = optionId(fieldOpened.body, fieldPns2.hbn);
+    // THE HBN ENTRY (canon 0.30.341): each option names the HBN's form and silo.
+    assert(fieldSelect.includes(`(${fieldArl.hbn}) Bucked Silo 2</option>`), "the ARL option must read Bucked Silo 2");
+    assert(fieldSelect.includes(`(${fieldPns.hbn}) Spear Arlington Dry Room</option>`), "the PNS option must read Spear Arlington Dry Room, the seventh space");
     const fieldBadGram = await req(`/station/field_harvest/load/${fieldLoad1}/weights`, {
       method: "POST",
       body: form({ weight_grams: "1.5", harvest_batch_id: fieldArlId }),
@@ -8260,6 +8409,10 @@ async function run() {
     };
     const afterFirst = await addFieldTote(fieldLoad1, fieldArlId, "100");
     assert(afterFirst.searchParams.get("carry") === "1", "a + must carry the last pick");
+    // THE HBN ENTRY (canon 0.30.341): the Bucked HBN's totes weigh into a Silo 2 lot, so Silo 2 reads filling on the console.
+    const fieldSilo2Id = drySpaceIdByName((await text("/admin/lookups/dry_spaces")).body, "Silo 2");
+    const fieldFilling = await text("/harvest");
+    assert(fieldFilling.body.includes(`data-silo="${fieldSilo2Id}" data-silo-state="`) && !fieldFilling.body.includes(`data-silo="${fieldSilo2Id}" data-silo-state="empty"`), "Silo 2 must not read empty while the field totes weigh into the Bucked HBN's lot");
     const carried = await text(afterFirst.pathname + afterFirst.search);
     const carriedSelect = (carried.body.match(/data-field-entry[\s\S]*?<select name="harvest_batch_id">([\s\S]*?)<\/select>/) || [])[1] || "";
     assert(carriedSelect.includes(`value="${fieldArlId}" selected`), "the select must keep the ARL HBN after +");
@@ -8341,6 +8494,11 @@ async function run() {
     assert(dryAfterPass.includes(arlPartId), "the passed lot must be drying");
     const siloPick = await text(`/station/load_silo?pick=${fieldArlId}`);
     assert(siloPick.body.includes(`<dt>Package</dt><dd>${fieldArl.hbn.slice(-5)}</dd>`), "the pass must mint the born package");
+    // THE HBN ENTRY (canon 0.30.341): the lot sits in Silo 2 as Bucked and its package is WIP.
+    const arlPartView = await text(`/station/wet_weight?lot=${arlPartId}`);
+    assert(arlPartView.body.includes("<dd>Silo 2</dd>") && arlPartView.body.includes("<dt>Material</dt><dd>Bucked</dd>"), "the field lot must sit in Silo 2 as Bucked");
+    const arlInv = await text("/reports/inventory_by_location?format=csv");
+    assert(/^PNN,BARN,ARL,WIP/m.test(arlInv.body), "the send must mint WIP for the Bucked ARL HBN");
     const sentAfterArl = await text("/station/field_harvest");
     assert(!sentLoadsPane(sentAfterArl.body).includes(`data-sent-load="${fieldLoad2}"`), "the ARL-only load must leave Loads sent");
     assert(sentLoadsPane(sentAfterArl.body).includes(`data-sent-load="${fieldLoad1}"`), "the load with an open PNS HBN stays in transit");
@@ -8348,6 +8506,20 @@ async function run() {
     assert(passPns.status === 303, `>> on the PNS HBN expected 303 got ${passPns.status} ${await passPns.text()}`);
     const sentAfterBoth = await text("/station/field_harvest");
     assert(!sentLoadsPane(sentAfterBoth.body).includes("data-sent-load"), "both passes must empty Loads sent");
+    // THE HBN ENTRY (canon 0.30.341): the Spear HBN's lot hangs in Hang in
+    // Place as SPR; the drying schedule reads its planned space through the
+    // sequence, 7 being the Arlington Dry Room here, so the Dry Rooms surface
+    // reads it planned here.
+    const pnsPartId = (await text("/logistics/internal")).body.match(new RegExp(`data-logistics-parts="([^" ]+)"[^>]*data-logistics-hbn="${fieldPns.hbn}"`))?.[1] || "";
+    assert(pnsPartId, "the PNS pass must name its lot");
+    const pnsPartView = await text(`/station/wet_weight?lot=${pnsPartId}`);
+    assert(pnsPartView.body.includes("<dd>Hang in Place</dd>") && pnsPartView.body.includes("<dt>Material</dt><dd>Spear</dd>"), "the Spear HBN's lot must hang in Hang in Place");
+    const roomsSurface = await text("/production/scheduling/dry_rooms");
+    const roomsAvailable = roomsSurface.body.slice(roomsSurface.body.indexOf('data-schedule-pane="available"'), roomsSurface.body.indexOf('data-schedule-pane="working"'));
+    // The surface groups its rows by HBN, so the row carries the harvest batch id.
+    const pnsRowAt = roomsAvailable.indexOf(`data-drying-lot="${fieldPnsId}"`);
+    const pnsRow = pnsRowAt === -1 ? "" : roomsAvailable.slice(pnsRowAt, roomsAvailable.indexOf("</li>", pnsRowAt));
+    assert(pnsRow.includes("planned here</strong>: Arlington Dry Room"), "the Dry Rooms surface must read the HBN on 7 as planned here, the seventh space");
     const reopenReceived = await req(`/station/field_harvest/load/${fieldLoad1}/reopen`, { method: "POST", body: form({ pin: ADMIN_PIN }) });
     assert(reopenReceived.status === 400, `a received load must refuse <<, got ${reopenReceived.status}`);
     const fieldStart3 = await req("/station/field_harvest/start", {

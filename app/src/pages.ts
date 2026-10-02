@@ -366,13 +366,21 @@ export function manualHbnPage(
     licenses: LookupOption[];
     grow_methods: LookupOption[];
     strains: LookupOption[];
+    /** THE HBN ENTRY (canon 0.30.341): the Silo pick list and the next silo with room, preselected. */
+    silo_number?: LookupOption[];
+    next_silo?: string;
   },
   locale: Locale = "en",
   okHbn?: string
 ): string {
-  const opts = (rows: LookupOption[]) =>
-    [`<option value=""></option>`, ...rows.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`)].join("");
+  const opts = (rows: LookupOption[], selected = "") =>
+    [`<option value=""></option>`, ...rows.map((o) => `<option value="${esc(o.value)}"${o.value === selected ? " selected" : ""}>${esc(o.label)}</option>`)].join("");
   const farmLicenses = lookups.licenses.filter((o) => o.farm_code);
+  // THE HBN ENTRY (canon 0.30.341): the same two fields as Acquire, Bucked and the next silo with room by default.
+  const formRadio = `<fieldset class="field field-radio"><legend>${esc(t(locale, "Spear or Bucked"))}</legend><span class="choice-row"><label><input type="radio" name="material_form" value="spear"> ${esc(
+    t(locale, "Spear")
+  )}</label> <label><input type="radio" name="material_form" value="bucked" checked> ${esc(t(locale, "Bucked"))}</label></span></fieldset>`;
+  const siloSelect = `<label class="field">${esc(t(locale, "Silo"))} <select name="planned_dryspc" required>${opts(lookups.silo_number ?? [], lookups.next_silo ?? "")}</select></label>`;
   const flash = okHbn
     ? `<p class="banner ok">${esc(t(locale, "Minted"))}: ${esc(okHbn)}. ${esc(t(locale, "It sits in the HBN Queue like any other."))}</p>`
     : "";
@@ -392,6 +400,8 @@ export function manualHbnPage(
       <label class="field">${esc(t(locale, "License"))} ${licensePicker("license_value", farmLicenses, "", { required: true })}</label>
       <label class="field">${esc(t(locale, "Grow Method"))} <select name="grow_method_code" required>${opts(lookups.grow_methods)}</select></label>
       <label class="field">${esc(t(locale, "Strain"))} <select name="strain_id" required>${opts(lookups.strains)}</select></label>
+      ${formRadio}
+      ${siloSelect}
       <label class="field">${esc(t(locale, "Reason"))} <input type="text" name="reason" required placeholder="${esc(t(locale, "why the system failed"))}"></label>
       <button type="submit">${esc(t(locale, "Mint manual HBN"))}</button>
     </form>
@@ -464,14 +474,28 @@ function editInput(
     if (field.lookup === "license") {
       return `<label class="field">${esc(field.label)}${licensePicker(field.name, options, String(current ?? ""), { required: !field.optional })}</label>`;
     }
+    // THE HBN ENTRY (canon 0.30.341): a NULL value shows as a blank option and a
+    // value the list no longer offers (an HBN's NA) stays as its own option, so
+    // a plain Save never writes the first option by accident.
+    const cur = String(current ?? "");
+    const known = options.some((o) => o.value === cur);
     const opts = [
-      field.optional ? `<option value=""></option>` : "",
+      field.optional || cur === "" ? `<option value=""${cur === "" ? " selected" : ""}></option>` : "",
+      cur !== "" && !known ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : "",
       ...options.map((o) => {
-        const sel = String(current ?? "") === o.value ? " selected" : "";
+        const sel = cur === o.value ? " selected" : "";
         return `<option value="${esc(o.value)}"${sel}>${esc(o.label)}</option>`;
       }),
     ].join("");
     return `<label class="field">${esc(field.label)}<select name="${esc(field.name)}">${opts}</select></label>`;
+  }
+  // THE HBN ENTRY (canon 0.30.341): Spear or Bucked is a one-tap radio on both pencils, the current value checked.
+  if (field.input === "radio" && field.options) {
+    const cur = String(current ?? "");
+    const row = field.options
+      .map((o) => `<label><input type="radio" name="${esc(field.name)}" value="${esc(o.value)}"${cur === o.value ? " checked" : ""}> ${esc(o.label)}</label>`)
+      .join(" ");
+    return `<fieldset class="field field-radio"><legend>${esc(field.label)}</legend><span class="choice-row">${row}</span></fieldset>`;
   }
   if (field.input === "textarea") {
     return `<label class="field">${esc(field.label)}<textarea name="${esc(field.name)}">${esc(current ?? "")}</textarea></label>`;

@@ -174,7 +174,8 @@ export type PipelineEntry = StationDef | QueueDef;
 export type EditFieldDef = {
   name: string;
   label: string;
-  input: "text" | "date" | "time" | "textarea" | "number" | "checkbox" | "lookup";
+  /** THE HBN ENTRY (canon 0.30.341): radio renders the fixed list as one-tap radios, the current value checked. */
+  input: "text" | "date" | "time" | "textarea" | "number" | "checkbox" | "lookup" | "radio";
   lookup?: LookupName;
   /** Lookups only: render a leading blank option; saving blank stores NULL. */
   optional?: boolean;
@@ -195,7 +196,21 @@ export const EDITABLE_FIELDS: Record<string, EditFieldDef[]> = {
     { name: "strain_id", label: "Strain", input: "lookup", lookup: "strains" },
     { name: "market_strain", label: "Market Strain (optional)", input: "text" },
     { name: "manicure", label: "Manicure?", input: "checkbox" },
-    { name: "planned_dryspc", label: "Silo # (planned, optional)", input: "lookup", lookup: "silo_number" },
+    // THE HBN ENTRY (canon 0.30.341): the HBN decides a lot's form and its
+    // space. The Silo pencil preselects the current number and shows a NULL
+    // as a blank option so a save never writes "1" by accident; Spear or
+    // Bucked is the same two-word radio as Acquire. No HBN string is
+    // re-minted by an edit.
+    { name: "planned_dryspc", label: "Silo", input: "lookup", lookup: "silo_number", optional: false },
+    {
+      name: "material_form",
+      label: "Spear or Bucked",
+      input: "radio",
+      options: [
+        { value: "spear", label: "Spear" },
+        { value: "bucked", label: "Bucked" },
+      ],
+    },
     { name: "start_time", label: "Start Time (planned, optional, 24h)", input: "text" },
     { name: "zone", label: "Zone (optional)", input: "text" },
     { name: "rows_text", label: "Rows (optional)", input: "text" },
@@ -210,10 +225,23 @@ export const EDITABLE_FIELDS: Record<string, EditFieldDef[]> = {
     // complete HBN.
     { name: "harvest_batch_id", label: "HBN", input: "lookup", lookup: "harvest_batches" },
     { name: "weight_grams", label: "Total wet weight (g)", input: "number" },
-    { name: "actual_dryspc", label: "Move To", input: "lookup", lookup: "dry_spaces" },
+    // THE HBN ENTRY (canon 0.30.341; the owner: "remove "move-to" altogether"):
+    // the floor's Move To is gone; the Admin pencil keeps the lot's space as
+    // "Dry space", the correction tool (its save still carries the ledger item
+    // to the space).
+    { name: "actual_dryspc", label: "Dry space", input: "lookup", lookup: "dry_spaces" },
     // Owner ruling 2026-09-07 (canon 0.29.1): the lot's form, fixable with a
-    // reasoned pencil like everything else. Values: spear or bucked.
-    { name: "material_form", label: "Spear or Bucked", input: "text" },
+    // reasoned pencil like everything else. Values: spear or bucked, the same
+    // radio as the HBN's (canon 0.30.341).
+    {
+      name: "material_form",
+      label: "Spear or Bucked",
+      input: "radio",
+      options: [
+        { value: "spear", label: "Spear" },
+        { value: "bucked", label: "Bucked" },
+      ],
+    },
     { name: "actual_start_time", label: "Actual Start Time (24h)", input: "text" },
     { name: "truck_number", label: "Truck #", input: "text" },
     { name: "notes", label: "Notes", input: "textarea" },
@@ -505,14 +533,35 @@ export const PIPELINE: PipelineEntry[] = [
           es: "Nombre comercial que reemplaza el nombre del producto en cada paquete posterior. Nunca cambia el HBN: el cultivar real queda para el futuro.",
         },
       },
+      // THE HBN ENTRY (canon 0.30.341). The owner, 2026-10-02: "Add the
+      // bucked/spears toggle to the HBN entry, remove "move-to" altogether.
+      // The HBN being made defaults to the next silo in sequence for
+      // scheduling purposes, it can be changed by drop down before the HBN is
+      // minted". The HBN decides a lot's form and its space; Start lot and the
+      // field node read both from the HBN.
+      {
+        name: "material_form",
+        label: "Spear or Bucked",
+        input: "radio",
+        options: [
+          { value: "spear", label: "Spear" },
+          { value: "bucked", label: "Bucked" },
+        ],
+        default: "bucked",
+        help: {
+          en: "Bucked lots are weighed into the silo as WIP. Spear lots hang (Hang in Place at Penn North, the Arlington Dry Room at Arlington) as SPR and the silo is for the schedule.",
+          es: "Los lotes desgranados se pesan en el silo como WIP. Los lotes de lanza cuelgan (Hang in Place en Penn North, el Arlington Dry Room en Arlington) como SPR y el silo es para la programacion.",
+        },
+      },
       {
         name: "planned_dryspc",
-        label: "Silo # (planned, optional)",
+        label: "Silo",
         input: "lookup",
         lookup: "silo_number",
+        required: true,
         help: {
-          en: "A planned field, not a data field. The actual space is chosen at Wet Weight, which is what ratifies the HBN. Admin\\Data Lookups\\Harvest Operations\\Silo #",
-          es: "Un campo planeado, no un dato. El espacio real se elige en Peso Humedo, que es lo que ratifica el HBN. Admin\\Data Lookups\\Harvest Operations\\Silo #",
+          en: "Where this HBN's lots land and what the drying schedule plans for. The next silo with room is picked for you; change it before you Save. Admin\\Data Lookups\\Harvest Operations\\Silo #",
+          es: "Donde llegan los lotes de este HBN y lo que planea el programa de secado. El siguiente silo con espacio se elige por usted; cambielo antes de Guardar. Admin\\Data Lookups\\Harvest Operations\\Silo #",
         },
       },
       {
@@ -603,35 +652,11 @@ export const PIPELINE: PipelineEntry[] = [
           es: "Lote de cosecha abierto al que pertenece esta entrada. Terminar lote acuna inventario contra ese lote.",
         },
       },
-      {
-        name: "actual_dryspc",
-        label: "Move To",
-        input: "move_to",
-        required: true,
-        help: {
-          en: "Actual dry space at PNN, where every lot lands. A hang room mints SPR; a silo or the freezer mints WIP, born in PNN's barn under its grow license. Admin\\Data Lookups\\Harvest Operations\\Dry Spaces",
-          es: "Espacio de secado real en PNN, donde llega cada lote. Un cuarto de colgar acuna SPR; un silo o el congelador acuna WIP, nacido en el granero de PNN bajo su licencia de cultivo. Admin\\Data Lookups\\Harvest Operations\\Dry Spaces",
-        },
-      },
-      {
-        // Owner ruling 2026-09-07 (canon 0.29.1, verbatim): "we're just going
-        // to move the spear/buck toggle to the wet weight entry screen." The
-        // lot carries its form from weigh-in: the receive mints from it (spear
-        // SPR, bucked WIP) and the unload derives its weigh mode from it. A
-        // silo Move To overrides to bucked at create (the silo law).
-        name: "material_form",
-        label: "Spear or Bucked",
-        input: "radio",
-        options: [
-          { value: "spear", label: "Spear" },
-          { value: "bucked", label: "Bucked" },
-        ],
-        default: "spear",
-        help: {
-          en: "What this lot is at weigh-in. Spear is the common case and stays one tap. Drives the truck receive mint and the unload questions.",
-          es: "Lo que es este lote al pesar. Lanza es el caso comun y queda en un toque. Define el acunado al recibir el camion y las preguntas al descargar.",
-        },
-      },
+      // THE HBN ENTRY (canon 0.30.341; the owner: "remove "move-to"
+      // altogether"): Move To and the Spear or Bucked radio left the header.
+      // The HBN decides both: a Bucked HBN's lots weigh into its silo as WIP,
+      // a Spear HBN's lots hang in Hang in Place as SPR; the header shows one
+      // read-only landing line under the HBN with a link to the HBN's pencil.
       {
         name: "truck_number",
         label: "Truck #",

@@ -337,9 +337,10 @@ describe("station page in Spanish (owner ruling 2026-08-28)", () => {
   const queuesByKey: Record<string, QueueDef> = { hbn_queue: queueByKey("hbn_queue")! };
   // Owner ruling 2026-08-31: trucks are record-borne; the batch's numbers arrive
   // as truckOptions and label through the Truck dictionary key.
+  // THE HBN ENTRY (canon 0.30.341): the header reads the HBN's landing line in place of Move To.
   const ledgerCtx: StationLedgerCtx = {
     farmName: "Arlington",
-    moveToOptions: [{ value: "ds6", label: "Arlington Dry Room" }],
+    landing: { form: "bucked", spaceName: "Silo 3", hbnId: "hb1" },
     truckOptions: ["1"],
     resumeLots: [],
   };
@@ -359,9 +360,9 @@ describe("station page in Spanish (owner ruling 2026-08-28)", () => {
     );
     expect(html).toContain("Iniciar lote");
     expect(html).toContain("Cosecha Penn North");
-    expect(html).toContain("Mover a");
-    expect(html).toContain("Agregar camión");
-    expect(html).toContain('<option value="truck-1">Camión 1</option>');
+    expect(html).toContain("Desgranado: llega a Silo 3 como WIP");
+    expect(html).toContain("cambiar en el HBN");
+    expect(html).not.toContain("Mover a");
     expect(html).toContain("Líder");
     expect(html).toContain("Cola de HBN");
     // User-entered data never translates.

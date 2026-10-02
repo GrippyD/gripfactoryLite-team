@@ -2894,6 +2894,25 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "AM": { en: "AM", es: "AM" },
   "PM": { en: "PM", es: "PM" },
   "Start time saved.": { en: "Start time saved.", es: "Hora de inicio guardada." },
+  // THE HBN ENTRY (canon 0.30.341): the HBN decides a lot's form and its space.
+  "Where this HBN's lots land and what the drying schedule plans for. The next silo with room is picked for you; change it before you Save.": {
+    en: "Where this HBN's lots land and what the drying schedule plans for. The next silo with room is picked for you; change it before you Save.",
+    es: "Donde llegan los lotes de este HBN y lo que planea el programa de secado. El siguiente silo con espacio se elige por usted; cambielo antes de Guardar.",
+  },
+  "Bucked lots are weighed into the silo as WIP. Spear lots hang (Hang in Place at Penn North, the Arlington Dry Room at Arlington) as SPR and the silo is for the schedule.": {
+    en: "Bucked lots are weighed into the silo as WIP. Spear lots hang (Hang in Place at Penn North, the Arlington Dry Room at Arlington) as SPR and the silo is for the schedule.",
+    es: "Los lotes desgranados se pesan en el silo como WIP. Los lotes de lanza cuelgan (Hang in Place en Penn North, el Arlington Dry Room en Arlington) como SPR y el silo es para la programacion.",
+  },
+  "lands in {space} as WIP": { en: "lands in {space} as WIP", es: "llega a {space} como WIP" },
+  "hangs in {space} as SPR": { en: "hangs in {space} as SPR", es: "cuelga en {space} como SPR" },
+  "change on the HBN": { en: "change on the HBN", es: "cambiar en el HBN" },
+  "This HBN has no silo. Set it on the HBN first.": { en: "This HBN has no silo. Set it on the HBN first.", es: "Este HBN no tiene silo. Fijelo en el HBN primero." },
+  "Pick a silo.": { en: "Pick a silo.", es: "Elija un silo." },
+  "Pick Spear or Bucked.": { en: "Pick Spear or Bucked.", es: "Elija Lanza o Desgranado." },
+  "weighing since": { en: "weighing since", es: "pesando desde" },
+  "Dry space": { en: "Dry space", es: "Espacio de secado" },
+  "6 Arlington Dry Room": { en: "6 Arlington Dry Room", es: "6 Arlington Dry Room" },
+  "7 Blast Freezer(s)": { en: "7 Blast Freezer(s)", es: "7 Blast Freezer(s)" },
 };
 
 /** Look a display string up by its English key; unknown keys render as-is. */

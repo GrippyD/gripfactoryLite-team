@@ -17,11 +17,12 @@ type Row = Record<string, unknown>;
 function makeDb(lots: Row[]) {
   const tables: Record<string, Row[]> = {
     people: [{ id: "p1", display_name: "Pat", is_active: 1, deleted_at: null }],
-    harvest_batches: [{ id: "hb1", status: "open", deleted_at: null }],
+    // THE HBN ENTRY (canon 0.30.341): the HBN decides the lot's form and its space; this one is Bucked on Silo 1.
+    harvest_batches: [{ id: "hb1", status: "open", born_from: "app", farm_code: "PNN", material_form: "bucked", planned_dryspc: "1", deleted_at: null }],
     dry_spaces: [
-      { id: "silo1", kind: "silo", deleted_at: null },
-      { id: "silo2", kind: "silo", deleted_at: null },
-      { id: TRUCK_DRY_SPACE_ID, kind: "truck", deleted_at: null },
+      { id: "silo1", name: "Silo 1", kind: "silo", space_type: "silo", deleted_at: null },
+      { id: "silo2", name: "Silo 2", kind: "silo", space_type: "silo", deleted_at: null },
+      { id: TRUCK_DRY_SPACE_ID, name: "Truck", kind: "truck", space_type: null, deleted_at: null },
     ],
     wet_weight_entries: lots,
     record_change_log: [],
@@ -44,6 +45,8 @@ function makeDb(lots: Row[]) {
     if (q.startsWith("insert into")) return insert(sql, args), { success: true };
     if (q.includes("from people")) return tables.people.find((r) => r.id === args[0]) ?? null;
     if (q.includes("from harvest_batches")) return tables.harvest_batches.find((r) => r.id === args[0]) ?? null;
+    // listSilos: the sequence's spaces, kind silo, in the strip's order.
+    if (q.includes("from dry_spaces where kind = 'silo'")) return tables.dry_spaces.filter((r) => r.kind === "silo");
     if (q.includes("from dry_spaces")) return tables.dry_spaces.find((r) => r.id === args[0]) ?? null;
     if (q.includes("from wet_weight_entries") && q.includes("created_at >= ?")) {
       const [batch, status, space, truck, lead, since] = args as string[];
@@ -76,7 +79,7 @@ function makeDb(lots: Row[]) {
       },
       async all() {
         const r = exec(sql, args);
-        return { results: r ? [r] : [] };
+        return { results: Array.isArray(r) ? r : r ? [r] : [] };
       },
       async run() {
         exec(sql, args);
@@ -100,11 +103,11 @@ function fd(fields: Record<string, string>): FormData {
   return form;
 }
 
-// THE BLANK SLATE (canon 0.30.108): the trucks left the Move To list, so the
-// four taps' header points at a silo now; the truck header of 2026-09-16
-// refuses in words (pinned below).
-const header = { person_id: "p1", team_lead: "Plutarco", harvest_batch_id: "hb1", actual_dryspc: "silo1", material_form: "bucked" };
-const truckHeader = { ...header, actual_dryspc: "truck-4" };
+// THE HBN ENTRY (canon 0.30.341): the header carries no Move To and no form any
+// more; the HBN (Bucked, Silo 1) decides both. An older client's posted
+// actual_dryspc or material_form is ignored (pinned below).
+const header = { person_id: "p1", team_lead: "Test Lead", harvest_batch_id: "hb1" };
+const truckHeader = { ...header, actual_dryspc: "truck-4", material_form: "spear" };
 const secondsAgo = (n: number) => new Date(Date.now() - n * 1000).toISOString();
 const emptyLot = (over: Row = {}): Row => ({
   id: "lot-first",
@@ -113,7 +116,7 @@ const emptyLot = (over: Row = {}): Row => ({
   weight_grams: 0,
   actual_dryspc: "silo1",
   truck_number: null,
-  team_lead: "plutarco",
+  team_lead: "test lead",
   created_at: secondsAgo(6),
   deleted_at: null,
   ...over,
@@ -144,7 +147,7 @@ describe("THE FOUR START TAPS (canon 0.30.89): the Start lot repeat guard", () =
     const old = makeDb([emptyLot({ created_at: secondsAgo(START_LOT_REPEAT_WINDOW_SECONDS + 30) })]);
     await createWetWeight(old as unknown as D1Database, fd(header));
     expect(old.tables.wet_weight_entries).toHaveLength(2);
-    const otherLead = makeDb([emptyLot({ team_lead: "Olga" })]);
+    const otherLead = makeDb([emptyLot({ team_lead: "Other Lead" })]);
     await createWetWeight(otherLead as unknown as D1Database, fd(header));
     expect(otherLead.tables.wet_weight_entries).toHaveLength(2);
     const otherSpace = makeDb([emptyLot({ actual_dryspc: "silo2" })]);
@@ -157,16 +160,22 @@ describe("THE FOUR START TAPS (canon 0.30.89): the Start lot repeat guard", () =
     expect(truckLot.tables.wet_weight_entries).toHaveLength(2);
   });
 
-  it("THE BLANK SLATE (canon 0.30.108): a truck header refuses in words and mints nothing", async () => {
+  it("THE HBN ENTRY (canon 0.30.341): a posted Move To or form is ignored; the HBN's silo and form land the lot", async () => {
     const db = makeDb([]);
-    await expect(createWetWeight(db as unknown as D1Database, fd(truckHeader))).rejects.toMatchObject({
-      status: 400,
-      message: "Trucks left the Move To list; every lot lands in PNN's barn. Pick a silo or a room.",
-    });
-    expect(db.tables.wet_weight_entries).toHaveLength(0);
+    await createWetWeight(db as unknown as D1Database, fd(truckHeader));
+    expect(db.tables.wet_weight_entries).toHaveLength(1);
+    expect(db.tables.wet_weight_entries[0]).toMatchObject({ actual_dryspc: "silo1", material_form: "bucked" });
     const sentinel = makeDb([]);
-    await expect(createWetWeight(sentinel as unknown as D1Database, fd({ ...header, actual_dryspc: TRUCK_DRY_SPACE_ID }))).rejects.toMatchObject({ status: 400 });
-    expect(sentinel.tables.wet_weight_entries).toHaveLength(0);
+    await createWetWeight(sentinel as unknown as D1Database, fd({ ...header, actual_dryspc: TRUCK_DRY_SPACE_ID }));
+    expect(sentinel.tables.wet_weight_entries[0]).toMatchObject({ actual_dryspc: "silo1" });
+    // A Bucked HBN with no numeric silo refuses in words and mints nothing.
+    const noSilo = makeDb([]);
+    noSilo.tables.harvest_batches[0].planned_dryspc = null;
+    await expect(createWetWeight(noSilo as unknown as D1Database, fd(header))).rejects.toMatchObject({
+      status: 400,
+      message: "This HBN has no silo. Set it on the HBN first.",
+    });
+    expect(noSilo.tables.wet_weight_entries).toHaveLength(0);
   });
 
   it("a voided or finished twin does not catch the tap", async () => {

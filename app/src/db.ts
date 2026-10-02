@@ -1,5 +1,5 @@
 import { HttpError, nowIso } from "./audit";
-import { FARM_DAY_START_HOUR_DEFAULT, farmDay, parseFarmDayStartHour } from "./farmday";
+import { FARM_DAY_START_HOUR_DEFAULT, dayBefore, farmDay, farmDayBounds, parseFarmDayStartHour } from "./farmday";
 import {
   CONFIG_KEYS,
   ITEM_KIND_WET,
@@ -18,6 +18,8 @@ import {
   parseExtractionCodes,
   projectedDryYieldPct,
   roundGrams,
+  SILO_SEQUENCE_SIZE,
+  siloSequenceNumber,
   INTERNAL_LOGISTICS_STAGE,
   SCHEDULE_STAGES,
   SCHEDULE_STATUS,
@@ -218,11 +220,44 @@ export async function countQueue(db: D1Database, def: QueueDef): Promise<number>
  * it visible so the crew can resume (or move) that lot. Written against the b alias of
  * the hbn_queue query in listHarvestQueueRows. */
 /** THE TRUCK RECORD (canon 0.30.226): a batch hides only when it has no weighing
- * lot and every finished lot finished before the farm's today (effective_date,
- * else the day of updated_at). An HBN finished today stays for its next truck.
- * The bound value is that today. */
+ * lot and every finished lot finished before the farm's today. An HBN finished
+ * today stays for its next truck.
+ * THE HBN ENTRY (canon 0.30.341; the floor lead: "The first harvest batch from
+ * today is no longer on this list but an HBN from Monday is"): the day a lot
+ * finished was read off its effective_date, the day it STARTED, so an HBN
+ * whose lot started before 06:00 and finished the same morning dropped off at
+ * once. The finish now stamps finished_at (migration 0087 backfilled it from
+ * the status log) and the clause reads that instant against the START of the
+ * farm's today (06:00 Eastern, farmDayBounds(today).startIso), so an HBN
+ * finished this morning stays through the farm day whatever day its lot
+ * started. The bound value is that instant. */
 export const NO_FINISHED_LOT_SQL =
-  "AND (EXISTS (SELECT 1 FROM wet_weight_entries w2 WHERE w2.harvest_batch_id = b.id AND w2.deleted_at IS NULL AND w2.status = 'weighing') OR NOT EXISTS (SELECT 1 FROM wet_weight_entries w WHERE w.harvest_batch_id = b.id AND w.deleted_at IS NULL AND w.status <> 'weighing') OR EXISTS (SELECT 1 FROM wet_weight_entries w3 WHERE w3.harvest_batch_id = b.id AND w3.deleted_at IS NULL AND w3.status <> 'weighing' AND COALESCE(NULLIF(w3.effective_date, ''), substr(w3.updated_at, 1, 10)) >= ?))";
+  "AND (EXISTS (SELECT 1 FROM wet_weight_entries w2 WHERE w2.harvest_batch_id = b.id AND w2.deleted_at IS NULL AND w2.status = 'weighing') OR NOT EXISTS (SELECT 1 FROM wet_weight_entries w WHERE w.harvest_batch_id = b.id AND w.deleted_at IS NULL AND w.status <> 'weighing') OR EXISTS (SELECT 1 FROM wet_weight_entries w3 WHERE w3.harvest_batch_id = b.id AND w3.deleted_at IS NULL AND w3.status <> 'weighing' AND COALESCE(NULLIF(w3.finished_at, ''), w3.updated_at) >= ?))";
+
+/** The instant the farm's current day began, the bound NO_FINISHED_LOT_SQL takes. */
+export async function farmTodayStartIso(db: D1Database): Promise<{ today: string; startHour: number; startIso: string }> {
+  const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour)) || FARM_DAY_START_HOUR_DEFAULT;
+  const today = farmDay(nowIso(), startHour);
+  return { today, startHour, startIso: farmDayBounds(today, startHour).startIso };
+}
+
+/** THE HBN ENTRY (canon 0.30.341): the queue row's age flag. A weighing lot
+ * whose day (the farm day of its created_at, or its effective_date when that
+ * is earlier, the PIN's backdate) is before yesterday's farm day reads
+ * ", weighing since YYYY-MM-DD" on its row; words on the row, never a filter. */
+export function weighingSinceFlag(
+  createdAt: string | null | undefined,
+  effectiveDate: string | null | undefined,
+  today: string,
+  startHour: number
+): string {
+  const created = String(createdAt ?? "").trim();
+  const effective = String(effectiveDate ?? "").trim();
+  const days = [created ? farmDay(created, startHour) : "", /^\d{4}-\d{2}-\d{2}$/.test(effective) ? effective : ""].filter(Boolean).sort();
+  const since = days[0] ?? "";
+  if (!since) return "";
+  return since < dayBefore(today) ? since : "";
+}
 
 /** PRODUCTION SCHEDULING (canon 0.30.97): Trim Packages Entry lists only
  * unloaded lots with a non-deleted trim schedule row in status scheduled. */
@@ -244,8 +279,13 @@ export async function listPaneRows(
   farmCodes?: readonly string[]
 ): Promise<QueueRow[]> {
   if (paneFilter === "no_finished_lot" && def.entity === "harvest_batches") {
-    const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour)) || FARM_DAY_START_HOUR_DEFAULT;
-    return listHarvestQueueRows(db, def, NO_FINISHED_LOT_SQL, [farmDay(nowIso(), startHour)], farmCodes);
+    const day = await farmTodayStartIso(db);
+    const rows = await listHarvestQueueRows(db, def, NO_FINISHED_LOT_SQL, [day.startIso], farmCodes, true);
+    for (const row of rows) {
+      row.values.weighing_since = weighingSinceFlag(row.values.weighing_since, row.values.weighing_effective, day.today, day.startHour);
+      delete row.values.weighing_effective;
+    }
+    return rows;
   }
   if (paneFilter === "trim_scheduled" && def.entity === "wet_weight_entries") {
     return listLotQueueRows(db, def, TRIM_SCHEDULED_SQL);
@@ -261,13 +301,19 @@ async function listHarvestQueueRows(
   def: QueueDef,
   filterSql: string,
   extraBinds: unknown[] = [],
-  farmCodes?: readonly string[]
+  farmCodes?: readonly string[],
+  withWeighingSince = false
 ): Promise<QueueRow[]> {
   const farms = (farmCodes ?? []).filter((code) => code.length > 0);
   const farmSql = farms.length > 0 ? ` AND b.farm_code IN (${farms.map(() => "?").join(", ")})` : "";
+  // THE HBN ENTRY (canon 0.30.341): the pane's rows carry the oldest weighing lot's birth and started day for the age flag.
+  const sinceSql = withWeighingSince
+    ? `, (SELECT MIN(w4.created_at) FROM wet_weight_entries w4 WHERE w4.harvest_batch_id = b.id AND w4.deleted_at IS NULL AND w4.status = 'weighing') AS weighing_since,
+         (SELECT MIN(NULLIF(w5.effective_date, '')) FROM wet_weight_entries w5 WHERE w5.harvest_batch_id = b.id AND w5.deleted_at IS NULL AND w5.status = 'weighing') AS weighing_effective`
+    : "";
   const result = await db
     .prepare(
-      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, s.name AS strain_name, b.created_at
+      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, s.name AS strain_name, b.created_at${sinceSql}
        FROM harvest_batches b
        LEFT JOIN strains s ON s.id = b.strain_id
        WHERE b.deleted_at IS NULL AND b.status = ? AND ${farmHarvestSql("b")} ${filterSql}${farmSql}
@@ -1294,7 +1340,14 @@ export async function listFarmDayTruckNumbers(db: D1Database, farmCode: string, 
   return numbers;
 }
 
-export type OpenHbnOption = { id: string; hbn: string; label: string };
+export type OpenHbnOption = {
+  id: string;
+  hbn: string;
+  label: string;
+  /** THE HBN ENTRY (canon 0.30.341): the field select names each HBN's form and silo ("Bucked Silo 1"). */
+  form?: "spear" | "bucked";
+  silo?: string | null;
+};
 
 /** Minted open HBNs of one farm, header first, then newest by entry date. */
 export async function listOpenFarmHbns(db: D1Database, farmCode: string, headerId: string): Promise<OpenHbnOption[]> {
@@ -1334,22 +1387,25 @@ function hbnOptionLabel(row: { farm_code: string; strain_name: string; entry_dat
 export const FIELD_OPEN_HBN_SQL = `AND b.field_closed_at IS NULL ${NO_FINISHED_LOT_SQL}`;
 
 export async function listFieldHbns(db: D1Database): Promise<OpenHbnOption[]> {
-  const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour)) || FARM_DAY_START_HOUR_DEFAULT;
+  const day = await farmTodayStartIso(db);
+  const sequence = await listSiloSequence(db);
   const result = await db
     .prepare(
-      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, COALESCE(s.name, '') AS strain_name
+      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, COALESCE(s.name, '') AS strain_name, b.material_form, b.planned_dryspc
        FROM harvest_batches b
        LEFT JOIN strains s ON s.id = b.strain_id
        WHERE b.deleted_at IS NULL AND b.status = 'open' AND b.farm_code IN ('ARL', 'PNS') AND ${farmHarvestSql("b")}
        ${FIELD_OPEN_HBN_SQL}
        ORDER BY b.entry_date DESC, b.created_at DESC`
     )
-    .bind(farmDay(nowIso(), startHour))
-    .all<{ id: string; hbn: string; entry_date: string; farm_code: string; strain_name: string }>();
+    .bind(day.startIso)
+    .all<{ id: string; hbn: string; entry_date: string; farm_code: string; strain_name: string; material_form: string | null; planned_dryspc: string | null }>();
   return (result.results ?? []).map((row) => ({
     id: row.id,
     hbn: row.hbn,
     label: hbnOptionLabel(row),
+    form: row.material_form === "spear" ? "spear" : "bucked",
+    silo: siloSpaceOfNumber(sequence, row.planned_dryspc)?.name ?? null,
   }));
 }
 
@@ -1369,15 +1425,19 @@ export async function listFieldDestinations(db: D1Database): Promise<FieldDestin
   return result.results ?? [];
 }
 
-/** Hang in Place at Penn North, the Arlington Dry Room at Arlington. */
-export async function fieldHoldingSpaceId(db: D1Database, farmCode: string): Promise<string | null> {
+/** Hang in Place at Penn North, the Arlington Dry Room at Arlington: where a Spear HBN's lots hang. */
+export async function fieldHoldingSpace(db: D1Database, farmCode: string): Promise<{ id: string; name: string } | null> {
   const name = farmCode === "PNN" ? "Hang in Place" : farmCode === "ARL" ? "Arlington Dry Room" : null;
   if (!name) return null;
   const row = await db
-    .prepare(`SELECT id FROM dry_spaces WHERE deleted_at IS NULL AND farm_code = ? AND name = ?`)
+    .prepare(`SELECT id, name FROM dry_spaces WHERE deleted_at IS NULL AND farm_code = ? AND name = ?`)
     .bind(farmCode, name)
-    .first<{ id: string }>();
-  return row?.id ?? null;
+    .first<{ id: string; name: string }>();
+  return row ?? null;
+}
+
+export async function fieldHoldingSpaceId(db: D1Database, farmCode: string): Promise<string | null> {
+  return (await fieldHoldingSpace(db, farmCode))?.id ?? null;
 }
 
 export type FieldLoadRow = {
@@ -2184,7 +2244,7 @@ export async function listRecallableBatches(db: D1Database): Promise<RecallableB
   const result = await db
     .prepare(
       `SELECT b.id, b.hbn, b.entry_date, b.farm_code, b.grow_method_code, b.strain_id,
-              b.manicure, b.planned_dryspc, b.start_time, b.zone, b.rows_text,
+              b.manicure, b.planned_dryspc, b.material_form, b.start_time, b.zone, b.rows_text,
               b.metrc_harvest_tag, b.license_value
        FROM harvest_batches b
        WHERE b.deleted_at IS NULL AND b.status = 'open' AND ${farmHarvestSql("b")}
@@ -4150,7 +4210,7 @@ export type BarnWetLotRow = {
   actual_dryspc: string | null;
   planned_space_name: string | null;
   planned_space_kind: string | null;
-  /** THE LOADING SILO (canon 0.30.81): the silo the HBN planned (harvest_batches.planned_dryspc, the Silo # lookup value, matched to "Silo N" by name), for a truck lot whose space is the sentinel; null when none. */
+  /** THE LOADING SILO (canon 0.30.81): the silo the HBN planned (harvest_batches.planned_dryspc, resolved through the silo sequence since canon 0.30.341), for a truck lot whose space is the sentinel; null when none. */
   planned_silo_id?: string | null;
   package_code: string | null;
   item_id: string | null;
@@ -4200,7 +4260,7 @@ const BARN_WET_LOT_SELECT = `SELECT w.id, w.status, li.location AS barn_location
          ORDER BY i.created_at ASC, i.id ASC LIMIT 1)
        LEFT JOIN strains s ON s.id = b.strain_id
        LEFT JOIN dry_spaces d ON d.id = w.actual_dryspc
-       LEFT JOIN dry_spaces ps ON ps.kind = 'silo' AND ps.deleted_at IS NULL AND ps.name = 'Silo ' || COALESCE(b.planned_dryspc, '')
+       ${plannedSiloJoinSql("ps", "b")}
        LEFT JOIN people p ON p.id = w.lead_person_id
        LEFT JOIN people c ON c.id = w.created_by
        WHERE w.deleted_at IS NULL AND w.status IN (?, ?)
@@ -4255,7 +4315,7 @@ const WEIGHING_IN_TRANSIT_SELECT = `SELECT w.id, w.status, li.location AS barn_l
          ORDER BY i.created_at ASC, i.id ASC LIMIT 1)
        LEFT JOIN strains s ON s.id = b.strain_id
        LEFT JOIN dry_spaces d ON d.id = w.actual_dryspc
-       LEFT JOIN dry_spaces ps ON ps.kind = 'silo' AND ps.deleted_at IS NULL AND ps.name = 'Silo ' || COALESCE(b.planned_dryspc, '')
+       ${plannedSiloJoinSql("ps", "b")}
        LEFT JOIN people p ON p.id = w.lead_person_id
        LEFT JOIN people c ON c.id = w.created_by
        WHERE w.deleted_at IS NULL AND w.status = ?
@@ -4308,8 +4368,7 @@ export async function listOpenLogisticsSchedules(db: D1Database): Promise<OpenLo
        FROM production_schedules ps
        JOIN harvest_batches b ON b.id = ps.harvest_batch_id AND b.deleted_at IS NULL
        LEFT JOIN strains st ON st.id = b.strain_id
-       LEFT JOIN dry_spaces silo ON silo.kind = 'silo' AND silo.deleted_at IS NULL
-         AND silo.name = 'Silo ' || COALESCE(b.planned_dryspc, '')
+       ${plannedSiloJoinSql("silo", "b")}
        WHERE ps.stage = ? AND ps.status = ? AND ps.deleted_at IS NULL
        ORDER BY ps.scheduled_at ASC`
     )
@@ -4489,6 +4548,78 @@ export async function listSilos(db: D1Database): Promise<SiloRow[]> {
   return result.results ?? [];
 }
 
+/** THE HBN ENTRY (canon 0.30.341). The owner: "Arlington dry room and the blast
+ * freezer will count as silo 6 and 7 for our sequence". The sequence is the
+ * first SILO_SEQUENCE_SIZE kind-silo spaces in the drying strip's order
+ * (listSilos: the silos by name, then the dry rooms, then the freezers),
+ * numbered 1 to 7 by position; today 6 is the Arlington Dry Room and 7 the
+ * Blast Freezer(s), and a renamed space keeps its number by its place. */
+export type SiloSequenceEntry = SiloRow & { number: number };
+
+export async function listSiloSequence(db: D1Database): Promise<SiloSequenceEntry[]> {
+  return (await listSilos(db)).slice(0, SILO_SEQUENCE_SIZE).map((space, i) => ({ ...space, number: i + 1 }));
+}
+
+/** The space a planned silo number names, or null for a blank, NA, or a number past the sequence. */
+export function siloSpaceOfNumber(sequence: readonly SiloSequenceEntry[], raw: unknown): SiloSequenceEntry | null {
+  const n = siloSequenceNumber(raw);
+  if (n == null) return null;
+  return sequence.find((space) => space.number === n) ?? null;
+}
+
+/** The one SQL of the sequence (Postgres-portable: ROW_NUMBER over the strip's
+ * order), joined on the HBN's planned number, for the Dry Queue, the drying
+ * schedule's "planned here", the silo tiles' "waiting to load, planned here"
+ * and the Internal Logistics pass. `alias` is the joined row (id, name, kind,
+ * farm_code, seq_no); `batch` is the harvest_batches alias. */
+export function plannedSiloJoinSql(alias: string, batch: string): string {
+  const numbers = Array.from({ length: SILO_SEQUENCE_SIZE }, (_, i) => `'${i + 1}'`).join(", ");
+  return `LEFT JOIN (
+         SELECT q.id, q.name, q.kind, q.farm_code,
+                ROW_NUMBER() OVER (ORDER BY CASE WHEN q.space_type = 'freezer' THEN 2 WHEN q.space_type = 'dry_room' THEN 1 ELSE 0 END, q.name) AS seq_no
+         FROM dry_spaces q WHERE q.kind = 'silo' AND q.deleted_at IS NULL
+       ) ${alias} ON ${alias}.seq_no <= ${SILO_SEQUENCE_SIZE}
+         AND ${alias}.seq_no = CASE WHEN ${batch}.planned_dryspc IN (${numbers}) THEN CAST(${batch}.planned_dryspc AS INTEGER) END`;
+}
+
+/** THE DEFAULT SILO (canon 0.30.341; his pick "Next silo with room"): the
+ * lowest-numbered space of the sequence that is not filling, where filling
+ * means a live lot sits in it (weighing into it or drying in it, loaded or
+ * waiting to load; an open silo load counts too) or an open HBN is planned
+ * for it. When all seven are busy, round robin: the number after the most
+ * recently created HBN's planned silo, 7 wrapping to 1; with no such HBN, 1.
+ * Advice on the page: no lock, no reservation. Capacity in pounds plays no
+ * part. */
+export async function nextSiloNumber(db: D1Database): Promise<number> {
+  const sequence = await listSiloSequence(db);
+  if (sequence.length === 0) return 1;
+  const lots = await db
+    .prepare(
+      `SELECT DISTINCT w.actual_dryspc AS id FROM wet_weight_entries w
+       WHERE w.deleted_at IS NULL AND w.actual_dryspc IS NOT NULL AND w.status IN ('weighing', 'drying')
+       UNION
+       SELECT DISTINCT l.dry_space_id AS id FROM silo_loads l
+       JOIN wet_weight_entries w ON w.id = l.wet_weight_entry_id AND w.deleted_at IS NULL
+       WHERE l.deleted_at IS NULL AND l.ended_at IS NULL`
+    )
+    .all<{ id: string }>();
+  const planned = await db
+    .prepare(`SELECT DISTINCT planned_dryspc AS n FROM harvest_batches WHERE deleted_at IS NULL AND status = 'open' AND planned_dryspc IS NOT NULL`)
+    .all<{ n: string }>();
+  const busySpaces = new Set((lots.results ?? []).map((row) => String(row.id)));
+  const busyNumbers = new Set((planned.results ?? []).map((row) => siloSequenceNumber(row.n)).filter((n): n is number => n != null));
+  for (const space of sequence) {
+    if (!busySpaces.has(space.id) && !busyNumbers.has(space.number)) return space.number;
+  }
+  const numbers = Array.from({ length: SILO_SEQUENCE_SIZE }, (_, i) => `'${i + 1}'`).join(", ");
+  const last = await db
+    .prepare(`SELECT planned_dryspc FROM harvest_batches WHERE deleted_at IS NULL AND planned_dryspc IN (${numbers}) ORDER BY created_at DESC LIMIT 1`)
+    .first<{ planned_dryspc: string }>();
+  const n = siloSequenceNumber(last?.planned_dryspc);
+  if (n == null) return 1;
+  return n >= SILO_SEQUENCE_SIZE ? 1 : n + 1;
+}
+
 export type SiloLoadRow = {
   id: string;
   dry_space_id: string;
@@ -4591,7 +4722,7 @@ export async function listSiloLotGrams(db: D1Database): Promise<SiloLotGramsRow[
        LEFT JOIN dry_spaces d ON d.id = w.actual_dryspc AND d.deleted_at IS NULL
        LEFT JOIN harvest_batches b ON b.id = w.harvest_batch_id
        LEFT JOIN strains s ON s.id = b.strain_id
-       LEFT JOIN dry_spaces p ON p.kind = 'silo' AND p.deleted_at IS NULL AND p.name = 'Silo ' || COALESCE(b.planned_dryspc, '')
+       ${plannedSiloJoinSql("p", "b")}
        WHERE w.deleted_at IS NULL
          AND (
            (w.status = 'weighing' AND d.kind = 'silo')

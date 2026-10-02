@@ -51,7 +51,7 @@ import type {
   RecallPrefill,
   RecallableBatch,
 } from "./inventory";
-import { t, type Locale } from "./i18n";
+import { t, tFill, type Locale } from "./i18n";
 import type { PendingTestSampleRow } from "./testing";
 import type { OpsIconName } from "./icons";
 import { formatByteSize } from "./imports";
@@ -2527,6 +2527,33 @@ function queueRowLabel(queue: QueueDef | undefined, row: QueueRow, index?: numbe
   return seq + (label || row.id);
 }
 
+/** THE HBN ENTRY (canon 0.30.341): the queue row's age flag, ", weighing since
+ * 2026-09-28", on a row whose weighing lot is older than yesterday's farm day
+ * (listPaneRows fills values.weighing_since with that day, else blank). */
+export function weighingSinceWords(row: QueueRow, locale: Locale): string {
+  const since = row.values.weighing_since ?? "";
+  if (!since) return "";
+  return `<span class="muted" data-weighing-since="${esc(since)}">, ${esc(t(locale, "weighing since"))} ${esc(since)}</span>`;
+}
+
+/** THE HBN ENTRY (canon 0.30.341): "Bucked: lands in Silo 3 as WIP" or "Spear:
+ * hangs in Hang in Place as SPR", with a muted "change on the HBN" link to the
+ * HBN's Admin pencil; a Bucked HBN with no silo reads the refusal Start lot
+ * would give. */
+export function lotLandingLine(landing: LotLandingCtx, stationKey: string, pickId: string, locale: Locale): string {
+  const back = `/station/${stationKey}?pick=${pickId}&new=1`;
+  const href = `/record/harvest_batches/${esc(landing.hbnId)}/edit?back=${esc(encodeURIComponent(back))}`;
+  const words =
+    landing.form === "spear"
+      ? `${t(locale, "Spear")}: ${tFill(locale, "hangs in {space} as SPR", { space: landing.spaceName ?? "" })}`
+      : landing.spaceName
+        ? `${t(locale, "Bucked")}: ${tFill(locale, "lands in {space} as WIP", { space: landing.spaceName })}`
+        : `${t(locale, "Bucked")}: ${t(locale, "This HBN has no silo. Set it on the HBN first.")}`;
+  return `<p class="lot-landing" data-lot-landing="${esc(landing.form)}" data-lot-landing-space="${esc(landing.spaceName ?? "")}">${esc(words)} <a class="muted" href="${href}">${esc(
+    t(locale, "change on the HBN")
+  )}</a></p>`;
+}
+
 /** Canon 0.30.67: the Team Lead field's hover help (the 0.26.0 help law). */
 export const TEAM_LEAD_HELP = "Team Lead is the harvest crew lead on this lot, typed by hand. The Supervisor is the login and records itself.";
 
@@ -2850,10 +2877,22 @@ function trimReconcileGate(
     </section>`;
 }
 
+/** THE HBN ENTRY (canon 0.30.341): where the picked HBN's next lot lands, read
+ * off the HBN (its form and its sequence silo), rendered as one read-only line
+ * under the HBN with a link to the HBN's pencil. spaceName null on a Bucked HBN
+ * with no numeric silo. */
+export type LotLandingCtx = {
+  form: "spear" | "bucked";
+  spaceName: string | null;
+  hbnId: string;
+};
+
 /** Context the ledger station's picked page needs beyond the queue rows. */
 export type StationLedgerCtx = {
   farmName: string;
-  moveToOptions: LookupOption[];
+  /** The Move To select's options; the wet header carries no Move To since canon 0.30.341 (kept for the renderer). */
+  moveToOptions?: LookupOption[];
+  landing?: LotLandingCtx;
   /** Owner ruling 2026-08-31: record-borne truck numbers derived from this batch's
    * own lots. Absent when the farm law disallows kind truck (no truck options and
    * no Add a truck control); an empty array means allowed but none yet. */
@@ -2882,7 +2921,7 @@ function moveToField(
     `<option value="truck-${esc(n)}"${selected ? " selected" : ""}>${esc(`${t(locale, "Truck")} ${n}`)}</option>`;
   const opts = [
     `<option value=""></option>`,
-    ...ctx.moveToOptions.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`),
+    ...(ctx.moveToOptions ?? []).map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`),
     ...(ctx.truckOptions ?? []).map((n) => truckOption(n, false)),
     ...(ctx.stagedTruck ? [truckOption(ctx.stagedTruck, true)] : []),
   ].join("");
@@ -2964,7 +3003,7 @@ export function stationPage(
     list
       .map((row, i) => {
         const cls = row.id === picked?.id ? "queue-pane-item selected" : "queue-pane-item";
-        return `<li><a class="${cls}" href="/station/${esc(station.key)}?pick=${esc(row.id)}">${esc(queueRowLabel(queue, row, i))}</a></li>`;
+        return `<li><a class="${cls}" href="/station/${esc(station.key)}?pick=${esc(row.id)}">${esc(queueRowLabel(queue, row, i))}${weighingSinceWords(row, locale)}</a></li>`;
       })
       .join("");
   let paneBody: string;
@@ -3017,7 +3056,9 @@ export function stationPage(
   const fields = station.fields
     .map((f) => {
       if (picked && f.name === pane.pickField) {
-        return `<input type="hidden" name="${esc(pane.pickField)}" value="${esc(picked.id)}">`;
+        // THE HBN ENTRY (canon 0.30.341): the landing line sits right under the HBN.
+        const landing = isLedger && ledgerCtx?.landing ? lotLandingLine(ledgerCtx.landing, station.key, picked.id, locale) : "";
+        return `<input type="hidden" name="${esc(pane.pickField)}" value="${esc(picked.id)}">${landing}`;
       }
       if (f.input === "move_to" && isLedger) return moveToField(f, ledgerCtx!, locale);
       const values = ledgerCtx?.suggestedTruck ? { truck_number: ledgerCtx.suggestedTruck } : undefined;

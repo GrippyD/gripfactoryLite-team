@@ -126,6 +126,8 @@ export type RecallableBatch = {
   strain_id: string;
   manicure: number;
   planned_dryspc: string | null;
+  /** THE HBN ENTRY (canon 0.30.341): the HBN's form, spear or bucked. */
+  material_form?: string | null;
   start_time: string | null;
   zone: string | null;
   rows_text: string | null;
@@ -141,6 +143,7 @@ export const RECALL_PREFILL_FIELDS = [
   "strain_id",
   "manicure",
   "planned_dryspc",
+  "material_form",
   "start_time",
   "zone",
   "rows_text",
@@ -479,6 +482,7 @@ export function recallPrefillFromBatch(batch: RecallableBatch): RecallPrefill {
     manicure: batch.manicure ? "1" : "0",
   };
   if (batch.planned_dryspc) prefill.planned_dryspc = batch.planned_dryspc;
+  if (batch.material_form) prefill.material_form = batch.material_form;
   if (batch.start_time) prefill.start_time = batch.start_time;
   if (batch.zone) prefill.zone = batch.zone;
   if (batch.rows_text) prefill.rows_text = batch.rows_text;
