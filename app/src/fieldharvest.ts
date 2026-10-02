@@ -125,7 +125,7 @@ function emptyHeader(destinations: FieldDestination[], locale: Locale): string {
     )
     .join("");
   return `<form method="post" action="${esc(PATH)}/start" class="stack" data-field-header>
-      <label class="field">${esc(t(locale, "Operator"))} <input type="text" name="operator_name" autocomplete="off"></label>
+      <label class="field">${esc(t(locale, "Operator"))} <input type="text" name="operator_name" required autocomplete="off" data-keep-operator></label>
       <label class="field">${esc(t(locale, "Destination"))} <select name="destination_farm_code">${options}</select></label>
       <button type="submit">${esc(t(locale, "START"))}</button>
     </form>`;
@@ -149,7 +149,7 @@ function entryPane(
 ): string {
   return `<form method="post" action="${esc(PATH)}/load/${esc(picked.load.id)}/weights" class="field-entry" data-field-entry>
       <label class="field">${esc(t(locale, "Weight"))} <input type="number" name="weight_grams" min="0" step="1" inputmode="numeric" required autofocus data-field-weight></label>
-      ${hbnSelect("harvest_batch_id", picked.hbnOptions, picked.carryId ?? "", true, locale)}
+      ${hbnSelect("harvest_batch_id", picked.hbnOptions, picked.carryId ?? "", !picked.carryId || !picked.hbnOptions.some((row) => row.id === picked.carryId), locale)}
       <button type="submit" aria-label="+" data-field-plus>+</button>
       <p class="banner err field-entry-status" data-field-status data-no-answer="${esc(
         t(locale, "No answer from the server. Check the list before you add it again.")
@@ -200,6 +200,20 @@ function fieldEntryScript(): string {
     e.preventDefault();
     post();
   });
+  var hbnKey = "gf_field_hbn:" + (form.getAttribute("action") || "");
+  function keep() {
+    var s = form.querySelector('select[name="harvest_batch_id"]');
+    try { if (s && s.value) localStorage.setItem(hbnKey, s.value); } catch (e) {}
+  }
+  (function restore() {
+    var s = form.querySelector('select[name="harvest_batch_id"]');
+    if (!s) return;
+    try {
+      var v = localStorage.getItem(hbnKey);
+      if (v && s.querySelector('option[value="' + v + '"]')) s.value = v;
+    } catch (e) {}
+    s.addEventListener("change", keep);
+  })();
   function swap(doc) {
     var fresh = doc.querySelector("form[data-field-entry]");
     var pane = form.parentNode;
@@ -216,8 +230,12 @@ function fieldEntryScript(): string {
     var sel = form.querySelector('select[name="harvest_batch_id"]');
     var freshSel = fresh.querySelector('select[name="harvest_batch_id"]');
     if (sel && freshSel) {
+      // THE HBN KEPT (canon 0.30.346): the HBN this tablet picked stays picked from "+" to "+"; the server's list
+      // replaces the options, never the pick, while the pick is still on the list.
+      var kept = sel.value;
       sel.innerHTML = freshSel.innerHTML;
-      sel.value = freshSel.value;
+      sel.value = kept && sel.querySelector('option[value="' + kept + '"]') ? kept : freshSel.value;
+      keep();
     }
     var main = document.querySelector("main");
     var freshMain = doc.querySelector("main");

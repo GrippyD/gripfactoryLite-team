@@ -730,6 +730,8 @@ table.data th { background: var(--panel-2); }
 .hc-farm { position: relative; overflow: hidden; flex: 1 1 14rem; min-width: 13rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); }
 .hc-shade { position: absolute; inset: 0; background: var(--accent); pointer-events: none; }
 .hc-farm-body { position: relative; padding: 0.6rem 0.7rem; }
+/* THE YEAR PANE (canon 0.30.346): the harvest year's wet total in its own inset inside the farm box. */
+.hc-year-pane { margin-top: 0.45rem; padding: 0.4rem 0.55rem; border: 1px solid rgba(128, 128, 128, 0.35); border-radius: 8px; background: rgba(128, 128, 128, 0.08); }
 .hc-farm-name { font-weight: 800; letter-spacing: 0.06em; font-size: 0.95rem; margin-bottom: 0.35rem; }
 .hc-total .hc-farm-name { text-transform: uppercase; }
 .hc-metrics { margin: 0; display: grid; gap: 0.4rem; }
@@ -1509,6 +1511,8 @@ table.data tbody tr:hover td { background: var(--surface-2); }
 .hc-farm { position: relative; overflow: hidden; flex: 1 1 14rem; min-width: 13rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); }
 .hc-shade { position: absolute; inset: 0; background: var(--primary); pointer-events: none; }
 .hc-farm-body { position: relative; padding: 0.6rem 0.7rem; }
+/* THE YEAR PANE (canon 0.30.346): the harvest year's wet total in its own inset inside the farm box. */
+.hc-year-pane { margin-top: 0.45rem; padding: 0.4rem 0.55rem; border: 1px solid rgba(128, 128, 128, 0.35); border-radius: 8px; background: rgba(128, 128, 128, 0.08); }
 .hc-farm-name { font-weight: 800; letter-spacing: 0.06em; font-size: 0.95rem; margin-bottom: 0.35rem; }
 .hc-total .hc-farm-name { text-transform: uppercase; }
 .hc-metrics { margin: 0; display: grid; gap: 0.4rem; }
@@ -2233,6 +2237,8 @@ legend { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; c
 .hc-farm { position: relative; overflow: hidden; flex: 1 1 14rem; min-width: 13rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); }
 .hc-shade { position: absolute; inset: 0; background: var(--gold); pointer-events: none; }
 .hc-farm-body { position: relative; padding: 0.6rem 0.7rem; }
+/* THE YEAR PANE (canon 0.30.346): the harvest year's wet total in its own inset inside the farm box. */
+.hc-year-pane { margin-top: 0.45rem; padding: 0.4rem 0.55rem; border: 1px solid rgba(128, 128, 128, 0.35); border-radius: 8px; background: rgba(128, 128, 128, 0.08); }
 .hc-farm-name { font-weight: 800; letter-spacing: 0.06em; font-size: 0.95rem; margin-bottom: 0.35rem; }
 .hc-total .hc-farm-name { text-transform: uppercase; }
 .hc-metrics { margin: 0; display: grid; gap: 0.4rem; }

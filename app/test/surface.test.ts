@@ -784,7 +784,7 @@ describe("wet weight header render (owner ruling 2026-08-28)", () => {
     // THE SUPERVISOR AND THE TEAM LEAD (canon 0.30.67): the login shown as the
     // Supervisor, never picked; the Team Lead a hand-typed, required text box.
     expect(html).toContain('data-supervisor>Supervisor: Pat</p>');
-    expect(html).toContain('<input type="text" name="team_lead" required autocomplete="off" data-team-lead>');
+    expect(html).toContain('<input type="text" name="team_lead" required autocomplete="off" data-team-lead data-keep-operator>');
     expect(html).not.toContain('name="lead_person_id"');
     expect(html).toContain("Team Lead");
     expect(html).not.toContain('name="weight_grams"');

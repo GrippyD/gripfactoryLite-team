@@ -361,6 +361,7 @@ export function layout(opts: {
     // stays chrome-free as before.
     view === "cerberus" ? cerberusChrome() : ""
   }
+  ${keepOperatorScript()}
 </body>
 </html>`;
 }
@@ -593,9 +594,11 @@ export function renderField(
   const defaultsToday = type === "date" && (field.name === "trim_date" || field.name === "cryo_date");
   const todayAttr = defaultsToday ? " data-default-today" : "";
   const todayScript = defaultsToday ? defaultTodayScript() : "";
+  // THE OPERATOR KEPT (canon 0.30.346): the trim operator box keeps this tablet's last name.
+  const keepOp = field.name === "trim_operator" ? ` autocomplete="off" data-keep-operator` : "";
   return withFieldHelp(
     `<label class="field">${esc(t(locale, field.label))}
-    <input type="${type}" name="${esc(field.name)}" value="${esc(current)}"${field.required ? " required" : ""}${extra}${pattern}${inputmode}${placeholder}${mask}${todayAttr}>
+    <input type="${type}" name="${esc(field.name)}" value="${esc(current)}"${field.required ? " required" : ""}${extra}${pattern}${inputmode}${placeholder}${mask}${todayAttr}${keepOp}>
   </label>${maskScript}${todayScript}`,
     field,
     locale
@@ -2580,7 +2583,7 @@ function stationForm(
   const lead = station.personLabel
     ? `<p class="muted supervisor-line" data-supervisor>${esc(t(locale, "Supervisor"))}: ${esc(supervisor)}</p>
       <label class="field" title="${esc(t(locale, TEAM_LEAD_HELP))}">${esc(t(locale, station.personLabel))}
-        <input type="text" name="team_lead" required autocomplete="off" data-team-lead>
+        <input type="text" name="team_lead" required autocomplete="off" data-team-lead data-keep-operator>
       </label>`
     : "";
   const idAttr = formId ? ` id="${esc(formId)}"` : "";
@@ -3544,7 +3547,7 @@ export function unloadLotPanel(
   )}</p>`;
   const sessionHeader = `<form id="unload-session" class="stack session-header" method="post" action="/station/${esc(station.key)}/lot/${esc(lot.id)}/session">
       <label class="field">${esc(t(locale, "Operator"))}
-        <input type="text" name="operator_name" value="${esc(session?.operator_name ?? "")}">
+        <input type="text" name="operator_name" required autocomplete="off" data-keep-operator value="${esc(session?.operator_name ?? "")}">
       </label>
       <p class="muted" data-supervisor>${esc(t(locale, "Supervisor"))}: ${esc(actorName)}</p>
       ${lot.lead_name ? `<p class="muted" data-team-lead>${esc(t(locale, "Team Lead"))}: ${esc(lot.lead_name)}</p>` : ""}
@@ -3880,4 +3883,13 @@ function groupRows(rows: QueueRow[], groupBy?: string): Array<[string, QueueRow[
 
 export function errorBody(message: string): string {
   return `<h1>Could not save</h1><div class="banner err">${esc(message)}</div><p><a href="javascript:history.back()">Back</a></p>`;
+}
+
+/** THE OPERATOR KEPT (canon 0.30.346). Owner, 2026-10-02, verbatim: "Make all free text operator fields in weight
+ * entry nodes to mandatory.  They don't nullify on refresh or onLoad but they can be changed." Every operator box on
+ * the weigh nodes carries data-keep-operator; this tablet keeps the last name typed in it (per box name, in
+ * localStorage), fills an empty box with it on every load, and saves it as it changes. Storage may be off; then the
+ * box simply starts blank, as before. */
+export function keepOperatorScript(): string {
+  return `<script>(function(){try{var boxes=document.querySelectorAll("input[data-keep-operator]");boxes.forEach(function(b){var k="gf_operator:"+b.name;try{var v=localStorage.getItem(k);if(v&&!b.value)b.value=v;}catch(e){}var save=function(){try{if(b.value.trim())localStorage.setItem(k,b.value.trim());}catch(e){}};b.addEventListener("change",save);b.addEventListener("input",save);});}catch(e){}})();</script>`;
 }

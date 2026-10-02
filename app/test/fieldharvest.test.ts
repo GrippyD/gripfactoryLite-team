@@ -60,11 +60,12 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     const m = await migratedDb();
     const person = seedPerson(m);
     seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26202", serial: 6202, farm: "ARL", form: "spear" });
-    const started = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "ARL" }));
+    const started = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "ARL" }));
     const loadId = new URL("http://local" + started.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, loadId, formOf({ person_id: person, weight_grams: "4", harvest_batch_id: "hb-arl" }));
     expect(m.get(`SELECT actual_dryspc, team_lead FROM wet_weight_entries`)?.actual_dryspc).toBe(ROOM);
-    expect(m.get(`SELECT team_lead FROM wet_weight_entries`)?.team_lead).toBeNull();
+    // The operator is mandatory now (canon 0.30.346), so the lot takes it as its team lead.
+    expect(m.get(`SELECT team_lead FROM wet_weight_entries`)?.team_lead).toBe("Field Hand");
   });
 
   it("the entry select is null on load and carries the last pick after +", () => {
@@ -100,6 +101,13 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     });
     expect(carried).toContain('value="hb-b" selected');
     expect(carried).not.toContain('value="" selected');
+    // THE HBN KEPT (canon 0.30.346): the tablet's pick survives "+" (the swap keeps it) and a reload (localStorage per load).
+    expect(carried).toContain('var hbnKey = "gf_field_hbn:"');
+    expect(carried).toContain("var kept = sel.value;");
+    expect(carried).toContain('s.addEventListener("change", keep);');
+    // The operator box on a new load is mandatory and kept on this tablet.
+    const fresh = fieldHarvestPage({ locale: "en", destinations: [{ code: "PNN", display_name: "Penn North" }], openLoads: [], sentLoads: [], picked: null });
+    expect(fresh).toContain('name="operator_name" required autocomplete="off" data-keep-operator');
   });
 
   it("THE PLUS KEEPS THE CURSOR (canon 0.30.334): the Weight box takes the cursor and the + posts in the background", () => {
@@ -183,7 +191,7 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     const person = seedPerson(m);
     const pin = await pinOf(m);
     seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26231", serial: 6231, farm: "ARL", form: "spear" });
-    const started = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "ARL" }));
+    const started = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "ARL" }));
     const loadId = new URL("http://local" + started.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, loadId, formOf({ person_id: person, weight_grams: "8", harvest_batch_id: "hb-arl" }));
     const yes = formOf({ person_id: person });
@@ -228,13 +236,15 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     const person = seedPerson(m);
     seedBatch(m, { id: "hb-pnn", hbn: "26244-PNN-GH-027-0-NA-26251", serial: 6251, farm: "PNN", form: "spear" });
     seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26252", serial: 6252, farm: "ARL", form: "spear" });
+    // THE OPERATOR KEPT (canon 0.30.346): the operator is mandatory on the load.
+    await expect(startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "PNN" }))).rejects.toMatchObject({ status: 400 });
     await expect(startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand" }))).rejects.toMatchObject({
       message: "Destination is required.",
     });
-    await expect(startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "PNS" }))).rejects.toMatchObject({
+    await expect(startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNS" }))).rejects.toMatchObject({
       message: "That farm is not a destination.",
     });
-    const started = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "PNN" }));
+    const started = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNN" }));
     const loadId = new URL("http://local" + started.redirect).searchParams.get("load") ?? "";
     await expect(
       addFieldLoadWeight(m.db, loadId, formOf({ person_id: person, weight_grams: "1.5", harvest_batch_id: "hb-arl" }))
@@ -345,7 +355,7 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     m.run(`UPDATE field_loads SET sent_at = '2026-09-01T12:00:00.000Z' WHERE id = ?`, load1);
     expect((await listInTransitFieldLoads(m.db)).map((row) => row.id)).toContain(load1);
     m.run(`UPDATE field_loads SET sent_at = ? WHERE id = ?`, sentAt, load1);
-    const second = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "PNN" }));
+    const second = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNN" }));
     const load2 = new URL("http://local" + second.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, load2, formOf({ person_id: person, weight_grams: "6", harvest_batch_id: "hb-arl" }));
     await sendFieldLoad(m.db, load2, formOf({ person_id: person }));
@@ -366,12 +376,12 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     const person = seedPerson(m);
     seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26281", serial: 6281, farm: "ARL", form: "spear" });
     seedBatch(m, { id: "hb-pns", hbn: "26244-PNS-GH-027-0-NA-26282", serial: 6282, farm: "PNS", form: "spear" });
-    const first = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "PNN" }));
+    const first = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNN" }));
     const load1 = new URL("http://local" + first.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, load1, formOf({ person_id: person, weight_grams: "100", harvest_batch_id: "hb-arl" }));
     await addFieldLoadWeight(m.db, load1, formOf({ person_id: person, weight_grams: "15", harvest_batch_id: "hb-pns" }));
     await sendFieldLoad(m.db, load1, formOf({ person_id: person }));
-    const second = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "PNN" }));
+    const second = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNN" }));
     const load2 = new URL("http://local" + second.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, load2, formOf({ person_id: person, weight_grams: "6", harvest_batch_id: "hb-arl" }));
     await sendFieldLoad(m.db, load2, formOf({ person_id: person }));
@@ -406,7 +416,7 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     expect(m.get(`SELECT status FROM field_loads WHERE id = ?`, load1)?.status).toBe("received");
     expect(await listInTransitFieldLoads(m.db)).toEqual([]);
     expect((await listFieldHbns(m.db)).map((row) => row.id).sort()).toEqual(["hb-arl", "hb-pns"]);
-    const third = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "PNN" }));
+    const third = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNN" }));
     const load3 = new URL("http://local" + third.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, load3, formOf({ person_id: person, weight_grams: "4", harvest_batch_id: "hb-arl" }));
     const lots = m.all(`SELECT id, status FROM wet_weight_entries WHERE harvest_batch_id = 'hb-arl' AND deleted_at IS NULL`);
@@ -420,7 +430,7 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     const person = seedPerson(m);
     seedBatch(m, { id: "hb-arl", hbn: "26244-ARL-GH-027-0-NA-26291", serial: 6291, farm: "ARL", form: "spear" });
     seedBatch(m, { id: "hb-pns", hbn: "26244-PNS-GH-027-0-NA-26292", serial: 6292, farm: "PNS", form: "spear" });
-    const started = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "PNN" }));
+    const started = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNN" }));
     const loadId = new URL("http://local" + started.redirect).searchParams.get("load") ?? "";
     await addFieldLoadWeight(m.db, loadId, formOf({ person_id: person, weight_grams: "9", harvest_batch_id: "hb-arl" }));
     await addFieldLoadWeight(m.db, loadId, formOf({ person_id: person, weight_grams: "3", harvest_batch_id: "hb-pns" }));
@@ -429,7 +439,7 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     await sendFieldLoad(m.db, loadId, yes);
     expect(m.get(`SELECT status FROM field_loads WHERE id = ?`, loadId)?.status).toBe("in_transit");
     expect((await listFieldHbns(m.db)).map((row) => row.id)).toEqual(["hb-pns"]);
-    const again = await startFieldLoad(m.db, formOf({ person_id: person, destination_farm_code: "PNN" }));
+    const again = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNN" }));
     const load2 = new URL("http://local" + again.redirect).searchParams.get("load") ?? "";
     await expect(
       addFieldLoadWeight(m.db, load2, formOf({ person_id: person, weight_grams: "1", harvest_batch_id: "hb-arl" }))

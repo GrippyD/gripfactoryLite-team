@@ -149,7 +149,7 @@ describe("station forms after the identity ruling (owner ruling 2026-08-31)", ()
     expect(html).not.toContain('name="lead_person_id"');
     expect(html).not.toContain('<option value="p1" selected>Pat</option>');
     expect(html).toContain('<p class="muted supervisor-line" data-supervisor>Supervisor: Pat</p>');
-    expect(html).toContain('<input type="text" name="team_lead" required autocomplete="off" data-team-lead>');
+    expect(html).toContain('<input type="text" name="team_lead" required autocomplete="off" data-team-lead data-keep-operator>');
     expect(html).toContain("Team Lead is the harvest crew lead on this lot, typed by hand.");
     expect(html).not.toContain('name="person_id"');
   });

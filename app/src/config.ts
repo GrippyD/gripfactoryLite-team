@@ -1384,8 +1384,6 @@ export function modelToolPath(tool: ModelTool): string {
 export const HARVEST_HOURS_PATH = "/harvest/hours";
 /** THE TRIMMING SECTION (canon 0.30.88): "DLH Yesterday: [numbox]" posts here, one number per shift per day. */
 export const HARVEST_TRIM_HOURS_PATH = "/harvest/trim-hours";
-/** THE TRIM LINE PICTURE (canon 0.30.154): "input lbs (total lbs ran through T-0)" posts here, one number per shift per day. */
-export const HARVEST_TRIM_INPUT_PATH = "/harvest/trim-input";
 /** BRIEF V10 (canon 0.30.334): the pasteurization shift panes' "Total Hours [Save]" posts here, one number per shift per day. */
 export const HARVEST_PASTEURIZATION_HOURS_PATH = "/harvest/pasteurization-hours";
 /** THE PREPACK (canon 0.30.188): one DLH box a day. */

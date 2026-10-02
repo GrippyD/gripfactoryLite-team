@@ -234,7 +234,7 @@ function entryForm(run: CryoRunRow, categories: readonly string[], outputs: Cryo
   return `<form class="stack" method="post" action="${CRYO_STATION_PATH}/run/${esc(run.id)}/add" data-cryo-add data-lock-on-submit>
       ${effectiveDateField(null, locale, hint)}
       <label class="field">${esc(t(locale, "Operator"))}
-        <input type="text" name="cryo_operator" required autocomplete="off" value="${esc(lastOperator)}">
+        <input type="text" name="cryo_operator" required autocomplete="off" data-keep-operator value="${esc(lastOperator)}">
       </label>
       <fieldset>
         <legend>${esc(t(locale, "Packages"))}</legend>

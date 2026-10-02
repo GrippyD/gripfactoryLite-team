@@ -504,7 +504,7 @@ export function unloadTogetherForm(input: {
       )}</p>
       <ol class="unload-together-lots">${lots}</ol>
       <label class="field">${esc(t(locale, "Total dry grams"))} <input type="number" name="total_dry_grams" min="1" step="1" inputmode="numeric" required data-total-dry></label>
-      <label class="field">${esc(t(locale, "Operator"))} <input type="text" name="operator_name"></label>
+      <label class="field">${esc(t(locale, "Operator"))} <input type="text" name="operator_name" required autocomplete="off" data-keep-operator></label>
       <p class="muted" data-material-form>${esc(t(locale, "Material"))}: ${esc(t(locale, "Bucked"))}</p>
       ${effectiveDateField(
         input.nowIso,

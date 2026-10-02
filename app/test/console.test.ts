@@ -8,12 +8,10 @@ import {
   HARVEST_HOURS_PATH,
   HARVEST_PATH,
   HARVEST_TRIM_HOURS_PATH,
-  HARVEST_TRIM_INPUT_PATH,
   harvestConsolePage,
   consoleDayOf,
   loadHarvestConsole,
   parseHours,
-  parseInputLbs,
   prepackCodesOf,
   TRIM_LINE_BAR_WIDTH,
   TRIM_LINE_FLOW_MS,
@@ -38,7 +36,6 @@ import {
 } from "../src/console";
 import { CONFIG_KEYS, parseBtrTypeCodes, parseCryoTypeCategories, parseNameList, parseShiftWindow, parseTrimBogey, shiftWindowHolds, TRIM_BOGEY_DEFAULT, TRIM_SHIFT_HOURS_DEFAULT, trimBogeyOf } from "../src/config";
 import { etClockMinutes, farmDayBounds } from "../src/farmday";
-import { HttpError } from "../src/audit";
 import { isReportKey, REPORT_CARDS, REPORT_KEYS } from "../src/reports";
 import { LB_GRAMS, siloVisual, type SiloLive } from "../src/silo";
 import { themeStylesheet } from "../src/theme";
@@ -49,7 +46,7 @@ import { formOf, migratedDb, seedBatch, seedLot, seedPerson } from "./migrated";
 
 const input: HarvestConsoleInput = {
   today: "2026-09-15",
-  yesterday: "2026-09-14",
+  day: "2026-09-14",
   dayPicked: false,
   year: 2026,
   remaining: [
@@ -67,7 +64,7 @@ const input: HarvestConsoleInput = {
     // An uncounted lot never enters a per-plant average.
     { farm: "ARL", wet_grams: 999, dry_grams: 100, plant_count: null },
   ],
-  yesterdayWet: [
+  dayWet: [
     { farm: "PNN", wet_grams: 90718.474 },
     { farm: "ARL", wet_grams: 4535.9237 },
   ],
@@ -113,7 +110,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(boxes.map((b) => b.farm)).toEqual(["PNN", "ARL", "PNS", "Total"]);
     const pnn = boxes[0];
     expect(pnn.pct).toBeCloseTo(0.4, 9);
-    expect(pnn.metrics.map((m) => m.key)).toEqual(["remaining_total", "harvested", "pct", "wet_per_plant", "dry_per_plant", "weight_harvested"]);
+    expect(pnn.metrics.map((m) => m.key)).toEqual(["remaining_total", "harvested", "pct", "wet_per_plant", "dry_per_plant", "weight_harvested", "weight_harvested_year"]);
     const by = (farm: string, key: string) => {
       const box = boxes.find((b) => b.farm === farm)!;
       return box.metrics.find((m) => m.key === key)!;
@@ -143,8 +140,19 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(by("Total", "harvested").value).toBe("850");
     expect(total.pct).toBeCloseTo(850 / 2350, 9);
     expect(by("Total", "pct").value).toBe("36.2%");
-    expect(by("Total", "hours")).toEqual({ key: "hours", label: "Harvest Hours Yesterday", value: "8" });
-    expect(by("Total", "weight_per_dlh")).toEqual({ key: "weight_per_dlh", label: "Weight/DLH Yesterday", value: "26.58 lb/h", sub: "11,907 g/h" });
+    expect(by("Total", "hours")).toEqual({ key: "hours", label: "Harvest Hours", value: "8" });
+    expect(by("Total", "weight_per_dlh")).toEqual({ key: "weight_per_dlh", label: "Weight/DLH", value: "26.58 lb/h", sub: "11,907 g/h" });
+    // THE YEAR PANE (canon 0.30.346): last on Total, beneath Weight/DLH.
+    expect(total.metrics.map((m) => m.key).slice(-3)).toEqual(["hours", "weight_per_dlh", "weight_harvested_year"]);
+    // THE PLANTS FROM ADMIN'S TOTAL (canon 0.30.346): a typed total less the remaining is the harvested, and drives the percent.
+    const typed = consoleBoxes({ ...input, plantCounts: { PNN: 5000, ARL: null, PNS: 10 } });
+    const tby = (farm: string, key: string) => typed.find((b) => b.farm === farm)!.metrics.find((m) => m.key === key)!.value;
+    expect(tby("PNN", "remaining_total")).toBe("1,200 / 5,000");
+    expect(tby("PNN", "harvested")).toBe("3,800");
+    expect(tby("PNN", "pct")).toBe("76.0%");
+    expect(tby("ARL", "harvested")).toBe("0");
+    // PNS typed below its remaining reads zero harvested, never negative.
+    expect(tby("PNS", "harvested")).toBe(String(Math.max(0, 10 - Number(by("PNS", "remaining_total").value.split(" / ")[0].replace(/,/g, "")))));
     const allHours = consoleBoxes({ ...input, harvestHoursAll: 4 });
     expect(allHours.find((b) => b.farm === "Total")!.metrics.find((m) => m.key === "hours")!.value).toBe("4");
     // No plants known at all: no percent, not a division by zero.
@@ -260,10 +268,11 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
       "Wet Weight/plant AVG",
       "Dry Weight/plant AVG",
       "Weight Harvested",
+      "Harvest Year Total",
     ];
     for (const label of labels) expect(html.match(new RegExp(`<dt>${label.replace(/[%/]/g, (c) => (c === "%" ? "%" : "\\/"))}`, "g"))).toHaveLength(4);
-    expect(html.match(/<dt>Harvest Hours Yesterday/g)).toHaveLength(1);
-    expect(html.match(/<dt>Weight\/DLH Yesterday/g)).toHaveLength(1);
+    expect(html.match(/<dt>Harvest Hours/g)).toHaveLength(1);
+    expect(html.match(/<dt>Weight\/DLH/g)).toHaveLength(1);
     expect(html).toContain('<span class="hc-value" data-hc="remaining_total">1,200 / 2,000</span>');
     expect(html).toContain('<span class="hc-value" data-hc="weight_per_dlh">26.58 lb/h</span><span class="hc-sub muted">11,907 g/h</span>');
   });
@@ -274,7 +283,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(html).toContain('data-hc-hours="ALL"');
     expect(html).toContain('<input type="hidden" name="farm" value="ALL">');
     expect(html).toContain('<input type="hidden" name="work_date" value="2026-09-14">');
-    expect(html).toContain('<input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="8" placeholder="hours" aria-label="Harvest Hours Yesterday" data-hc-hours-input>');
+    expect(html).toContain('<input type="number" name="hours" min="0" step="0.25" inputmode="decimal" value="8" placeholder="hours" aria-label="Harvest Hours" data-hc-hours-input>');
     expect(html).not.toContain('data-hc-hours="PNN"');
     expect(html).not.toContain('data-hc-hours="ARL"');
     expect(html).toContain('<button type="submit" class="secondary">Save</button>');
@@ -293,32 +302,40 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" })).not.toContain("data-hc-flash");
   });
 
-  it("today so far is one tap, the plant count is the denominator, and the harvested weight shows even at zero", () => {
-    expect(consoleDayOf("2026-09-15", "2026-09-15")).toEqual({ day: "2026-09-15", dayPicked: true });
-    const today = harvestConsolePage({ input: { ...input, yesterday: "2026-09-15", dayPicked: true }, live, nowIso: "2026-09-15T16:00:00.000Z" });
+  it("the default day reads today so far, a pick offers Back to today, the plant count is the denominator, and the harvested weight shows even at zero", () => {
+    expect(consoleDayOf("2026-09-15", "2026-09-15")).toEqual({ day: "2026-09-15", dayPicked: false });
+    expect(consoleDayOf(null, "2026-09-15")).toEqual({ day: "2026-09-15", dayPicked: false });
+    expect(consoleDayOf("2026-09-14", "2026-09-15")).toEqual({ day: "2026-09-14", dayPicked: true });
+    const today = harvestConsolePage({ input: { ...input, day: "2026-09-15", dayPicked: false }, live, nowIso: "2026-09-15T16:00:00.000Z" });
     expect(today).toContain('data-hc-day-state>today so far; the panes below read today up to now');
-    expect(today).toContain('data-hc-day-reset');
+    expect(today).not.toContain("data-hc-day-reset");
     expect(today).not.toContain("data-hc-day-today");
-    const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T16:00:00.000Z" });
-    expect(html).toContain('data-hc-day-today');
-    expect(html).toContain('href="/harvest?day=2026-09-15"');
-    expect(html).toContain("Today so far");
+    expect(today).toContain("Today is 2026-09-15");
+    const picked = harvestConsolePage({ input: { ...input, day: "2026-09-14", dayPicked: true }, live, nowIso: "2026-09-15T16:00:00.000Z" });
+    expect(picked).toContain("picked; the panes below read this day");
+    expect(picked).toContain('data-hc-day-reset>Back to today</a>');
+    expect(picked).not.toContain("Today so far");
     const counted = consoleBoxes({ ...input, plantCounts: { PNN: 1000, ARL: null, PNS: null }, seasonHarvested: [{ farm: "PNN", plants: 250 }], remaining: [{ farm: "PNN", plants: 800 }] });
     const pnn = counted.find((b) => b.farm === "PNN")!;
     expect(pnn.metrics.find((m) => m.key === "remaining_total")!.value).toBe("800 / 1,000");
-    expect(pnn.metrics.find((m) => m.key === "pct")!.value).toBe("25.0%");
+    // Canon 0.30.346: the typed total less the remaining (1,000 less 800) is the harvested; the lots' 250 no longer count.
+    expect(pnn.metrics.find((m) => m.key === "harvested")!.value).toBe("200");
+    expect(pnn.metrics.find((m) => m.key === "pct")!.value).toBe("20.0%");
     const stale = consoleBoxes({
       ...input,
       plantCounts: { PNN: 100, ARL: null, PNS: null },
       seasonHarvested: [{ farm: "PNN", plants: 250 }],
       remaining: [{ farm: "PNN", plants: 10 }],
     }).find((b) => b.farm === "PNN")!;
-    expect(stale.metrics.find((m) => m.key === "pct")!.value).toBe("250.0%");
-    expect(stale.pct).toBeCloseTo(2.5, 9);
+    // A typed total that the lots outrun no longer reads above 100%: 100 less the 10 remaining.
+    expect(stale.metrics.find((m) => m.key === "pct")!.value).toBe("90.0%");
+    expect(stale.pct).toBeCloseTo(0.9, 9);
     const fallback = consoleBoxes(input).find((b) => b.farm === "ARL")!;
     expect(fallback.metrics.find((m) => m.key === "remaining_total")!.value).toBe("300 / 300");
     const page = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z" });
     expect(page.match(/data-hc-metric="weight_harvested"/g)).toHaveLength(4);
+    expect(page.match(/data-hc-metric="weight_harvested_year"/g)).toHaveLength(4);
+    expect(page.match(/Harvest Year Total <span class="hc-date muted">2026<\/span>/g)).toHaveLength(4);
     expect(page).toContain('data-hc="weight_harvested">0.00 lb</span><span class="hc-sub muted">0 g</span>');
     expect(page).not.toContain("Plants remaining are the live plants");
     expect(page).not.toContain("The day's packages from Trim Packages Entry");
@@ -342,9 +359,14 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
       "2026-09-15T09:00:00.000Z"
     );
     const loaded = await loadHarvestConsole(m.db, at, "2026-09-15");
-    expect(loaded.dayPicked).toBe(true);
-    expect(loaded.yesterday).toBe("2026-09-15");
-    expect(loaded.yesterdayWet).toEqual([{ farm: "PNN", wet_grams: 448 }]);
+    expect(loaded.dayPicked).toBe(false);
+    expect(loaded.day).toBe("2026-09-15");
+    expect(loaded.dayWet).toEqual([{ farm: "PNN", wet_grams: 448 }]);
+    expect(loaded.yearWet).toEqual([{ farm: "PNN", wet_grams: 1344 }]);
+    const earlier = await loadHarvestConsole(m.db, at, "2026-09-14");
+    expect(earlier.dayPicked).toBe(true);
+    expect(earlier.day).toBe("2026-09-14");
+    expect(earlier.dayWet).toEqual([{ farm: "PNN", wet_grams: 896 }]);
     expect(bounds.startIso < "2026-09-15T15:00:00.000Z" && "2026-09-15T15:00:00.000Z" < bounds.endIso).toBe(true);
     expect("2026-09-15T09:00:00.000Z" < bounds.startIso).toBe(true);
   });
@@ -397,7 +419,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(es).toContain("<summary>Pasteurizacion</summary>");
     expect(es).toContain("<summary>Pruebas <span class=\"muted hc-year\">Año de cosecha 2026</span></summary>");
     expect(es).toContain("<dt>Plantas restantes/Plantas totales</dt>");
-    expect(es).toContain("Horas de cosecha de ayer");
+    expect(es).toContain("Horas de cosecha");
     expect(es).not.toContain("Inventario FFZ");
   });
 });
@@ -463,12 +485,12 @@ describe("THE BUD WAFFLE (canon 0.30.157), drawn as THE PROGRESSION BUD (canon 0
     expect(sixty).toContain('class="hc-bud-cell hc-bud-bud" data-hc-bud-order="41"');
     const none = budWaffle(null);
     expect(none).toContain('data-hc-bud-consumed="0"');
-    expect(none).toContain('aria-label="no packages yesterday"');
+    expect(none).toContain('aria-label="no packages on the day"');
     expect((none.match(/class="hc-bud-cell hc-bud-empty"/g) || []).length).toBe(100);
     expect(none).not.toContain("data-hc-bud-stem");
     expect(none).not.toContain('class="hc-bud-cell hc-bud-bud"');
     expect(none).not.toContain('class="hc-bud-cell hc-bud-consumed"');
-    expect(budWaffle(null, "es")).toContain('aria-label="sin paquetes ayer"');
+    expect(budWaffle(null, "es")).toContain('aria-label="sin paquetes en el dia"');
     const over = budWaffle(1.004);
     expect(over).toContain('data-hc-bud-consumed="0"');
     expect((over.match(/class="hc-bud-cell hc-bud-bud"/g) || []).length).toBe(100);
@@ -568,7 +590,7 @@ describe("THE BUD WAFFLE (canon 0.30.157), drawn as THE PROGRESSION BUD (canon 0
 
 /** THE TRIMMING SECTION (canon 0.30.88). Owner ruling 2026-09-16, verbatim:
  * "in the harvest console (not the continuum one) let's work on Trimming: Day
- * shift: Lbs Produced Yesterday / DLH Yesterday: [numbox] / Lbs/DLH / BTR
+ * shift: Lbs Produced / DLH: [numbox] / Lbs/DLH / BTR
  * (BTR=(BUD+WPR+SHA)/All weight ran that shift) shown as a percentage / BUD =
  * [BUD+WPR+SHA] / OTHER = All other / Second Shift / Same / Display them in a
  * visual way (graphed or something, a pictograph of some kind maybe)". His
@@ -653,7 +675,6 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(TRIM_RUNNING_MINUTES).toBe(30);
     expect(TRIM_LINE_BAR_WIDTH).toBe(44);
     expect(TRIM_LINE_FLOW_MS).toBe(900);
-    expect(HARVEST_TRIM_INPUT_PATH).toBe("/harvest/trim-input");
   });
 
   it("his math: Bulk Bud = SHAKE + BUD, Prepack Bud = WPR (SMALLS), Total Bud = Bulk + Prepack; Other = TRIM + BIO + WIP left + the rest; the shift total adds the WIP left; BTR divides by it", () => {
@@ -672,7 +693,6 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
         { lot_id: "c", dry_grams: 300, recorded_grams: 100, last_operator: "Les" },
         { lot_id: "d", dry_grams: null, recorded_grams: 50, last_operator: "Victor" },
       ],
-      inputLbs: { day: 12.5, second: null },
     });
     const day = f.shifts[0];
     expect(day.bulkGrams).toBe(350); // BUD 300 + SHAKE 50
@@ -689,7 +709,6 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(day.budGrams + day.otherGrams).toBe(day.totalGrams);
     expect(day.btr).toBeCloseTo(450 / 990, 9);
     expect(day.gramsPerDlh).toBeCloseTo(790 / 5, 9);
-    expect(day.inputLbs).toBe(12.5);
     const second = f.shifts[1];
     expect(second.bulkGrams).toBe(90);
     expect(second.prepackGrams).toBe(0);
@@ -699,7 +718,6 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(second.otherGrams).toBe(220);
     expect(second.totalGrams).toBe(310);
     expect(second.btr).toBeCloseTo(90 / 310, 9);
-    expect(second.inputLbs).toBeNull();
     // A finished lot on neither shift lands nowhere; the unassigned grams stay the packages'.
     expect(f.unassignedGrams).toBe(10);
   });
@@ -754,7 +772,7 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
   });
 
   it("the picture: his seven machines, six flow bars of his width, the greens moving only while the line runs, the endpoints carrying the grams (the TRIM circle fed by T-0, his correction), the lines converging on the shift total", () => {
-    const f = trimFigures({ ...trim, finishedLots: [{ lot_id: "a", dry_grams: 1000, recorded_grams: 800, last_operator: "Olga" }], inputLbs: { day: 12.5, second: null } });
+    const f = trimFigures({ ...trim, finishedLots: [{ lot_id: "a", dry_grams: 1000, recorded_grams: 800, last_operator: "Olga" }] });
     const day = trimLinePicture(f.shifts[0]);
     expect(day).toContain('<svg class="hc-trimline" viewBox="0 0 1000 704" role="img" aria-label="Shift total 2.12 lb · 950 g" data-hc-trimline data-hc-trimline-running="0" data-hc-trimline-total="950">');
     for (const node of ["trim", "t0", "sorter", "marvel", "bio", "bud", "retrim"]) expect(day).toContain(`data-hc-node="${node}"`);
@@ -780,7 +798,7 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     // T-0 carries the grams weighed, the package count and the typed input pounds (the total run through it).
     expect(day).toContain('data-hc-node-value="t0" x="849" y="308">1.67 lb</text>');
     expect(day).toContain("750 g · 5 packages</text>");
-    expect(day).toContain('<text class="hc-node-sub" data-hc-node-value="t0-input" x="849" y="362">input 12.50 lb</text>');
+    expect(day).not.toContain('data-hc-node-value="t0-input"');
     // The converging lines from BIO, BUD and the TRIM circle, and the total under them.
     expect(day).toContain('<polyline points="118,548 118,612 990,612"/>');
     expect(day).toContain('<polyline points="912,82 990,82 990,612"/>');
@@ -793,22 +811,13 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(live).toContain('<animate attributeName="x" from="0" to="-20" dur="900ms" repeatCount="indefinite"/>');
     expect(live).toContain('<animate attributeName="y" from="0" to="-20" dur="900ms" repeatCount="indefinite"/>');
     expect(live.match(/<animate /g)).toHaveLength(3);
-    expect(live).toContain('<text class="hc-node-sub hc-node-muted" data-hc-node-value="t0-input" x="849" y="362">input lbs</text>');
+    expect(live).not.toContain('data-hc-node-value="t0-input"');
     // Spanish speaks on the picture's words.
     expect(trimLinePicture(f.shifts[0], "es")).toContain(">Total del turno</text>");
   });
 
-  it("parses the typed input lbs: blank clears, commas drop, two decimals, negatives and words refuse", () => {
-    expect(parseInputLbs(null)).toBeNull();
-    expect(parseInputLbs("  ")).toBeNull();
-    expect(parseInputLbs("1,250.505")).toBe(1250.51);
-    expect(parseInputLbs("0")).toBe(0);
-    expect(() => parseInputLbs("-1")).toThrow(HttpError);
-    expect(() => parseInputLbs("twelve")).toThrow(HttpError);
-  });
-
-  it("the section: two cards in his order, the picture on top, his lines under it, the DLH box, the sheet hours, the input lbs box, the unassigned line", () => {
-    const html = trimmingSection({ ...withTrim, trim: { ...trim, inputLbs: { day: 12.5, second: null }, recent: [{ trim_operator: "Olga" }, { trim_operator: "Les" }] } });
+  it("the section: two cards in his order, the picture on top, his lines under it, the DLH box, the unassigned line", () => {
+    const html = trimmingSection({ ...withTrim, trim: { ...trim, recent: [{ trim_operator: "Olga" }, { trim_operator: "Les" }] } });
     expect(html).toContain('<details class="hc-section" data-hc-section="trimming" open>');
     expect(html).toContain("<summary>Trimming</summary>");
     expect(html.indexOf('data-hc-shift="day"')).toBeLessThan(html.indexOf('data-hc-shift="second"'));
@@ -818,7 +827,7 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(day).toContain('<span class="hc-date muted">2026-09-14</span>');
     expect(day).toContain('data-hc-shift-running="1"');
     expect(day).toContain('<span class="hc-running" data-hc-running>RUNNING</span>');
-    for (const label of ["Other", "Bulk Bud", "Prepack Bud", "Total Bud", "BTR", "Lbs Produced Yesterday", "DLH Yesterday", "Lbs/DLH"]) {
+    for (const label of ["Other", "Bulk Bud", "Prepack Bud", "Total Bud", "BTR", "Lbs Produced", "DLH", "Lbs/DLH"]) {
       expect(day).toContain(`<dt>${label}</dt>`);
     }
     // The picture stands before the bud, the bud before the lines, and the lines keep his order.
@@ -827,7 +836,7 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(day).toContain('data-hc-bud-consumed="40"');
     expect(day).toContain('data-hc-btr-read><strong>60.0%</strong> BTR</div>');
     expect(day).toContain('<div class="hc-legend"><span class="hc-swatch hc-swatch-bud"></span>bud <span class="hc-swatch hc-swatch-consumed"></span>byproduct <span class="hc-swatch hc-swatch-waste"></span>waste</div>');
-    const order = ["trim_other", "trim_bulk", "trim_prepack", "trim_bud", "trim_btr", "trim_lbs", "trim_dlh", "trim_lbs_per_dlh", "trim_input"];
+    const order = ["trim_other", "trim_bulk", "trim_prepack", "trim_bud", "trim_btr", "trim_lbs", "trim_dlh", "trim_lbs_per_dlh"];
     const positions = order.map((k) => day.indexOf(`data-hc-metric="${k}"`));
     expect(positions.every((p, i) => p >= 0 && (i === 0 || p > positions[i - 1]))).toBe(true);
     // 750 g = 1.65 lb; 450 g = 0.99 lb; 350 g = 0.77 lb; 100 g = 0.22 lb; 300 g = 0.66 lb; 150 g/h = 0.33 lb/h.
@@ -841,24 +850,23 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(day).toContain(`<form method="post" action="${HARVEST_TRIM_HOURS_PATH}" class="hc-hours" data-hc-trim-hours="day">`);
     expect(day).toContain('<input type="hidden" name="shift" value="day">');
     expect(day).toContain('<input type="hidden" name="work_date" value="2026-09-14">');
-    expect(day).toContain('value="5" placeholder="hours" aria-label="DLH Yesterday Day shift" data-hc-hours-input>');
+    expect(day).toContain('value="5" placeholder="hours" aria-label="DLH Day shift" data-hc-hours-input>');
     expect(day).not.toContain("Cutting and bucking hours from the sheet");
     expect(day).not.toContain("data-hc-trimline");
-    expect(day).toContain(`<form method="post" action="${HARVEST_TRIM_INPUT_PATH}" class="hc-hours" data-hc-trim-input="day">`);
-    expect(day).toContain('value="12.50" placeholder="lbs" aria-label="Input lbs Day shift" data-hc-input-lbs>');
+    expect(day).not.toContain("data-hc-trim-input");
     expect(day).not.toContain('data-hc-node-value="t0-input"');
     const second = html.slice(html.indexOf('data-hc-shift="second"'));
     expect(second).toContain('<span class="hc-shift-name">Second Shift</span>');
     expect(second).toContain('data-hc-shift-running="0"');
     expect(second).not.toContain("data-hc-running>");
     expect(second).toContain('<span class="hc-value" data-hc="trim_lbs_per_dlh">type hours</span>');
-    expect(second).toContain('value="" placeholder="hours" aria-label="DLH Yesterday Second Shift" data-hc-hours-input>');
-    expect(second).toContain('value="" placeholder="lbs" aria-label="Input lbs Second Shift" data-hc-input-lbs>');
+    expect(second).toContain('value="" placeholder="hours" aria-label="DLH Second Shift" data-hc-hours-input>');
+    expect(second).not.toContain("data-hc-trim-input");
     expect(second).not.toContain("data-hc-trimline");
     expect(second).toContain('data-hc-bud-consumed="70"');
     expect(second).toContain('data-hc-btr-read><strong>30.0%</strong> BTR</div>');
     expect(second).toContain('<div class="hc-legend"><span class="hc-swatch hc-swatch-bud"></span>bud <span class="hc-swatch hc-swatch-consumed"></span>byproduct <span class="hc-swatch hc-swatch-waste"></span>waste</div>');
-    expect(html).toContain("data-hc-trim-unassigned>10 g yesterday by operators on neither shift: Les. Name the shifts' operators in Admin, Lookups, app_config.</p>");
+    expect(html).toContain("data-hc-trim-unassigned>10 g on the day by operators on neither shift: Les. Name the shifts' operators in Admin, Lookups, app_config.</p>");
     expect(html).toContain('data-hc-trim-running-unassigned><span class="hc-running">RUNNING</span> a package was weighed in the last 30 minutes by an operator on neither shift.</p>');
     const rightNow = html.slice(html.indexOf("data-hc-trim-rightnow"), html.indexOf('data-hc-shift="day"'));
     expect(html.indexOf("data-hc-trim-rightnow")).toBeLessThan(html.indexOf('data-hc-shift="day"'));
@@ -944,37 +952,22 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
       '<div class="hc-trim-total" data-hc-trim-total="btr"><div class="hc-gate-name">Weighted BTR</div><span class="hc-value">51.4%</span><span class="hc-sub muted">both shifts, Total Bud over the shift totals</span></div>'
     );
     const quiet = trimmingSection({ ...withTrim, trim: { ...trim, packages: [] } });
-    expect(quiet).toMatch(/data-hc-trim-total="btr"[\s\S]*?<span class="hc-value">no packages yesterday<\/span><\/div>/);
+    expect(quiet).toMatch(/data-hc-trim-total="btr"[\s\S]*?<span class="hc-value">no packages on the day<\/span><\/div>/);
     const esTotals = trimmingSection({ ...withTrim, trim: { ...trim, hours: { day: 5, second: 3 } } }, "es");
     expect(esTotals).toContain('<div class="hc-gate-name">BTR ponderado</div><span class="hc-value">51.4%</span><span class="hc-sub muted">ambos turnos, flor total sobre los totales de turno</span>');
   });
 
-  it("THE SHEET SYNC (canon 0.30.162): the line under the sheet hours says when the sheet was last read; never read before a run; Spanish speaks, footnotes included", () => {
-    // No run yet: the status is never and the line says so.
-    const pageOf = (over: Partial<typeof withTrim> = {}, locale: "en" | "es" = "en") =>
-      harvestConsolePage({ input: { ...withTrim, ...over }, live: [], nowIso: "2026-09-15T12:00:00.000Z", locale });
-    const never = pageOf();
-    expect(never).toContain('data-hc-sheet-sync="never"');
-    expect(never).toContain('data-hc-sheet-sync-line>sheet never read</dd>');
-    const neverEs = pageOf({}, "es");
-    expect(neverEs).toContain("data-hc-sheet-sync-line>la hoja nunca se leyo</dd>");
+  it("the sheet read line has left the console; the long footnotes stay off the page", () => {
+    const never = harvestConsolePage({ input: withTrim, live: [], nowIso: "2026-09-15T12:00:00.000Z" });
+    expect(never).not.toContain("data-hc-sheet-sync");
+    expect(never).not.toContain("sheet never read");
+    expect(never).not.toContain("sheet read failed");
+    const neverEs = harvestConsolePage({ input: withTrim, live: [], nowIso: "2026-09-15T12:00:00.000Z", locale: "es" });
+    expect(neverEs).not.toContain("data-hc-sheet-sync");
     expect(never).not.toContain("RUNNING means the clock is inside the shift's hours");
     expect(never).not.toContain("Cutting and bucking hours from the sheet");
     expect(neverEs).not.toContain("EN MARCHA significa que el reloj esta dentro de las horas del turno");
     expect(neverEs).not.toContain("Horas de corte y desrame de la hoja");
-    const okView = { status: "ok" as const, at: "2026-09-21T14:15:00Z", rowsSeen: 44, rowsChanged: 3, message: null };
-    const ok = pageOf({ sheetSync: okView });
-    expect(ok).toContain('data-hc-sheet-sync="ok"');
-    expect(ok).toContain("data-hc-sheet-sync-line>read from the sheet at 2026-09-21 10:15 AM ET (44 rows, 3 changed)</dd>");
-    expect(pageOf({ sheetSync: okView }, "es")).toContain(
-      "data-hc-sheet-sync-line>leido de la hoja a las 2026-09-21 10:15 AM ET (44 filas, 3 cambiadas)</dd>"
-    );
-    const skipped = pageOf({ sheetSync: { status: "skipped", at: "2026-09-21T15:15:00Z", rowsSeen: null, rowsChanged: null, message: null } });
-    expect(skipped).toContain('data-hc-sheet-sync="skipped"');
-    expect(skipped).toContain("data-hc-sheet-sync-line>sheet unchanged since 2026-09-21 11:15 AM ET</dd>");
-    const failed = pageOf({ sheetSync: { status: "failed", at: "2026-09-21T16:15:00Z", rowsSeen: null, rowsChanged: null, message: "401 token" } });
-    expect(failed).toContain('data-hc-sheet-sync="failed"');
-    expect(failed).toContain("data-hc-sheet-sync-line>sheet read failed at 2026-09-21 12:15 PM ET: 401 token</dd>");
   });
 
   it("without the trim input the section renders empty, never throws; no unassigned or running line; Spanish speaks", () => {
@@ -984,8 +977,8 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(html.match(/data-hc-bud-consumed="0"/g)).toHaveLength(2);
     expect((html.match(/class="hc-bud-cell hc-bud-empty"/g) || []).length).toBe(200);
     expect(html).not.toContain("data-hc-bud-stem");
-    expect(html).toContain('aria-label="no packages yesterday"');
-    expect(html).toContain("data-hc-btr-read>no packages yesterday</div>");
+    expect(html).toContain('aria-label="no packages on the day"');
+    expect(html).toContain("data-hc-btr-read>no packages on the day</div>");
     expect(html).not.toContain("<animate ");
     expect(html).not.toContain("data-hc-trim-unassigned");
     expect(html).not.toContain("data-hc-trim-running-unassigned");
@@ -994,19 +987,18 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     const es = trimmingSection(withTrim, "es");
     expect(es).toContain("Turno de dia");
     expect(es).toContain("Segundo turno");
-    expect(es).toContain("Libras producidas ayer");
+    expect(es).toContain("Libras producidas");
     expect(es).toContain("<dt>Flor total</dt>");
     expect(es).toContain("<dt>Otros</dt>");
-    expect(es).toContain("Libras de entrada");
+    expect(es).not.toContain("Libras de entrada");
     expect(es).toContain('hc-swatch-bud"></span>flor <span class="hc-swatch hc-swatch-consumed"></span>subproducto <span class="hc-swatch hc-swatch-waste"></span>desperdicio</div>');
   });
 
-  it("the console page carries the built section open and flashes trim hours saved, and input lbs saved", () => {
+  it("the console page carries the built section open and flashes trim hours saved", () => {
     const html = harvestConsolePage({ input: withTrim, live: [], nowIso: "2026-09-15T12:00:00.000Z", ok: "trim_hours" });
     expect(html).toContain('data-hc-section="trimming" open');
     expect(html).toContain("data-hc-flash>Hours saved.</p>");
-    const lbsSaved = harvestConsolePage({ input: withTrim, live: [], nowIso: "2026-09-15T12:00:00.000Z", ok: "trim_input" });
-    expect(lbsSaved).toContain("data-hc-flash>Input lbs saved.</p>");
+    expect(html).not.toContain("Input lbs saved.");
     expect(html.indexOf('data-hc-section="drying"')).toBeLessThan(html.indexOf('data-hc-section="trimming"'));
     expect(html.indexOf('data-hc-section="trimming"')).toBeLessThan(html.indexOf('data-hc-section="pasteurization"'));
     // BRIEF V10 (canon 0.30.334): Pasteurization stands between Trimming and Testing, open, and flashes its hours saved.
