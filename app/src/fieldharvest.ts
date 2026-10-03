@@ -19,6 +19,10 @@ export type FieldHarvestPageInput = {
     finish: "" | "ask" | "warn";
     warnIds: string[];
   } | null;
+  /** FINISHED LOTS, FOUND (canon 0.30.373): the lots weighing here whose totes are not all on this load, rendered. */
+  lotsSoFar?: string;
+  /** The lot a Reopen landed on; the open loads' links carry it. */
+  focusLotId?: string | null;
 };
 
 function hbnSelect(
@@ -54,7 +58,8 @@ export function fieldHarvestPage(input: FieldHarvestPageInput): string {
     .map((load) => {
       const selected = picked?.load.id === load.id ? " selected" : "";
       const who = [load.operator_name, load.destination_name].filter(Boolean).join(" / ");
-      return `<li><a class="queue-pane-item${selected}" href="${esc(PATH)}?load=${esc(load.id)}">${esc(who || load.destination_name)}</a></li>`;
+      const focus = input.focusLotId ? `&lot=${encodeURIComponent(input.focusLotId)}` : "";
+      return `<li><a class="queue-pane-item${selected}" href="${esc(`${PATH}?load=${encodeURIComponent(load.id)}${focus}`)}">${esc(who || load.destination_name)}</a></li>`;
     })
     .join("");
   const left = `<aside class="queue-pane">
@@ -97,7 +102,7 @@ export function fieldHarvestPage(input: FieldHarvestPageInput): string {
 function middle(input: FieldHarvestPageInput): string {
   const locale = input.locale;
   const picked = input.picked;
-  if (!picked) return emptyHeader(input.destinations, locale);
+  if (!picked) return `${input.lotsSoFar ?? ""}${emptyHeader(input.destinations, locale)}`;
   const load = picked.load;
   const header = `<dl class="lot-meta" data-field-load="${esc(load.id)}">
       <dt>${esc(t(locale, "Operator"))}</dt><dd>${esc(load.operator_name ?? "")}</dd>
@@ -115,6 +120,7 @@ function middle(input: FieldHarvestPageInput): string {
     ${entryPane(picked, locale)}
     ${finishBlock(picked, locale)}
     ${contentPane(picked, locale)}
+    ${input.lotsSoFar ?? ""}
     ${finishScript()}`;
 }
 

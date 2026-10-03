@@ -3368,6 +3368,90 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "No failed first-time tests at the lab station this season.": { en: "No failed first-time tests at the lab station this season.", es: "No hay pruebas fallidas al primer intento en la estacion de laboratorio esta temporada." },
   "Compliance samples are entered at the lab station, on the Internal tab.": { en: "Compliance samples are entered at the lab station, on the Internal tab.", es: "Las muestras de cumplimiento se registran en la estacion de laboratorio, en la pestana Interna." },
   "Open the lab station": { en: "Open the lab station", es: "Abrir la estacion de laboratorio" },
+  // FINISHED LOTS, FOUND (canon 0.30.373): the Finished lots list on both weigh screens, the lot's page, Void and Reopen.
+  "Weighing": { en: "Weighing", es: "Pesando" },
+  "Unloaded": { en: "Unloaded", es: "Descargado" },
+  "Trimmed": { en: "Trimmed", es: "Podado" },
+  "Frozen": { en: "Frozen", es: "Congelado" },
+  "Finished lots": { en: "Finished lots", es: "Lotes terminados" },
+  "Finished lot": { en: "Finished lot", es: "Lote terminado" },
+  "Finish time": { en: "Finish time", es: "Hora de termino" },
+  "Totes": { en: "Totes", es: "Totes" },
+  "Time": { en: "Time", es: "Hora" },
+  "Field load": { en: "Field load", es: "Carga de campo" },
+  "Weighed by": { en: "Weighed by", es: "Pesado por" },
+  "This load": { en: "This load", es: "Esta carga" },
+  "Void this tote": { en: "Void this tote", es: "Anular este tote" },
+  "Back to {screen}": { en: "Back to {screen}", es: "Volver a {screen}" },
+  "No lots finished in these 8 farm days.": {
+    en: "No lots finished in these 8 farm days.",
+    es: "Ningun lote terminado en estos 8 dias de granja.",
+  },
+  "Today and the 7 farm days before it, newest finish first. Tap a lot to see every tote.": {
+    en: "Today and the 7 farm days before it, newest finish first. Tap a lot to see every tote.",
+    es: "Hoy y los 7 dias de granja anteriores, el ultimo terminado primero. Toque un lote para ver cada tote.",
+  },
+  "Voided {when} by {who}: {reason}": { en: "Voided {when} by {who}: {reason}", es: "Anulado {when} por {who}: {reason}" },
+  "Reopen puts this lot back to weighing with all its totes on the weigh screen. Continue?": {
+    en: "Reopen puts this lot back to weighing with all its totes on the weigh screen. Continue?",
+    es: "Reabrir devuelve este lote a pesaje con todos sus totes en la pantalla de pesaje. Continuar?",
+  },
+  "Reopen puts this lot back to weighing with all its totes on the weigh screen; new totes add to it.": {
+    en: "Reopen puts this lot back to weighing with all its totes on the weigh screen; new totes add to it.",
+    es: "Reabrir devuelve este lote a pesaje con todos sus totes en la pantalla de pesaje; los totes nuevos se suman a el.",
+  },
+  "This lot is weighing. Open it on the weigh screen.": {
+    en: "This lot is weighing. Open it on the weigh screen.",
+    es: "Este lote esta en pesaje. Abralo en la pantalla de pesaje.",
+  },
+  "{hbn}: all {n} totes on this lot, {total}": {
+    en: "{hbn}: all {n} totes on this lot, {total}",
+    es: "{hbn}: los {n} totes de este lote, {total}",
+  },
+  "Pick or start a load, then weigh this HBN; new totes add to this lot.": {
+    en: "Pick or start a load, then weigh this HBN; new totes add to this lot.",
+    es: "Elija o inicie una carga y pese este HBN; los totes nuevos se suman a este lote.",
+  },
+  "Tote voided. The lot and its wet package dropped by its grams.": {
+    en: "Tote voided. The lot and its wet package dropped by its grams.",
+    es: "Tote anulado. El lote y su paquete humedo bajaron por sus gramos.",
+  },
+  "Lot reopened. All its totes are on the weigh screen; new totes add to it.": {
+    en: "Lot reopened. All its totes are on the weigh screen; new totes add to it.",
+    es: "Lote reabierto. Todos sus totes estan en la pantalla de pesaje; los totes nuevos se suman a el.",
+  },
+  "Voiding a tote needs the Admin PIN.": { en: "Voiding a tote needs the Admin PIN.", es: "Anular un tote requiere el PIN de Admin." },
+  "Reopening a lot needs the Admin PIN.": { en: "Reopening a lot needs the Admin PIN.", es: "Reabrir un lote requiere el PIN de Admin." },
+  "Reason is required.": { en: "Reason is required.", es: "El motivo es obligatorio." },
+  "Unknown tote.": { en: "Unknown tote.", es: "Tote desconocido." },
+  "Unknown screen.": { en: "Unknown screen.", es: "Pantalla desconocida." },
+  "That tote is already voided.": { en: "That tote is already voided.", es: "Ese tote ya esta anulado." },
+  "That lot is not on this screen.": { en: "That lot is not on this screen.", es: "Ese lote no esta en esta pantalla." },
+  "The wet ledger is not wired.": { en: "The wet ledger is not wired.", es: "El registro humedo no esta conectado." },
+  "The wet weight of this lot is closed (unloaded, trimmed or frozen). Ask the Scribe for a repair.": {
+    en: "The wet weight of this lot is closed (unloaded, trimmed or frozen). Ask the Scribe for a repair.",
+    es: "El peso humedo de este lote esta cerrado (descargado, podado o congelado). Pida al Scribe una reparacion.",
+  },
+  "The lot's wet package has packages made from it, so its wet weight is closed. Ask the Scribe for a repair.": {
+    en: "The lot's wet package has packages made from it, so its wet weight is closed. Ask the Scribe for a repair.",
+    es: "Del paquete humedo del lote se hicieron otros paquetes, asi que su peso humedo esta cerrado. Pida al Scribe una reparacion.",
+  },
+  "The lot's wet package has left its space, so its wet weight is closed. Ask the Scribe for a repair.": {
+    en: "The lot's wet package has left its space, so its wet weight is closed. Ask the Scribe for a repair.",
+    es: "El paquete humedo del lote salio de su espacio, asi que su peso humedo esta cerrado. Pida al Scribe una reparacion.",
+  },
+  "The lot has more than one wet package. Ask the Scribe for a repair.": {
+    en: "The lot has more than one wet package. Ask the Scribe for a repair.",
+    es: "El lote tiene mas de un paquete humedo. Pida al Scribe una reparacion.",
+  },
+  "The lot's wet package holds less than this tote. Ask the Scribe for a repair.": {
+    en: "The lot's wet package holds less than this tote. Ask the Scribe for a repair.",
+    es: "El paquete humedo del lote tiene menos que este tote. Pida al Scribe una reparacion.",
+  },
+  "Only a drying or in-transit lot can be reopened. Ask the Scribe for a repair.": {
+    en: "Only a drying or in-transit lot can be reopened. Ask the Scribe for a repair.",
+    es: "Solo un lote secando o en transito se puede reabrir. Pida al Scribe una reparacion.",
+  },
   "The consoles read the lab station. This drop still lands the workbook into its table.": { en: "The consoles read the lab station. This drop still lands the workbook into its table.", es: "Las consolas leen la estacion de laboratorio. Esta carga sigue dejando el libro en su tabla." },
 };
 

@@ -1,6 +1,6 @@
-# BRIEF V26: FINISHED LOTS, FOUND (canon 0.30.367)
+# BRIEF V26: FINISHED LOTS, FOUND (canon 0.30.373)
 
-For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155): the two weigh screens find their finished lots again, show every tote, void a wrong tote and reopen a lot with its totes on screen. Built on the worktree exactly as it stands after BRIEF V25, THE STATION IS THE TEST RECORD, is merged and pushed (the Scribe writes the tree hash into this line at the paste; if the hash on the disk differs, stop and say so). No migration unless the report shows one is needed (say why); the smoke pin stays 90 otherwise.
+For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155): the two weigh screens find their finished lots again, show every tote, void a wrong tote and reopen a lot with its totes on screen. Built on the worktree exactly as it stands LIVE after BRIEF V25, THE STATION IS THE TEST RECORD (worker `2143a798`, main `ba9c00a`, the app tree `f16eeacbfd987ca3`, 281 files, migrations 0001-0090; if the hash on the disk differs, stop and say so). No migration unless the report shows one is needed (say why); the smoke pin stays 90 otherwise.
 
 ## The sources (verbatim)
 
