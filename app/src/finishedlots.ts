@@ -9,8 +9,10 @@
  * no weigh screen. Each weigh screen now lists its farms' lots finished in the
  * farm's today or the 7 farm days before it; a lot opens on its own page with
  * every tote, live and voided; a live tote voids with a reason while the wet
- * weight is still open (the lot and its wet package drop by the tote's grams in
- * the same batch); and Reopen is the queue's Demote, the same code path, with
+ * weight is still open (the lot's total drops by the tote's grams, and on an
+ * in-transit or drying lot its wet package drops by the same grams, in one
+ * batch; a weighing lot's package is left for the finish); and Reopen is the
+ * queue's Demote, the same code path, with
  * the lot landing where the floor weighs. Void and Reopen take the Admin PIN,
  * the PIN that fronts the Data Queues' Demote; the list and the lot page are
  * open to the floor. Listing changes no HBN list.
@@ -395,8 +397,172 @@ const PACKAGE_BELOW_ZERO = "The lot's wet package holds less than this tote. Ask
 
 type WetPackage = { id: string; qty: number; item_kind: string; location: string };
 
-/** VOID A TOTE: soft (deleted_at, deleted_by), logged with the reason, and in the same batch the lot's weight_grams and
- * its minted wet package (SPR or WIP) drop by the tote's grams. Open while the lot weighs, rides or dries. */
+/** A change to a tote's grams. set is a new live weight. restore clears a void. The record layer has no restore route. */
+export type ToteGramsOp = { op: "void" } | { op: "restore" } | { op: "set"; grams: number };
+
+type ToteOnLot = {
+  tote_id: string;
+  weight_grams: number;
+  deleted_at: string | null;
+  lot_id: string;
+  status: string;
+  lot_grams: number;
+  space_name: string;
+  space_location: string;
+};
+
+/** ONE RULE FOR EVERY TOTE CHANGE (canon 0.30.375). Decides the statements for a void, a gram edit or a restore:
+ * the tote, the lot's recomputed total, and (in transit or drying only) the one live wet package, moved by the
+ * same grams. A weighing lot's package is not touched. Pass `into` to fold the statements into the caller's batch;
+ * otherwise this function runs the batch. */
+export async function changeToteGrams(
+  db: D1Database,
+  toteId: string,
+  op: ToteGramsOp,
+  actorId: string,
+  reason: string,
+  ts: string,
+  into?: D1PreparedStatement[]
+): Promise<void> {
+  const row = await db
+    .prepare(
+      `SELECT t.id AS tote_id, t.weight_grams, t.deleted_at, w.id AS lot_id, w.status, w.weight_grams AS lot_grams,
+              COALESCE(d.name, '') AS space_name, COALESCE(d.location_name, '') AS space_location
+       FROM wet_weights t
+       JOIN wet_weight_entries w ON w.id = t.wet_weight_entry_id AND w.deleted_at IS NULL
+       LEFT JOIN dry_spaces d ON d.id = w.actual_dryspc
+       WHERE t.id = ?`
+    )
+    .bind(toteId)
+    .first<ToteOnLot>();
+  if (!row) throw new HttpError(404, "Unknown tote.");
+  if (!TOTE_VOIDABLE_STATUSES.includes(row.status)) throw new HttpError(400, WET_CLOSED);
+  const current = Number(row.weight_grams);
+  if (op.op === "void" || op.op === "set") {
+    if (row.deleted_at) throw new HttpError(400, "That tote is already voided.");
+  } else if (row.deleted_at == null) {
+    throw new HttpError(400, "That tote is not voided.");
+  }
+  const delta = op.op === "void" ? -current : op.op === "restore" ? current : sumGrams([op.grams, -current]);
+  if (delta === 0) return;
+  const movesPackage = row.status === LOT_STATUS.in_transit || row.status === LOT_STATUS.drying;
+  let pkg: WetPackage | null = null;
+  if (movesPackage) {
+    const packages = await db
+      .prepare(
+        `SELECT id, qty, item_kind, location FROM local_inventory_items
+         WHERE wet_weight_entry_id = ? AND deleted_at IS NULL ORDER BY created_at ASC`
+      )
+      .bind(row.lot_id)
+      .all<WetPackage>();
+    const pkgs = packages.results ?? [];
+    if (pkgs.length > 1) throw new HttpError(400, PACKAGE_MANY);
+    pkg = pkgs[0] ?? null;
+    if (pkg) {
+      if (pkg.item_kind !== ITEM_KIND_SPR && pkg.item_kind !== ITEM_KIND_WIP) throw new HttpError(400, WET_CLOSED);
+      const child = await db
+        .prepare(`SELECT 1 AS one FROM local_inventory_items WHERE parent_item_id = ? AND deleted_at IS NULL LIMIT 1`)
+        .bind(pkg.id)
+        .first<{ one: number }>();
+      if (child) throw new HttpError(400, PACKAGE_HAS_CHILDREN);
+      const spaces = [barnLocationForSite(LANDING_FARM), row.space_name, row.space_location].filter((value) => value !== "");
+      if (!spaces.includes(pkg.location)) throw new HttpError(400, PACKAGE_LEFT);
+      if (sumGrams([Number(pkg.qty), delta]) < 0) throw new HttpError(400, PACKAGE_BELOW_ZERO);
+    }
+  }
+  const ledger = ledgerByTable("wet_weights");
+  if (!ledger) throw new HttpError(500, "The wet ledger is not wired.");
+  const liveBefore = await db
+    .prepare(`SELECT COALESCE(SUM(weight_grams), 0) AS g FROM wet_weights WHERE wet_weight_entry_id = ? AND deleted_at IS NULL`)
+    .bind(row.lot_id)
+    .first<{ g: number }>();
+  const lotAfter = sumGrams([Number(liveBefore?.g ?? 0), delta]);
+  const stmts: D1PreparedStatement[] = [];
+  if (op.op === "void") {
+    stmts.push(
+      db
+        .prepare(`UPDATE wet_weights SET deleted_at = ?, deleted_by = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
+        .bind(ts, actorId, ts, actorId, row.tote_id),
+      insertLog(db, {
+        record_table: "wet_weights",
+        record_id: row.tote_id,
+        field: "deleted_at",
+        old_value: null,
+        new_value: ts,
+        actor_person_id: actorId,
+        reason,
+        changed_at: ts,
+      })
+    );
+  } else if (op.op === "restore") {
+    stmts.push(
+      db
+        .prepare(`UPDATE wet_weights SET deleted_at = NULL, deleted_by = NULL, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NOT NULL`)
+        .bind(ts, actorId, row.tote_id),
+      insertLog(db, {
+        record_table: "wet_weights",
+        record_id: row.tote_id,
+        field: "deleted_at",
+        old_value: row.deleted_at,
+        new_value: null,
+        actor_person_id: actorId,
+        reason,
+        changed_at: ts,
+      })
+    );
+  } else {
+    stmts.push(
+      db
+        .prepare(`UPDATE wet_weights SET weight_grams = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
+        .bind(op.grams, ts, actorId, row.tote_id),
+      insertLog(db, {
+        record_table: "wet_weights",
+        record_id: row.tote_id,
+        field: "weight_grams",
+        old_value: String(current),
+        new_value: String(op.grams),
+        actor_person_id: actorId,
+        reason,
+        changed_at: ts,
+      })
+    );
+  }
+  stmts.push(
+    lotTotalRecomputeStmt(db, ledger, row.lot_id, actorId, ts),
+    insertLog(db, {
+      record_table: "wet_weight_entries",
+      record_id: row.lot_id,
+      field: "weight_grams",
+      old_value: String(row.lot_grams),
+      new_value: String(lotAfter),
+      actor_person_id: actorId,
+      reason,
+      changed_at: ts,
+    })
+  );
+  if (movesPackage && pkg) {
+    const qtyAfter = sumGrams([Number(pkg.qty), delta]);
+    stmts.push(
+      db
+        .prepare(`UPDATE local_inventory_items SET qty = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
+        .bind(qtyAfter, ts, actorId, pkg.id),
+      insertLog(db, {
+        record_table: "local_inventory_items",
+        record_id: pkg.id,
+        field: "qty",
+        old_value: String(pkg.qty),
+        new_value: String(qtyAfter),
+        actor_person_id: actorId,
+        reason,
+        changed_at: ts,
+      })
+    );
+  }
+  if (into) into.push(...stmts);
+  else await db.batch(stmts);
+}
+
+/** VOID A TOTE: the Admin PIN, then the one gram rule. Open while the lot weighs, rides or dries. */
 export async function voidFinishedTote(
   db: D1Database,
   screenKey: string,
@@ -409,90 +575,15 @@ export async function voidFinishedTote(
   await requireLotPin(db, form, "Voiding a tote needs the Admin PIN.");
   const reason = requireReason(textOrNull(form.get("reason")));
   const tote = await db
-    .prepare(`SELECT id, wet_weight_entry_id, weight_grams, deleted_at FROM wet_weights WHERE id = ?`)
+    .prepare(`SELECT id, wet_weight_entry_id, deleted_at FROM wet_weights WHERE id = ?`)
     .bind(toteId)
-    .first<{ id: string; wet_weight_entry_id: string; weight_grams: number; deleted_at: string | null }>();
+    .first<{ id: string; wet_weight_entry_id: string; deleted_at: string | null }>();
   if (!tote) throw new HttpError(404, "Unknown tote.");
   if (tote.deleted_at) throw new HttpError(400, "That tote is already voided.");
   const lot = await getScreenLot(db, screen, tote.wet_weight_entry_id);
   if (!lot) throw new HttpError(404, "That lot is not on this screen.");
-  if (!TOTE_VOIDABLE_STATUSES.includes(lot.status)) throw new HttpError(400, WET_CLOSED);
-  const grams = Number(tote.weight_grams);
-  const packages = await db
-    .prepare(
-      `SELECT id, qty, item_kind, location FROM local_inventory_items
-       WHERE wet_weight_entry_id = ? AND deleted_at IS NULL ORDER BY created_at ASC`
-    )
-    .bind(lot.id)
-    .all<WetPackage>();
-  const pkgs = packages.results ?? [];
-  if (pkgs.length > 1) throw new HttpError(400, PACKAGE_MANY);
-  const pkg = pkgs[0] ?? null;
-  if (pkg) {
-    if (pkg.item_kind !== ITEM_KIND_SPR && pkg.item_kind !== ITEM_KIND_WIP) throw new HttpError(400, WET_CLOSED);
-    const child = await db
-      .prepare(`SELECT 1 AS one FROM local_inventory_items WHERE parent_item_id = ? AND deleted_at IS NULL LIMIT 1`)
-      .bind(pkg.id)
-      .first<{ one: number }>();
-    if (child) throw new HttpError(400, PACKAGE_HAS_CHILDREN);
-    // Its space: the barn it was born in, the lot's own space (a hang or a room), or the silo's METRC location.
-    const spaces = [barnLocationForSite(LANDING_FARM), lot.space_name, lot.space_location].filter((value) => value !== "");
-    if (!spaces.includes(pkg.location)) throw new HttpError(400, PACKAGE_LEFT);
-    if (Number(pkg.qty) < grams) throw new HttpError(400, PACKAGE_BELOW_ZERO);
-  }
-  const ledger = ledgerByTable("wet_weights");
-  if (!ledger) throw new HttpError(500, "The wet ledger is not wired.");
   const ts = nowIso();
-  const liveBefore = await db
-    .prepare(`SELECT COALESCE(SUM(weight_grams), 0) AS g FROM wet_weights WHERE wet_weight_entry_id = ? AND deleted_at IS NULL`)
-    .bind(lot.id)
-    .first<{ g: number }>();
-  const lotAfter = sumGrams([Number(liveBefore?.g ?? 0), -grams]);
-  const stmts: D1PreparedStatement[] = [
-    db
-      .prepare(`UPDATE wet_weights SET deleted_at = ?, deleted_by = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
-      .bind(ts, actor.id, ts, actor.id, tote.id),
-    insertLog(db, {
-      record_table: "wet_weights",
-      record_id: tote.id,
-      field: "deleted_at",
-      old_value: null,
-      new_value: ts,
-      actor_person_id: actor.id,
-      reason,
-      changed_at: ts,
-    }),
-    lotTotalRecomputeStmt(db, ledger, lot.id, actor.id, ts),
-    insertLog(db, {
-      record_table: "wet_weight_entries",
-      record_id: lot.id,
-      field: "weight_grams",
-      old_value: String(lot.weight_grams),
-      new_value: String(lotAfter),
-      actor_person_id: actor.id,
-      reason,
-      changed_at: ts,
-    }),
-  ];
-  if (pkg) {
-    const qtyAfter = sumGrams([Number(pkg.qty), -grams]);
-    stmts.push(
-      db
-        .prepare(`UPDATE local_inventory_items SET qty = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
-        .bind(qtyAfter, ts, actor.id, pkg.id),
-      insertLog(db, {
-        record_table: "local_inventory_items",
-        record_id: pkg.id,
-        field: "qty",
-        old_value: String(pkg.qty),
-        new_value: String(qtyAfter),
-        actor_person_id: actor.id,
-        reason,
-        changed_at: ts,
-      })
-    );
-  }
-  await db.batch(stmts);
+  await changeToteGrams(db, tote.id, { op: "void" }, actor.id, reason, ts);
   return { redirect: `${lotPagePath(screen, lot.id)}?ok=tote_voided` };
 }
 

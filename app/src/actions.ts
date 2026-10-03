@@ -67,6 +67,7 @@ import {
   type TransitionName,
 } from "./config";
 import { CRYO_REFUSAL, CRYO_STATION_PATH, allocateIngredients, newPackagesSheet, type NewPackagesLine } from "./cryo";
+import { changeToteGrams } from "./finishedlots";
 import { buildXlsx } from "./xlsx";
 import {
   MOVEMENT_KIND,
@@ -4486,6 +4487,8 @@ export async function editRecord(
 
   for (const field of fields) {
     let next: unknown;
+    // BRIEF V27a: a tote's grams go through changeToteGrams, not this update.
+    if (table === "wet_weights" && field.name === "weight_grams") continue;
     if (field.input === "checkbox") {
       next = checkbox01(form, field.name);
     } else if (GRAM_FIELDS.has(field.name)) {
@@ -4658,15 +4661,25 @@ export async function editRecord(
       })
     );
   }
-  if (sets.length === 0) throw new HttpError(400, "No fields changed.");
-  sets.push("updated_at = ?", "updated_by = ?");
-  values.push(ts, actor.id, id);
-  const stmts: D1PreparedStatement[] = [
-    db
-      .prepare(`UPDATE ${table} SET ${sets.join(", ")} WHERE ${pk} = ? AND deleted_at IS NULL`)
-      .bind(...values),
-    ...logs,
-  ];
+  const gramsStmts: D1PreparedStatement[] = [];
+  if (table === "wet_weights" && form.has("weight_grams")) {
+    const nextGrams = parseGrams(form.get("weight_grams"), "Weight (g)");
+    if (normalize(existing.weight_grams, "weight_grams") !== normalize(nextGrams, "weight_grams")) {
+      await changeToteGrams(db, id, { op: "set", grams: nextGrams }, actor.id, reason, ts, gramsStmts);
+    }
+  }
+  if (sets.length === 0 && gramsStmts.length === 0) throw new HttpError(400, "No fields changed.");
+  const stmts: D1PreparedStatement[] = [];
+  if (sets.length > 0) {
+    sets.push("updated_at = ?", "updated_by = ?");
+    values.push(ts, actor.id, id);
+    stmts.push(
+      db
+        .prepare(`UPDATE ${table} SET ${sets.join(", ")} WHERE ${pk} = ? AND deleted_at IS NULL`)
+        .bind(...values),
+      ...logs
+    );
+  }
   if (table === "wet_weight_entries" && sets.some((x) => x.startsWith("harvest_batch_id"))) {
     const nextHbn = textOrNull(form.get("harvest_batch_id"));
     const oldHbn = existing.harvest_batch_id == null ? null : String(existing.harvest_batch_id);
@@ -4697,9 +4710,10 @@ export async function editRecord(
     }
   }
   const ledger = ledgerByTable(table);
-  if (ledger) {
+  if (ledger && gramsStmts.length === 0) {
     // The parent lot's total column is the live total of its non-voided ledger
-    // rows (owner rulings 2026-08-28 wet, 2026-08-31 dry).
+    // rows (owner rulings 2026-08-28 wet, 2026-08-31 dry). A gram change already
+    // recomputes inside changeToteGrams.
     stmts.push(lotTotalRecomputeStmt(db, ledger, String(existing[ledger.parentField]), actor.id, ts));
   }
   // Owner ruling 2026-09-06 (canon 0.28.6): "We will do a location change when
@@ -4799,6 +4813,7 @@ export async function editRecord(
       }
     }
   }
+  stmts.push(...gramsStmts);
   await db.batch(stmts);
   const back = textOrNull(form.get("back"));
   if (back && back.startsWith("/") && !back.startsWith("//")) {
@@ -4833,6 +4848,11 @@ async function planVoidRecord(
   if (!existing) throw new HttpError(404, "Record not found.");
   if (existing.deleted_at) throw new HttpError(400, "Record is already voided.");
   const ts = nowIso();
+  if (table === "wet_weights") {
+    const held: D1PreparedStatement[] = [];
+    await changeToteGrams(db, id, { op: "void" }, actor.id, reason, ts, held);
+    return held;
+  }
   if (table === "lookup_values") {
     const value = String(existing.value ?? "");
     const category = String(existing.category ?? "");

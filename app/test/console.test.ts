@@ -433,7 +433,10 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(metric("PNN", "estimated_bud").value).toBe(`${formatLbs(yields.farms.PNN.estimatedBudGrams)} lb`);
     expect(metric("PNN", "estimated_bud").sub).toBe("at 83.3% BTR");
     expect(metric("ARL", "assumed_dry").sub).toBe("no dry-down yet");
-    expect(metric("ARL", "estimated_bud").sub).toBe("no BTR yet");
+    // ARL has no trimmed lot, so it borrows PNN's rate. The grams stay 0: no bud yet and no dry-down to project.
+    expect(yields.farms.ARL.btrSource).toBe("season");
+    expect(yields.farms.ARL.btrRate).toBeCloseTo(1000 / 1200, 9);
+    expect(metric("ARL", "estimated_bud").sub).toBe("at 83.3% BTR, the season's (no lot trimmed here yet)");
     expect(metric("PNS", "assumed_dry")).toEqual({ key: "assumed_dry", label: "Assumed Dry", value: "0.00 lb", sub: "no dry-down yet" });
     expect(metric("Total", "assumed_dry").sub).toBe("the three farms");
     expect(metric("Total", "estimated_bud").sub).toBe("the three farms");
@@ -457,9 +460,80 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(es).toContain("al 23.0% de seco");
     expect(es).toContain("Cogollo estimado");
     expect(es).toContain("al 83.3% BTR");
+    expect(es).toContain("al 83.3% BTR, el de la temporada (ningun lote podado aqui aun)");
     expect(es).toContain("sin porcentaje de seco aun");
-    expect(es).toContain("sin BTR aun");
     expect(es).toContain("las tres granjas");
+  });
+
+  it("BRIEF V27: a farm with no trimmed lot borrows the season's pooled BTR, weighted, not the mean of the farms", () => {
+    const pkg = (type: string, grams: number) => ({ type_code: type, weight_grams: grams });
+    const lot = (
+      farm: string,
+      status: string,
+      wet: number,
+      dry: number | null,
+      packages: { type_code: string; weight_grams: number }[],
+      freezer = false
+    ): YieldLot => ({ farm, status, wet_grams: wet, dry_grams: dry, freezer, packages });
+    // PNN trimmed 100/100 = 100%. PNS trimmed 100/900 = 11.1%. The mean of the percents is 55.6%. The pool is 200/1000 = 20%.
+    const lots: YieldLot[] = [
+      lot("PNN", "trimmed", 1000, 400, [pkg("BUD", 80), pkg("SMALLS", 20), pkg("TRIM", 0)]),
+      lot("PNS", "trimmed", 5000, 2000, [pkg("BUD", 100), pkg("TRIM", 800)]),
+      lot("ARL", "unloaded", 8000, 2000, [pkg("BUD", 50), pkg("TRIM", 10)]),
+      lot("ARL", "drying", 4000, null, []),
+      lot("PNN", "frozen", 90000, 90000, [pkg("BUD", 80000)]),
+      lot("PNS", "drying", 70000, null, [pkg("BUD", 60000)], true),
+    ];
+    // ARL dry-down is its own unloaded lot: 2000/8000 = 0.25. Projected dry of the drying lot: 0.25 * 4000 = 1000. Remainder: 2000 - 60 = 1940.
+    const season = 200 / 1000;
+    const mean = (1 + 100 / 900) / 2;
+    expect(season).not.toBeCloseTo(mean, 2);
+    const yields = consoleYields(lots);
+    expect(yields.farms.PNN.btr).toBeCloseTo(1, 9);
+    expect(yields.farms.PNN.btrSource).toBe("own");
+    expect(yields.farms.PNN.btrRate).toBeCloseTo(1, 9);
+    expect(yields.farms.PNS.btrSource).toBe("own");
+    expect(yields.farms.PNS.btrRate).toBeCloseTo(100 / 900, 9);
+    expect(yields.farms.ARL.btr).toBeNull();
+    expect(yields.farms.ARL.btrSource).toBe("season");
+    expect(yields.farms.ARL.btrRate).toBeCloseTo(season, 9);
+    expect(yields.farms.ARL.btrRate).not.toBeCloseTo(mean, 2);
+    const arlBud = 50 + season * (1000 + 1940);
+    expect(yields.farms.ARL.estimatedBudGrams).toBeCloseTo(arlBud, 6);
+    expect(yields.farms.ARL.assumedDryGrams).toBeCloseTo(3000, 6);
+    expect(yields.total.estimatedBudGrams).toBeCloseTo(
+      yields.farms.PNN.estimatedBudGrams + yields.farms.ARL.estimatedBudGrams + yields.farms.PNS.estimatedBudGrams,
+      6
+    );
+    const boxes = consoleBoxes({ ...input, yieldLots: lots });
+    const sub = (farm: string) => boxes.find((b) => b.farm === farm)!.metrics.find((m) => m.key === "estimated_bud")!.sub;
+    expect(sub("PNN")).toBe("at 100.0% BTR");
+    expect(sub("PNS")).toBe("at 11.1% BTR");
+    expect(sub("ARL")).toBe("at 20.0% BTR, the season's (no lot trimmed here yet)");
+    expect(sub("Total")).toBe("the three farms");
+    const es = consoleBoxes({ ...input, yieldLots: lots }, "es");
+    expect(es.find((b) => b.farm === "ARL")!.metrics.find((m) => m.key === "estimated_bud")!.sub).toBe(
+      "al 20.0% BTR, el de la temporada (ningun lote podado aqui aun)"
+    );
+    // No trimmed lot anywhere: the line stays "no BTR yet" and Estimated Bud is the bud already weighed.
+    const none = consoleYields([lot("ARL", "unloaded", 5000, 1000, [pkg("BUD", 400)]), lot("PNN", "drying", 2000, null, [])]);
+    expect(none.farms.ARL.btr).toBeNull();
+    expect(none.farms.ARL.btrSource).toBe("none");
+    expect(none.farms.ARL.btrRate).toBeNull();
+    expect(none.farms.ARL.estimatedBudGrams).toBe(400);
+    expect(none.farms.PNN.btrSource).toBe("none");
+    expect(none.farms.PNN.estimatedBudGrams).toBe(0);
+    expect(consoleBoxes({ ...input, yieldLots: [lot("ARL", "drying", 1000, null, [])] }).find((b) => b.farm === "ARL")!.metrics.find((m) => m.key === "estimated_bud")!.sub).toBe(
+      "no BTR yet"
+    );
+    // A trimmed lot with no trim grams ends the borrow and does not lend a rate.
+    const emptyTrim = consoleYields([
+      lot("PNN", "trimmed", 1000, 400, []),
+      lot("ARL", "unloaded", 4000, 1000, [pkg("BUD", 80)]),
+    ]);
+    expect(emptyTrim.farms.PNN.btrSource).toBe("none");
+    expect(emptyTrim.farms.ARL.btrSource).toBe("none");
+    expect(emptyTrim.farms.ARL.estimatedBudGrams).toBe(80);
   });
 
   it("BRIEF V22: the loader reads the harvest year, and a picked day does not move the figures", async () => {

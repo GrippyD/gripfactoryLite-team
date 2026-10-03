@@ -3498,8 +3498,7 @@ async function run() {
       "package files still pending must not show the empty wet list line"
     );
 
-    // A reasoned weight edit after the mark does not re-pend the file. It
-    // shows under Changed after upload. Reweigh the silo lot's 234.5 read.
+    // BRIEF V27a: this lot is unloaded, so the pencil on its tote refuses. The marked file stays marked and nothing lands under Changed after upload.
     const wetLotAfter = await text(`/station/wet_weight?lot=${wetLotId}`);
     const wetRow = wetLotAfter.body.match(
       /<td>235<\/td>[^]*?href="\/record\/wet_weights\/([^/"]+)\/edit"/
@@ -3509,22 +3508,18 @@ async function run() {
       method: "POST",
       body: form({ weight_grams: "240", reason: "smoke metrc reweigh" }),
     });
-    if (rePend.status !== 303) fail("changed after upload", `status ${rePend.status}`);
+    const rePendBody = await rePend.text();
+    assert(
+      rePend.status === 400 && rePendBody.includes("The wet weight of this lot is closed (unloaded, trimmed or frozen). Ask the Scribe for a repair."),
+      `an unloaded lot's tote pencil must refuse, got ${rePend.status} ${rePendBody.slice(0, 240)}`
+    );
     const uploadsAfterEdit = await text("/admin/uploads");
     assert(
       !uploadsAfterEdit.body.includes(`wet_weights/${wetLotId}.csv`),
-      "an edit after the mark must not re-pend the harvest file"
+      "a refused edit must not re-pend the harvest file"
     );
-    assert(uploadsAfterEdit.body.includes("Changed after upload"), "the edit must show under Changed after upload");
-    assert(uploadsAfterEdit.body.includes(`${pickedHbn}(1).csv`), "the changed row must name the load's file");
-    assert(uploadsAfterEdit.body.includes("1,240"), "the changed row must carry the grams now");
-    const ackChange = await req(`/admin/uploads/wet_weights/${wetLotId}/acknowledge`, {
-      method: "POST",
-      body: form({ reason: "smoke acknowledged the reweigh" }),
-    });
-    if (ackChange.status !== 303) fail("acknowledge change", `status ${ackChange.status} ${await ackChange.text()}`);
-    const afterAck = await text("/admin/uploads");
-    assert(!afterAck.body.includes("data-changed-upload"), "acknowledge must clear the changed row");
+    assert(!uploadsAfterEdit.body.includes("smoke metrc reweigh"), "a refused edit must not land a changed row");
+    assert(wetLotAfter.body.includes("<td>235</td>"), "the refused edit must leave the 235 g tote");
 
     // Acquire HBN recall: mint a weightless batch, recall it (void + prefill),
     // remint one serial past the recalled gap (ADR-6).
@@ -5368,6 +5363,26 @@ async function run() {
       assert(drySub && !/\sg$/.test(drySub[1]), `${farm} Assumed Dry must not carry a grams line, got ${drySub && drySub[1]}`);
       assert(budSub && !/\sg$/.test(budSub[1]), `${farm} Estimated Bud must not carry a grams line, got ${budSub && budSub[1]}`);
     }
+    // BRIEF V27: with trimmed lots on one farm only, the other two name that farm's rate as the season's.
+    const budSubOf = (farm) => {
+      const start = consolePage.body.indexOf(`data-hc-farm="${farm}"`);
+      const next = farm === "PNN" ? "ARL" : farm === "ARL" ? "PNS" : "Total";
+      const end = consolePage.body.indexOf(`data-hc-farm="${next}"`);
+      const box = consolePage.body.slice(start, end);
+      return (box.match(/data-hc="estimated_bud">[^<]+<\/span><span class="hc-sub muted">([^<]*)<\/span>/) || [])[1] || "";
+    };
+    const farmSubs = ["PNN", "ARL", "PNS"].map((farm) => `${farm}=${budSubOf(farm)}`);
+    const ownFarms = ["PNN", "ARL", "PNS"].filter((farm) => /^at \d+\.\d% BTR$/.test(budSubOf(farm)));
+    const seasonFarms = ["PNN", "ARL", "PNS"].filter((farm) => budSubOf(farm).includes("the season's (no lot trimmed here yet)"));
+    assert(ownFarms.length === 1, `one farm keeps its own BTR, got ${farmSubs.join("; ")}`);
+    assert(seasonFarms.length === 2, `the other farms borrow the season's BTR, got ${farmSubs.join("; ")}`);
+    const ownPct = (budSubOf(ownFarms[0]).match(/at ([\d.]+)% BTR/) || [])[1];
+    for (const farm of seasonFarms) {
+      assert(
+        budSubOf(farm) === `at ${ownPct}% BTR, the season's (no lot trimmed here yet)`,
+        `${farm} must name the season rate ${ownPct}, got ${budSubOf(farm)}`
+      );
+    }
     assert(totalBoxYear.includes('data-hc-metric="assumed_dry"') && totalBoxYear.indexOf('data-hc-metric="weight_harvested_year"') < totalBoxYear.indexOf('data-hc-metric="assumed_dry"'), "on Total the two figures follow the year pane");
     // BRIEF V23: Dry Equiv. Wt of Fresh Frozen and Estimated Dry Total follow Estimated Bud, on Total only.
     const totalBoxV23 = consolePage.body.slice(consolePage.body.indexOf('data-hc-farm="Total"'), consolePage.body.indexOf('data-hc-section="drying"'));
@@ -5400,8 +5415,8 @@ async function run() {
     assert(consolePage.body.includes("today so far; the panes below read today up to now") && !consolePage.body.includes("data-hc-day-reset"), "the default day reads as today so far with no reset link");
     const trimCardDay = dayBeforeSmoke(farmToday);
     const pickedDay = dayBeforeSmoke(trimCardDay);
-    // The year's live totes at this line, whole grams: 1000, 240 (the 235 reweighed), 200, 111, 1500, 777, 1132. The 90 g guard lot was voided.
-    const wetYearGrams = 1000 + 240 + 200 + 111 + 1500 + 777 + 1132;
+    // The year's live totes at this line, whole grams: 1000, 235 (the unloaded lot's tote, the pencil now refused), 200, 111, 1500, 777, 1132. The 90 g guard lot was voided.
+    const wetYearGrams = 1000 + 235 + 200 + 111 + 1500 + 777 + 1132;
     const yearGramMatches = [...consolePage.body.matchAll(/data-hc="weight_harvested_year">[^<]*<\/span><span class="hc-sub muted">([^<]+)<\/span>/g)];
     assert(yearGramMatches.length === 4, `every box must show the year's grams, got ${yearGramMatches.length}`);
     const yearGrams = yearGramMatches.map((m) => Number(String(m[1]).replace(/[^0-9]/g, "")));
@@ -9281,12 +9296,39 @@ async function run() {
     assert(pnnListPage.body.includes(`href="${pnnHref}">${foundPnnSerial}</a>`), `Finished lots must list ${foundPnnSerial}`);
     const pnnPage = await text(pnnHref);
     assert(pnnPage.body.includes("<dd data-lot-live-count>2</dd>") && pnnPage.body.includes('data-lot-live-grams="500"'), "the PNN lot page must count two totes, 500 g");
-    const pnnVoidHref = (pnnPage.body.match(/action="(\/station\/wet_weight\/finished\/totes\/[^"]+\/void)"/) || [])[1];
+    // BRIEF V27a: the pencil on a drying lot lowers the lot and its package by the same grams, then the weight goes back so the void below still starts at 500 g.
+    const qtyMove = (body, reason) => {
+      const rows = [...body.matchAll(/<tr>([\s\S]*?)<\/tr>/g)];
+      const hit = rows.find((row) => row[1].includes("<td>local_inventory_items</td>") && row[1].includes("<td>qty</td>") && row[1].includes(`<td>${reason}</td>`));
+      if (!hit) return null;
+      const cells = [...hit[1].matchAll(/<td>([^<]*)<\/td>/g)].map((cell) => cell[1]);
+      return { old: cells[4], next: cells[5] };
+    };
+    const toteByGrams = (body, grams) => {
+      const rows = [...body.matchAll(/<tr data-lot-tote="([^"]+)">([\s\S]*?)<\/tr>/g)];
+      const hit = rows.find((row) => row[2].includes(`<td>${grams}</td>`));
+      return hit ? hit[1] : "";
+    };
+    const heavy = toteByGrams(pnnPage.body, "300");
+    assert(heavy, "the 300 g tote must be on the lot page");
+    const lowered = await req(`/record/wet_weights/${heavy}/edit`, { method: "POST", body: form({ weight_grams: "250", reason: "smoke: pencil lower", back: pnnHref }) });
+    assert(lowered.status === 303, `the pencil lower expected 303 got ${lowered.status} ${await lowered.text()}`);
+    const loweredPage = await text(pnnHref);
+    assert(loweredPage.body.includes('data-lot-live-grams="450"'), "the pencil must drop the drying lot to 450 g");
+    const lowerMove = qtyMove((await text("/log")).body, "smoke: pencil lower");
+    assert(lowerMove && lowerMove.old === "500" && lowerMove.next === "450", `the pencil must drop the package from 500 g to 450 g, got ${lowerMove && lowerMove.old} to ${lowerMove && lowerMove.next}`);
+    const raised = await req(`/record/wet_weights/${heavy}/edit`, { method: "POST", body: form({ weight_grams: "300", reason: "smoke: pencil raise", back: pnnHref }) });
+    assert(raised.status === 303, `the pencil raise expected 303 got ${raised.status} ${await raised.text()}`);
+    const raisedPage = await text(pnnHref);
+    assert(raisedPage.body.includes('data-lot-live-grams="500"'), "raising the tote must put the drying lot back to 500 g");
+    const pnnVoidHref = (raisedPage.body.match(/action="(\/station\/wet_weight\/finished\/totes\/[^"]+\/void)"/) || [])[1];
     assert(pnnVoidHref, "the PNN lot's totes must carry Void");
     const pnnVoid = await req(pnnVoidHref, { method: "POST", body: form({ reason: "smoke: found PNN void", pin: ADMIN_PIN }) });
     assert(pnnVoid.status === 303, `the PNN void expected 303 got ${pnnVoid.status} ${await pnnVoid.text()}`);
     const pnnVoided = await text(pnnHref);
     assert(pnnVoided.body.includes("<dd data-lot-live-count>1</dd>") && pnnVoided.body.includes('data-lot-live-grams="200"'), "the PNN void must drop the lot to 200 g");
+    const dryingVoidMove = qtyMove((await text("/log")).body, "smoke: found PNN void");
+    assert(dryingVoidMove && dryingVoidMove.old === "500" && dryingVoidMove.next === "200", `the drying void must drop the package from 500 g to 200 g, got ${dryingVoidMove && dryingVoidMove.old} to ${dryingVoidMove && dryingVoidMove.next}`);
     assert((await text("/log")).body.includes("smoke: found PNN void"), "the change log must carry the PNN void's reason");
     const pnnLive = liveToteIds(pnnVoided.body);
     const pnnReopen = await req(`${pnnHref}/reopen`, { method: "POST", body: form({ pin: ADMIN_PIN }) });
@@ -9300,8 +9342,21 @@ async function run() {
     const pnnWeighing = await text(pnnHref);
     assert(pnnWeighing.body.includes("<dd data-lot-live-count>2</dd>") && pnnWeighing.body.includes('data-lot-live-grams="350"'), "the new tote must count on the same PNN lot");
     assert(pnnWeighing.body.includes("data-lot-weighing"), "a weighing lot's page must send the floor to the weigh screen");
+    // BRIEF V27a: voiding a tote while the lot is weighing again leaves the package where the Demote left it.
+    const weighingTote = toteByGrams(pnnWeighing.body, "200");
+    assert(weighingTote, "the 200 g tote must still be live after the reopen");
+    const weighingVoid = await req(`/record/wet_weights/${weighingTote}/void`, { method: "POST", body: form({ reason: "smoke: weighing void", back: pnnHref }) });
+    assert(weighingVoid.status === 303, `the weighing void expected 303 got ${weighingVoid.status} ${await weighingVoid.text()}`);
+    const afterWeighingVoid = await text(pnnHref);
+    assert(afterWeighingVoid.body.includes('data-lot-live-grams="150"'), "voiding the 200 g tote while weighing must leave the 150 g tote");
+    assert(qtyMove((await text("/log")).body, "smoke: weighing void") == null, "a weighing void must not move the package");
     const pnnRefinish = await req(`/station/wet_weight/lot/${foundPnnLot}/finish`, { method: "POST", body: form({}) });
     assert(pnnRefinish.status === 303, `the PNN re-finish expected 303 got ${pnnRefinish.status} ${await pnnRefinish.text()}`);
+    const refinished = await text(pnnHref);
+    assert(refinished.body.includes('data-lot-live-grams="150"'), "the re-finish must keep the live total at 150 g");
+    const finishQty = [...(await text("/log")).body.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].find((row) => row[1].includes("<td>qty</td>") && row[1].includes("<td>inv_minted</td>"));
+    const finishQtyNext = finishQty ? ([...finishQty[1].matchAll(/<td>([^<]*)<\/td>/g)].map((cell) => cell[1])[5] || "") : "";
+    assert(finishQtyNext === "150", `the re-finish must set the package to the lot's live total, got ${finishQtyNext}`);
 
     process.stdout.write("SMOKE PASS\n");
   } finally {
