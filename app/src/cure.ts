@@ -13,6 +13,7 @@ import { HttpError } from "./audit";
 import { CONFIG_KEYS, CSA_LOT_CAP_DEFAULT, CSB_LOT_CAP_DEFAULT, formatGrams, parseLotCap, SCHEDULE_STATUS, shortLotId } from "./config";
 import { formatLbs } from "./compliance";
 import { getConfigValue } from "./db";
+import { etWallClock } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
 import { listEnvironmentFlags } from "./environment";
 import { esc } from "./ui";
@@ -45,6 +46,7 @@ export type CureReading = {
   temperatureF: number;
   humidityPct: number | null;
   readAt: string;
+  source?: string;
 };
 
 export type CurePanesData = {
@@ -146,7 +148,23 @@ export function conditionsLine(reading: CureReading | null, nowIso: string, loca
         ? t(locale, "1 hour ago")
         : t(locale, "{n} hours ago").replace("{n}", String(Math.floor(min / 60)));
   const humid = reading.humidityPct == null ? "" : ` · ${numWord(reading.humidityPct)} %`;
-  return { text: `${numWord(reading.temperatureF)} F${humid} · ${ago}`, stale };
+  const source = (reading.source ?? "").trim();
+  const tagged = source.toLowerCase() === "silo-ops" ? ` · ${t(locale, "Silo Ops")}` : "";
+  return { text: `${numWord(reading.temperatureF)} F${humid} · ${ago}${tagged}`, stale };
+}
+
+/** Hover words: the reading's Eastern wall clock and its stored source. */
+export function readingTitle(reading: CureReading): string {
+  const when = etWallClock(reading.readAt);
+  const source = (reading.source ?? "").trim();
+  if (when && source) return `${when} ET · ${source}`;
+  if (when) return `${when} ET`;
+  return source;
+}
+
+/** A stored test row never shows on the panes (case-blind, trimmed). */
+export function isTestSensorSource(source: string | null | undefined): boolean {
+  return String(source ?? "").trim().toLowerCase() === "test";
 }
 
 export function formatCureClock(ms: number): string {
@@ -239,16 +257,18 @@ function matchesLot(row: TestSql, hbn: string | null, tag: string | null): boole
 export async function latestReading(db: D1Database, room: string): Promise<CureReading | null> {
   const row = await db
     .prepare(
-      `SELECT temperature_f, humidity_pct, read_at FROM sensor_readings
-       WHERE room = ? ORDER BY read_at DESC LIMIT 1`
+      `SELECT temperature_f, humidity_pct, read_at, source FROM sensor_readings
+       WHERE room = ? AND lower(trim(coalesce(source, ''))) <> 'test'
+       ORDER BY read_at DESC LIMIT 1`
     )
     .bind(room)
-    .first<{ temperature_f: number; humidity_pct: number | null; read_at: string }>();
+    .first<{ temperature_f: number; humidity_pct: number | null; read_at: string; source: string | null }>();
   if (!row) return null;
   return {
     temperatureF: Number(row.temperature_f),
     humidityPct: row.humidity_pct == null ? null : Number(row.humidity_pct),
     readAt: row.read_at,
+    source: String(row.source ?? "").trim(),
   };
 }
 
@@ -303,7 +323,9 @@ function oneReading(value: unknown, rooms: readonly string[], index: string): Se
   };
 }
 
-/** Store one reading or an array of up to 100. Refuses the whole post in words when any row is bad. */
+/** Store one reading or an array of up to 100. Refuses the whole post in words when any row is bad.
+ * Silo Ops posts its Storage readings for CSA and CSB here with source "silo-ops", at most once a
+ * minute per room, read_at the unit's own sample time in UTC. */
 export async function storeSensorReadings(db: D1Database, body: unknown, nowIso: string): Promise<number> {
   if (body == null || (typeof body !== "object")) throw new HttpError(400, "The body must be a reading or a list of readings.");
   const list = Array.isArray(body) ? body : [body];
@@ -374,19 +396,22 @@ function paneCard(name: CurePaneName, lots: CureLot[], cap: number, reading: Cur
   const fill = cureShadeFill(n, cap);
   // THE FULLNESS LINE FOLDS THE LOTS (owner, 2026-10-02: "Collapse all the lots into the text containing the
   // fullness" "% full - n Lots"): one summary line; open, the lots as they were, each still folding on its number.
+  // THE COUNT SITS ON THE BAR (canon 0.30.378): the details live inside the shade, the summary its first child.
   const count = tFill(locale, n === 1 ? "{pct}% full - 1 Lot" : "{pct}% full - {n} Lots", { n: String(n), pct: String(pctShown) });
   const capLine = tFill(locale, "{n} of {cap} lots, {pct}% full", { n: String(n), cap: String(cap), pct: String(pctShown) });
   const body = lots.length
     ? lots.map((lot) => lotRow(lot, nowIso, locale)).join("")
     : `<p class="muted" data-cure-empty>${esc(t(locale, "No lots."))}</p>`;
-  return `<div class="inv-gauge cure-pane" data-cure-pane="${name}">
-      <div class="cure-shade" style="height:${fill}%" data-cure-shade data-cure-fill="${fill}"></div>
+  const hover = reading ? ` title="${esc(readingTitle(reading))}"` : "";
+  return `<div class="inv-gauge cure-pane" data-cure-pane="${name}"${hover}>
       <div class="inv-gauge-name">${name}</div>
       <p class="cure-conditions${cond.stale || alert ? " cure-stale" : ""}" data-cure-conditions>${esc(text)}</p>
+      <div class="cure-shade" style="height:${fill}%" data-cure-shade data-cure-fill="${fill}">
       <details class="cure-lots" data-cure-lots>
         <summary class="cure-count${over ? " cure-over" : ""}" data-cure-count="${n}" data-cure-cap="${cap}" data-cure-pct="${pctShown}" title="${esc(capLine)}">${esc(count)}</summary>
         ${body}
       </details>
+      </div>
     </div>`;
 }
 
@@ -411,6 +436,34 @@ export function cureClockScript(): string {
   }
   tick();
   setInterval(tick, 1000);
+  function fillVar() {
+    document.querySelectorAll("[data-cure-shade]").forEach(function (s) {
+      s.style.setProperty("--cure-fill", s.getAttribute("data-cure-fill") + "%");
+    });
+  }
+  function padShade(pane) {
+    var shade = pane.querySelector("[data-cure-shade]");
+    var lots = pane.querySelector("[data-cure-lots]");
+    if (!shade) return;
+    if (lots && lots.open) {
+      shade.style.paddingTop = "";
+      return;
+    }
+    var head = 0;
+    pane.querySelectorAll(":scope > .inv-gauge-name, :scope > .cure-conditions").forEach(function (el) {
+      head += el.offsetHeight;
+    });
+    var tile = pane.clientHeight;
+    var fill = Number(shade.getAttribute("data-cure-fill")) / 100;
+    if (!isFinite(fill)) fill = 0;
+    var gap = tile * (1 - Math.min(fill, 1));
+    var pad = Math.max(0, head - gap);
+    shade.style.paddingTop = pad ? pad + "px" : "";
+  }
+  function padAll() {
+    document.querySelectorAll("[data-cure-pane]").forEach(padShade);
+  }
+  fillVar();
   // A pane's fold stays as this tablet left it, across a reload (localStorage per pane, gf_cure_open:).
   document.querySelectorAll("[data-cure-lots]").forEach(function (d) {
     var pane = d.closest("[data-cure-pane]");
@@ -418,8 +471,11 @@ export function cureClockScript(): string {
     try { if (localStorage.getItem(key) === "1") d.open = true; } catch (e) {}
     d.addEventListener("toggle", function () {
       try { localStorage.setItem(key, d.open ? "1" : "0"); } catch (e) {}
+      var p = d.closest("[data-cure-pane]");
+      if (p) padShade(p);
     });
   });
+  padAll();
 })();
 </script>`;
 }

@@ -4,13 +4,17 @@ import {
   csaInTime,
   cureMembership,
   curePanes,
+  isTestSensorSource,
+  latestReading,
   listCurePanes,
   moistureText,
   parseCureRooms,
   pickMoisture,
+  readingTitle,
   storeSensorReadings,
   type CurePanesData,
 } from "../src/cure";
+import { migratedDb } from "./migrated";
 
 const NOW = "2026-09-21T16:00:00.000Z";
 
@@ -181,7 +185,7 @@ describe("THE CURE PANES (canon 0.30.164)", () => {
     expect(row).not.toContain("<details open");
     // THE PANES RIDE THE STRIP (owner, 2026-09-22): two inv-gauge tiles and the clock script, no wrapper of their own.
     expect(html).not.toContain("cure-panes");
-    expect(html.startsWith('<div class="inv-gauge cure-pane" data-cure-pane="CSA">')).toBe(true);
+    expect(html.startsWith('<div class="inv-gauge cure-pane" data-cure-pane="CSA" title="2026-09-21 11:56 ET">')).toBe(true);
     expect(html.indexOf('data-cure-pane="CSA"')).toBeLessThan(html.indexOf('data-cure-pane="CSB"'));
     expect(html.indexOf('data-cure-pane="CSB"')).toBeLessThan(html.indexOf("<script>"));
     const es = curePanes({ ...data, readings: { CSA: null, CSB: null } }, "es");
@@ -201,6 +205,7 @@ describe("THE CURE PANES (canon 0.30.164)", () => {
     );
     expect(stored).toBe(1);
     expect(inserts[0]?.[1]).toBe("CSA");
+    expect(inserts[0]?.[4]).toBe("silo-ops");
     await expect(storeSensorReadings(db as unknown as D1Database, { room: "NOPE", temperature_f: 70, humidity_pct: 40, read_at: NOW }, NOW)).rejects.toThrow(
       /room/
     );
@@ -236,5 +241,63 @@ describe("THE CURE PANES (canon 0.30.164)", () => {
       "en"
     );
     expect(html).toContain("cure-stale");
+    const silo = conditionsLine({ temperatureF: 68.2, humidityPct: 58, readAt: "2026-09-21T15:56:00.000Z", source: "silo-ops" }, NOW, "en");
+    expect(silo.text.endsWith(" · Silo Ops")).toBe(true);
+    expect(silo.text).toContain("68.2 F · 58 % · 4 min ago · Silo Ops");
+    expect(conditionsLine({ temperatureF: 68.2, humidityPct: 58, readAt: "2026-09-21T15:56:00.000Z", source: "SILO-OPS" }, NOW, "es").text.endsWith(" · Silo Ops")).toBe(true);
+    expect(conditionsLine({ temperatureF: 68.2, humidityPct: 58, readAt: "2026-09-21T15:56:00.000Z", source: "sensorpush" }, NOW, "en").text.endsWith(" · Silo Ops")).toBe(false);
+    expect(readingTitle({ temperatureF: 68.2, humidityPct: 58, readAt: "2026-09-21T15:56:00.000Z", source: "silo-ops" })).toBe("2026-09-21 11:56 ET · silo-ops");
+    const titled = curePanes(
+      {
+        csa: [],
+        csb: [],
+        readings: { CSA: { temperatureF: 68.2, humidityPct: 58, readAt: "2026-09-21T15:56:00.000Z", source: "silo-ops" }, CSB: null },
+        nowIso: NOW,
+        caps: { CSA: 36, CSB: 8 },
+      } satisfies CurePanesData,
+      "en"
+    );
+    expect(titled).toContain('data-cure-pane="CSA" title="2026-09-21 11:56 ET · silo-ops"');
+    expect(titled).toContain("68.2 F · 58 % · 4 min ago · Silo Ops");
+    expect(isTestSensorSource("test")).toBe(true);
+    expect(isTestSensorSource(" TEST ")).toBe(true);
+    expect(isTestSensorSource("silo-ops")).toBe(false);
+  });
+
+  it("passes over a test reading and shows a silo-ops row, newer or older", async () => {
+    const m = await migratedDb();
+    const insert = (id: string, room: string, source: string, readAt: string, temp = 68.2, humid: number | null = 58) => {
+      m.run(
+        `INSERT INTO sensor_readings (id, room, temperature_f, humidity_pct, source, read_at, received_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        id,
+        room,
+        temp,
+        humid,
+        source,
+        readAt,
+        readAt
+      );
+    };
+    insert("r-test", "CSA", "test", "2026-09-22T02:31:00.000Z");
+    expect(await latestReading(m.db as unknown as D1Database, "CSA")).toBeNull();
+    const onlyTest = await listCurePanes(m.db as unknown as D1Database, NOW);
+    expect(onlyTest.readings.CSA).toBeNull();
+    expect(curePanes(onlyTest, "en")).toContain("no sensor yet");
+    expect(m.get(`SELECT source FROM sensor_readings WHERE id = 'r-test'`)?.source).toBe("test");
+    insert("r-silo-old", "CSA", "silo-ops", "2026-09-21T12:00:00.000Z", 70, 40);
+    const older = await latestReading(m.db as unknown as D1Database, "CSA");
+    expect(older).toMatchObject({ temperatureF: 70, humidityPct: 40, source: "silo-ops", readAt: "2026-09-21T12:00:00.000Z" });
+    insert("r-silo-new", "CSA", " SILO-OPS ", "2026-09-22T03:00:00.000Z", 72.4, 55);
+    const newer = await latestReading(m.db as unknown as D1Database, "CSA");
+    expect(newer).toMatchObject({ temperatureF: 72.4, humidityPct: 55, source: "SILO-OPS", readAt: "2026-09-22T03:00:00.000Z" });
+    insert("r-test-newer", "CSA", "TEST", "2026-09-22T04:00:00.000Z", 99, 99);
+    const stillSilo = await latestReading(m.db as unknown as D1Database, "CSA");
+    expect(stillSilo?.readAt).toBe("2026-09-22T03:00:00.000Z");
+    expect(stillSilo?.source).toBe("SILO-OPS");
+    const shown = await listCurePanes(m.db as unknown as D1Database, "2026-09-22T03:10:00.000Z");
+    const html = curePanes(shown, "en");
+    expect(html).toContain("72.4 F · 55 % · 10 min ago · Silo Ops");
+    expect(html).toContain('title="2026-09-21 23:00 ET · SILO-OPS"');
   });
 });
