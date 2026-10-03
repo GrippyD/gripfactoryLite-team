@@ -2110,7 +2110,7 @@ async function run() {
     const csbUnloaded = cureStats(consoleUnloaded.body, "CSB");
     assert(csaUnloaded.pane.includes("data-cure-shade") && csbUnloaded.pane.includes("data-cure-shade"), "each cure pane must carry a shade");
     assert(csaUnloaded.n === csaUnloaded.lots && csaUnloaded.cap === 36 && csaUnloaded.pct === Math.round((csaUnloaded.n / 36) * 100) && csaUnloaded.opacity === cureShadeOf(csaUnloaded.n, 36), `CSA must count its lots against 36, got ${csaUnloaded.n} of ${csaUnloaded.cap} at ${csaUnloaded.pct}% fill ${csaUnloaded.opacity}`);
-    assert(csaUnloaded.pane.includes(`>${csaUnloaded.pct}% full - ${csaUnloaded.n} Lot${csaUnloaded.n === 1 ? "" : "s"}</summary>`) && csaUnloaded.pane.includes('<details class="cure-lots" data-cure-lots>'), "the CSA lots must fold under the fullness line");
+    assert(csaUnloaded.pane.includes(`>${csaUnloaded.pct}% full - ${csaUnloaded.n} Lot${csaUnloaded.n === 1 ? "" : "s"}</summary>`) && /<div class="cure-shade"[^>]*>\s*<details class="cure-lots" data-cure-lots>/.test(csaUnloaded.pane) && /<div class="cure-shade"[^>]*>\s*<details class="cure-lots" data-cure-lots>/.test(csbUnloaded.pane), "the CSA and CSB fullness lines must sit inside the shade");
     assert(csbUnloaded.cap === 8 && csbUnloaded.n === csbUnloaded.lots, `CSB must count its lots against 8, got ${csbUnloaded.n}`);
     // THE ROW FOLDS ON THE LOT NUMBER (owner, 2026-09-22): the lot's row is a folded details element, the id and the time in on its summary.
     {
@@ -2143,7 +2143,16 @@ async function run() {
     });
     assert(sensorOk.status === 200, `a sensor reading expected 200 got ${sensorOk.status} ${await sensorOk.text()}`);
     const withSensor = await text("/ops/drying_ops");
-    assert(cureOf(withSensor.body, "CSA").includes("68.2 F"), "the posted reading must show on the CSA pane");
+    assert(cureOf(withSensor.body, "CSA").includes("68.2 F") && cureOf(withSensor.body, "CSA").includes(" · Silo Ops"), "the posted reading must show on the CSA pane with Silo Ops");
+    const csbSensor = await req("/sensors/readings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ room: "CSB", temperature_f: 70.5, humidity_pct: 41, read_at: new Date().toISOString(), source: "silo-ops" }),
+      noIdentity: true,
+    });
+    assert(csbSensor.status === 200, `a CSB silo-ops reading expected 200 got ${csbSensor.status} ${await csbSensor.text()}`);
+    const withCsb = await text("/ops/drying_ops");
+    assert(cureOf(withCsb.body, "CSB").includes("70.5 F") && cureOf(withCsb.body, "CSB").includes(" · Silo Ops"), "a silo-ops post for CSB must show on CSB's line with Silo Ops");
     const sensorBad = await req("/sensors/readings", {
       method: "POST",
       headers: { "content-type": "application/json" },

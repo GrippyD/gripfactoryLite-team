@@ -1,6 +1,6 @@
-# BRIEF V28: THE COUNT RIDES THE BAR, AND THE ROOMS READ SILO OPS (canon 0.30.372)
+# BRIEF V28: THE COUNT RIDES THE BAR, AND THE ROOMS READ SILO OPS (canon 0.30.378)
 
-For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155): one layout correction to the cure panes, CSA and CSB, on the Harvest Console's drying row, and their conditions line made ready for the readings Silo Ops will push. Built on the worktree exactly as it stands after BRIEF V27, A FARM WITH NO TRIMMED LOT BORROWS THE SEASON'S BTR, is merged and pushed (the Scribe writes the tree hash into this line at the paste; if the hash on the disk differs, stop and say so). No migration; the smoke pin stays 90.
+For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155): one layout correction to the cure panes, CSA and CSB, on the Harvest Console's drying row, and their conditions line made ready for the readings Silo Ops will push. Built on the worktree exactly as it stands LIVE after BRIEFS V27 and V27a (worker `9a152b52`, main `bcdcf09`, the app tree `a6a9608eb68264ff`, 283 files, migrations 0001-0090; if the hash on the disk differs, stop and say so). No migration; the smoke pin stays 90.
 
 ## The sources (verbatim)
 

@@ -336,15 +336,20 @@ select option[data-occupied] { color: var(--text-dim, #888); }
    (owner, 2026-09-22: "in line with drying spaces, in the void after FFZ Inventory set the same size").
    A pane is an inv-gauge tile the silo tiles' width (13.6rem, canon 0.30.355), its children the tile's full width. */
 .cure-pane { flex: 0 0 auto; width: 13.6rem; min-width: 0; font-size: 0.8rem; position: relative; overflow: hidden; }
+.inv-gauge.cure-pane { padding-bottom: 0; }
 .cure-pane > * { width: 100%; }
-/* THE PANE IS A BAR (canon 0.30.355): the green rises from the tile's bottom to the percent full (its inline height), the silo tiles' width (13.6rem, owner 2026-10-02: "match width of the columns above"). */
-.cure-pane > .cure-shade { position: absolute; left: 0; right: 0; bottom: 0; top: auto; width: auto; background: rgba(46, 158, 79, 0.6); border-top: 2px solid #2e9e4f; pointer-events: none; transition: height 0.6s ease; }
-.cure-pane > .cure-shade[data-cure-fill="0.0"] { border-top: 0; }
+/* THE PANE IS A BAR (canon 0.30.355): the green rises from the tile's bottom to the percent full (its inline height), the silo tiles' width (13.6rem, owner 2026-10-02: "match width of the columns above").
+   THE COUNT SITS ON THE BAR (canon 0.30.378): the lots fold lives inside the shade; opened, the shade grows (height auto, at least the percent full) and the tile grows with it. The summary and the rows read in the theme's text colour on the green; links keep the theme's link colour. */
+.cure-pane > .cure-shade { position: absolute; left: 0; right: 0; bottom: 0; top: auto; width: auto; background: rgba(46, 158, 79, 0.6); border-top: 2px solid #2e9e4f; pointer-events: auto; transition: height 0.6s ease; box-sizing: border-box; display: flex; flex-direction: column; min-height: min-content; }
+.cure-pane > .cure-shade[data-cure-fill="0.0"] { border-top: 0; background: transparent; }
+.cure-pane:has(.cure-lots[open]) > .cure-shade { position: relative; left: auto; right: auto; bottom: auto; align-self: stretch; width: calc(100% + 1.6rem); height: auto !important; min-height: var(--cure-fill, 0%); margin-top: auto; margin-left: -0.8rem; margin-right: -0.8rem; }
+.cure-shade > .cure-lots { margin: 0; width: 100%; }
+.cure-shade > .cure-lots > summary.cure-count { margin: 0; padding: 0.12rem 0.25rem 0.2rem; }
 .cure-lots > summary.cure-count { cursor: pointer; list-style: none; }
 .cure-lots > summary.cure-count::-webkit-details-marker { display: none; }
 .cure-lots > summary.cure-count::before { content: "▸ "; font-size: 0.8em; opacity: 0.7; }
 .cure-lots[open] > summary.cure-count::before { content: "▾ "; }
-.cure-pane > :not(.cure-shade) { position: relative; }
+.cure-pane > :not(.cure-shade) { position: relative; z-index: 1; }
 .cure-count { margin: 0.1rem 0 0.35rem; font-weight: 600; }
 .cure-over { color: #7c1b1b; }
 /* POST HARVEST PUZZLES (canon 0.30.351): the ten best and the ten worst. */

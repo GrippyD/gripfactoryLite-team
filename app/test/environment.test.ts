@@ -115,7 +115,10 @@ describe("THE ENVIRONMENT FLAGS (canon 0.30.246)", () => {
     const html = environmentPage(page, "en");
     expect(html).toContain('data-env-sensor="sp-1"');
     expect(html).toContain("Silo 3");
+    expect(html).toContain('data-env-silo-ops');
+    expect(html).toContain("Silo Ops posts its Storage readings for CSA and CSB here with source &quot;silo-ops&quot;, at most once a minute per room, read_at the unit's own sample time in UTC.");
     expect(environmentPage(page, "es")).toContain("Releer sensores");
+    expect(environmentPage(page, "es")).toContain("Silo Ops publica aqui sus lecturas de Storage para CSA y CSB con source &quot;silo-ops&quot;, a lo sumo una vez por minuto por sala, read_at la hora de muestra de la unidad en UTC.");
     const visual = { state: "drying", label: "drying", wetGrams: 0, level: 0, fill: null, throb: null, unloadedDryGrams: 0, unloadedShare: 0, freezer: false } as SiloVisual;
     const live = siloLiveEntry("s3", "Silo 3", visual, "en", "cylinder", ["Plenum 104.2 F, above 100 F"]);
     expect(live.state).toBe("drying");

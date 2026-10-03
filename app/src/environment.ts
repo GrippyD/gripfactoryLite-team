@@ -345,6 +345,7 @@ export function environmentPage(page: EnvironmentPage, locale: Locale = "en", ok
   const roleOptions = ENV_ROLES.map((role) => option(role, t(locale, roleWord(role)), "room")).join("");
   return `<h1>${esc(t(locale, "Environment"))}</h1>
     ${flash}
+    <p class="muted" data-env-silo-ops>${esc(t(locale, "Silo Ops posts its Storage readings for CSA and CSB here with source \"silo-ops\", at most once a minute per room, read_at the unit's own sample time in UTC."))}</p>
     ${pull}
     <form method="post" action="${ENVIRONMENT_PATH}/stale" class="stack">
       <label class="field">${esc(t(locale, "Stale after minutes"))}

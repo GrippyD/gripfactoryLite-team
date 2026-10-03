@@ -2476,6 +2476,11 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "No lots.": { en: "No lots.", es: "No hay lotes." },
   "no reading": { en: "no reading", es: "sin lectura" },
   "no sensor yet": { en: "no sensor yet", es: "aun no hay sensor" },
+  "Silo Ops": { en: "Silo Ops", es: "Silo Ops" },
+  "Silo Ops posts its Storage readings for CSA and CSB here with source \"silo-ops\", at most once a minute per room, read_at the unit's own sample time in UTC.": {
+    en: "Silo Ops posts its Storage readings for CSA and CSB here with source \"silo-ops\", at most once a minute per room, read_at the unit's own sample time in UTC.",
+    es: "Silo Ops publica aqui sus lecturas de Storage para CSA y CSB con source \"silo-ops\", a lo sumo una vez por minuto por sala, read_at la hora de muestra de la unidad en UTC.",
+  },
   "no time": { en: "no time", es: "sin hora" },
   "Moisture at in-time": { en: "Moisture at in-time", es: "Humedad al entrar" },
   "Latest moisture": { en: "Latest moisture", es: "Ultima humedad" },
