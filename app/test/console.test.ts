@@ -188,7 +188,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(html).toContain('data-hc-icon="ready"');
     expect(html).toContain('data-hc="ready_packages">0<');
     expect(html).toContain('data-hc="ftq">NA<');
-    expect(html).toContain("No first-time tests on the sheet this season.");
+    expect(html).toContain("No first-time tests at the lab station this season.");
     expect(html).not.toContain("data-hc-thc");
     expect(html).not.toContain("Lots ready");
     expect(html.match(/data-hc-stub>/g)).toBeNull();

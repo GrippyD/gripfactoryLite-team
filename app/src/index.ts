@@ -187,7 +187,6 @@ import {
   finishAudit,
   issuePurchaseOrder,
   loadComplianceKpis,
-  queueInstrumentImport,
   saveAuditHeader,
   saveExternalResult,
   saveLabelTemplate,
@@ -196,7 +195,7 @@ import {
   stepSalesOrder,
   toggleListing,
 } from "./biz";
-import { auditsPage, complianceMenuPage, testingPage, type AuditNoteRow, type AuditRow, type ExternalTestRow } from "./compliance";
+import { auditsPage, complianceMenuPage, externalRowFromLab, testingPage, type AuditNoteRow, type AuditRow } from "./compliance";
 import { loadRadBoard, radOperationPage, radSchedulePage } from "./rad";
 import { labelPrintHtml, labelsPage, type LabelPackage, type LabelTemplateRow } from "./labels";
 import { listingsWithMatch, marketplacePage, parseMarketplacePane, salesOrderPage, type ListingRow, type MarketplacePane, type SalesOrderRow } from "./marketplace";
@@ -266,6 +265,7 @@ import {
   saveLocationEdits,
 } from "./ledgerloc";
 import { TRIM_WEIGHS_PATH, listTrimWeighs, parseTrimWeighsQuery, trimWeighsFeed } from "./feeds";
+import { handleLab, LAB_FEED_PATHS, listLabComplianceSurface } from "./lab";
 import { changeLocationPage } from "./locationpane";
 import {
   newPurchaseOrderPage,
@@ -347,7 +347,6 @@ import {
   sumLotPackageGrams,
   listAudits,
   listAuditNotes,
-  listExternalTests,
   listFinishedExternalAudits,
   listInternalTestingReport,
   listLaborHours,
@@ -470,7 +469,7 @@ import {
   type StationDef,
 } from "./pipeline";
 import { anyPlantCount, queueRowsToCsv, toCsv, wetWeightsCsv, wetWeightsCsvWithCounts, wetWeightsCsvWithTags, wetWeightsFilename } from "./csv";
-import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePasteurizationHours, savePrepackHours, saveTrimHours } from "./console";
+import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePasteurizationHours, savePrepackHours, saveTrimHours, sheetInSeason } from "./console";
 import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { terpRecipesPage } from "./terps";
 import { easternStamp, fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
@@ -2660,6 +2659,10 @@ app.post("/station/field_harvest/weights/:id/hbn", async (c) => {
   return c.redirect(result.redirect, 303);
 });
 
+// THE LAB STATION (canon 0.30.362): the package's link lands on the Internal
+// tab, which IS the station. A literal /station route sits ahead of /station/:key.
+app.get("/station/lab_tests", (c) => c.redirect("/compliance/testing?tab=internal", 302));
+
 app.get("/station/:key", async (c) => {
   const station = stationByKey(c.req.param("key"));
   if (!station) return c.notFound();
@@ -3721,19 +3724,51 @@ app.get("/compliance/labels/print", async (c) => {
   return c.html(htmlPage, { headers: { "cache-control": "no-store" } });
 });
 
+app.all("/api/lab/*", async (c) => {
+  const res = await handleLab(c.req.raw, c.env.DB, c.get("actor"));
+  return res ?? c.json({ ok: false, error: "not-found" }, 404, { "cache-control": "no-store" });
+});
+
+for (const path of LAB_FEED_PATHS) {
+  app.all(path, async (c) => {
+    const res = await handleLab(c.req.raw, c.env.DB, c.get("actor"));
+    return res ?? c.notFound();
+  });
+}
+
 app.get("/compliance/testing", async (c) => {
   const tab = c.req.query("tab") === "internal" ? "internal" : "external";
   const s = await shell(c);
-  const rows = (await listExternalTests(c.env.DB, {
-    facility: c.req.query("facility") || undefined,
-    status: c.req.query("status") || undefined,
-    year: c.req.query("year") || undefined,
-  })) as ExternalTestRow[];
-  const labs = await listLookupValues(c.env.DB, "testing_lab");
+  // THE LAB STATION (canon 0.30.362): the External tab lists the station's
+  // compliance samples (R&D out, voided out). A picked year is the season by
+  // the lot token (sheetInSeason, V19), filtered here.
+  const yearPick = (c.req.query("year") ?? "").trim();
+  const season = /^\d{4}$/.test(yearPick) ? Number(yearPick) : null;
+  const labRows =
+    tab === "external"
+      ? await listLabComplianceSurface(c.env.DB, {
+          facility: c.req.query("facility") || undefined,
+          status: c.req.query("status") || undefined,
+        })
+      : [];
+  const rows = labRows
+    .filter(
+      (r) =>
+        season == null ||
+        sheetInSeason(
+          {
+            hbn: r.harvest_batch == null ? null : String(r.harvest_batch),
+            entered_testing: r.entered_testing_on == null ? null : String(r.entered_testing_on),
+          },
+          season
+        )
+    )
+    .map((r) => externalRowFromLab(r));
   const parseFlash =
     c.req.query("ok") === "parsed"
       ? `${t(s.locale, "Parsed")} ${c.req.query("parsed") ?? "0"}, ${t(s.locale, "skipped")} ${c.req.query("skipped") ?? "0"}.`
       : undefined;
+  const signedIn = s.people.find((p) => p.id === s.personId);
   return html(
     c,
     s,
@@ -3741,17 +3776,12 @@ app.get("/compliance/testing", async (c) => {
     testingPage(
       tab,
       rows,
-      labs,
       { facility: c.req.query("facility") ?? "", status: c.req.query("status") ?? "", year: c.req.query("year") ?? "" },
       s.locale,
-      parseFlash
+      parseFlash,
+      signedIn?.display_name || null
     )
   );
-});
-
-app.post("/compliance/testing/internal", async (c) => {
-  const result = await queueInstrumentImport(c.env.DB, actorForm(c, await c.req.formData()));
-  return c.redirect(result.redirect, 303);
 });
 
 app.post("/compliance/testing/external", async (c) => {

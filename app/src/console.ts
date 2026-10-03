@@ -179,6 +179,7 @@ import { dayBefore, etClockMinutes, etDate, etDayBounds, FARM_DAY_START_HOUR_DEF
 import { t, tFill, type Locale } from "./i18n";
 import { type SiloLive, dryingTotalsMarkup, type DryingTotals } from "./silo";
 import { outcomeOf } from "./intesting";
+import { LAB_ATTEMPT_SQL, LAB_CONSOLE_SET_SQL, LAB_OUTCOME_SQL } from "./labvocab";
 import { consoleIconSvg, type ConsoleIconName } from "./consoleicons";
 import { loadRadRunning, type RadRunningView } from "./rad";
 import { esc } from "./ui";
@@ -2000,6 +2001,9 @@ export type TestingOrderRow = {
   batch_grams: number | string | null;
 };
 
+/** One compliance sample from the lab station (lab_compliance_samples), its
+ * status already mapped to passed, failed or open and its attempt to 1 or 2
+ * (labvocab). The name is V19's, from when these rows came off the sheet. */
 export type TestingSheetRow = {
   strain: string | null;
   hbn: string | null;
@@ -2304,7 +2308,7 @@ export function testingSection(figures: TestingFigures, opts: { locale?: Locale;
     `<div class="hc-stat" data-hc-stat="${esc(key)}"><div class="hc-gate-name">${esc(t(locale, label))}</div><span class="hc-value" data-hc="${esc(key)}">${esc(value)}</span>${season}${extra}</div>`;
   const rateExtra = `<span class="hc-sub muted" data-hc="ftq_n">${esc(tFill(locale, "{n} first-time tests", { n: String(figures.tests) }))}</span>`;
   const sheetEmpty =
-    figures.tests === 0 ? `<p class="muted hc-note" data-hc-sheet-empty>${esc(t(locale, "No first-time tests on the sheet this season."))}</p>` : "";
+    figures.tests === 0 ? `<p class="muted hc-note" data-hc-sheet-empty>${esc(t(locale, "No first-time tests at the lab station this season."))}</p>` : "";
   const paths = figures.slices
     .map(
       (slice) =>
@@ -2329,7 +2333,7 @@ export function testingSection(figures: TestingFigures, opts: { locale?: Locale;
     .join("");
   const pie =
     figures.slices.length === 0
-      ? `<p class="muted hc-note" data-hc-pie-empty>${esc(t(locale, "No failed first-time tests on the sheet this season."))}</p>`
+      ? `<p class="muted hc-note" data-hc-pie-empty>${esc(t(locale, "No failed first-time tests at the lab station this season."))}</p>`
       : `<div class="hc-pie-block" data-hc-pie>
           <svg class="hc-pie" viewBox="0 0 100 100" role="img" aria-label="${esc(t(locale, "Failure Mode Analysis"))}">${paths}</svg>
           <div class="hc-pie-side">
@@ -2553,10 +2557,10 @@ const OPEN_SQL = TEST_OPEN_STATUSES.map((status) => `'${status}'`).join(",");
 
 /** THE TESTING GATE (canon 0.30.293). The four panes read the live mirror and
  * the desk's open orders. The stats and the pie read the season's first-time
- * rows on the In Testing sheet. The console's picked day is not an input. */
+ * compliance samples at the lab station (THE LAB STATION, canon 0.30.362:
+ * lab_compliance_samples, R&D out, voided out, the outcome and the attempt by
+ * labvocab's one vocabulary). The console's picked day is not an input. */
 export async function loadTestingSection(db: D1Database, year: number): Promise<TestingFigures> {
-  const rndRaw = await getConfigValue(db, CONFIG_KEYS.in_testing_rnd_tab);
-  const rndLike = `${(rndRaw ?? "").trim() || "R&D"}|%`;
   const [typesRaw, unitsRaw, mirror, cryo, rad, orders, sheet, batches] = await Promise.all([
     getConfigValue(db, CONFIG_KEYS.gate_type_codes),
     getConfigValue(db, CONFIG_KEYS.gate_unit_grams),
@@ -2582,17 +2586,13 @@ export async function loadTestingSection(db: D1Database, year: number): Promise<
       .all<{ id: string; tag: string; status: string; batch_grams: number | null }>(),
     db
       .prepare(
-        `SELECT e.strain, e.hbn, e.entered_testing, e.status, e.failure_mode, e.batch_weight_grams, e.attempt
-         FROM external_test_results e
-         WHERE e.deleted_at IS NULL AND e.attempt = 1
-           AND (e.source <> 'sheet' OR e.on_sheet = 1)
-           AND NOT EXISTS (
-             SELECT 1 FROM test_orders o
-             WHERE o.deleted_at IS NULL AND o.sheet_key = e.sheet_key AND o.panel = 'rnd'
-           )
-           AND (e.sheet_key IS NULL OR e.sheet_key NOT LIKE ?)`
+        `SELECT strain, harvest_batch AS hbn, entered_testing_on AS entered_testing,
+                ${LAB_OUTCOME_SQL} AS status,
+                fail_reason AS failure_mode, batch_weight_g AS batch_weight_grams,
+                ${LAB_ATTEMPT_SQL} AS attempt
+         FROM lab_compliance_samples
+         WHERE ${LAB_CONSOLE_SET_SQL}`
       )
-      .bind(rndLike)
       .all<{
         strain: string | null;
         hbn: string | null;

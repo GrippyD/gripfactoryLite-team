@@ -29,6 +29,8 @@ describe("THE TESTING OVERRIDE (canon 0.30.341)", () => {
     expect(ran).toContain("Skipped: no lab");
     expect(ran).toContain("2026-10-02 12:00 PM ET, override, 2 seen, 2 landed, 0 changed, 1 skipped.");
     expect(testingOverridePage({ last: null, locale: "es" })).toContain("Ultima corrida: nunca");
+    expect(empty).toContain("The consoles read the lab station.");
+    expect(testingOverridePage({ last: null, locale: "es" })).toContain("Las consolas leen la estacion de laboratorio.");
   });
 
   it("refuses a file that is not an .xlsb", async () => {
@@ -56,57 +58,54 @@ describe("THE TESTING OVERRIDE (canon 0.30.341)", () => {
     expect(sheetInSeason({ hbn: "no-digits", entered_testing: null }, 2026)).toBe(false);
   });
 
-  it("keeps manual rows in the picture and leaves off-sheet and R&D rows out", async () => {
+  // THE LAB STATION (canon 0.30.362): V19's off-sheet row is now a voided sample,
+  // its R&D rows are program 'rnd'. Same numbers as V19.
+  it("reads compliance samples: voided and R&D rows leave every figure, an open first test stays out of the denominator", async () => {
     const m = await migratedDb();
     const row = (
       id: string,
       sample: string,
       status: string,
       mode: string | null,
-      source: string,
-      onSheet: number,
-      sheetKey: string | null,
-      finished: string | null,
-      grams: number | null
+      program: string,
+      voided: string | null,
+      batch: number | null
     ) => {
       m.run(
-        `INSERT INTO external_test_results (
-          id, hbn, sample_tag, entered_testing, status, failure_mode, attempt, source, on_sheet, sheet_key,
-          net_weight_grams, finished_testing, created_at, updated_at
-        ) VALUES (?, ?, ?, '2026-08-10', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO lab_compliance_samples (
+          id, program, license, market, source_metrc_tag, harvest_batch, sample_tag, required_test,
+          entered_testing_on, status, fail_reason, batch_weight_g, notes, scheduled_at,
+          created_at, updated_at, changed_at, voided_at
+        ) VALUES (?, ?, 'AU-P-000694', 'AU', ?, ?, ?, 'Full Compliance', '2026-08-10', ?, ?, ?, '', ?, ?, ?, ?, ?)`,
         id,
+        program,
+        `1A405030000000000000${sample}`,
         HBN,
         sample,
         status,
         mode,
-        source,
-        onSheet,
-        sheetKey,
-        grams,
-        finished,
+        batch,
         T,
-        T
+        T,
+        T,
+        T,
+        voided
       );
     };
-    row("m1", "M1", "Failed", "Coliforms", "manual", 0, null, "2026-08-12", null);
-    row("s1", "S1", "Passed", null, "sheet", 1, "In Testing|S1|1", "2026-08-12", null);
-    row("s0", "S0", "Failed", "Yeast", "sheet", 0, "In Testing|S0|1", null, 4480);
-    row("s2", "S2", "Failed", "Pesticides", "sheet", 1, "R&D|S2|1", "2026-08-12", null);
-    row("s3", "S3", "Failed", "Metals", "sheet", 1, "In Testing|S3|1", "2026-08-12", null);
-    row("open", "OPEN", "In Progress", null, "manual", 0, null, null, null);
-    row("s4", "S4", "fail", "Heavy Metals", "manual", 0, null, "2026-08-12", null);
-    row("live", "LIVE", "Failed", "Coliforms", "sheet", 1, "In Testing|LIVE|1", null, 448);
-    m.run(
-      `INSERT INTO test_orders (
-        id, lot_id, market, lab_id, panel, required_lab_test_batch, batch_grams, sample_grams, status,
-        created_at, updated_at, source, sheet_key
-      ) VALUES ('ord-rnd', 'lot-x', 'AU', 'sc-labs-michigan', 'rnd', 'batch', 1, 1, 'sent', ?, ?, 'sheet', 'In Testing|S3|1')`,
-      T,
-      T
-    );
+    row("m1", "M1", "failed", "Coliforms", "compliance", null, null);
+    row("s1", "S1", "passed", null, "compliance", null, null);
+    row("s0", "S0", "failed", "Yeast", "compliance", T, 4480);
+    row("s0b", "S0B", "in_testing", null, "compliance", T, 4480);
+    row("rndopen", "RO", "in_testing", null, "rnd", null, 896);
+    row("s2", "S2", "failed", "Pesticides", "rnd", null, null);
+    row("s3", "S3", "failed", "Metals", "rnd", null, null);
+    row("open", "OPEN", "in_testing", null, "compliance", null, 448);
+    row("s4", "S4", "failed", "Heavy Metals", "compliance", null, null);
+    row("live", "LIVE", "failed", "Coliforms", "compliance", null, null);
     const kpis = await loadComplianceKpis(m.db);
     expect(kpis.ftq).toEqual({ n: 4, passed: 1, rate: 25 });
     expect(kpis.pareto.map((bar) => bar.mode).sort()).toEqual(["Coliforms", "Heavy Metals"]);
+    // Only the live compliance in_testing sample (448 g): the voided 4,480 g and the R&D 896 g are out.
     expect(kpis.lbs.grams).toBe(448);
     const figures = await loadTestingSection(m.db, 2026);
     expect(figures.tests).toBe(4);

@@ -1,5 +1,5 @@
 import { HttpError, nowIso, parseGrams, requireReason, requireText, textOrNull } from "./audit";
-import { CONFIG_KEYS, ITEM_KIND_FG, ITEM_KIND_WIP, roundGrams, SYSTEM_REASON, WIP_STATUS } from "./config";
+import { CONFIG_KEYS, ITEM_KIND_FG, ITEM_KIND_WIP, roundGrams, SYSTEM_REASON } from "./config";
 import { parseInstrumentCsv, isInstrumentSource, IMPORT_STATUS, assertImportUpload, importBasename } from "./imports";
 import { LABEL_FIELD_KEYS, type LabelFieldKey, serializeLabelFields, stockMm } from "./labels";
 import { mintSoNumber, splitChildCode } from "./marketplace";
@@ -9,14 +9,14 @@ import {
   getRow,
   insertLog,
   listSplitChildren,
-  listWipPackagesByStatus,
   logsForInsert,
   maxPoSeq,
   maxSoSeq,
   newestFinishedInternalAudit,
   requireActor,
 } from "./db";
-import { auditUpToDate, ftqRate, internalAuditIntervalDays, lbsInTesting, outcomeOf, paretoFromFailures } from "./compliance";
+import { auditUpToDate, ftqRate, gramsToLbs, internalAuditIntervalDays, paretoFromFailures } from "./compliance";
+import { LAB_ATTEMPT_SQL, LAB_CONSOLE_SET_SQL, LAB_OUTCOME_SQL } from "./labvocab";
 
 export type ActionOk = { redirect: string };
 
@@ -24,51 +24,44 @@ function personIdFrom(form: FormData): string | null {
   return textOrNull(form.get("person_id"));
 }
 
-/** A sheet row off the latest drop leaves the picture. An R&D row (desk panel rnd, or a sheet key from the R&D tab) leaves the quality figures. */
-const TESTING_QUALITY_SQL = `e.deleted_at IS NULL
-  AND (e.source <> 'sheet' OR e.on_sheet = 1)
-  AND NOT EXISTS (
-    SELECT 1 FROM test_orders o
-    WHERE o.deleted_at IS NULL AND o.sheet_key = e.sheet_key AND o.panel = 'rnd'
-  )
-  AND (e.sheet_key IS NULL OR e.sheet_key NOT LIKE ?)`;
-
+/** THE LAB STATION (canon 0.30.362). The Compliance Console reads the lab
+ * station's compliance samples (labvocab's set: R&D out, voided out). Lbs in
+ * testing is the batch weight of the samples in_testing. The pareto splits each
+ * failed sample's fail_reason on commas (V19). The FTQ is first tests only (a
+ * status that is not a retest one), all seasons (V19 law 5); an open first test
+ * stays out of the denominator. */
 export async function loadComplianceKpis(db: D1Database) {
-  const rndRaw = await getConfigValue(db, CONFIG_KEYS.in_testing_rnd_tab);
-  const rndLike = `${(rndRaw ?? "").trim() || "R&D"}|%`;
-  const unfinished = await db
+  const inTesting = await db
     .prepare(
-      `SELECT net_weight_grams, batch_weight_grams FROM external_test_results
-       WHERE deleted_at IS NULL AND (source <> 'sheet' OR on_sheet = 1)
-         AND (finished_testing IS NULL OR trim(finished_testing) = '')`
+      `SELECT batch_weight_g FROM lab_compliance_samples
+       WHERE ${LAB_CONSOLE_SET_SQL} AND status = 'in_testing'`
     )
-    .all<{ net_weight_grams: number | null; batch_weight_grams: number | null }>();
-  const queue = await listWipPackagesByStatus(db, WIP_STATUS.testing_queue);
-  const lbs = lbsInTesting(unfinished.results ?? [], queue.map((r) => Number(r.weight_grams)));
+    .all<{ batch_weight_g: number | null }>();
+  const grams = (inTesting.results ?? []).reduce((sum, row) => sum + (Number.isFinite(Number(row.batch_weight_g)) ? Number(row.batch_weight_g) : 0), 0);
+  const lbs = { grams: roundGrams(grams), lbs: gramsToLbs(grams), source: "external" as const };
   const failed = await db
     .prepare(
-      `SELECT e.status, e.failure_mode FROM external_test_results e
-       WHERE ${TESTING_QUALITY_SQL}
-         AND e.failure_mode IS NOT NULL AND trim(e.failure_mode) <> ''`
+      `SELECT fail_reason FROM lab_compliance_samples
+       WHERE ${LAB_CONSOLE_SET_SQL}
+         AND ${LAB_OUTCOME_SQL} = 'failed'
+         AND fail_reason IS NOT NULL AND trim(fail_reason) <> ''`
     )
-    .bind(rndLike)
-    .all<{ status: string | null; failure_mode: string }>();
+    .all<{ fail_reason: string }>();
   const ftqRows = await db
     .prepare(
-      `SELECT e.sample_tag, e.attempt, e.status FROM external_test_results e
-       WHERE ${TESTING_QUALITY_SQL}
-         AND e.sample_tag IS NOT NULL AND trim(e.sample_tag) <> ''`
+      `SELECT sample_tag, ${LAB_ATTEMPT_SQL} AS attempt, ${LAB_OUTCOME_SQL} AS status
+       FROM lab_compliance_samples
+       WHERE ${LAB_CONSOLE_SET_SQL}
+         AND sample_tag IS NOT NULL AND trim(sample_tag) <> ''
+       ORDER BY scheduled_at, id`
     )
-    .bind(rndLike)
     .all<{ sample_tag: string; attempt: number; status: string | null }>();
   const interval = internalAuditIntervalDays(
     await getConfigValue(db, CONFIG_KEYS.internal_audit_interval_days)
   );
   return {
     lbs,
-    pareto: paretoFromFailures(
-      (failed.results ?? []).filter((row) => outcomeOf(row.status) === "failed").map((row) => row.failure_mode)
-    ),
+    pareto: paretoFromFailures((failed.results ?? []).map((row) => row.fail_reason)),
     ftq: ftqRate(ftqRows.results ?? []),
     audit: auditUpToDate(await newestFinishedInternalAudit(db), interval),
   };

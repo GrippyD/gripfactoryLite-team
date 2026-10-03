@@ -1,6 +1,9 @@
 import { format2, formatGrams, GRAMS_PER_LB, round2, roundGrams } from "./config";
 import { csvObjects } from "./csv";
 import { t, type Locale } from "./i18n";
+import { labStationBody } from "./labpage";
+import { STATUS_LABELS, STATUSES } from "./labrules";
+import { labAttempt } from "./labvocab";
 import { esc, fieldBlock, pencilLink, rapidAddButton, rapidFocusScript, tabBar, voidLink } from "./ui";
 
 export { GRAMS_PER_LB };
@@ -571,13 +574,86 @@ export type ExternalTestRow = {
   on_sheet?: number | null;
 };
 
+/** The lab_compliance_samples fields the External tab shows (any typed row with
+ * these columns fits). */
+export type LabSampleListFields = {
+  id?: unknown;
+  license?: unknown;
+  market?: unknown;
+  strain?: unknown;
+  item_name?: unknown;
+  source_metrc_tag?: unknown;
+  batch_weight_g?: unknown;
+  harvest_batch?: unknown;
+  sample_tag?: unknown;
+  required_test?: unknown;
+  net_weight_g?: unknown;
+  testing_facility?: unknown;
+  entered_testing_on?: unknown;
+  finished_testing_on?: unknown;
+  thc_potency_pct?: unknown;
+  status?: unknown;
+  fail_reason?: unknown;
+};
+
+const textOf = (v: unknown): string | null => (v == null ? null : String(v));
+const numberOf = (v: unknown): number | null => (v == null || v === "" ? null : Number(v));
+
+/** THE LAB STATION (canon 0.30.362). A compliance sample as an External tab
+ * row: the status stays the station's word (shown through its label), the
+ * attempt is labvocab's (2 for a retest status, else 1), source 'lab'. */
+export function externalRowFromLab(r: LabSampleListFields): ExternalTestRow {
+  const status = String(r.status ?? "");
+  return {
+    id: String(r.id),
+    license_number: textOf(r.license),
+    med_au: textOf(r.market),
+    strain: textOf(r.strain),
+    item_name: textOf(r.item_name),
+    source_metrc_tag: textOf(r.source_metrc_tag),
+    batch_weight_grams: numberOf(r.batch_weight_g),
+    hbn: textOf(r.harvest_batch),
+    sample_tag: textOf(r.sample_tag),
+    required_test: textOf(r.required_test),
+    net_weight_grams: numberOf(r.net_weight_g),
+    testing_facility: textOf(r.testing_facility),
+    entered_testing: textOf(r.entered_testing_on),
+    finished_testing: textOf(r.finished_testing_on),
+    attempt: labAttempt(status),
+    potency_result: numberOf(r.thc_potency_pct),
+    finalized_potency: null,
+    status,
+    failure_mode: textOf(r.fail_reason),
+    source: "lab",
+  };
+}
+
+/** A station status word through the station's label (an i18n key); any other word as written. */
+export function labStatusText(status: string | null, locale: Locale): string {
+  const label = status == null ? undefined : (STATUS_LABELS as Record<string, string>)[status];
+  return label ? t(locale, label) : String(status ?? "");
+}
+
+/** The External tab's Status filter: the station's seven statuses, the English
+ * station word as the value and its label in the page's words. A word off the
+ * list (an old saved link) stays offered and selected, so the filter shows why
+ * the list is empty. */
+function statusFilterSelect(current: string, locale: Locale): string {
+  const known = (STATUSES as readonly string[]).includes(current);
+  const options = STATUSES.map(
+    (s) => `<option value="${esc(s)}"${s === current ? " selected" : ""}>${esc(t(locale, STATUS_LABELS[s]))}</option>`
+  ).join("");
+  const offList = current !== "" && !known ? `<option value="${esc(current)}" selected>${esc(current)}</option>` : "";
+  return `<select name="status"><option value=""${current === "" ? " selected" : ""}></option>${options}${offList}</select>`;
+}
+
 export function testingPage(
   tab: "internal" | "external",
   rows: ExternalTestRow[],
-  labs: Array<{ value: string; label: string }>,
   filters: { facility: string; status: string; year: string },
   locale: Locale = "en",
-  parseFlash?: string
+  parseFlash?: string,
+  operator: string | null = null
 ): string {
   const tabs = tabBar(
     locale,
@@ -592,20 +668,8 @@ export function testingPage(
     return `<h1>${esc(t(locale, "Compliance Testing"))}</h1>
       ${tabs}
       ${flash}
-      <div class="stack">
-        <form class="stack" method="post" action="/compliance/testing/internal" enctype="multipart/form-data">
-          <input type="hidden" name="source" value="orange_photonics">
-          ${fieldBlock(locale, "Drop CSV of Orange Photonix results", `<input type="file" name="file" accept=".csv" required>`, "Orange Photonics export. Headers alias tag, sample, or package. Sample export owed.")}
-          <button type="submit">${esc(t(locale, "Queue and parse"))}</button>
-        </form>
-        <form class="stack" method="post" action="/compliance/testing/internal" enctype="multipart/form-data">
-          <input type="hidden" name="source" value="aqualab">
-          ${fieldBlock(locale, "Drop CSV of Aqualab results", `<input type="file" name="file" accept=".csv" required>`, "Aqualab export. Headers alias tag, sample, or package. Water activity lands as analyte water_activity. Sample export owed.")}
-          <button type="submit">${esc(t(locale, "Queue and parse"))}</button>
-        </form>
-      </div>`;
+      ${labStationBody(locale, operator)}`;
   }
-  const labOpts = labs.map((l) => `<option value="${esc(l.value)}">${esc(l.label)}</option>`).join("");
   const body =
     rows.length === 0
       ? `<tr><td colspan="8">${esc(t(locale, "No external results."))}</td></tr>`
@@ -616,12 +680,12 @@ export function testingPage(
         <td>${esc(r.item_name ?? "")}</td>
         <td>${esc(r.testing_facility ?? "")}</td>
         <td>${esc(String(r.attempt))}</td>
-        <td>${esc(r.status ?? "")}${
+        <td>${esc(labStatusText(r.status, locale))}${
           r.source === "sheet" && Number(r.on_sheet) === 0 ? ` <span class="muted" data-on-sheet="0">${esc(t(locale, "no longer on the sheet"))}</span>` : ""
         }</td>
         <td>${esc(r.failure_mode ?? "")}</td>
         <td>${r.net_weight_grams == null ? "" : esc(formatGrams(r.net_weight_grams))}</td>
-        <td class="row-actions">${pencilLink(`/record/external_test_results/${r.id}/edit`, locale, "Edit result")}</td>
+        <td class="row-actions">${r.source === "lab" ? "" : pencilLink(`/record/external_test_results/${r.id}/edit`, locale, "Edit result")}</td>
       </tr>`
           )
           .join("");
@@ -630,7 +694,7 @@ export function testingPage(
     <form class="stack report-filters" method="get" action="/compliance/testing">
       <input type="hidden" name="tab" value="external">
       <label class="field">${esc(t(locale, "Facility"))} <input type="text" name="facility" value="${esc(filters.facility)}"></label>
-      <label class="field">${esc(t(locale, "Status"))} <input type="text" name="status" value="${esc(filters.status)}"></label>
+      <label class="field">${esc(t(locale, "Status"))} ${statusFilterSelect(filters.status, locale)}</label>
       <label class="field">${esc(t(locale, "Year"))} <input type="text" name="year" value="${esc(filters.year)}"></label>
       <button type="submit">${esc(t(locale, "Apply filters"))}</button>
     </form>
@@ -647,27 +711,5 @@ export function testingPage(
       </tr></thead>
       <tbody>${body}</tbody>
     </table>
-    <h2>${esc(t(locale, "Add external result"))}</h2>
-    <form class="stack" method="post" action="/compliance/testing/external">
-      ${fieldBlock(locale, "License Number", `<input type="text" name="license_number">`, "License on the workbook row. Admin\\Data Lookups\\Logistics\\Licenses")}
-      ${fieldBlock(locale, "Med/AU", `<input type="text" name="med_au">`, "Med or AU flag from the workbook.")}
-      ${fieldBlock(locale, "Strain", `<input type="text" name="strain">`, "Strain on the tested package. Admin\\Data Lookups\\Harvest Operations\\Strains")}
-      ${fieldBlock(locale, "Item Name", `<input type="text" name="item_name">`, "Item name from the workbook.")}
-      ${fieldBlock(locale, "Source Metrc Tag", `<input type="text" name="source_metrc_tag">`, "Source package tag. Never invent a tag.")}
-      ${fieldBlock(locale, "Batch Weight", `<input type="number" name="batch_weight_grams" step="0.01" min="0">`, "Batch weight in grams (stored grams, display-only lbs elsewhere).")}
-      ${fieldBlock(locale, "HBN", `<input type="text" name="hbn">`, "Harvest batch name the sample came from.")}
-      ${fieldBlock(locale, "Sample Tag", `<input type="text" name="sample_tag" required>`, "Sample tag. Retests reuse this tag with attempt 2 or 3.")}
-      ${fieldBlock(locale, "Required Test", `<input type="text" name="required_test">`, "Required test named on the workbook.")}
-      ${fieldBlock(locale, "Net Weight", `<input type="number" name="net_weight_grams" step="0.01" min="0">`, "Net weight in grams.")}
-      ${fieldBlock(locale, "Testing Facility", `<select name="testing_facility">${labOpts}</select>`, "Lab that ran the test. Admin\\Data Lookups\\Business Operations\\Testing labs")}
-      ${fieldBlock(locale, "Entered Testing", `<input type="text" name="entered_testing">`, "Date the sample entered testing.")}
-      ${fieldBlock(locale, "Finished Testing", `<input type="text" name="finished_testing">`, "Date the lab finished. Blank means still in testing.")}
-      ${fieldBlock(locale, "Attempt", `<input type="number" name="attempt" min="1" value="1">`, "1 is first time. 2 and 3 are retests on the same sample tag.")}
-      ${fieldBlock(locale, "Potency Result", `<input type="number" name="potency_result" step="0.01">`, "This attempt's potency number.")}
-      ${fieldBlock(locale, "Finalized Potency", `<input type="number" name="finalized_potency" step="0.01">`, "Finalized potency lives on the newest attempt.")}
-      ${fieldBlock(locale, "Status", `<select name="status"><option value="Pending">Pending</option><option value="Passed">Passed</option><option value="Failed">Failed</option></select>`, "Passed, Failed, or Pending. FTQ reads attempt 1.")}
-      ${fieldBlock(locale, "Failure mode", `<input type="text" name="failure_mode">`, "Comma-separated modes. Admin\\Data Lookups\\Business Operations\\Failure modes")}
-      <label class="field">${esc(t(locale, "Reason"))} <input type="text" name="reason" required></label>
-      <button type="submit">${esc(t(locale, "Save result"))}</button>
-    </form>`;
+    <p class="muted" data-lab-station-pointer>${esc(t(locale, "Compliance samples are entered at the lab station, on the Internal tab."))} <a href="/compliance/testing?tab=internal">${esc(t(locale, "Open the lab station"))}</a></p>`;
 }

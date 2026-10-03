@@ -409,8 +409,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 89 migration(s)")) {
-      throw new Error(`from-zero apply must say 89 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 90 migration(s)")) {
+      throw new Error(`from-zero apply must say 90 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -4144,43 +4144,148 @@ async function run() {
     assert(printed.body.includes("@page { size: 101.6mm 152.4mm; margin: 0; }"), "label print must size the 4x6 stock");
     assert(printed.body.includes("<svg"), "label print must carry a barcode svg");
 
-    const opBytes = new TextEncoder().encode("Sample,Date,THC\nHBN-SMOKE,2026-09-04,21.5\n");
-    const opForm = new FormData();
-    opForm.append("source", "orange_photonics");
-    opForm.append("file", new File([opBytes], "op-smoke.csv", { type: "text/csv" }));
-    const opDrop = await req("/compliance/testing/internal", { method: "POST", body: opForm });
-    assert(opDrop.status === 303, `OP drop expected 303 got ${opDrop.status}`);
-    assert((opDrop.headers.get("location") || "").includes("ok=parsed"), "OP drop must flash parsed");
-    const awBytes = new TextEncoder().encode("Package,Date,aW\nHBN-SMOKE,2026-09-04,0.52\n");
-    const awForm = new FormData();
-    awForm.append("source", "aqualab");
-    awForm.append("file", new File([awBytes], "aw-smoke.csv", { type: "text/csv" }));
-    const awDrop = await req("/compliance/testing/internal", { method: "POST", body: awForm });
-    assert(awDrop.status === 303, `Aqualab drop expected 303 got ${awDrop.status}`);
-    const parsedPage = await text(new URL(awDrop.headers.get("location") || "", base).pathname + new URL(awDrop.headers.get("location") || "", base).search);
-    assert(parsedPage.body.includes("Parsed"), "instrument drop must report parsed counts");
+    // BRIEF V24, THE LAB STATION (canon 0.30.362): Compliance, Testing, the Internal tab IS the
+    // station, and its two old drops (POST /compliance/testing/internal) came off. The station's own
+    // labels still name both instruments, so the drops are proven gone by their form markers.
+    // A bench reading saved through the JSON API with x-lab-client: station lands with the grower
+    // license's full tag and rides the list and the feed; a write without the header answers 403;
+    // the package's /station/lab_tests link redirects to the tab. A compliance sample moved to
+    // failed with a fail reason reads on the Harvest Console's Testing section and the Compliance
+    // FTQ in the console's own season; an open first test and an R&D failure stay out. The External
+    // tab lists the station's compliance samples and points at the station instead of a form.
+    const v24Json = (method, body, headers = {}) => ({ method, headers: { "content-type": "application/json", "x-lab-client": "station", ...headers }, body: JSON.stringify(body) });
+    const v24Me = await req("/api/lab/me");
+    const v24MeJson = await v24Me.json();
+    assert(
+      v24Me.status === 200 && v24MeJson.ok === true && v24MeJson.typed === false && typeof v24MeJson.operator === "string" && !v24MeJson.operator.startsWith("typed:") && !!v24MeJson.name,
+      `the station must know the Access login as the app's actor, got ${v24Me.status} ${JSON.stringify(v24MeJson)}`
+    );
+    const v24Tab = await text("/compliance/testing?tab=internal");
+    assert(v24Tab.res.status === 200, `the Internal tab expected 200 got ${v24Tab.res.status}`);
+    assert(v24Tab.body.includes('data-tab="internal" aria-current="page"'), "the Internal tab must read as the current tab");
+    assert(
+      v24Tab.body.includes('<div id="lab-station" data-lab-station>') && v24Tab.body.includes('id="tab-bench"') && v24Tab.body.includes('id="tab-compliance"') && v24Tab.body.includes('id="bench-form"') && v24Tab.body.includes('id="cs-form"') && v24Tab.body.includes('<script type="application/json" id="lab-words">'),
+      "the Internal tab must render the lab station"
+    );
+    assert(v24Tab.body.includes('id="who">Signed in: ') && !v24Tab.body.includes('id="lab-operator"'), "a signed-in station names the person and shows no name box");
+    assert(
+      !v24Tab.body.includes('action="/compliance/testing/internal"') && !v24Tab.body.includes('value="orange_photonics"') && !v24Tab.body.includes('value="aqualab"') && !v24Tab.body.includes("Drop CSV of Orange Photonix results") && !v24Tab.body.includes("Drop CSV of Aqualab results") && !v24Tab.body.includes("Queue and parse"),
+      "the Internal tab must carry no Orange Photonics or Aqualab drop"
+    );
+    const v24OldDrop = await req("/compliance/testing/internal", { method: "POST", body: form({ source: "orange_photonics" }) });
+    assert(v24OldDrop.status === 404, `the old instrument drop route must be gone, got ${v24OldDrop.status}`);
+    const v24ToEs = await req("/locale", { method: "POST", body: form({ locale: "es" }) });
+    assert(v24ToEs.status === 303, `POST /locale es expected 303 got ${v24ToEs.status}`);
+    const v24TabEs = await text("/compliance/testing?tab=internal");
+    const v24ToEn = await req("/locale", { method: "POST", body: form({ locale: "en" }) });
+    assert(v24ToEn.status === 303, `POST /locale en expected 303 got ${v24ToEn.status}`);
+    assert(v24TabEs.body.includes("Pruebas de laboratorio") && v24TabEs.body.includes("Nueva lectura de mesa"), "the station must read in Spanish");
+    const v24Link = await req("/station/lab_tests");
+    assert(v24Link.status === 302 && (v24Link.headers.get("location") || "") === "/compliance/testing?tab=internal", `the package's /station/lab_tests must redirect to the Internal tab, got ${v24Link.status} ${v24Link.headers.get("location")}`);
+    const v24Bench = { id: "lt_smokev24bench01", location: "Silo 3", reason: "During Silo", license: "AU-G-C-000832", metrc_tag: "56899", sample_type: "Flower", moisture_pct: 13.2 };
+    const v24NoHeader = await req("/api/lab/internal-tests", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...v24Bench, id: "lt_smokev24nohdr01" }) });
+    const v24NoHeaderJson = await v24NoHeader.json();
+    assert(v24NoHeader.status === 403 && v24NoHeaderJson.ok === false && v24NoHeaderJson.error === "client-header-required", `a write without x-lab-client expected 403 got ${v24NoHeader.status} ${JSON.stringify(v24NoHeaderJson)}`);
+    const v24Saved = await req("/api/lab/internal-tests", v24Json("POST", v24Bench));
+    const v24SavedJson = await v24Saved.json();
+    assert(v24Saved.status === 201 && v24SavedJson.ok === true && v24SavedJson.created === true, `the bench reading expected 201 created got ${v24Saved.status} ${JSON.stringify(v24SavedJson)}`);
+    const v24Row = v24SavedJson.row;
+    assert(
+      v24Row.metrc_tag === "1A40503000311FB000056899" && v24Row.metrc_tag_raw === "56899" && v24Row.license === "AU-G-C-000832" && v24Row.location === "Silo 3" && v24Row.reason === "During Silo" && v24Row.sample_type === "Flower" && v24Row.moisture_pct === 13.2 && v24Row.source === "station",
+      `the reading must land with the grower license's full tag, got ${JSON.stringify(v24Row)}`
+    );
+    assert(typeof v24Row.tested_at === "string" && v24Row.tested_at.endsWith("Z") && v24Row.tested_at_source === "auto", "a reading with no typed time is stamped by the server in UTC with a Z");
+    assert(v24Row.operator === v24MeJson.operator, `an Access login writes as the app's actor (its person id), never a typed name, got ${v24Row.operator}`);
+    const v24Again = await req("/api/lab/internal-tests", v24Json("POST", v24Bench));
+    const v24AgainJson = await v24Again.json();
+    assert(v24Again.status === 200 && v24AgainJson.created === false && v24AgainJson.row.id === v24Bench.id, `a resend of the same client id must land nothing new, got ${v24Again.status}`);
+    const v24List = await req("/api/lab/internal-tests?tag=56899&limit=200");
+    assert(v24List.status === 200, `the bench list expected 200 got ${v24List.status}`);
+    const v24ListJson = await v24List.json();
+    assert(v24ListJson.ok === true && v24ListJson.rows.filter((r) => r.id === v24Bench.id && r.metrc_tag === "1A40503000311FB000056899").length === 1, "the bench list must carry the reading once");
+    assert(!v24ListJson.rows.some((r) => r.id === "lt_smokev24nohdr01"), "the refused write must land nothing");
+    {
+      // The feeds are the service door (the /feeds/ prefix): they answer without the PIN cookie; the API is behind it.
+      const savedPinForLab = jar.get("gf_pin");
+      jar.delete("gf_pin");
+      // An explicit limit here; the default of 500 for a read with no limit is asserted on the compliance feed below.
+      const v24Feed = await req("/feeds/lab-internal-tests.json?limit=2000");
+      const v24NoPin = await req("/api/lab/internal-tests", v24Json("POST", { ...v24Bench, id: "lt_smokev24nopin01" }));
+      jar.set("gf_pin", savedPinForLab);
+      assert(v24NoPin.status === 401, `a station write without the PIN cookie expected the gate (401) got ${v24NoPin.status}`);
+      assert(v24Feed.status === 200, `the lab feed expected 200 got ${v24Feed.status}`);
+      assert((v24Feed.headers.get("content-type") || "").includes("application/json"), "the lab feed must answer JSON");
+      assert((v24Feed.headers.get("cache-control") || "") === "no-store", "the lab feed must answer no-store");
+      const v24FeedJson = await v24Feed.json();
+      assert(v24FeedJson.feed === "lab_internal_tests" && Array.isArray(v24FeedJson.rows) && v24FeedJson.count === v24FeedJson.rows.length, "the lab feed must name itself and count its rows");
+      const v24FeedRow = v24FeedJson.rows.find((r) => r.id === v24Bench.id);
+      assert(v24FeedRow && v24FeedRow.metrc_tag === "1A40503000311FB000056899" && v24FeedRow.moisture_pct === 13.2 && v24FeedRow.voided_at === null, `the feed must carry the reading with its full tag, got ${JSON.stringify(v24FeedRow)}`);
+      assert(!v24FeedJson.rows.some((r) => r.id === "lt_smokev24nohdr01" || r.id === "lt_smokev24nopin01"), "the refused writes must not reach the feed");
+      assert(v24FeedJson.next_since === v24FeedJson.rows[v24FeedJson.rows.length - 1].changed_at && v24FeedJson.more === false && v24FeedJson.run_completed === 0, "next_since must be the last change instant with more false under the limit");
+    }
+    const v24FeedSince = await (await req(`/feeds/lab-internal-tests.json?limit=2000&since=${encodeURIComponent(v24Row.changed_at)}`)).json();
+    assert(!v24FeedSince.rows.some((r) => r.id === v24Bench.id), "since= must return the rows changed after it and not the row at it");
+    const v24FeedBad = await req("/feeds/lab-internal-tests.json?since=yesterday");
+    assert(v24FeedBad.status === 400 && (await v24FeedBad.json()).error === "bad-since", "a bad since must answer 400 as JSON");
+    const v24BenchLog = await text("/log");
+    assert(v24BenchLog.body.includes("<td>lab_internal_tests</td>") && v24BenchLog.body.includes(`<td>${v24Bench.id}</td>`) && v24BenchLog.body.includes("<td>lab station</td>"), "the bench reading must land in the change log");
+    const v24Day = farmDaySmoke(new Date().toISOString());
+    const v24Hc = await text("/harvest");
+    const v24Year = (v24Hc.body.match(/data-hc-testing-year="(\d{4})"/) || [])[1] || "";
+    assert(v24Year === v24Day.slice(0, 4), `the console's Testing season must be the farm today's year, got ${v24Year} for ${v24Day}`);
+    // The lot token (the HBN's seventh segment, YY###) puts the samples in the console's season; no batch carries this HBN, so the strain reads unnamed.
+    const v24Hbn = `00000-PNN-GH-099-0-NA-${v24Year.slice(2)}099`;
+    const v24Fail = { id: "cs_smokev24fail01", program: "compliance", license: "AU-G-C-000832", source_metrc_tag: "56899", required_test: "Full Compliance", item_name: "Smoke Lab Bud", harvest_batch: v24Hbn, batch_weight_g: 2240, testing_facility: "SC Labs" };
+    const v24Created = await req("/api/lab/compliance", v24Json("POST", v24Fail));
+    const v24CreatedJson = await v24Created.json();
+    assert(
+      v24Created.status === 201 && v24CreatedJson.row.status === "scheduled" && v24CreatedJson.row.market === "AU" && v24CreatedJson.row.source_metrc_tag === "1A40503000311FB000056899" && v24CreatedJson.row.sample_tag === null,
+      `a new compliance sample must land scheduled with its full source tag, got ${v24Created.status} ${JSON.stringify(v24CreatedJson)}`
+    );
+    let v24At = v24CreatedJson.row.updated_at;
+    const v24NoTag = await req(`/api/lab/compliance/${v24Fail.id}`, v24Json("PATCH", { status: "in_testing", if_updated_at: v24At }));
+    assert(v24NoTag.status === 400 && (await v24NoTag.json()).error === "sample_tag-required", `a sample past scheduled without a sample tag must refuse, got ${v24NoTag.status}`);
+    const v24Stale = await req(`/api/lab/compliance/${v24Fail.id}`, v24Json("PATCH", { status: "in_testing", sample_tag: "56900", if_updated_at: "2000-01-01T00:00:00.000Z" }));
+    assert(v24Stale.status === 409 && (await v24Stale.json()).error === "stale", `a stale edit must answer 409 stale, got ${v24Stale.status}`);
+    const v24Sent = await req(`/api/lab/compliance/${v24Fail.id}`, v24Json("PATCH", { status: "in_testing", sample_tag: "56900", entered_testing_on: v24Day, if_updated_at: v24At }));
+    const v24SentJson = await v24Sent.json();
+    assert(v24Sent.status === 200 && v24SentJson.row.status === "in_testing" && v24SentJson.row.sample_tag === "1A40503000311FB000056900", `moving to in_testing expected 200 got ${v24Sent.status} ${JSON.stringify(v24SentJson)}`);
+    v24At = v24SentJson.row.updated_at;
+    const v24NoReason = await req(`/api/lab/compliance/${v24Fail.id}`, v24Json("PATCH", { status: "failed", if_updated_at: v24At }));
+    assert(v24NoReason.status === 400 && (await v24NoReason.json()).error === "fail_reason-required", `a failed status without a fail reason must refuse, got ${v24NoReason.status}`);
+    const v24Failed = await req(`/api/lab/compliance/${v24Fail.id}`, v24Json("PATCH", { status: "failed", fail_reason: "Coliforms", finished_testing_on: v24Day, if_updated_at: v24At }));
+    const v24FailedJson = await v24Failed.json();
+    assert(v24Failed.status === 200 && v24FailedJson.row.status === "failed" && v24FailedJson.row.fail_reason === "Coliforms", `moving to failed expected 200 got ${v24Failed.status} ${JSON.stringify(v24FailedJson)}`);
+    const v24Open = { id: "cs_smokev24open01", program: "compliance", license: "AU-G-C-000832", source_metrc_tag: "56901", sample_tag: "56902", status: "in_testing", required_test: "Full Compliance", item_name: "Smoke Lab Trim", harvest_batch: v24Hbn, batch_weight_g: 448, entered_testing_on: v24Day };
+    const v24OpenRes = await req("/api/lab/compliance", v24Json("POST", v24Open));
+    assert(v24OpenRes.status === 201, `the open sample expected 201 got ${v24OpenRes.status} ${await v24OpenRes.text()}`);
+    const v24Rnd = { id: "cs_smokev24rnd001", program: "rnd", license: "AU-P-000694", source_metrc_tag: "56903", sample_tag: "56904", status: "failed", fail_reason: "Heavy Metals", required_test: "Full Panel R&D", item_name: "Smoke Lab Rnd", harvest_batch: v24Hbn, entered_testing_on: v24Day, finished_testing_on: v24Day };
+    const v24RndRes = await req("/api/lab/compliance", v24Json("POST", v24Rnd));
+    assert(v24RndRes.status === 201, `the R&D sample expected 201 got ${v24RndRes.status} ${await v24RndRes.text()}`);
+    const v24Console = await text("/harvest");
+    const v24Testing = v24Console.body.slice(v24Console.body.indexOf('data-hc-section="testing"'), v24Console.body.indexOf('data-hc-section="prepack"'));
+    assert(
+      v24Testing.includes('data-hc="first_fails">1<') && v24Testing.includes('data-hc="first_tests">1<') && v24Testing.includes('data-hc="ftq">0.0%<') && v24Testing.includes('data-hc="ftq_n">1 first-time tests<'),
+      "the failed sample is the season's one first-time test; the open one and R&D stay out"
+    );
+    assert(v24Testing.includes('data-hc-pie-mode="Coliforms"') && v24Testing.includes('data-hc-pie-strain="unnamed"') && !v24Testing.includes("Heavy Metals"), "the pie must read the fail reason, and R&D must stay off it");
+    assert(!v24Testing.includes("data-hc-sheet-empty") && !v24Testing.includes("data-hc-pie-empty"), "a season with a failed first test is not empty");
+    const v24Menu = await text("/compliance");
+    const v24Kpi = (key, next) => v24Menu.body.slice(v24Menu.body.indexOf(`data-kpi="${key}"`), v24Menu.body.indexOf(`data-kpi="${next}"`));
+    assert(v24Kpi("lbs", "pareto").includes("1.00 lbs"), `Lbs in testing must be the in_testing sample's 448 g, got ${v24Kpi("lbs", "pareto")}`);
+    assert(v24Kpi("pareto", "ftq").includes('data-mode="Coliforms"') && v24Kpi("pareto", "ftq").includes("100.00%") && !v24Kpi("pareto", "ftq").includes("Heavy Metals"), "the pareto must read the compliance fail reason alone");
+    assert(v24Kpi("ftq", "audit").includes('<strong class="kpi-value">0.0%</strong>') && v24Kpi("ftq", "audit").includes("n=1"), "the Compliance FTQ must read the failed first test, the open one out of the denominator");
+    const v24External = await text("/compliance/testing?tab=external");
+    assert(v24External.body.includes("1A40503000311FB000056900") && v24External.body.includes("1A40503000311FB000056902") && !v24External.body.includes("1A4050300061761000056904"), "the External tab must list the compliance samples and leave R&D out");
+    assert(v24External.body.includes("data-lab-station-pointer") && !v24External.body.includes('action="/compliance/testing/external"') && !v24External.body.includes("Add external result"), "the External tab must point at the lab station and carry no add form");
+    const v24CsFeed = await (await req("/feeds/lab-compliance.json?live=1&limit=2000")).json();
+    assert(v24CsFeed.feed === "lab_compliance_samples" && [v24Fail.id, v24Open.id, v24Rnd.id].every((id) => v24CsFeed.rows.some((r) => r.id === id)), "the compliance feed must carry the three samples");
+    const v24CsFeedDefault = await (await req("/feeds/lab-compliance.json?live=1")).json();
+    assert(v24CsFeedDefault.more === false && v24CsFeedDefault.count === v24CsFeedDefault.rows.length && [v24Fail.id, v24Open.id, v24Rnd.id].every((id) => v24CsFeedDefault.rows.some((r) => r.id === id)), "a feed read with no limit must page at its default of 500, not one row");
+    const v24CsLog = await text("/log");
+    assert(v24CsLog.body.includes(`<td>${v24Fail.id}</td>`) && v24CsLog.body.includes("<td>fail_reason</td>") && v24CsLog.body.includes("<td>Coliforms</td>"), "the move to failed must land its fields in the change log");
     const inTest = await text("/reports/internal_testing");
-    assert(inTest.body.includes("HBN-SMOKE"), "internal testing report missing the dropped HBN");
-    assert(inTest.body.includes("0.52"), "internal testing report missing aW");
-    assert(inTest.body.includes("21.5"), "internal testing report missing potency");
-
-    const extResult = await req("/compliance/testing/external", {
-      method: "POST",
-      body: form({
-        sample_tag: "SMOKE-S1",
-        item_name: "Gelato",
-        net_weight_grams: "448",
-        status: "Failed",
-        failure_mode: "Coliforms",
-        attempt: "1",
-        entered_testing: "2026-09-04",
-        reason: "smoke seed",
-      }),
-    });
-    assert(extResult.status === 303, `external result expected 303 got ${extResult.status}`);
-    const seededMenu = await text("/compliance");
-    assert(seededMenu.body.includes("Coliforms"), "compliance pareto missing the seeded failure mode");
-    assert(seededMenu.body.includes("1.00"), "lbs in testing must convert the seeded 448 g");
+    assert(inTest.res.status === 200 && !inTest.body.includes("HBN-SMOKE"), "the internal testing report still renders; the Internal tab's instrument drops no longer feed it");
 
     const supplier = await req("/purchasing/suppliers", {
       method: "POST",
@@ -5087,6 +5192,8 @@ async function run() {
     const overridePage = await text("/admin/testing-override");
     assert(overridePage.res.status === 200, `GET the Testing Override pane expected 200 got ${overridePage.res.status}`);
     assert(overridePage.body.includes("Last run: never"), "the Testing Override pane must say never before any drop");
+    // BRIEF V24: the override still lands the workbook into its table, and its help line says the consoles read the lab station.
+    assert(overridePage.body.includes("The consoles read the lab station. This drop still lands the workbook into its table."), "the Testing Override pane must say the consoles read the lab station");
     assert(overridePage.body.includes('href="/harvest#testing"') && overridePage.body.includes('href="/compliance"'), "the pane must link the Testing section and the Compliance Console");
     assert(overridePage.body.includes("dragover") && overridePage.body.includes("drop"), "the pane must take a drop");
     const csvOverride = new FormData();
@@ -5177,9 +5284,9 @@ async function run() {
       gateRead("ready_packages") === "0" && gateRead("ready_lb") === "0.00 lb" && gateRead("scheduled_packages") === "0" && gateRead("in_testing_packages") === "0" && gateRead("passed_packages") === "0",
       `the four panes are empty here: the cryo output was voided and the mirror has not been mounted, got ready ${gateRead("ready_packages")} ${gateRead("ready_lb")} scheduled ${gateRead("scheduled_packages")} in ${gateRead("in_testing_packages")} passed ${gateRead("passed_packages")}`
     );
-    assert(testingSection.includes('data-hc="first_fails">1<') && testingSection.includes('data-hc="first_tests">1<') && testingSection.includes('data-hc="ftq">0.0%<'), "the manual external failure is the season's one first-time test, and it failed");
-    assert(testingSection.includes("Coliforms") && testingSection.includes('data-hc-pie-strain="unnamed"'), "that failure is Coliforms, with no strain named");
-    assert(!testingSection.includes("No first-time tests on the sheet this season."), "the manual row means the season is not empty");
+    assert(testingSection.includes('data-hc="first_fails">1<') && testingSection.includes('data-hc="first_tests">1<') && testingSection.includes('data-hc="ftq">0.0%<'), "the failed lab station sample is the season's one first-time test; the open sample stays out of the denominator");
+    assert(testingSection.includes("Coliforms") && testingSection.includes('data-hc-pie-strain="unnamed"'), "that lab sample failed on Coliforms, with no strain named");
+    assert(!testingSection.includes("No first-time tests at the lab station this season."), "the lab station sample means the season is not empty");
     assert(!testingSection.includes("COAs by parent tag") && !testingSection.includes("Lots ready") && !testingSection.includes("data-hc-thc") && !testingSection.includes("https://lims.tagleaf.com/coa_/smoke"), "the old Testing section is gone");
     assert(!testingSection.includes(sampleTag) && !testingSection.includes(retestTag), "the sample tag never shows in the Testing section");
     assert(consolePage.body.includes('data-hc-section="trimming" open'), "Trimming opens by default");
@@ -7149,13 +7256,16 @@ async function run() {
     xlsbCap.append("file", new File([new Uint8Array(8_000_001)], "too-big.xlsb", { type: "application/vnd.ms-excel.sheet.binary.macroEnabled.12" }));
     const xlsbCapPosted = await req("/admin/testing-override", { method: "POST", body: xlsbCap });
     assert(xlsbCapPosted.status === 400 && (await xlsbCapPosted.text()).includes("That file is over the 8 MB cap."), `an xlsb over the cap must refuse with the 8 MB words, got ${xlsbCapPosted.status}`);
+    // BRIEF V24: the In Testing sheet still lands in external_test_results, which no surface reads;
+    // the console's Testing section and the External tab read the lab station alone.
     const seededConsole = await text("/harvest");
+    const seededTesting = seededConsole.body.slice(seededConsole.body.indexOf('data-hc-section="testing"'), seededConsole.body.indexOf('data-hc-section="prepack"'));
     assert(
-      seededConsole.body.includes("Seed Fail") && seededConsole.body.includes("Coliforms") && seededConsole.body.includes('data-hc="first_tests">3<') && seededConsole.body.includes('data-hc="first_fails">2<') && seededConsole.body.includes('data-hc="ftq">33.3%<'),
-      "the console Testing section must read the seeded sheet history"
+      !seededTesting.includes("Seed Fail") && seededTesting.includes('data-hc="first_tests">1<') && seededTesting.includes('data-hc="first_fails">1<') && seededTesting.includes('data-hc="ftq">0.0%<'),
+      "the sheet history must not move the console's Testing section: it reads the lab station"
     );
     const complianceSeed = await text("/compliance/testing?tab=external");
-    assert(complianceSeed.body.includes("1A40503000311FB0000000A2") && complianceSeed.body.includes("BUD Seed"), "the compliance page must list the seeded sample");
+    assert(!complianceSeed.body.includes("1A40503000311FB0000000A2") && !complianceSeed.body.includes("BUD Seed") && complianceSeed.body.includes("1A40503000311FB000056900"), "the External tab must list the lab station's samples, not the sheet's");
     const fixtureBook = await req("/__sheet-fixture?book=in_testing");
     assert(fixtureBook.status === 200, `the in testing fixture expected 200 got ${fixtureBook.status}`);
     const fixtureBytes = new Uint8Array(await fixtureBook.arrayBuffer());
@@ -7181,13 +7291,13 @@ async function run() {
       const realPage = await text(realLoc);
       assert(realPage.body.includes("In testing sheet:"), "the override pane must say the counts in words");
       if (realLoc.includes("message=")) assert(realPage.body.includes("Skipped:"), "the override pane must print the skip reasons");
+      // BRIEF V24: the override lands the workbook in external_test_results, which no surface reads; the Testing section still reads the lab station alone.
       const realConsole = await text("/harvest");
-      const realTests = Number((realConsole.body.match(/data-hc="first_tests">([^<]*)</) || [])[1]);
-      assert(realTests > 0, `the Testing section must read first_tests above zero after the override, got ${realTests}`);
-      const realFails = Number((realConsole.body.match(/data-hc="first_fails">([^<]*)</) || [])[1]);
       const realTesting = realConsole.body.slice(realConsole.body.indexOf('data-hc-section="testing"'), realConsole.body.indexOf('data-hc-section="prepack"'));
-      if (realFails > 0) assert(realTesting.includes("data-hc-pie"), "a season with fails must draw the pie");
-      else assert(realTesting.includes("No failed first-time tests on the sheet this season."), "a season with no fails must say so");
+      assert(
+        realTesting.includes('data-hc="first_tests">1<') && realTesting.includes('data-hc="first_fails">1<') && !realTesting.includes("data-hc-sheet-empty"),
+        "the override lands the workbook in its table; the Testing section still reads the lab station alone"
+      );
       const realCompliance = await text("/compliance");
       assert(realCompliance.body.includes('data-kpi="ftq"'), "the Compliance Console must still read an FTQ");
       assert(realPage.body.includes("override") || realPage.body.includes("anulacion"), "the last run must name the override trigger");

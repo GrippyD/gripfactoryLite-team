@@ -225,6 +225,8 @@ export const SYSTEM_REASON = {
   rad_run_complete: "rad run complete",
   // THE RAD START TIME (canon 0.30.330): the running run's actual start, typed.
   rad_start_time_set: "rad start time set",
+  // THE LAB STATION (canon 0.30.362): a bench reading, a sample, an import, or a schedule cell.
+  lab_station: "lab station",
   finish_unload: "finish unload",
   // THE BLAST FREEZER(S) (canon 0.30.106): the freezer line removed, the lot frozen; nothing moved.
   freezer_unload: "freezer line removed; the packages stand as FFZ in METRC",

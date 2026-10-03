@@ -400,7 +400,7 @@ export function testingOverridePage(input: {
     : t(locale, "Last run: never");
   return `<h1>${esc(t(locale, "Testing Override"))}</h1>
     ${flash}${skips}
-    <p class="muted">${esc(t(locale, "The sheet is parsed as Import Data parses it. What it says is what the Compliance Console and the Harvest Console's Testing section picture: a row the sheet no longer carries leaves the picture and stays in the table, marked no longer on the sheet."))}</p>
+    <p class="muted">${esc(t(locale, "The consoles read the lab station. This drop still lands the workbook into its table."))}</p>
     <p data-testing-override-last>${esc(last)}</p>
     <div data-testing-override>
       <form class="stack" method="post" action="/admin/testing-override" enctype="multipart/form-data">
