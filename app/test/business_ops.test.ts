@@ -613,7 +613,10 @@ describe("external results, FTQ, and purchasing", () => {
       }))
     );
     expect(ftq.rate).toBe(0);
-    expect(testingPage("external", [], [], { facility: "", status: "", year: "" })).toContain("Add external result");
+    const external = testingPage("external", [], { facility: "", status: "", year: "" });
+    expect(external).not.toContain("Add external result");
+    expect(external).not.toContain('action="/compliance/testing/external"');
+    expect(external).toContain("data-lab-station-pointer");
   });
 
   it("mints PO-farm-yy-seq, totals cents, and walks draft to closed with eval", async () => {

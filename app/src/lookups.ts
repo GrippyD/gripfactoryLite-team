@@ -205,7 +205,7 @@ export const LOOKUP_LANDING: LookupLandingSection[] = [
         key: "failure_modes",
         title: "Failure modes",
         href: "/admin/lookups/failure_modes",
-        description: "External test failure modes that feed the compliance pareto.",
+        description: "Failure modes for the old external results record. The lab station picks fail reasons from its own list.",
         lookupFieldName: "Failure modes",
       },
       {

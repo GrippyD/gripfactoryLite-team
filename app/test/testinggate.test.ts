@@ -106,8 +106,8 @@ describe("THE TESTING GATE on a migrated database (canon 0.30.293)", () => {
     expect(figures.slices).toEqual([]);
     const html = testingSection(figures, { year: 2026 });
     expect(html).toContain('data-hc="ftq">NA<');
-    expect(html).toContain("No first-time tests on the sheet this season.");
-    expect(html).toContain("No failed first-time tests on the sheet this season.");
+    expect(html).toContain("No first-time tests at the lab station this season.");
+    expect(html).toContain("No failed first-time tests at the lab station this season.");
     expect(html).toContain('data-hc-pie-empty');
     expect(html).not.toContain('class="hc-pie"');
   });
@@ -198,7 +198,8 @@ describe("THE TESTING GATE on a migrated database (canon 0.30.293)", () => {
     m.run(`UPDATE harvest_batches SET market_strain = 'Beta' WHERE id = 'hb-26903'`);
     m.run(`UPDATE harvest_batches SET market_strain = 'Alpha' WHERE id = 'hb-26904'`);
 
-    const sheet = (row: {
+    // THE LAB STATION (canon 0.30.362): the stats and the pie read compliance samples.
+    const sample = (row: {
       id: string;
       strain?: string | null;
       hbn?: string | null;
@@ -206,36 +207,48 @@ describe("THE TESTING GATE on a migrated database (canon 0.30.293)", () => {
       status: string;
       mode?: string | null;
       grams?: number | null;
-      attempt?: number;
       deleted?: string | null;
+      program?: string;
     }) => {
       m.run(
-        `INSERT INTO external_test_results (id, strain, hbn, entered_testing, status, failure_mode, batch_weight_grams, attempt, created_at, updated_at, deleted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO lab_compliance_samples (
+          id, program, license, market, strain, source_metrc_tag, batch_weight_g, harvest_batch,
+          sample_tag, required_test, entered_testing_on, status, fail_reason, notes, scheduled_at,
+          created_at, updated_at, changed_at, voided_at
+        ) VALUES (?, ?, 'AU-P-000694', 'AU', ?, ?, ?, ?, ?, 'Full Compliance', ?, ?, ?, '', ?, ?, ?, ?, ?)`,
         row.id,
+        row.program ?? "compliance",
         row.strain ?? null,
+        `1A4050300000000000000${row.id}`,
+        row.grams ?? null,
         row.hbn ?? null,
+        `SMP-${row.id}`,
         row.entered ?? null,
         row.status,
         row.mode ?? null,
-        row.grams ?? null,
-        row.attempt ?? 1,
+        T,
+        T,
         T,
         T,
         row.deleted ?? null
       );
     };
-    sheet({ id: "s1", strain: "SheetA", hbn: "26901-ARL-GH-001-0-NA-26901", status: "pass", grams: 100 });
-    sheet({ id: "s2", strain: "SheetB", hbn: "26902-ARL-GH-001-0-NA-26902", status: "Passed - Retest", grams: 100 });
-    sheet({ id: "s3", strain: "Alpha", hbn: "26903-ARL-GH-001-0-NA-26903", status: "Failed", mode: "Coliforms", grams: 448 });
-    sheet({ id: "s4", strain: "Alpha", hbn: "26904-ARL-GH-001-0-NA-26904", status: "Failed", mode: "Coliforms", grams: 224 });
-    sheet({ id: "s5", strain: "Gamma", entered: "2026-04-01", status: "fail", mode: "Yeast", grams: 112 });
-    sheet({ id: "s6", entered: "2026-05-01", status: "Failed", grams: 50 });
-    sheet({ id: "s7", strain: "Alpha", hbn: "26903-ARL-GH-001-0-NA-26903", status: "Failed", mode: "Coliforms", grams: 10, attempt: 2 });
-    sheet({ id: "s8", strain: "Open", hbn: "26903-ARL-GH-001-0-NA-26903", status: "In Progress", grams: 10 });
-    sheet({ id: "s9", strain: "Old", hbn: "25999-PNN-GH-001-0-NA-25999", entered: "2026-06-01", status: "Failed", mode: "Coliforms", grams: 10 });
-    sheet({ id: "s10", strain: "Gone", hbn: "26903-ARL-GH-001-0-NA-26903", status: "Failed", mode: "Coliforms", grams: 10, deleted: T });
-    sheet({ id: "s11", strain: "LastYear", entered: "2025-12-01", status: "Failed", mode: "Yeast", grams: 10 });
+    sample({ id: "s1", strain: "StationA", hbn: "26901-ARL-GH-001-0-NA-26901", status: "passed", grams: 100 });
+    sample({ id: "s2", strain: "StationB", hbn: "26902-ARL-GH-001-0-NA-26902", status: "passed", grams: 100 });
+    sample({ id: "s2r", strain: "StationB", hbn: "26902-ARL-GH-001-0-NA-26902", status: "retest_passed", grams: 999 });
+    sample({ id: "s3", strain: "Alpha", hbn: "26903-ARL-GH-001-0-NA-26903", status: "failed", mode: "Coliforms", grams: 448 });
+    sample({ id: "s4", strain: "Alpha", hbn: "26904-ARL-GH-001-0-NA-26904", status: "failed", mode: "Coliforms", grams: 224 });
+    sample({ id: "s5", strain: "Gamma", entered: "2026-04-01", status: "failed", mode: "Yeast", grams: 112 });
+    sample({ id: "s6", hbn: "26906-ARL", entered: "2025-05-01", status: "failed", grams: 50 });
+    sample({ id: "s7", strain: "Alpha", hbn: "26903-ARL-GH-001-0-NA-26903", status: "retest_failed", mode: "Coliforms", grams: 10 });
+    sample({ id: "s8", strain: "Open", hbn: "26903-ARL-GH-001-0-NA-26903", status: "in_testing", grams: 10 });
+    sample({ id: "s9", strain: "Old", hbn: "25999-PNN-GH-001-0-NA-25999", entered: "2026-06-01", status: "failed", mode: "Coliforms", grams: 10 });
+    sample({ id: "s10", strain: "Gone", hbn: "26903-ARL-GH-001-0-NA-26903", status: "failed", mode: "Coliforms", grams: 10, deleted: T });
+    sample({ id: "s11", strain: "LastYear", entered: "2025-12-01", status: "failed", mode: "Yeast", grams: 10 });
+    sample({ id: "s12", strain: "Rnd", hbn: "26903-ARL-GH-001-0-NA-26903", status: "failed", mode: "Pesticides", grams: 80, program: "rnd" });
+    sample({ id: "s13", strain: "OldFirst", hbn: "25913-PNN", entered: "2026-06-01", status: "failed", mode: "Coliforms", grams: 10 });
+    sample({ id: "s14", strain: "Waiting", hbn: "26903-ARL-GH-001-0-NA-26903", status: "scheduled", grams: 10 });
+    sample({ id: "s15", strain: "Unsent", hbn: "26903-ARL-GH-001-0-NA-26903", status: "not_submitted", grams: 10 });
 
     const figures = await loadTestingSection(m.db, 2026);
     const by = (gate: string) => figures.panes.find((pane) => pane.gate === gate)!;
@@ -246,6 +259,8 @@ describe("THE TESTING GATE on a migrated database (canon 0.30.293)", () => {
     expect(figures.tests).toBe(6);
     expect(figures.fails).toBe(4);
     expect(figures.ftq).toBe("33.3");
+    // R&D (Pesticides), the voided row, the retest and the 2025 lots leave the pie.
+    expect(figures.slices.map((slice) => slice.mode).sort()).toEqual(["Coliforms", "Yeast", "unnamed"]);
     const coli = figures.slices.find((slice) => slice.mode === "Coliforms");
     expect(coli).toMatchObject({ count: 2, pct: "50.0", dx: "6.000", dy: "0.000", color: 1 });
     expect(coli?.strains.map((strain) => strain.label).sort()).toEqual(["Alpha", "Alpha / Beta"]);
