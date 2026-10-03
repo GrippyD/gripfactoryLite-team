@@ -162,6 +162,7 @@ export const LAB_CLIENT_JS = `(() => {
     fill(cf.license, OPT.licenses, (l) => l.label, (l) => l.license);
     fill(cf.required_test, OPT.required_tests); fill(cf.testing_facility, OPT.facilities, null, null, tr("Not sent yet"));
     fill(cf.status, OPT.statuses, (s) => s.label, (s) => s.value); fill(cf.fail_reason, OPT.fail_reasons, null, null, tr("None"));
+    csStatusChoices();
     const last = store.get("lab.license"); if (last) { bf.license.value = last; cf.license.value = last; }
     bf.license.addEventListener("change", () => { store.set("lab.license", bf.license.value); previewTag(); });
     const tab = store.get("lab.tab") || "bench";
@@ -281,6 +282,18 @@ export const LAB_CLIENT_JS = `(() => {
   const cf = $("#cs-form");
   function csPreview() { const lic = cf.license.value; $("#cs-src-preview").textContent = expandTag(cf.source_metrc_tag.value, lic).tag; $("#cs-smp-preview").textContent = expandTag(cf.sample_tag.value, lic).tag; }
   cf.source_metrc_tag.addEventListener("input", csPreview); cf.sample_tag.addEventListener("input", csPreview); cf.license.addEventListener("change", csPreview);
+  // THE STATUS AGREES WITH THE TEST (BRIEF V25 law 1a): a required test that
+  // names a retest (labvocab isRetestTest: it begins with "Retest", case-blind,
+  // after trimming) offers the retest statuses only. Passed and Failed stay in
+  // the list switched off, so a stored one still shows; the worker refuses
+  // setting one (status-retest) and keeps a stored one as stored.
+  function csStatusChoices() {
+    if (!OPT) return;
+    const retest = cf.required_test.value.trim().toLowerCase().startsWith("retest");
+    const allowed = OPT.retest_test_statuses || [];
+    $$("option", cf.status).forEach((o) => { o.disabled = retest && !o.dataset.stored && !allowed.includes(o.value); });
+  }
+  cf.required_test.addEventListener("change", csStatusChoices);
   // The Metrc mirror fills batch weight only from a package counted in grams
   // (quantity_g); a package counted in another unit shows its count instead.
   cf.source_metrc_tag.addEventListener("change", async () => {
@@ -293,7 +306,7 @@ export const LAB_CLIENT_JS = `(() => {
       if (!cf.harvest_batch.value) cf.harvest_batch.value = p.source_harvest || "";
     }
   });
-  function csReset(program) { csEditing = null; csLoadedGrams = {}; dropStored(cf); cf.reset(); cf.program.value = program || "compliance"; $("#cs-title").textContent = program === "rnd" ? tr("New R&D sample") : tr("New compliance sample"); $("#cs-save").textContent = tr("Save sample"); const last = store.get("lab.license"); if (last) cf.license.value = last; cf.status.value = "scheduled"; $("#cs-batch-unit").textContent = ""; csPreview(); clear($("#cs-status")); }
+  function csReset(program) { csEditing = null; csLoadedGrams = {}; dropStored(cf); cf.reset(); cf.program.value = program || "compliance"; $("#cs-title").textContent = program === "rnd" ? tr("New R&D sample") : tr("New compliance sample"); $("#cs-save").textContent = tr("Save sample"); const last = store.get("lab.license"); if (last) cf.license.value = last; cf.status.value = "scheduled"; $("#cs-batch-unit").textContent = ""; csPreview(); csStatusChoices(); clear($("#cs-status")); }
   $("#cs-reset").addEventListener("click", () => csReset(cf.program.value));
   cf.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -326,7 +339,7 @@ export const LAB_CLIENT_JS = `(() => {
       cf[k].value = v;
       if (cf[k].tagName === "SELECT" && cf[k].value !== String(v) && v !== "") offerStored(cf[k], v);
     }
-    csPreview(); $$("#tabs button").find((b) => b.dataset.tab === "compliance").click(); window.scrollTo({ top: 0, behavior: "smooth" });
+    csPreview(); csStatusChoices(); $$("#tabs button").find((b) => b.dataset.tab === "compliance").click(); window.scrollTo({ top: 0, behavior: "smooth" });
   }
   // The Ready chip's tooltip, built from the readiness numbers in the page's
   // words (the server's why stays English for the JSON contract only).

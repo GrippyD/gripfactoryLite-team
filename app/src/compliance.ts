@@ -601,7 +601,8 @@ const numberOf = (v: unknown): number | null => (v == null || v === "" ? null : 
 
 /** THE LAB STATION (canon 0.30.362). A compliance sample as an External tab
  * row: the status stays the station's word (shown through its label), the
- * attempt is labvocab's (2 for a retest status, else 1), source 'lab'. */
+ * attempt is labvocab's (2 for a retest status or a "Retest" required test,
+ * else 1; BRIEF V25 law 1), source 'lab'. */
 export function externalRowFromLab(r: LabSampleListFields): ExternalTestRow {
   const status = String(r.status ?? "");
   return {
@@ -619,7 +620,7 @@ export function externalRowFromLab(r: LabSampleListFields): ExternalTestRow {
     testing_facility: textOf(r.testing_facility),
     entered_testing: textOf(r.entered_testing_on),
     finished_testing: textOf(r.finished_testing_on),
-    attempt: labAttempt(status),
+    attempt: labAttempt(status, textOf(r.required_test)),
     potency_result: numberOf(r.thc_potency_pct),
     finalized_potency: null,
     status,

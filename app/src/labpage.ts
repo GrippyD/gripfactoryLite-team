@@ -40,6 +40,7 @@ export const LAB_FRIENDLY: Record<string, string> = {
   entered_testing_on: "the entered date is unreadable",
   finished_testing_on: "the finished date is unreadable",
   status: "that status is not one the lab uses",
+  "status-retest": "a retest takes Retest passed or Retest failed; Passed and Failed are first tests",
   required_test: "pick the required test",
   "not-found": "that row no longer exists",
   voided: "that row was voided",
@@ -230,7 +231,7 @@ body.device-phone #lab-station .lab-nav button, body.device-phone #lab-station t
         <label class="field">${e(locale, "Entered testing")} <input type="date" name="entered_testing_on"></label>
         <label class="field">${e(locale, "Finished testing")} <input type="date" name="finished_testing_on"></label>
         <label class="field">${e(locale, "THC potency %")} <input type="number" name="thc_potency_pct" step="0.0001" inputmode="decimal"></label>
-        <label class="field">${e(locale, "Status")} <select name="status"></select></label>
+        <label class="field" title="${e(locale, "A Retest required test takes Retest passed or Retest failed; Passed and Failed are first tests.")}">${e(locale, "Status")} <select name="status"></select></label>
         <label class="field">${e(locale, "Fail reason")} <select name="fail_reason"><option value="">${e(locale, "None")}</option></select></label>
         <label class="field lab-wide">${e(locale, "Notes")} <textarea name="notes"></textarea></label>
       </div>

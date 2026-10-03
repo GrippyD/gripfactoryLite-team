@@ -898,3 +898,71 @@ describe("lab handlers (the brief's own cases)", () => {
     expect(unknown.body.error).toBe("status");
   });
 });
+
+describe("BRIEF V25 law 1a: the status agrees with the test", () => {
+  const retest = { license: "AU-P-000694", source_metrc_tag: "01401", sample_tag: "02401", required_test: "Retest (Coliforms)", entered_testing_on: "2026-10-01" };
+
+  it("a Retest (Coliforms) sample refuses passed and failed (status-retest) and takes retest_passed", async () => {
+    const { m, lab } = await setup();
+    const logsBefore = logCount(m);
+    const passed = await lab.call<Fail>("POST", "/api/lab/compliance", { ...retest, id: "cs_retest00000001", status: "passed" });
+    expect(passed.status, JSON.stringify(passed.body)).toBe(400);
+    expect(passed.body.error).toBe("status-retest");
+    const failed = await lab.call<Fail>("POST", "/api/lab/compliance", { ...retest, id: "cs_retest00000001", status: "Failed", fail_reason: "Coliforms" });
+    expect(failed.body.error).toBe("status-retest");
+    // Case-blind, after trimming.
+    const shouted = await lab.call<Fail>("POST", "/api/lab/compliance", { ...retest, id: "cs_retest00000001", required_test: "  RETEST (Metals) ", status: "passed" });
+    expect(shouted.body.error).toBe("status-retest");
+    expect(m.get("SELECT COUNT(*) AS n FROM lab_compliance_samples")?.n).toBe(0);
+    expect(logCount(m)).toBe(logsBefore);
+
+    const made = await lab.call<Created<LabComplianceRow>>("POST", "/api/lab/compliance", { ...retest, id: "cs_retest00000001", status: "in_testing" });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    let at = made.body.row.updated_at;
+    const toPassed = await lab.call<Fail>("PATCH", "/api/lab/compliance/cs_retest00000001", { status: "passed", if_updated_at: at });
+    expect(toPassed.status).toBe(400);
+    expect(toPassed.body.error).toBe("status-retest");
+    const toFailed = await lab.call<Fail>("PATCH", "/api/lab/compliance/cs_retest00000001", { status: "failed", fail_reason: "Coliforms", if_updated_at: at });
+    expect(toFailed.body.error).toBe("status-retest");
+    const took = await lab.call<Patched<LabComplianceRow>>("PATCH", "/api/lab/compliance/cs_retest00000001", { status: "retest_passed", finished_testing_on: "2026-10-03", thc_potency_pct: 22.1, if_updated_at: at });
+    expect(took.status, JSON.stringify(took.body)).toBe(200);
+    expect(took.body.row.status).toBe("retest_passed");
+    at = took.body.row.updated_at;
+    const retestFailed = await lab.call<Patched<LabComplianceRow>>("PATCH", "/api/lab/compliance/cs_retest00000001", { status: "retest_failed", fail_reason: "Coliforms", if_updated_at: at });
+    expect(retestFailed.status, JSON.stringify(retestFailed.body)).toBe(200);
+    expect(logsFor(m, "lab_compliance_samples", "cs_retest00000001").filter((l) => l.field === "status").map((l) => [l.old_value, l.new_value])).toStrictEqual([
+      [null, "in_testing"],
+      ["in_testing", "retest_passed"],
+      ["retest_passed", "retest_failed"],
+    ]);
+
+    // A first test that turns into a retest while passed is refused too; one with a retest status is fine.
+    const first = await lab.call<Created<LabComplianceRow>>("POST", "/api/lab/compliance", { ...retest, id: "cs_retest00000002", required_test: "Full Compliance", status: "passed" });
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    const turned = await lab.call<Fail>("PATCH", "/api/lab/compliance/cs_retest00000002", { required_test: "Retest (Coliforms)" });
+    expect(turned.body.error).toBe("status-retest");
+    const turnedRight = await lab.call<Patched<LabComplianceRow>>("PATCH", "/api/lab/compliance/cs_retest00000002", { required_test: "Retest (Coliforms)", status: "retest_passed" });
+    expect(turnedRight.status, JSON.stringify(turnedRight.body)).toBe(200);
+
+    const o = await lab.call<R.LabOptions>("GET", "/api/lab/options");
+    expect(o.body.retest_test_statuses).toStrictEqual(["scheduled", "not_submitted", "in_testing", "retest_passed", "retest_failed"]);
+  });
+
+  it("a stored Retest row with a plain passed is never rewritten: a correction that keeps the status lands, a new plain status is refused", async () => {
+    const { m, lab } = await setup();
+    m.run(
+      `INSERT INTO lab_compliance_samples (id, program, license, market, source_metrc_tag, sample_tag, required_test, status, notes, scheduled_at, source, created_at, updated_at, changed_at)
+       VALUES ('cs_stored0000001', 'compliance', 'AU-P-000694', 'AU', '1A4050300061761000001402', '1A4050300061761000002402', 'Retest (Coliforms)', 'passed', '', '2026-09-20T12:00:00.000Z', 'workbook', '2026-09-20T12:00:00.000Z', '2026-09-20T12:00:00.000Z', '2026-09-20T12:00:00.000Z')`
+    );
+    const noted = await lab.call<Patched<LabComplianceRow>>("PATCH", "/api/lab/compliance/cs_stored0000001", { notes: "read by the one retest rule", status: "passed" });
+    expect(noted.status, JSON.stringify(noted.body)).toBe(200);
+    expect(noted.body.row.status).toBe("passed");
+    expect(noted.body.row.required_test).toBe("Retest (Coliforms)");
+    expect(logsFor(m, "lab_compliance_samples", "cs_stored0000001").map((l) => l.field)).toStrictEqual(["notes"]);
+    const plainFail = await lab.call<Fail>("PATCH", "/api/lab/compliance/cs_stored0000001", { status: "failed", fail_reason: "Coliforms" });
+    expect(plainFail.body.error).toBe("status-retest");
+    const corrected = await lab.call<Patched<LabComplianceRow>>("PATCH", "/api/lab/compliance/cs_stored0000001", { status: "retest_passed" });
+    expect(corrected.status, JSON.stringify(corrected.body)).toBe(200);
+    expect(corrected.body.row.status).toBe("retest_passed");
+  });
+});

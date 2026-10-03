@@ -16,7 +16,7 @@ import {
   requireActor,
 } from "./db";
 import { auditUpToDate, ftqRate, gramsToLbs, internalAuditIntervalDays, paretoFromFailures } from "./compliance";
-import { LAB_ATTEMPT_SQL, LAB_CONSOLE_SET_SQL, LAB_OUTCOME_SQL } from "./labvocab";
+import { LAB_ATTEMPT_SQL, LAB_CONSOLE_SET_SQL, LAB_OUTCOME_SQL, labInTestingGrams, type LabInTestingRow } from "./labvocab";
 
 export type ActionOk = { redirect: string };
 
@@ -26,18 +26,19 @@ function personIdFrom(form: FormData): string | null {
 
 /** THE LAB STATION (canon 0.30.362). The Compliance Console reads the lab
  * station's compliance samples (labvocab's set: R&D out, voided out). Lbs in
- * testing is the batch weight of the samples in_testing. The pareto splits each
- * failed sample's fail_reason on commas (V19). The FTQ is first tests only (a
- * status that is not a retest one), all seasons (V19 law 5); an open first test
- * stays out of the denominator. */
+ * testing is one batch weight per source tag over the samples in_testing (BRIEF
+ * V25 law 2, labInTestingGrams). The pareto splits each failed sample's
+ * fail_reason on commas (V19). The FTQ is first tests only (no retest status and
+ * no "Retest" required test, BRIEF V25 law 1), all seasons (V19 law 5); an open
+ * first test stays out of the denominator. */
 export async function loadComplianceKpis(db: D1Database) {
   const inTesting = await db
     .prepare(
-      `SELECT batch_weight_g FROM lab_compliance_samples
+      `SELECT id, source_metrc_tag, batch_weight_g, scheduled_at, changed_at FROM lab_compliance_samples
        WHERE ${LAB_CONSOLE_SET_SQL} AND status = 'in_testing'`
     )
-    .all<{ batch_weight_g: number | null }>();
-  const grams = (inTesting.results ?? []).reduce((sum, row) => sum + (Number.isFinite(Number(row.batch_weight_g)) ? Number(row.batch_weight_g) : 0), 0);
+    .all<LabInTestingRow>();
+  const grams = labInTestingGrams(inTesting.results ?? []);
   const lbs = { grams: roundGrams(grams), lbs: gramsToLbs(grams), source: "external" as const };
   const failed = await db
     .prepare(

@@ -22,6 +22,8 @@
  * would have thrown on or stored as a symbol is refused with its slug.
  */
 
+import { isRetestTest } from "./labvocab";
+
 // ---------------------------------------------------------------- types
 
 /** An inclusive [low, high] bound. */
@@ -126,6 +128,10 @@ export const STATUS_LABELS: Readonly<Record<LabStatus, string>> = {
   retest_passed: "Retest passed",
   retest_failed: "Retest failed",
 };
+// THE STATUS AGREES WITH THE TEST (canon 0.30.365, BRIEF V25 law 1a): a plain
+// passed or failed is a first test, so a sample whose required test names a
+// retest (labvocab isRetestTest) takes only these.
+export const RETEST_TEST_STATUSES: readonly LabStatus[] = ["scheduled", "not_submitted", "in_testing", "retest_passed", "retest_failed"];
 // The sheet's own spellings, so a seeded row and a typed row mean the same thing.
 export const STATUS_ALIASES: Readonly<Record<string, LabStatus>> = {
   "not submitted": "not_submitted",
@@ -481,8 +487,14 @@ export type ComplianceSampleRow = {
  * sheet let a sample be typed at any stage, and a lab result arriving before
  * the "entered testing" date was filled is real life, not an error. What is
  * enforced: a source tag always, a license always, a sample tag before any
- * status past scheduled, and a fail reason on a failed status. */
-export function validateComplianceSample(input: unknown, nowMs: number): Checked<ComplianceSampleRow> {
+ * status past scheduled, a fail reason on a failed status, and no plain passed
+ * or failed on a "Retest" required test (BRIEF V25 law 1a). `stored` is the row a
+ * correction changes (its status and required test as stored); a create has none. */
+export function validateComplianceSample(
+  input: unknown,
+  nowMs: number,
+  stored: { status: string; required_test: string } | null = null
+): Checked<ComplianceSampleRow> {
   if (!input || typeof input !== "object") return { ok: false, error: "not-an-object" };
   const i = input as Record<string, unknown>;
   const id = str(i.id, 64);
@@ -517,6 +529,15 @@ export function validateComplianceSample(input: unknown, nowMs: number): Checked
   if (status !== "scheduled" && !smp.tag) return { ok: false, error: "sample_tag-required" };
   const required_test = text(requiredTest);
   if (!required_test) return { ok: false, error: "required_test" };
+  // THE STATUS AGREES WITH THE TEST (BRIEF V25 law 1a): a plain passed or
+  // failed is a first test, so a sample whose required test names a retest is
+  // refused one. A stored row that already disagrees is never rewritten by this
+  // rule: a correction that leaves its status as stored (its test still a
+  // retest) is not refused, and the one retest rule reads it as a retest.
+  if (!RETEST_TEST_STATUSES.includes(status) && isRetestTest(required_test)) {
+    const kept = stored != null && stored.status === status && isRetestTest(stored.required_test);
+    if (!kept) return { ok: false, error: "status-retest" };
+  }
   const facility = text(facilityText) || null;
   const batch_weight_g = numOrNull(i.batch_weight_g, GRAMS_RANGE);
   if (batch_weight_g === undefined) return { ok: false, error: "batch_weight_g" };
@@ -1007,6 +1028,8 @@ export type LabOptions = {
   required_tests: typeof REQUIRED_TESTS;
   facilities: typeof FACILITIES;
   statuses: { value: LabStatus; label: string }[];
+  /** The statuses a "Retest" required test takes (BRIEF V25 law 1a). */
+  retest_test_statuses: readonly LabStatus[];
   programs: typeof PROGRAMS;
   fail_reasons: typeof FAIL_REASONS;
   ready_aw_limit: number;
@@ -1024,6 +1047,7 @@ export function options(): LabOptions {
     required_tests: REQUIRED_TESTS,
     facilities: FACILITIES,
     statuses: STATUSES.map((s) => ({ value: s, label: STATUS_LABELS[s] })),
+    retest_test_statuses: RETEST_TEST_STATUSES,
     programs: PROGRAMS,
     fail_reasons: FAIL_REASONS,
     ready_aw_limit: READY_AW_LIMIT,

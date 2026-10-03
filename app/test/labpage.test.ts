@@ -224,4 +224,18 @@ describe("the lab station page", () => {
     expect(LAB_CLIENT_JS).toContain("outbox.save(outbox.list().filter((x) => !sent.has(x.key)))");
     expect(LAB_CLIENT_JS).toContain("if (b === null)");
   });
+
+  it("BRIEF V25 law 1a: switches Passed and Failed off for a Retest required test, keeps a stored one, and says why in EN and ES", () => {
+    expect(LAB_CLIENT_JS).toContain('cf.required_test.addEventListener("change", csStatusChoices)');
+    expect(LAB_CLIENT_JS).toContain("OPT.retest_test_statuses");
+    expect(LAB_CLIENT_JS).toContain('cf.required_test.value.trim().toLowerCase().startsWith("retest")');
+    expect(LAB_CLIENT_JS).toMatch(/o\.disabled = retest && !o\.dataset\.stored && !allowed\.includes\(o\.value\)/);
+    // Run on boot, on a reset, and when a stored sample opens.
+    expect(LAB_CLIENT_JS.match(/csStatusChoices\(\)/g)?.length).toBeGreaterThanOrEqual(3);
+    const words = DICT[LAB_FRIENDLY["status-retest"] as string];
+    expect(words?.es).toMatch(/Reprueba aprobada o Reprueba fallida/);
+    const help = "A Retest required test takes Retest passed or Retest failed; Passed and Failed are first tests.";
+    expect(labStationBody("en", "Smoke Hand")).toContain(`title="${help}"`);
+    expect(labStationBody("es", "Smoke Hand")).toContain(`title="${DICT[help]?.es}"`);
+  });
 });
