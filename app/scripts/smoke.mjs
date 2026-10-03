@@ -4284,6 +4284,51 @@ async function run() {
     assert(v24CsFeedDefault.more === false && v24CsFeedDefault.count === v24CsFeedDefault.rows.length && [v24Fail.id, v24Open.id, v24Rnd.id].every((id) => v24CsFeedDefault.rows.some((r) => r.id === id)), "a feed read with no limit must page at its default of 500, not one row");
     const v24CsLog = await text("/log");
     assert(v24CsLog.body.includes(`<td>${v24Fail.id}</td>`) && v24CsLog.body.includes("<td>fail_reason</td>") && v24CsLog.body.includes("<td>Coliforms</td>"), "the move to failed must land its fields in the change log");
+    // BRIEF V25, THE STATION IS THE TEST RECORD (canon 0.30.365). ONE RETEST RULE: a station sample whose
+    // required test is "Retest (Coliforms)" refuses a plain passed (status-retest), takes retest_passed,
+    // and leaves First Time Tests and both FTQs as they were; a retest is never a first test. LBS IN
+    // TESTING COUNTS A PACKAGE ONCE: a second sample in testing on the open sample's source tag (56901)
+    // leaves one batch weight, the newest sample's. LABELS READ THE STATION: the open sample is a label
+    // package by its source tag; the R&D sample is not.
+    const v25Retest = { id: "cs_smokev25retest1", program: "compliance", license: "AU-G-C-000832", source_metrc_tag: "56899", sample_tag: "56905", status: "in_testing", required_test: "Retest (Coliforms)", item_name: "Smoke Lab Bud", harvest_batch: v24Hbn, entered_testing_on: v24Day, testing_facility: "SC Labs" };
+    const v25RetestRes = await req("/api/lab/compliance", v24Json("POST", v25Retest));
+    const v25RetestJson = await v25RetestRes.json();
+    assert(
+      v25RetestRes.status === 201 && v25RetestJson.row.required_test === "Retest (Coliforms)" && v25RetestJson.row.status === "in_testing",
+      `the Retest sample expected 201 in testing got ${v25RetestRes.status} ${JSON.stringify(v25RetestJson)}`
+    );
+    const v25Plain = await req(`/api/lab/compliance/${v25Retest.id}`, v24Json("PATCH", { status: "passed", finished_testing_on: v24Day, if_updated_at: v25RetestJson.row.updated_at }));
+    const v25PlainJson = await v25Plain.json();
+    assert(v25Plain.status === 400 && v25PlainJson.error === "status-retest", `a plain passed on a Retest sample must refuse with status-retest, got ${v25Plain.status} ${JSON.stringify(v25PlainJson)}`);
+    const v25Passed = await req(`/api/lab/compliance/${v25Retest.id}`, v24Json("PATCH", { status: "retest_passed", finished_testing_on: v24Day, if_updated_at: v25RetestJson.row.updated_at }));
+    const v25PassedJson = await v25Passed.json();
+    assert(v25Passed.status === 200 && v25PassedJson.row.status === "retest_passed", `the Retest sample must take retest_passed, got ${v25Passed.status} ${JSON.stringify(v25PassedJson)}`);
+    const v25Console = await text("/harvest");
+    const v25Testing = v25Console.body.slice(v25Console.body.indexOf('data-hc-section="testing"'), v25Console.body.indexOf('data-hc-section="prepack"'));
+    assert(
+      v25Testing.includes('data-hc="first_tests">1<') && v25Testing.includes('data-hc="first_fails">1<') && v25Testing.includes('data-hc="ftq">0.0%<'),
+      "a Retest sample moved to passed must leave First Time Tests, First Time Fails and the FTQ as they were"
+    );
+    const v25Twin = { id: "cs_smokev25twin001", program: "compliance", license: "AU-G-C-000832", source_metrc_tag: "56901", sample_tag: "56906", status: "in_testing", required_test: "Retest (Coliforms)", item_name: "Smoke Lab Trim", harvest_batch: v24Hbn, batch_weight_g: 896, entered_testing_on: v24Day };
+    const v25TwinRes = await req("/api/lab/compliance", v24Json("POST", v25Twin));
+    assert(v25TwinRes.status === 201, `the second sample in testing expected 201 got ${v25TwinRes.status} ${await v25TwinRes.text()}`);
+    const v25Menu = await text("/compliance");
+    const v25Kpi = (key, next) => v25Menu.body.slice(v25Menu.body.indexOf(`data-kpi="${key}"`), v25Menu.body.indexOf(`data-kpi="${next}"`));
+    assert(v25Kpi("lbs", "pareto").includes("2.00 lbs"), `two samples in testing on one source tag must count one batch weight, the newest's 896 g, got ${v25Kpi("lbs", "pareto")}`);
+    assert(v25Kpi("ftq", "audit").includes('<strong class="kpi-value">0.0%</strong>') && v25Kpi("ftq", "audit").includes("n=1"), "the Compliance FTQ must leave the two Retest samples out");
+    // The required test alone makes the open twin a retest: the External tab shows it as attempt 2
+    // (a status-only rule read it as 1), beside the Full Compliance sample on the same tag at attempt 1.
+    const v25External = await text("/compliance/testing?tab=external");
+    assert(
+      /<td>1A40503000311FB000056906<\/td>\s*<td>Smoke Lab Trim<\/td>\s*<td>[^<]*<\/td>\s*<td>2<\/td>/.test(v25External.body) &&
+        /<td>1A40503000311FB000056902<\/td>\s*<td>Smoke Lab Trim<\/td>\s*<td>[^<]*<\/td>\s*<td>1<\/td>/.test(v25External.body),
+      "the External tab must show the open Retest sample as attempt 2 and the Full Compliance sample as attempt 1"
+    );
+    const v25Labels = await text("/compliance/labels");
+    assert(
+      v25Labels.body.includes(`<option value="${v24Open.id}">1A40503000311FB000056901 Smoke Lab Trim</option>`) && !v25Labels.body.includes(`value="${v24Rnd.id}"`),
+      "Labels must list the station's compliance samples by source tag, R&D out"
+    );
     const inTest = await text("/reports/internal_testing");
     assert(inTest.res.status === 200 && !inTest.body.includes("HBN-SMOKE"), "the internal testing report still renders; the Internal tab's instrument drops no longer feed it");
 

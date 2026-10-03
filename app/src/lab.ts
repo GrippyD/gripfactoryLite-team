@@ -720,7 +720,8 @@ async function patchCompliance(db: D1Database, request: Request, id: string, act
     }
   }
   if (!touched.length) return bad("nothing-to-change");
-  const v = R.validateComplianceSample(merged, Date.now());
+  // The stored status and required test: a row that already disagrees is never rewritten (BRIEF V25 law 1a).
+  const v = R.validateComplianceSample(merged, Date.now(), { status: cur.status, required_test: cur.required_test });
   if (!v.ok) return bad(v.error);
   const r = v.row;
   const now = iso(Date.now());

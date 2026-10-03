@@ -31,6 +31,7 @@ import {
   type ScheduleStage,
 } from "./config";
 import type { WetWeightsCsvRow } from "./csv";
+import { LAB_CONSOLE_SET_SQL, LAB_OUTCOME_SQL } from "./labvocab";
 import type {
   DrySpaceRow,
   DryingLotRow,
@@ -4161,31 +4162,40 @@ export async function listLabelPackages(db: D1Database): Promise<Array<Record<st
        ORDER BY i.package_code`
     )
     .all<Record<string, unknown>>();
+  // THE STATION IS THE TEST RECORD (canon 0.30.365, BRIEF V25 law 4): the test
+  // rows are the lab station's compliance samples (labvocab's set: R&D out,
+  // voided out).
   const tests = await db
     .prepare(
-      `SELECT id, COALESCE(source_metrc_tag, sample_tag) AS tag,
-              COALESCE(item_name, strain, sample_tag) AS item_or_strain,
-              net_weight_grams, COALESCE(entered_testing, created_at) AS packaged_date,
-              license_number, testing_facility AS facility_name
-       FROM external_test_results
-       WHERE deleted_at IS NULL AND COALESCE(source_metrc_tag, sample_tag) IS NOT NULL
-       ORDER BY created_at DESC`
+      `SELECT id, COALESCE(NULLIF(TRIM(source_metrc_tag), ''), sample_tag) AS tag,
+              COALESCE(NULLIF(TRIM(item_name), ''), NULLIF(TRIM(strain), ''), sample_tag) AS item_or_strain,
+              net_weight_g AS net_weight_grams, COALESCE(entered_testing_on, scheduled_at) AS packaged_date,
+              license AS license_number, testing_facility AS facility_name
+       FROM lab_compliance_samples
+       WHERE ${LAB_CONSOLE_SET_SQL} AND COALESCE(NULLIF(TRIM(source_metrc_tag), ''), sample_tag) IS NOT NULL
+       ORDER BY created_at DESC, id DESC`
     )
     .all<Record<string, unknown>>();
   return [...(inv.results ?? []), ...(tests.results ?? [])];
 }
 
+/** BRIEF V25 law 4: the THC potency of the newest passed compliance sample
+ * (passed or retest_passed) whose source or sample tag is the tag, newest by
+ * finished_testing_on, then changed_at; none, blank. A failed sample, however
+ * new, is never taken. */
+/** THE LABEL'S POTENCY (canon 0.30.371, the V25 gate): the newest passed sample that carries a potency; a retest that
+ * re-ran only the failed analyte leaves THC blank, so the earlier passed figure stands. None, blank. */
 export async function latestFinalizedPotency(db: D1Database, tag: string): Promise<string> {
   const row = await db
     .prepare(
-      `SELECT finalized_potency FROM external_test_results
-       WHERE deleted_at IS NULL AND (source_metrc_tag = ? OR sample_tag = ?)
-         AND finalized_potency IS NOT NULL
-       ORDER BY attempt DESC, created_at DESC LIMIT 1`
+      `SELECT thc_potency_pct FROM lab_compliance_samples
+       WHERE ${LAB_CONSOLE_SET_SQL} AND (source_metrc_tag = ? OR sample_tag = ?)
+         AND ${LAB_OUTCOME_SQL} = 'passed' AND thc_potency_pct IS NOT NULL
+       ORDER BY (finished_testing_on IS NULL) ASC, finished_testing_on DESC, changed_at DESC, id DESC LIMIT 1`
     )
     .bind(tag, tag)
-    .first<{ finalized_potency: number }>();
-  return row?.finalized_potency == null ? "" : String(row.finalized_potency);
+    .first<{ thc_potency_pct: number | null }>();
+  return row?.thc_potency_pct == null ? "" : String(row.thc_potency_pct);
 }
 
 

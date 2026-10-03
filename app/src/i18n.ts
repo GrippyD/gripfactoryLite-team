@@ -3267,6 +3267,15 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "the entered date is unreadable": { en: "the entered date is unreadable", es: "la fecha de entrada no se lee" },
   "the finished date is unreadable": { en: "the finished date is unreadable", es: "la fecha de termino no se lee" },
   "that status is not one the lab uses": { en: "that status is not one the lab uses", es: "ese estado no es uno que el laboratorio usa" },
+  // THE STATION IS THE TEST RECORD (canon 0.30.365, BRIEF V25 law 1a): the status agrees with the test.
+  "a retest takes Retest passed or Retest failed; Passed and Failed are first tests": {
+    en: "a retest takes Retest passed or Retest failed; Passed and Failed are first tests",
+    es: "una reprueba lleva Reprueba aprobada o Reprueba fallida; Aprobado y Fallido son primeras pruebas",
+  },
+  "A Retest required test takes Retest passed or Retest failed; Passed and Failed are first tests.": {
+    en: "A Retest required test takes Retest passed or Retest failed; Passed and Failed are first tests.",
+    es: "Una prueba requerida de Reprueba lleva Reprueba aprobada o Reprueba fallida; Aprobado y Fallido son primeras pruebas.",
+  },
   "pick the required test": { en: "pick the required test", es: "elija la prueba requerida" },
   "that row no longer exists": { en: "that row no longer exists", es: "esa fila ya no existe" },
   "that row was voided": { en: "that row was voided", es: "esa fila fue anulada" },

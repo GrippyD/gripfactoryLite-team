@@ -293,3 +293,30 @@ describe("lab rules (the port's own laws)", () => {
     expect(row.moisture_pct).toBe(13.2);
   });
 });
+
+describe("BRIEF V25 law 1a: the status agrees with the test", () => {
+  const base = { id: "cs_abcdefgh12", license: "AU-P-000694", source_metrc_tag: "01301", sample_tag: "02310", required_test: "Retest (Coliforms)" };
+
+  it("a Retest required test takes the five retest choices and refuses passed and failed", () => {
+    expect(R.RETEST_TEST_STATUSES).toStrictEqual(["scheduled", "not_submitted", "in_testing", "retest_passed", "retest_failed"]);
+    for (const status of R.RETEST_TEST_STATUSES) {
+      const v = R.validateComplianceSample({ ...base, status, fail_reason: "Coliforms" }, NOW);
+      expect(v.ok, status).toBe(true);
+    }
+    expect(R.validateComplianceSample({ ...base, status: "passed" }, NOW)).toStrictEqual({ ok: false, error: "status-retest" });
+    expect(R.validateComplianceSample({ ...base, status: "Failed", fail_reason: "Coliforms" }, NOW)).toStrictEqual({ ok: false, error: "status-retest" });
+    expect(R.validateComplianceSample({ ...base, required_test: " retest (Total Yeast & Mold)", status: "passed" }, NOW)).toStrictEqual({ ok: false, error: "status-retest" });
+    // A first test takes every status; a word that merely contains retest is not a Retest test.
+    expect(R.validateComplianceSample({ ...base, required_test: "Full Compliance", status: "passed" }, NOW).ok).toBe(true);
+    expect(R.validateComplianceSample({ ...base, required_test: "Full Compliance Retest", status: "passed" }, NOW).ok).toBe(true);
+  });
+
+  it("a correction to a stored row that already disagrees keeps it; one that sets a plain status is refused", () => {
+    const stored = { status: "passed", required_test: "Retest (Coliforms)" };
+    expect(okRow(R.validateComplianceSample({ ...base, status: "passed" }, NOW, stored)).status).toBe("passed");
+    expect(okRow(R.validateComplianceSample({ ...base, required_test: "Retest (Metals)", status: "passed" }, NOW, stored)).status).toBe("passed");
+    expect(R.validateComplianceSample({ ...base, status: "failed", fail_reason: "Coliforms" }, NOW, stored)).toStrictEqual({ ok: false, error: "status-retest" });
+    expect(R.validateComplianceSample({ ...base, status: "passed" }, NOW, { status: "passed", required_test: "Full Compliance" })).toStrictEqual({ ok: false, error: "status-retest" });
+    expect(R.validateComplianceSample({ ...base, status: "passed" }, NOW, { status: "in_testing", required_test: "Retest (Coliforms)" })).toStrictEqual({ ok: false, error: "status-retest" });
+  });
+});

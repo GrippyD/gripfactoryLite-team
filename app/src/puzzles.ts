@@ -19,6 +19,7 @@ import {
 import { getConfigValue, insertLog, requireActor } from "./db";
 import { assignAttempts, rowsFromSheet } from "./intesting";
 import { t, tFill, type Locale } from "./i18n";
+import { LAB_ATTEMPT_SQL, LAB_CONSOLE_SET_SQL, LAB_OUTCOME_SQL } from "./labvocab";
 import { esc } from "./ui";
 import { excelSerialToIso } from "./xlsb";
 import { readXlsxSheets, type XlsxGridRow } from "./xlsx";
@@ -400,20 +401,26 @@ async function historyTests(db: D1Database, year: number): Promise<PuzzleTest[]>
   }));
 }
 
+/** THE STATION IS THE TEST RECORD (canon 0.30.365, BRIEF V25 law 3). A live
+ * year's tests are the lab station's compliance samples (labvocab's set: R&D
+ * out, voided out), the year by the lot token of harvest_batch. The status is
+ * the station's outcome (passed, failed or open: a retest_failed is failed for
+ * the TYM rule) and the attempt is 2 for a retest by the one retest rule. */
 async function liveTests(db: D1Database, year: number): Promise<PuzzleTest[]> {
   const rows = await db
     .prepare(
-      `SELECT strain, hbn, potency_result, status, failure_mode, attempt
-       FROM external_test_results
-       WHERE deleted_at IS NULL AND (source <> 'sheet' OR on_sheet = 1)`
+      `SELECT strain, harvest_batch AS hbn, thc_potency_pct AS potency, ${LAB_OUTCOME_SQL} AS status,
+              fail_reason AS failure_mode, ${LAB_ATTEMPT_SQL} AS attempt
+       FROM lab_compliance_samples
+       WHERE ${LAB_CONSOLE_SET_SQL}`
     )
-    .all<{ strain: string | null; hbn: string | null; potency_result: number | null; status: string | null; failure_mode: string | null; attempt: number | null }>();
+    .all<{ strain: string | null; hbn: string | null; potency: number | null; status: string | null; failure_mode: string | null; attempt: number | null }>();
   return (rows.results ?? [])
     .filter((row) => lotTokenYear(row.hbn) === year)
     .map((row) => ({
       strain: row.strain,
       hbn: row.hbn,
-      potency: row.potency_result == null ? null : Number(row.potency_result),
+      potency: row.potency == null ? null : Number(row.potency),
       status: row.status,
       failureMode: row.failure_mode,
       attempt: row.attempt == null ? null : Number(row.attempt),
