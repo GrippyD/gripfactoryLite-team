@@ -216,12 +216,19 @@ export type YieldLot = {
   packages: YieldPackage[];
 };
 
+/** Which rate Estimated Bud used. own: this farm's trimmed lots. season: the pooled rate, this farm has no trimmed lot yet. none: no rate to use. */
+export type BtrSource = "own" | "season" | "none";
+
 export type FarmYield = {
   /** Dry over wet, weighted, over unloaded and trimmed lots with a dry weight above zero. Null when there is no dry-down. */
   dryDown: number | null;
   assumedDryGrams: number;
-  /** Bud-type trim grams over all trim grams, trimmed lots only. Null when there is no BTR. */
+  /** This farm's own BTR: bud-type trim grams over all trim grams, its trimmed lots only. Null when this farm has no ratio. */
   btr: number | null;
+  /** Which rate Estimated Bud used, so the page and the tests read it. */
+  btrSource: BtrSource;
+  /** The rate Estimated Bud used. The farm's own BTR, else the season's, else null. */
+  btrRate: number | null;
   estimatedBudGrams: number;
 };
 
@@ -798,7 +805,10 @@ export function seasonDryFactor(lots: readonly YieldLot[]): SeasonDry {
 
 /** BRIEF V22, ASSUMED DRY AND ESTIMATED BUD (canon 0.30.356). Per farm, then the
  * Total as the sum of the three farms' grams. A frozen lot, and a lot in a freezer
- * space, is fresh frozen and stays out of both figures. */
+ * space, is fresh frozen and stays out of both figures.
+ * BRIEF V27 (canon 0.30.376): a farm with no trimmed lot borrows the season's pooled
+ * BTR (bud-type grams over all trim grams, the three farms' trimmed lots together,
+ * weighted by weight) until its own first trimmed lot. */
 export function consoleYields(lots: readonly YieldLot[], budCodes?: readonly string[]): ConsoleYields {
   const bud = new Set((budCodes && budCodes.length > 0 ? budCodes : parseBtrTypeCodes(null)).map((c) => c.trim().toUpperCase()));
   const byFarm: Record<ConsoleFarm, YieldLot[]> = { PNN: [], ARL: [], PNS: [] };
@@ -807,7 +817,21 @@ export function consoleYields(lots: readonly YieldLot[], budCodes?: readonly str
     const farm = farmOf(lot.farm);
     if (farm) byFarm[farm].push(lot);
   }
-  const farms = { PNN: oneFarmYield(byFarm.PNN, bud), ARL: oneFarmYield(byFarm.ARL, bud), PNS: oneFarmYield(byFarm.PNS, bud) };
+  const parts = { PNN: yieldParts(byFarm.PNN, bud), ARL: yieldParts(byFarm.ARL, bud), PNS: yieldParts(byFarm.PNS, bud) };
+  let seasonBud = 0;
+  let seasonTrim = 0;
+  let seasonLots = 0;
+  for (const farm of CONSOLE_FARMS) {
+    seasonBud += parts[farm].budTrimmed;
+    seasonTrim += parts[farm].trimTrimmed;
+    seasonLots += parts[farm].trimmedLots;
+  }
+  const seasonBtr = seasonLots > 0 && seasonTrim > 0 ? seasonBud / seasonTrim : null;
+  const farms = {
+    PNN: farmYield(parts.PNN, seasonBtr),
+    ARL: farmYield(parts.ARL, seasonBtr),
+    PNS: farmYield(parts.PNS, seasonBtr),
+  };
   return {
     farms,
     total: {
@@ -817,7 +841,20 @@ export function consoleYields(lots: readonly YieldLot[], budCodes?: readonly str
   };
 }
 
-function oneFarmYield(lots: readonly YieldLot[], bud: ReadonlySet<string>): FarmYield {
+type YieldParts = {
+  dryDown: number | null;
+  assumedDryGrams: number;
+  /** Null when this farm has no trimmed lot with trim grams. A trimmed lot with no trim grams is still a trimmed lot: trimmedLots counts it, and the borrow has ended. */
+  ownBtr: number | null;
+  budAll: number;
+  projectedDry: number;
+  remainder: number;
+  budTrimmed: number;
+  trimTrimmed: number;
+  trimmedLots: number;
+};
+
+function yieldParts(lots: readonly YieldLot[], bud: ReadonlySet<string>): YieldParts {
   let drySum = 0;
   let wetOfDried = 0;
   let driedLots = 0;
@@ -864,9 +901,33 @@ function oneFarmYield(lots: readonly YieldLot[], bud: ReadonlySet<string>): Farm
   }
   const dryDown = driedLots > 0 && wetOfDried > 0 ? drySum / wetOfDried : null;
   const projectedDry = dryDown == null ? 0 : dryDown * wetStill;
-  const btr = trimmedLots > 0 && trimTrimmed > 0 ? budTrimmed / trimTrimmed : null;
-  const estimatedBudGrams = budAll + (btr == null ? 0 : btr * (projectedDry + remainder));
-  return { dryDown, assumedDryGrams: actualDry + projectedDry, btr, estimatedBudGrams };
+  const ownBtr = trimmedLots > 0 && trimTrimmed > 0 ? budTrimmed / trimTrimmed : null;
+  return {
+    dryDown,
+    assumedDryGrams: actualDry + projectedDry,
+    ownBtr,
+    budAll,
+    projectedDry,
+    remainder,
+    budTrimmed,
+    trimTrimmed,
+    trimmedLots,
+  };
+}
+
+function farmYield(parts: YieldParts, seasonBtr: number | null): FarmYield {
+  // A trimmed lot ends the borrow even when its own ratio cannot be taken (no trim grams on it).
+  const btrSource: BtrSource = parts.ownBtr != null ? "own" : parts.trimmedLots === 0 && seasonBtr != null ? "season" : "none";
+  const btrRate = btrSource === "own" ? parts.ownBtr : btrSource === "season" ? seasonBtr : null;
+  const estimatedBudGrams = parts.budAll + (btrRate == null ? 0 : btrRate * (parts.projectedDry + parts.remainder));
+  return {
+    dryDown: parts.dryDown,
+    assumedDryGrams: parts.assumedDryGrams,
+    btr: parts.ownBtr,
+    btrSource,
+    btrRate,
+    estimatedBudGrams,
+  };
 }
 
 function yieldPct(ratio: number): string {
@@ -949,7 +1010,12 @@ export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"):
     } else {
       const figure = yields.farms[f];
       assumedLine = figure.dryDown == null ? t(locale, "no dry-down yet") : tFill(locale, "at {pct}% dry-down", { pct: yieldPct(figure.dryDown) });
-      estimatedLine = figure.btr == null ? t(locale, "no BTR yet") : tFill(locale, "at {pct}% BTR", { pct: yieldPct(figure.btr) });
+      estimatedLine =
+        figure.btrSource === "season"
+          ? tFill(locale, "at {pct}% BTR, the season's (no lot trimmed here yet)", { pct: yieldPct(figure.btrRate ?? 0) })
+          : figure.btrSource === "own"
+            ? tFill(locale, "at {pct}% BTR", { pct: yieldPct(figure.btrRate ?? 0) })
+            : t(locale, "no BTR yet");
     }
     const assumedPane: ConsoleMetric = { key: "assumed_dry", label: "Assumed Dry", value: `${formatLbs(assumedGrams)} lb`, sub: assumedLine };
     const estimatedPane: ConsoleMetric = { key: "estimated_bud", label: "Estimated Bud", value: `${formatLbs(estimatedGrams)} lb`, sub: estimatedLine };

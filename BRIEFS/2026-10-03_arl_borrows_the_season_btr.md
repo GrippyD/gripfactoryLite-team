@@ -1,6 +1,6 @@
-# BRIEF V27: A FARM WITH NO TRIMMED LOT BORROWS THE SEASON'S BTR (canon 0.30.369)
+# BRIEF V27: A FARM WITH NO TRIMMED LOT BORROWS THE SEASON'S BTR (canon 0.30.376)
 
-For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155): one correction to V22's Estimated Bud on the Harvest Console. Built on the worktree exactly as it stands after BRIEF V26, FINISHED LOTS, FOUND, is merged and pushed (the Scribe writes the tree hash into this line at the paste; if the hash on the disk differs, stop and say so). No migration; the smoke pin stays 90. When this is built, build BRIEF V27a, THE OLD TOTE CONTROLS FOLLOW VOID'S LAW (`BRIEFS/2026-10-03_the_old_tote_controls_follow_void.md`), in the same session; one report and one push for both.
+For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155): one correction to V22's Estimated Bud on the Harvest Console. Built on the worktree exactly as it stands LIVE after BRIEF V26, FINISHED LOTS, FOUND (worker `2c220c44`, main `0e21362`, the app tree `b333d595286a8b10`, 283 files, migrations 0001-0090; if the hash on the disk differs, stop and say so). No migration; the smoke pin stays 90. When this is built, build BRIEF V27a, THE OLD TOTE CONTROLS FOLLOW VOID'S LAW (`BRIEFS/2026-10-03_the_old_tote_controls_follow_void.md`), in the same session; one report and one push for both.
 
 ## The sources (verbatim)
 

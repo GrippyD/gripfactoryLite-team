@@ -1228,6 +1228,10 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "at {pct}% dry-down": { en: "at {pct}% dry-down", es: "al {pct}% de seco" },
   "no dry-down yet": { en: "no dry-down yet", es: "sin porcentaje de seco aun" },
   "at {pct}% BTR": { en: "at {pct}% BTR", es: "al {pct}% BTR" },
+  "at {pct}% BTR, the season's (no lot trimmed here yet)": {
+    en: "at {pct}% BTR, the season's (no lot trimmed here yet)",
+    es: "al {pct}% BTR, el de la temporada (ningun lote podado aqui aun)",
+  },
   "no BTR yet": { en: "no BTR yet", es: "sin BTR aun" },
   "the three farms": { en: "the three farms", es: "las tres granjas" },
   // BRIEF V23, THE FRESH FROZEN DRY EQUIVALENT (canon 0.30.359). The Total box only.
@@ -3426,6 +3430,7 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Unknown tote.": { en: "Unknown tote.", es: "Tote desconocido." },
   "Unknown screen.": { en: "Unknown screen.", es: "Pantalla desconocida." },
   "That tote is already voided.": { en: "That tote is already voided.", es: "Ese tote ya esta anulado." },
+  "That tote is not voided.": { en: "That tote is not voided.", es: "Ese tote no esta anulado." },
   "That lot is not on this screen.": { en: "That lot is not on this screen.", es: "Ese lote no esta en esta pantalla." },
   "The wet ledger is not wired.": { en: "The wet ledger is not wired.", es: "El registro humedo no esta conectado." },
   "The wet weight of this lot is closed (unloaded, trimmed or frozen). Ask the Scribe for a repair.": {

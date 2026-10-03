@@ -1,6 +1,6 @@
 # BRIEF V27a: THE OLD TOTE CONTROLS FOLLOW VOID'S LAW (canon 0.30.375)
 
-A mini-brief, built in the same session as BRIEF V27, A FARM WITH NO TRIMMED LOT BORROWS THE SEASON'S BTR (`BRIEFS/2026-10-03_arl_borrows_the_season_btr.md`), and shipped in V27's one commit and push: build V27 first, then this, one report for both. For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155). The tree pin is V27's (the Scribe writes it into V27 at the paste). No migration; the smoke pin stays 90.
+A mini-brief, built in the same session as BRIEF V27, A FARM WITH NO TRIMMED LOT BORROWS THE SEASON'S BTR (`BRIEFS/2026-10-03_arl_borrows_the_season_btr.md`), and shipped in V27's one commit and push: build V27 first, then this, one report for both. For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155). The tree pin is V27's (`b333d595286a8b10`, 283 files, LIVE). No migration; the smoke pin stays 90.
 
 ## The sources (verbatim)
 
