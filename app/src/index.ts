@@ -153,6 +153,19 @@ import {
   changeFieldToteHbn,
 } from "./actions";
 import { fieldHarvestPage } from "./fieldharvest";
+import {
+  FINISHED_LOT_SCREENS,
+  fieldLotsSoFar,
+  fieldLotsSoFarBlock,
+  finishedLotPage,
+  finishedLotScreen,
+  finishedLotsSection,
+  getScreenLot,
+  listFinishedLots,
+  listLotTotes,
+  reopenFinishedLot,
+  voidFinishedTote,
+} from "./finishedlots";
 import { cryoStationPage } from "./cryo";
 import {
   complianceTestingPage,
@@ -771,6 +784,9 @@ function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
   if (ok === "load_sent") return { kind: "ok", text: t(locale, "Load sent.") };
   if (ok === "load_reopened") return { kind: "ok", text: t(locale, "Load reopened.") };
   if (ok === "field_weight") return { kind: "ok", text: t(locale, "Weight added.") };
+  // FINISHED LOTS, FOUND (canon 0.30.373): a tote voided off a lot's page, a lot reopened onto its weigh screen.
+  if (ok === "tote_voided") return { kind: "ok", text: t(locale, "Tote voided. The lot and its wet package dropped by its grams.") };
+  if (ok === "lot_reopened") return { kind: "ok", text: t(locale, "Lot reopened. All its totes are on the weigh screen; new totes add to it.") };
   if (ok === "truck_split") {
     const truck = url.searchParams.get("truck") ?? "";
     const parts = (url.searchParams.get("parts") ?? "")
@@ -2626,7 +2642,71 @@ app.get("/station/field_harvest", async (c) => {
       picked = { load, totes, hbnOptions, carryId: carry, finish, warnIds: url.searchParams.getAll("hbn") };
     }
   }
-  return html(c, s, "Penn South/Arlington Harvest", fieldHarvestPage({ locale: s.locale, destinations, openLoads, sentLoads, picked }));
+  // FINISHED LOTS, FOUND (canon 0.30.373): a weighing lot whose totes are not all on this load (the lot a Reopen
+  // landed on, ?lot=, or one carried across loads) shows every live tote where the operator weighs.
+  const focusLotId = url.searchParams.get("lot") ?? "";
+  const soFarIds = [
+    ...(focusLotId ? [focusLotId] : []),
+    ...(picked ? picked.totes.filter((tote) => tote.lot_status === "weighing").map((tote) => tote.lot_id) : []),
+  ];
+  const soFar = soFarIds.length ? await fieldLotsSoFar(c.env.DB, soFarIds, picked?.load.id ?? null) : [];
+  const focusLot = soFar.find((row) => row.lot.id === focusLotId)?.lot ?? null;
+  if (picked && focusLot && picked.hbnOptions.some((row) => row.id === focusLot.harvest_batch_id)) {
+    picked.carryId = focusLot.harvest_batch_id;
+  }
+  const finished = await listFinishedLots(c.env.DB, FINISHED_LOT_SCREENS.field_harvest);
+  return html(
+    c,
+    s,
+    "Penn South/Arlington Harvest",
+    fieldHarvestPage({
+      locale: s.locale,
+      destinations,
+      openLoads,
+      sentLoads,
+      picked,
+      lotsSoFar: fieldLotsSoFarBlock(s.locale, soFar, picked?.load.id ?? null),
+      focusLotId: focusLot ? focusLot.id : null,
+    }) + finishedLotsSection(s.locale, FINISHED_LOT_SCREENS.field_harvest, finished)
+  );
+});
+
+/** FINISHED LOTS, FOUND (canon 0.30.373): the list below Penn North Harvest's weighing area. */
+async function finishedTail(c: AppContext, stationKey: string, locale: Locale): Promise<string> {
+  if (stationKey !== "wet_weight") return "";
+  const screen = FINISHED_LOT_SCREENS.wet_weight;
+  return finishedLotsSection(locale, screen, await listFinishedLots(c.env.DB, screen));
+}
+
+/** Void and Reopen take the Admin PIN, the PIN that fronts the Data Queues' Demote: typed on the form, or held on
+ * the device by the PIN cookie a correct entry set. */
+async function withHeldPin(c: AppContext, form: FormData): Promise<FormData> {
+  if (textOrNull(form.get("pin"))) return form;
+  const held = getCookie(c, PIN_COOKIE);
+  if (held) form.set("pin", held);
+  return form;
+}
+
+app.get("/station/:key/finished/:lotId", async (c) => {
+  const screen = finishedLotScreen(c.req.param("key"));
+  if (!screen) return c.notFound();
+  const lot = await getScreenLot(c.env.DB, screen, c.req.param("lotId"));
+  if (!lot) return c.notFound();
+  const s = await shell(c);
+  const totes = await listLotTotes(c.env.DB, lot.id);
+  return html(c, s, "Finished lot", finishedLotPage(s.locale, screen, lot, totes));
+});
+
+app.post("/station/:key/finished/totes/:toteId/void", async (c) => {
+  const form = await withHeldPin(c, actorForm(c, await c.req.formData()));
+  const result = await voidFinishedTote(c.env.DB, c.req.param("key"), c.req.param("toteId"), form);
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/station/:key/finished/:lotId/reopen", async (c) => {
+  const form = await withHeldPin(c, actorForm(c, await c.req.formData()));
+  const result = await reopenFinishedLot(c.env.DB, c.req.param("key"), c.req.param("lotId"), form);
+  return c.redirect(result.redirect, 303);
 });
 
 app.post("/station/field_harvest/start", async (c) => {
@@ -2721,7 +2801,7 @@ app.get("/station/:key", async (c) => {
           lotPaneRows,
           s.locale,
           wetLotPanel(station, lot, weights, farmName, total, s.locale, toteHbns)
-        )
+        ) + (await finishedTail(c, station.key, s.locale))
       );
     }
     return html(
@@ -2911,7 +2991,8 @@ app.get("/station/:key", async (c) => {
         acquireCtx,
         station.key === "trim_packages" && c.req.query("gate") === "1",
         trimCtx
-      )
+      ) +
+      (await finishedTail(c, station.key, s.locale))
   );
 });
 
