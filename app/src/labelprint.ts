@@ -6,7 +6,7 @@
  * is refused. Each container's labels fill through L2's resolvers.
  */
 
-import { nowIso, refusal, textOrNull } from "./audit";
+import { HttpError, nowIso, refusal, textOrNull } from "./audit";
 import { CONFIG_KEYS } from "./config";
 import { getConfigValue, requireActor } from "./db";
 import { t, tFill, type Locale } from "./i18n";
@@ -20,8 +20,10 @@ import {
   type DataTable,
   type LabelFacts,
 } from "./labeldata";
+import { formulaTokens } from "./labelformula";
 import {
   emptyLayout,
+  formulaSaveProblem,
   holdsData,
   labelRunPrintHtml,
   LayoutError,
@@ -114,6 +116,14 @@ export function layoutTokens(layout: LabelLayout): string[] {
   for (const obj of layout.objects) {
     if (!holdsData(obj)) continue;
     const raw = obj.attach ? resolveData(layout.objects, obj.id).text : ownData(obj);
+    if (raw.startsWith("=")) {
+      for (const token of formulaTokens(raw)) {
+        if (seen.has(token)) continue;
+        seen.add(token);
+        found.push(token);
+      }
+      continue;
+    }
     for (const match of raw.matchAll(/\{([A-Za-z0-9_:-]+)\}/g)) {
       const token = match[1];
       if (seen.has(token)) continue;
@@ -547,8 +557,11 @@ async function prepareRun(db: D1Database, form: FormData, templates: Array<Recor
   let layout: LabelLayout = emptyLayout();
   try {
     if (source.layout_json) layout = normalizeLayout(JSON.parse(String(source.layout_json)));
+    const problem = formulaSaveProblem(layout);
+    if (problem) throw refusal(400, problem);
   } catch (err) {
     if (err instanceof LayoutError) throw refusal(400, { key: err.message, vars: {} });
+    if (err instanceof HttpError) throw err;
     throw refusal(400, { key: "The label could not be read.", vars: {} });
   }
   let lengthIn: number;

@@ -2792,10 +2792,17 @@ export const DICT: Record<string, { en: string; es: string }> = {
   },
   "Cryo/Rad": { en: "Cryo/Rad", es: "Cryo/Rad" },
   "Date start": { en: "Date start", es: "Inicio del dia" },
-  "The day runs from this time to the same time next day, Eastern. The default is Admin's farm day start hour.": {
-    en: "The day runs from this time to the same time next day, Eastern. The default is Admin's farm day start hour.",
-    es: "El dia corre desde esta hora hasta la misma hora del dia siguiente, hora del Este. El valor por defecto es la hora de inicio del dia de la finca en Admin.",
+  "From the From date's start time to the day after To at the same time, Eastern. The default is Admin's farm day start hour.": {
+    en: "From the From date's start time to the day after To at the same time, Eastern. The default is Admin's farm day start hour.",
+    es: "Desde la hora de inicio de la fecha De hasta el dia siguiente a Hasta a la misma hora, hora del Este. El valor por defecto es la hora de inicio del dia de la finca en Admin.",
   },
+  "Pick 92 days or fewer.": { en: "Pick 92 days or fewer.", es: "Elija 92 dias o menos." },
+  "That is not a date.": { en: "That is not a date.", es: "Eso no es una fecha." },
+  "To was before From, so the report swapped them.": {
+    en: "To was before From, so the report swapped them.",
+    es: "Hasta estaba antes de De, asi que el reporte los invirtio.",
+  },
+  "{start} to {end}, Eastern": { en: "{start} to {end}, Eastern", es: "{start} a {end}, hora del Este" },
   "Weight (lb)": { en: "Weight (lb)", es: "Peso (lb)" },
   "Effective date": { en: "Effective date", es: "Fecha efectiva" },
   "No packages on this line in this window.": {
@@ -3603,7 +3610,87 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Printed": { en: "Printed", es: "Impreso" },
   "Roll": { en: "Roll", es: "Rodar" },
   "Containers": { en: "Containers", es: "Contenedores" },
+  // L4 LABEL FORMULAS, AND INK AND FILL (canon 0.30.396).
+  "Formulas": { en: "Formulas", es: "Formulas" },
+  "Ink": { en: "Ink", es: "Tinta" },
+  "White": { en: "White", es: "Blanco" },
+  "Bring to front": { en: "Bring to front", es: "Traer al frente" },
+  "Send to back": { en: "Send to back", es: "Enviar atras" },
+  "RIGHT keeps the last characters.": { en: "RIGHT keeps the last characters.", es: "RIGHT guarda los ultimos caracteres." },
+  "LEFT keeps the first characters.": { en: "LEFT keeps the first characters.", es: "LEFT guarda los primeros caracteres." },
+  "MID keeps a run of characters from a start.": { en: "MID keeps a run of characters from a start.", es: "MID guarda un tramo de caracteres desde un inicio." },
+  "LEN counts the characters.": { en: "LEN counts the characters.", es: "LEN cuenta los caracteres." },
+  "UPPER makes the letters capitals.": { en: "UPPER makes the letters capitals.", es: "UPPER pone las letras en mayuscula." },
+  "LOWER makes the letters small.": { en: "LOWER makes the letters small.", es: "LOWER pone las letras en minuscula." },
+  "TRIM drops end spaces and doubled spaces.": { en: "TRIM drops end spaces and doubled spaces.", es: "TRIM quita los espacios de los extremos y los espacios dobles." },
+  "SUBSTITUTE swaps one text for another.": { en: "SUBSTITUTE swaps one text for another.", es: "SUBSTITUTE cambia un texto por otro." },
+  "CONCAT joins text.": { en: "CONCAT joins text.", es: "CONCAT une texto." },
+  "IFBLANK uses the second value when the first is blank.": {
+    en: "IFBLANK uses the second value when the first is blank.",
+    es: "IFBLANK usa el segundo valor cuando el primero esta en blanco.",
+  },
+  "TEXT formats a date or a number.": { en: "TEXT formats a date or a number.", es: "TEXT da formato a una fecha o a un numero." },
+  "The text box holds a formula that cannot be saved. {reason}": {
+    en: "The text box holds a formula that cannot be saved. {reason}",
+    es: "La caja de texto tiene una formula que no se puede guardar. {reason}",
+  },
+  "The memo holds a formula that cannot be saved. {reason}": {
+    en: "The memo holds a formula that cannot be saved. {reason}",
+    es: "La nota tiene una formula que no se puede guardar. {reason}",
+  },
+  "The barcode holds a formula that cannot be saved. {reason}": {
+    en: "The barcode holds a formula that cannot be saved. {reason}",
+    es: "El codigo de barras tiene una formula que no se puede guardar. {reason}",
+  },
+  "The QR holds a formula that cannot be saved. {reason}": {
+    en: "The QR holds a formula that cannot be saved. {reason}",
+    es: "El QR tiene una formula que no se puede guardar. {reason}",
+  },
+  "White ink on a barcode or QR needs a fill, or it prints nothing.": {
+    en: "White ink on a barcode or QR needs a fill, or it prints nothing.",
+    es: "La tinta blanca en un codigo de barras o QR necesita un relleno, o no imprime nada.",
+  },
+  "A white code on a dark fill scans on fewer scanners. Test the label with the scanner it will meet.": {
+    en: "A white code on a dark fill scans on fewer scanners. Test the label with the scanner it will meet.",
+    es: "Un codigo blanco sobre un relleno oscuro se lee en menos escaneres. Pruebe la etiqueta con el escaner que va a usar.",
+  },
 };
+
+const FORMULA_ERRORS: Array<[string, string]> = [
+  ["The formula could not be read.", "No se pudo leer la formula."],
+  ["The formula names a function this label does not know: {name}.", "La formula nombra una funcion que esta etiqueta no conoce: {name}."],
+  ["The formula names a field this label does not know: {name}.", "La formula nombra un campo que esta etiqueta no conoce: {name}."],
+  ["LEFT needs 1 or 2 arguments.", "LEFT necesita 1 o 2 argumentos."],
+  ["RIGHT needs 1 or 2 arguments.", "RIGHT necesita 1 o 2 argumentos."],
+  ["MID needs 3 arguments.", "MID necesita 3 argumentos."],
+  ["LEN needs 1 argument.", "LEN necesita 1 argumento."],
+  ["UPPER needs 1 argument.", "UPPER necesita 1 argumento."],
+  ["LOWER needs 1 argument.", "LOWER necesita 1 argumento."],
+  ["TRIM needs 1 argument.", "TRIM necesita 1 argumento."],
+  ["SUBSTITUTE needs 3 arguments.", "SUBSTITUTE necesita 3 argumentos."],
+  ["CONCAT needs at least 1 argument.", "CONCAT necesita al menos 1 argumento."],
+  ["IFBLANK needs 2 arguments.", "IFBLANK necesita 2 argumentos."],
+  ["TEXT needs 2 arguments.", "TEXT necesita 2 argumentos."],
+  ["LEFT needs a whole number of characters.", "LEFT necesita un numero entero de caracteres."],
+  ["RIGHT needs a whole number of characters.", "RIGHT necesita un numero entero de caracteres."],
+  ["MID needs a start at 1 or more.", "MID necesita un inicio de 1 o mas."],
+  ["MID needs a whole number of characters.", "MID necesita un numero entero de caracteres."],
+];
+
+const FORMULA_SAVE_KINDS: Array<[string, string]> = [
+  ["text box", "La caja de texto"],
+  ["memo", "La nota"],
+  ["barcode", "El codigo de barras"],
+  ["QR", "El QR"],
+];
+
+for (const [en, es] of FORMULA_ERRORS) DICT[en] = { en, es };
+for (const [kind, article] of FORMULA_SAVE_KINDS) {
+  for (const [en, es] of FORMULA_ERRORS) {
+    const key = `The ${kind} holds a formula that cannot be saved. ${en}`;
+    DICT[key] = { en: key, es: `${article} tiene una formula que no se puede guardar. ${es}` };
+  }
+}
 
 /** Look a display string up by its English key; unknown keys render as-is. */
 export function t(locale: Locale, key: string): string {

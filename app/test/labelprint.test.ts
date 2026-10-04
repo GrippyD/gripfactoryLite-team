@@ -15,6 +15,7 @@ import {
   containerIds,
   containerPreview,
   expandPages,
+  layoutTokens,
   logPrintRun,
   quickPrintHref,
   quickPrintPage,
@@ -234,5 +235,42 @@ describe("L3 QUICK PRINT", () => {
     expect(t("es", PER_REFUSAL)).toContain("1 a 50");
     expect(t("es", ROLL_OVERFLOW)).toContain("cola numerica");
     expect(t("es", UNKNOWN_WARNING)).toContain("en blanco");
+  });
+
+  it("finds fields inside a formula, brace and bracket", () => {
+    const layout = normalizeLayout({
+      v: 1,
+      objects: [
+        {
+          id: "t1",
+          type: "text",
+          x: 0,
+          y: 0,
+          w: 1,
+          h: 0.4,
+          rotate: 0,
+          text: '=RIGHT([PACKAGE.TAG.ID],6)&{harvest_date}',
+          font: "Arial",
+          size: 12,
+          bold: false,
+          italic: false,
+          align: "left",
+          attach: null,
+        },
+        {
+          id: "b1",
+          type: "barcode",
+          x: 0,
+          y: 1,
+          w: 1,
+          h: 0.5,
+          rotate: 0,
+          data: '=TEXT({packaged_date},"MM/DD/YY")',
+          caption: false,
+          attach: null,
+        },
+      ],
+    });
+    expect(layoutTokens(layout)).toEqual(["package_tag", "harvest_date", "packaged_date"]);
   });
 });

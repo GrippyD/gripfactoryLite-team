@@ -63,7 +63,7 @@ import {
 } from "./identity";
 import { SERVICE_IDENTITY, SERVICE_REFUSAL, isAccessFronted, isServiceRoute, loginEmailOf } from "./service";
 import { farmDayStartHour, farmToday } from "./effective";
-import { dayAfter, etInstant, parseFarmDayStartHour } from "./farmday";
+import { isCalendarDate, parseFarmDayStartHour } from "./farmday";
 import { radLotByTag } from "./rad";
 import { importPostHarvest, loadPuzzlePage, postHarvestHtml, postHarvestView, savePostHarvestPlan } from "./puzzles";
 import {
@@ -453,8 +453,10 @@ import {
   internalTestingView,
   laborHoursDefaultWindow,
   laborHoursView,
+  linePackagesRefused,
   linePackagesView,
   productMixView,
+  resolveLinePackageRange,
   reportCsv,
   reportFileStamp,
   reportPdfHtml,
@@ -902,9 +904,22 @@ app.get("/reports/:key", async (c) => {
   }
   const s = await shell(c);
   if (key === "line_packages") {
-    if (!url.searchParams.get("date")) url.searchParams.set("date", await farmToday(c.env.DB, nowIso()));
     if (!url.searchParams.get("start")) url.searchParams.set("start", `${String(s.farmDayStart).padStart(2, "0")}:00`);
     if (!url.searchParams.get("line")) url.searchParams.set("line", "all");
+    const from = (url.searchParams.get("from") ?? "").trim();
+    const to = (url.searchParams.get("to") ?? "").trim();
+    if (!from && !to) {
+      const legacy = (url.searchParams.get("date") ?? "").trim();
+      const day = legacy && isCalendarDate(legacy) ? legacy : legacy ? "" : await farmToday(c.env.DB, nowIso());
+      if (day) {
+        url.searchParams.set("from", day);
+        url.searchParams.set("to", day);
+      }
+    } else {
+      const today = await farmToday(c.env.DB, nowIso());
+      if (!from) url.searchParams.set("from", today);
+      if (!to) url.searchParams.set("to", today);
+    }
   }
   const format = url.searchParams.get("format");
   if (key === "post_harvest_puzzles" && format !== "csv" && format !== "xlsx" && format !== "pdf") {
@@ -3563,10 +3578,11 @@ function reportFilterForm(key: string, params: URLSearchParams, locale: Locale):
     const line = params.get("line") || "all";
     const opt = (value: string, label: string) => `<option value="${value}"${line === value ? " selected" : ""}>${t(locale, label)}</option>`;
     return `<label class="field">${t(locale, "Line")} <select name="line">${opt("all", "All")}${opt("trim", "Trim")}${opt("prepack", "Prepack")}${opt("cryo_rad", "Cryo/Rad")}</select></label>
-      <label class="field">${t(locale, "Date")} <input type="date" name="date" value="${escQuery(params.get("date"))}"></label>
+      <label class="field">${t(locale, "From")} <input type="date" name="from" value="${escQuery(params.get("from"))}"></label>
+      <label class="field">${t(locale, "To")} <input type="date" name="to" value="${escQuery(params.get("to"))}"></label>
       <label class="field">${t(locale, "Date start")} <input type="time" name="start" step="60" value="${escQuery(params.get("start"))}"></label>
-      <p class="muted">${t(locale, "The day runs from this time to the same time next day, Eastern. The default is Admin's farm day start hour.")}</p>
-      <label class="field">${t(locale, "Operator")} <input type="text" name="operator" value="${escQuery(params.get("operator"))}"></label>`;
+      <label class="field">${t(locale, "Operator")} <input type="text" name="operator" value="${escQuery(params.get("operator"))}"></label>
+      <p class="muted">${t(locale, "From the From date's start time to the day after To at the same time, Eastern. The default is Admin's farm day start hour.")}</p>`;
   }
   if (key === "internal_testing") {
     return `<label class="field">${t(locale, "Year")} <input type="text" name="year" value="${escQuery(params.get("year"))}"></label>
@@ -3647,14 +3663,19 @@ async function buildReportView(
     return postHarvestView(await loadPuzzlePage(db, params.get("year"), params.get("farm")));
   }
   if (key === "line_packages") {
-    const date = params.get("date") ?? "";
-    const typed = (params.get("start") ?? "").trim();
     const fallback = `${String(parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour))).padStart(2, "0")}:00`;
-    const ok = /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(typed);
-    const start = ok ? typed : fallback;
+    const range = resolveLinePackageRange({
+      from: params.get("from"),
+      to: params.get("to"),
+      date: params.get("date"),
+      start: params.get("start"),
+      today: await farmToday(db, nowIso()),
+      fallbackStart: fallback,
+    });
+    if (!range.ok) return linePackagesRefused(t(locale, range.message));
     const rows = await listLinePackages(db, {
-      startIso: etInstant(date, start),
-      endIso: etInstant(dayAfter(date), start),
+      startIso: range.startIso,
+      endIso: range.endIso,
       line: params.get("line") || "all",
       operator: params.get("operator") ?? "",
     });
@@ -3664,7 +3685,15 @@ async function buildReportView(
       for (const row of rows) if (row.line === "Rad") row.lot = lots.get(row.tag) ?? "";
     }
     const budCodes = parseBtrTypeCodes(await getConfigValue(db, CONFIG_KEYS.btr_type_codes));
-    return linePackagesView(rows, { budCodes, startWarned: typed !== "" && !ok, startUsed: start, locale });
+    return linePackagesView(rows, {
+      budCodes,
+      startWarned: range.startWarned,
+      startUsed: range.start,
+      locale,
+      swapped: range.swapped,
+      windowStartIso: range.startIso,
+      windowEndIso: range.endIso,
+    });
   }
   if (key === "internal_testing") {
     const raw = await listInternalTestingReport(db, {
@@ -3862,7 +3891,7 @@ app.post("/compliance/labels/templates", async (c) => {
 });
 
 app.get("/compliance/labels/code.svg", (c) => {
-  const svg = labelCodeSvg(c.req.query("kind") ?? "barcode", c.req.query("text") ?? "");
+  const svg = labelCodeSvg(c.req.query("kind") ?? "barcode", c.req.query("text") ?? "", c.req.query("ink") === "white" ? "white" : "black");
   const body = svg || `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"></svg>`;
   return c.body(body, 200, { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "no-store" });
 });

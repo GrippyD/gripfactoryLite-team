@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { crc32, deflateRawSync } from "node:zlib";
@@ -213,6 +214,9 @@ function etHourSmoke(iso) {
 function dayBeforeSmoke(date) {
   return new Date(Date.parse(`${date}T00:00:00.000Z`) - 86_400_000).toISOString().slice(0, 10);
 }
+function dayAfterSmoke(date) {
+  return new Date(Date.parse(`${date}T00:00:00.000Z`) + 86_400_000).toISOString().slice(0, 10);
+}
 function farmDaySmoke(iso) {
   const date = etDateSmoke(iso);
   return etHourSmoke(iso) < SMOKE_FARM_DAY_START ? dayBeforeSmoke(date) : date;
@@ -380,6 +384,19 @@ function releaseFormId(html) {
   const m = html.match(re);
   if (!m) throw new Error("missing release form id on Data Queues");
   return m[1];
+}
+
+function localD1(sql) {
+  const dir = join(appRoot, ".smoke-persist", "v3", "d1", "miniflare-D1DatabaseObject");
+  const name = readdirSync(dir).find((file) => file.endsWith(".sqlite") && file !== "metadata.sqlite");
+  if (!name) throw new Error("the smoke persist has no D1 file");
+  const db = new DatabaseSync(join(dir, name));
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    db.exec(sql);
+  } finally {
+    db.close();
+  }
 }
 
 function runCmd(command) {
@@ -4154,6 +4171,10 @@ async function run() {
         { id: "q1", type: "qr", x: 3.2, y: 0.5, w: 1, h: 1, rotate: 0, data: "QR", caption: false, attach: null },
         { id: "s1", type: "shape", shape: "rect", x: 0.5, y: 2.5, w: 1, h: 1, rotate: 0, stroke: 2, fill: "none" },
         { id: "l1", type: "line", x1: 0.5, y1: 4, x2: 3, y2: 4.5, thickness: 2, dashes: "solid" },
+        { id: "t4", type: "text", x: 0.4, y: 4.8, w: 2.2, h: 0.35, rotate: 0, text: "=RIGHT({package_tag},6)", font: "Arial", size: 12, bold: false, italic: false, align: "left", attach: null },
+        { id: "b4", type: "barcode", x: 0.4, y: 5.2, w: 2.4, h: 0.55, rotate: 0, data: '=TEXT({harvest_date},"MM/DD/YY")', caption: true, attach: null },
+        { id: "t5", type: "text", x: 2.8, y: 2.5, w: 1, h: 0.4, rotate: 0, text: "Knockout", font: "Arial", size: 12, bold: true, italic: false, align: "left", attach: null, ink: "white", fill: "black" },
+        { id: "b5", type: "barcode", x: 2.8, y: 3.1, w: 1, h: 0.7, rotate: 0, data: "12345678", caption: false, attach: null, ink: "white", fill: "black" },
       ],
     };
     const tpl = await req("/compliance/labels/templates", {
@@ -4171,7 +4192,8 @@ async function run() {
     const opened = await text(`/compliance/labels/editor?template=${encodeURIComponent(tplId)}`);
     assert(opened.res.status === 200, `open template expected 200 got ${opened.res.status}`);
     assert(opened.body.includes("data-qp-modal") && opened.body.includes(`name="template_id" value="${tplId}"`), "Print opens Quick Print with this template");
-    assert(opened.body.includes('data-le-count="5"'), "opening smoke tag must bring five objects back");
+    assert(opened.body.includes('data-le-count="9"'), "opening smoke tag must bring nine objects back");
+    assert(opened.body.includes("=RIGHT({package_tag},6)") && opened.body.includes("=TEXT({harvest_date}"), "the smoke tag keeps the formulas");
     assert(opened.body.includes('data-le-type="text"') && opened.body.includes('data-le-attach="t1"'), "the barcode must stay attached to the text box");
     assert(opened.body.includes('data-le-type="barcode"') && opened.body.includes('data-le-type="qr"'), "the codes must come back");
     assert(opened.body.includes('data-le-shape="rect"') && opened.body.includes('data-le-type="line"'), "the rectangle and the line must come back");
@@ -9045,12 +9067,19 @@ async function run() {
     const linePackages = await text("/reports/line_packages");
     assert(linePackages.res.status === 200, `GET line packages expected 200 got ${linePackages.res.status}`);
     assert(/name="start"[^>]*value="06:00"/.test(linePackages.body), "the date start must default to 06:00");
-    assert(/name="date"[^>]*value="\d{4}-\d{2}-\d{2}"/.test(linePackages.body), "the date must default to a day");
+    assert(/name="from"[^>]*value="\d{4}-\d{2}-\d{2}"/.test(linePackages.body), "From must default to a day");
+    assert(/name="to"[^>]*value="\d{4}-\d{2}-\d{2}"/.test(linePackages.body), "To must default to a day");
+    assert(!/name="date"/.test(linePackages.body), "the filter must no longer carry a single Date");
+    assert(linePackages.body.includes("From the From date's start time to the day after To at the same time, Eastern. The default is Admin's farm day start hour."), "the help line must state the range");
     assert(linePackages.body.includes("BUD-SMOKE-1") && linePackages.body.includes('data-report-group="Trim"'), "the Trim group must list a package entered in this run");
     assert(linePackages.body.includes("2026-09-08"), "the Effective date column must keep the day the smoke typed");
     assert(linePackages.body.includes('data-report-group="Cryo"') && linePackages.body.includes('data-report-group="Prepack"') && linePackages.body.includes('data-report-group="Rad"'), "Cryo, Prepack and Rad must each group");
     assert(linePackages.body.includes("g x "), "a prepack row must read unit grams by bags");
-    const lineDate = (linePackages.body.match(/name="date" value="(\d{4}-\d{2}-\d{2})"/) || [])[1];
+    const lineDate = (linePackages.body.match(/name="from" value="(\d{4}-\d{2}-\d{2})"/) || [])[1];
+    const lineToDefault = (linePackages.body.match(/name="to" value="(\d{4}-\d{2}-\d{2})"/) || [])[1];
+    assert(lineDate && lineDate === lineToDefault, "From and To must both default to the farm's today");
+    const lineWindow = `${lineDate} 06:00 to ${dayAfterSmoke(lineDate)} 06:00, Eastern`;
+    assert(linePackages.body.includes(`class="report-window"`) && linePackages.body.includes(lineWindow), "the heading must state the one day window");
     const lineLes = await text(`/reports/line_packages?line=trim&operator=Les&date=${lineDate}`);
     assert(lineLes.body.includes("BUD-SMOKE-1") && lineLes.body.includes("Trim:"), "the operator filter must keep Les's trim rows and count them");
     assert(!lineLes.body.includes('data-report-group="Cryo"'), "the trim filter must leave Cryo off");
@@ -9062,8 +9091,25 @@ async function run() {
     else assert(lineLate.body.includes("BUD-SMOKE-1"), "a package entered after 23:00 Eastern must stay on a day that starts at 23:00");
     const lineCsv = await text(`/reports/line_packages?date=${lineDate}&format=csv`);
     assert(lineCsv.body.includes("Trim:"), "the CSV must carry the line total");
+    assert(lineCsv.body.includes(lineWindow), "the CSV must carry the window line");
     const linePdf = await text(`/reports/line_packages?date=${lineDate}&format=pdf`);
     assert(linePdf.res.status === 200 && linePdf.body.includes('data-report-print="1"') && linePdf.body.includes('class="report-total"'), "the PDF must render the group total");
+    assert(linePdf.body.includes(lineWindow), "the PDF must carry the window line");
+    const lineXlsx = await bin(`/reports/line_packages?date=${lineDate}&format=xlsx`);
+    assert(lineXlsx.res.status === 200 && lineXlsx.latin.includes(lineWindow), "the XLSX must carry the window line");
+    const lineByDate = await text(`/reports/line_packages?date=${lineDate}&start=06:00`);
+    const lineSame = await text(`/reports/line_packages?from=${lineDate}&to=${lineDate}&start=06:00`);
+    const lineTbody = (body) => (body.match(/<tbody>([\s\S]*?)<\/tbody>/) || [])[1] || "";
+    assert(lineTbody(lineSame.body) === lineTbody(lineByDate.body) && lineTbody(lineSame.body).includes("BUD-SMOKE-1"), "from and to on the same day must list the same rows as date");
+    const lineYesterday = dayBeforeSmoke(lineDate);
+    const ydayIso = etInstantSmoke(lineYesterday, "12:00");
+    await localD1(`INSERT INTO wip_packages (id, package_code, package_type_code, weight_grams, status, created_at, updated_at, trim_date, trim_operator, source) VALUES ('pkg-yday-smoke', 'YDAY-SMOKE', 'TRIM', 50, 'testing_queue', '${ydayIso}', '${ydayIso}', '2026-09-08', 'Les', 'trim');\n`);
+    const lineTwo = await text(`/reports/line_packages?from=${lineYesterday}&to=${lineDate}&start=06:00`);
+    assert(lineTwo.body.includes("YDAY-SMOKE") && lineTwo.body.includes("BUD-SMOKE-1"), "a two day range must hold a package from each day");
+    assert(lineTwo.body.includes(`${lineYesterday} 06:00 to ${dayAfterSmoke(lineDate)} 06:00, Eastern`), "the two day heading must run to the day after To");
+    const lineOnlyYesterday = await text(`/reports/line_packages?from=${lineYesterday}&to=${lineYesterday}&start=06:00`);
+    assert(lineOnlyYesterday.body.includes("YDAY-SMOKE") && !lineOnlyYesterday.body.includes("BUD-SMOKE-1"), "yesterday's day must keep today's package out");
+    await localD1("DELETE FROM wip_packages WHERE id = 'pkg-yday-smoke';\n");
     const puzzles = await text("/reports/post_harvest_puzzles?year=2026");
     assert(puzzles.res.status === 200, `GET Post Harvest Puzzles expected 200 got ${puzzles.res.status}`);
     const phpCols = [...puzzles.body.matchAll(/data-php-col="([^"]*)"/g)].map((match) => match[1]);
@@ -9509,6 +9555,52 @@ async function run() {
     assert(qpAgain.body.includes(`value="${QP}"`), "Reprint refills the package ID");
     assert(qpAgain.body.includes('value="3"') && qpAgain.body.includes('value="2"'), "Reprint refills the counts");
     assert(qpAgain.body.includes('value="yes" selected'), "Reprint refills Roll ID Yes");
+
+    const l4Bad = await req("/compliance/labels/templates", {
+      method: "POST",
+      body: form({
+        name: "smoke bad formula",
+        length_in: "4",
+        width_in: "6",
+        layout_json: JSON.stringify({
+          v: 1,
+          objects: [{ id: "t9", type: "text", x: 0.2, y: 0.2, w: 2, h: 0.4, rotate: 0, text: "=RIGHT({nope},6)", font: "Arial", size: 12, bold: false, italic: false, align: "left", attach: null }],
+        }),
+      }),
+    });
+    const l4BadBody = await l4Bad.text();
+    assert(l4Bad.status === 400 && l4BadBody.includes("nope"), `a broken formula must be refused, got ${l4Bad.status} ${l4BadBody.slice(0, 300)}`);
+    const l4Bare = await req("/compliance/labels/templates", {
+      method: "POST",
+      body: form({
+        name: "smoke bare white code",
+        length_in: "4",
+        width_in: "6",
+        layout_json: JSON.stringify({
+          v: 1,
+          objects: [{ id: "b9", type: "barcode", x: 0.2, y: 0.2, w: 2, h: 0.6, rotate: 0, data: "12345678", caption: false, attach: null, ink: "white", fill: "none" }],
+        }),
+      }),
+    });
+    const l4BareBody = await l4Bare.text();
+    assert(l4Bare.status === 400 && l4BareBody.includes("needs a fill"), `white ink with no fill must be refused, got ${l4Bare.status} ${l4BareBody.slice(0, 300)}`);
+    const l4Fields = await (await req(`/compliance/labels/preview.json?tag=${encodeURIComponent(QP)}`)).json();
+    const l4Day = String((l4Fields.values && l4Fields.values.harvest_date) || "");
+    assert(/^\d{4}-\d{2}-\d{2}$/.test(l4Day), `the smoke package must resolve a harvest date, got ${l4Day}`);
+    const l4Shown = `${l4Day.slice(5, 7)}/${l4Day.slice(8, 10)}/${l4Day.slice(2, 4)}`;
+    const l4Tail = QP.slice(-6);
+    const l4Print = await req("/compliance/labels/print", {
+      method: "POST",
+      body: form({ template_id: tplId, package_id: QP, roll: "no", container_qty: "1", labels_per: "1", step: "print" }),
+    });
+    const l4Body = await l4Print.text();
+    assert(l4Print.status === 200, `the formula print expected 200 got ${l4Print.status} ${l4Body.slice(0, 300)}`);
+    assert(l4Body.includes(l4Tail), `the print page must hold the tag's last six ${l4Tail}`);
+    assert(l4Body.includes(l4Shown), `the print page must hold the formatted date ${l4Shown}`);
+    const l4DateSvg = await (await req(`/compliance/labels/code.svg?kind=barcode&text=${encodeURIComponent(l4Shown)}`)).text();
+    const l4WhiteSvg = await (await req("/compliance/labels/code.svg?kind=barcode&ink=white&text=12345678")).text();
+    assert(l4Body.includes(l4DateSvg), "the barcode encodes the formatted date");
+    assert(l4Body.includes("Knockout") && l4Body.includes("background:#000") && l4Body.includes("color:#fff") && l4Body.includes(l4WhiteSvg) && l4Body.includes("print-color-adjust: exact"), "the print page carries white on black");
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

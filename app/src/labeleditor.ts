@@ -7,6 +7,7 @@
 
 import { bindText, fieldGroup, fieldWords, isFieldKey, LABEL_FIELD_KEYS } from "./labeldata";
 import { code128Svg } from "./code128";
+import { evaluateFormula, formulaEngineSource } from "./labelformula";
 import { t, type Locale } from "./i18n";
 import { labelIcon, type LabelIconName } from "./labelicons";
 import { qrSvg } from "./qr";
@@ -32,6 +33,8 @@ export type MemoKind = "text" | "number" | "alphanumeric";
 export type ShapeKind = "rect" | "ellipse" | "roundrect" | "triangle";
 export type DashKind = "solid" | "dashed" | "dotted";
 export type PictureMime = "image/jpeg" | "image/png" | "image/bmp";
+export type Ink = "black" | "white";
+export type BoxFill = "none" | "black" | "white";
 
 type Box = { id: string; x: number; y: number; w: number; h: number; rotate: number };
 
@@ -44,6 +47,8 @@ export type TextObj = Box & {
   italic: boolean;
   align: Align;
   attach: string | null;
+  ink: Ink;
+  fill: BoxFill;
 };
 
 export type MemoObj = Box & {
@@ -56,6 +61,8 @@ export type MemoObj = Box & {
   italic: boolean;
   align: Align;
   attach: string | null;
+  ink: Ink;
+  fill: BoxFill;
 };
 
 export type CodeObj = Box & {
@@ -63,6 +70,8 @@ export type CodeObj = Box & {
   data: string;
   caption: boolean;
   attach: string | null;
+  ink: Ink;
+  fill: BoxFill;
 };
 
 export type PictureObj = Box & {
@@ -76,7 +85,8 @@ export type ShapeObj = Box & {
   type: "shape";
   shape: ShapeKind;
   stroke: number;
-  fill: "none" | "black";
+  fill: BoxFill;
+  ink: Ink;
 };
 
 export type LineObj = {
@@ -227,6 +237,24 @@ function attachOf(raw: unknown): string | null {
   return id;
 }
 
+function inkOf(raw: unknown): Ink {
+  return raw === "white" ? "white" : "black";
+}
+
+function boxFillOf(raw: unknown): BoxFill {
+  return raw === "black" || raw === "white" ? raw : "none";
+}
+
+function inkColor(ink: Ink): string {
+  return ink === "white" ? "#fff" : "#000";
+}
+
+function fillColor(fill: BoxFill): string {
+  if (fill === "black") return "#000";
+  if (fill === "white") return "#fff";
+  return "transparent";
+}
+
 function base64Size(b64: string): number {
   const clean = b64.replaceAll(/\s/g, "");
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean) || clean.length % 4 === 1) {
@@ -279,6 +307,8 @@ export function normalizeLayout(raw: unknown): LabelLayout {
         italic: Boolean(row.italic),
         align: alignOf(row.align),
         attach: attachOf(row.attach),
+        ink: inkOf(row.ink),
+        fill: boxFillOf(row.fill),
       };
       if (type === "memo") return { ...obj, type: "memo", memo: memoOf(row.memo) };
       return { ...obj, type: "text" };
@@ -290,6 +320,8 @@ export function normalizeLayout(raw: unknown): LabelLayout {
         data: String(row.data ?? ""),
         caption: Boolean(row.caption),
         attach: attachOf(row.attach),
+        ink: inkOf(row.ink),
+        fill: boxFillOf(row.fill),
       };
     }
     if (type === "picture") {
@@ -309,7 +341,8 @@ export function normalizeLayout(raw: unknown): LabelLayout {
         type: "shape",
         shape,
         stroke: clampStroke(row.stroke),
-        fill: row.fill === "black" ? "black" : "none",
+        fill: boxFillOf(row.fill),
+        ink: inkOf(row.ink),
       };
     }
     if (type === "line") {
@@ -343,25 +376,81 @@ export function emptyFieldsJson(): string {
   return JSON.stringify({ fields: [] });
 }
 
-function shownText(objects: LabelObject[], obj: LabelObject, fills?: Record<string, string>): string {
-  if (!holdsData(obj)) return "";
+function shownText(
+  objects: LabelObject[],
+  obj: LabelObject,
+  fills: Record<string, string> | undefined,
+  onError: "mark" | "blank"
+): { text: string; error: boolean } {
+  if (!holdsData(obj)) return { text: "", error: false };
   const raw = obj.attach ? resolveData(objects, obj.id).text : ownData(obj);
-  return fills ? bindText(raw, fills) : raw;
+  if (!fills) return { text: raw, error: false };
+  if (raw.startsWith("=")) {
+    const result = evaluateFormula(raw, fills);
+    if (result.error) return { text: onError === "blank" ? "" : "#ERROR", error: true };
+    return { text: result.value, error: false };
+  }
+  return { text: bindText(raw, fills), error: false };
 }
 
-function codeMarkup(kind: "barcode" | "qr", text: string): string {
+function codeMarkup(kind: "barcode" | "qr", text: string, ink: Ink = "black"): string {
   if (!text) return "";
+  const color = inkColor(ink);
   try {
-    return kind === "qr" ? qrSvg(text) : code128Svg(text);
+    return kind === "qr" ? qrSvg(text, 3, color) : code128Svg(text, 48, color);
   } catch {
     return "";
   }
 }
 
-export function labelCodeSvg(kind: string, text: string): string {
+export function labelCodeSvg(kind: string, text: string, ink: Ink = "black"): string {
   const clipped = text.slice(0, 256);
-  if (kind === "qr") return codeMarkup("qr", clipped);
-  return codeMarkup("barcode", clipped);
+  if (kind === "qr") return codeMarkup("qr", clipped, ink);
+  return codeMarkup("barcode", clipped, ink);
+}
+
+export function bringToFront(objects: LabelObject[], id: string): LabelObject[] {
+  const index = objects.findIndex((obj) => obj.id === id);
+  if (index < 0 || index === objects.length - 1) return objects.slice();
+  const next = objects.slice();
+  const [obj] = next.splice(index, 1);
+  next.push(obj);
+  return next;
+}
+
+export function sendToBack(objects: LabelObject[], id: string): LabelObject[] {
+  const index = objects.findIndex((obj) => obj.id === id);
+  if (index <= 0) return objects.slice();
+  const next = objects.slice();
+  const [obj] = next.splice(index, 1);
+  next.unshift(obj);
+  return next;
+}
+
+const SAVE_KIND: Record<string, string> = {
+  text: "text box",
+  memo: "memo",
+  barcode: "barcode",
+  qr: "QR",
+};
+
+/** Save refuses a broken formula, naming the object, and white ink with no fill on a code. */
+export function formulaSaveProblem(layout: LabelLayout): { key: string; vars: Record<string, string> } | null {
+  for (const obj of layout.objects) {
+    if (!holdsData(obj)) continue;
+    const raw = ownData(obj);
+    if (!raw.startsWith("=")) continue;
+    const result = evaluateFormula(raw, {});
+    if (!result.errorKey) continue;
+    const kind = SAVE_KIND[obj.type] ?? "text box";
+    return { key: `The ${kind} holds a formula that cannot be saved. ${result.errorKey}`, vars: result.errorVars };
+  }
+  for (const obj of layout.objects) {
+    if ((obj.type === "barcode" || obj.type === "qr") && obj.ink === "white" && obj.fill === "none") {
+      return { key: "White ink on a barcode or QR needs a fill, or it prints nothing.", vars: {} };
+    }
+  }
+  return null;
 }
 
 function dashArray(dashes: DashKind): string {
@@ -371,8 +460,8 @@ function dashArray(dashes: DashKind): string {
 }
 
 function shapeSvg(obj: ShapeObj): string {
-  const fill = obj.fill === "black" ? "#000" : "none";
-  const stroke = `stroke="#000" stroke-width="${obj.stroke}" vector-effect="non-scaling-stroke" fill="${fill}"`;
+  const fill = obj.fill === "black" ? "#000" : obj.fill === "white" ? "#fff" : "none";
+  const stroke = `stroke="${inkColor(obj.ink)}" stroke-width="${obj.stroke}" vector-effect="non-scaling-stroke" fill="${fill}"`;
   let body = `<rect x="2" y="2" width="96" height="96" ${stroke}/>`;
   if (obj.shape === "ellipse") body = `<ellipse cx="50" cy="50" rx="46" ry="46" ${stroke}/>`;
   else if (obj.shape === "roundrect") body = `<rect x="2" y="2" width="96" height="96" rx="14" ${stroke}/>`;
@@ -388,25 +477,29 @@ function textStyle(obj: TextObj | MemoObj): string {
   return `font-family:${FONT_CSS[obj.font]};font-size:${obj.size}pt;font-weight:${obj.bold ? 700 : 400};font-style:${obj.italic ? "italic" : "normal"};text-align:${obj.align};${obj.type === "memo" ? "white-space:pre-wrap;" : "white-space:nowrap;"}`;
 }
 
+function chromeStyle(obj: TextObj | MemoObj | CodeObj): string {
+  return `background:${fillColor(obj.fill)};color:${inkColor(obj.ink)};`;
+}
+
 function oneLabel(layout: LabelLayout, lengthIn: number, widthIn: number, fills: Record<string, string> | undefined, page: number): string {
   const blocks: string[] = [];
-  const lines: string[] = [];
   for (const obj of layout.objects) {
     if (obj.type === "line") {
-      lines.push(
-        `<line x1="${num(obj.x1)}" y1="${num(obj.y1)}" x2="${num(obj.x2)}" y2="${num(obj.y2)}" stroke="#000" stroke-width="${num(obj.thickness / 72)}" stroke-linecap="round"${dashArray(obj.dashes)}/>`
+      blocks.push(
+        `<svg class="le-print-lines" viewBox="0 0 ${num(lengthIn)} ${num(widthIn)}" width="${num(lengthIn)}in" height="${num(widthIn)}in"><line x1="${num(obj.x1)}" y1="${num(obj.y1)}" x2="${num(obj.x2)}" y2="${num(obj.y2)}" stroke="#000" stroke-width="${num(obj.thickness / 72)}" stroke-linecap="round"${dashArray(obj.dashes)}/></svg>`
       );
       continue;
     }
-    const shown = shownText(layout.objects, obj, fills);
+    const shown = shownText(layout.objects, obj, fills, "blank");
     let inner = "";
     if (obj.type === "text" || obj.type === "memo") {
-      inner = `<div class="le-print-text" style="${textStyle(obj)}">${esc(shown)}</div>`;
+      inner = `<div class="le-print-text" style="${textStyle(obj)}">${esc(shown.text)}</div>`;
     } else if (obj.type === "barcode" || obj.type === "qr") {
       const caption = obj.caption
-        ? `<div class="le-print-caption" style="font-size:${Math.max(6, Math.round(obj.h * 72 * 0.28))}pt">${esc(shown)}</div>`
+        ? `<div class="le-print-caption" style="font-size:${Math.max(6, Math.round(obj.h * 72 * 0.28))}pt">${esc(shown.text)}</div>`
         : "";
-      inner = `<div class="le-print-code">${codeMarkup(obj.type, shown)}</div>${caption}`;
+      const code = shown.error || !shown.text ? "" : codeMarkup(obj.type, shown.text, obj.ink);
+      inner = `<div class="le-print-code">${code}</div>${caption}`;
     } else if (obj.type === "picture") {
       inner = `<img alt="" src="data:${obj.mime};base64,${obj.bytes}"/>`;
     } else if (obj.type === "shape") {
@@ -415,15 +508,13 @@ function oneLabel(layout: LabelLayout, lengthIn: number, widthIn: number, fills:
       inner = "";
     }
     const shapeAttr = obj.type === "shape" ? ` data-le-shape="${obj.shape}"` : "";
+    const paint = holdsData(obj) ? chromeStyle(obj) : "";
+    const inkAttr = holdsData(obj) || obj.type === "shape" ? ` data-le-ink="${obj.ink}" data-le-fill="${obj.fill}"` : "";
     blocks.push(
-      `<div class="le-print-obj" data-le-type="${obj.type}"${shapeAttr} style="${boxStyle(obj)}">${inner}</div>`
+      `<div class="le-print-obj" data-le-type="${obj.type}"${shapeAttr}${inkAttr} style="${boxStyle(obj)};${paint}">${inner}</div>`
     );
   }
-  const lineSvg =
-    lines.length === 0
-      ? ""
-      : `<svg class="le-print-lines" viewBox="0 0 ${num(lengthIn)} ${num(widthIn)}" width="${num(lengthIn)}in" height="${num(widthIn)}in">${lines.join("")}</svg>`;
-  return `<div class="label" data-label-page="${page}">${blocks.join("")}${lineSvg}</div>`;
+  return `<div class="label" data-label-page="${page}">${blocks.join("")}</div>`;
 }
 
 /** The print document. `@page` size is the label. One call is one page. */
@@ -457,6 +548,7 @@ export function labelRunPrintHtml(
   <title>${esc(name)}</title>
   <style>
     @page { size: ${num(lengthIn)}in ${num(widthIn)}in; margin: 0; }
+    html, body, .label, .le-print-obj { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     html, body { margin: 0; padding: 0; background: #fff; color: #000; }
     .label { position: relative; width: ${num(lengthIn)}in; height: ${num(widthIn)}in; background: #fff; color: #000; overflow: hidden; break-after: page; page-break-after: always; }
     .label:last-child { break-after: auto; page-break-after: auto; }
@@ -464,7 +556,7 @@ export function labelRunPrintHtml(
     .le-print-text { width: 100%; height: 100%; overflow: hidden; margin: 0; }
     .le-print-code { flex: 1; min-height: 0; }
     .le-print-code svg { width: 100%; height: 100%; display: block; }
-    .le-print-caption { text-align: center; line-height: 1; color: #000; }
+    .le-print-caption { text-align: center; line-height: 1; color: inherit; }
     .le-print-obj img { width: 100%; height: 100%; object-fit: fill; }
     .le-print-lines { position: absolute; left: 0; top: 0; overflow: visible; }
     .print-bar { margin: 8px; }
@@ -569,6 +661,46 @@ const WORD_KEYS = [
   "Preview with package",
   "Preview",
   "Select a text box, memo, barcode or QR.",
+  "Formulas",
+  "Ink",
+  "White",
+  "Bring to front",
+  "Send to back",
+  "RIGHT keeps the last characters.",
+  "LEFT keeps the first characters.",
+  "MID keeps a run of characters from a start.",
+  "LEN counts the characters.",
+  "UPPER makes the letters capitals.",
+  "LOWER makes the letters small.",
+  "TRIM drops end spaces and doubled spaces.",
+  "SUBSTITUTE swaps one text for another.",
+  "CONCAT joins text.",
+  "IFBLANK uses the second value when the first is blank.",
+  "TEXT formats a date or a number.",
+  "The text box holds a formula that cannot be saved. {reason}",
+  "The memo holds a formula that cannot be saved. {reason}",
+  "The barcode holds a formula that cannot be saved. {reason}",
+  "The QR holds a formula that cannot be saved. {reason}",
+  "White ink on a barcode or QR needs a fill, or it prints nothing.",
+  "A white code on a dark fill scans on fewer scanners. Test the label with the scanner it will meet.",
+  "The formula could not be read.",
+  "The formula names a function this label does not know: {name}.",
+  "The formula names a field this label does not know: {name}.",
+  "LEFT needs 1 or 2 arguments.",
+  "RIGHT needs 1 or 2 arguments.",
+  "MID needs 3 arguments.",
+  "LEN needs 1 argument.",
+  "UPPER needs 1 argument.",
+  "LOWER needs 1 argument.",
+  "TRIM needs 1 argument.",
+  "SUBSTITUTE needs 3 arguments.",
+  "CONCAT needs at least 1 argument.",
+  "IFBLANK needs 2 arguments.",
+  "TEXT needs 2 arguments.",
+  "LEFT needs a whole number of characters.",
+  "RIGHT needs a whole number of characters.",
+  "MID needs a start at 1 or more.",
+  "MID needs a whole number of characters.",
 ] as const;
 
 function wordsFor(locale: Locale): Record<string, string> {
@@ -593,28 +725,30 @@ function whenSaved(iso: string): string {
 
 function editorObjectsHtml(layout: LabelLayout, lengthIn: number, widthIn: number, fills?: Record<string, string>): string {
   const blocks: string[] = [];
-  const lines: string[] = [];
   for (const obj of layout.objects) {
     if (obj.type === "line") {
-      lines.push(
-        `<line data-le-object="1" data-le-type="line" data-le-id="${esc(obj.id)}" x1="${num(obj.x1)}" y1="${num(obj.y1)}" x2="${num(obj.x2)}" y2="${num(obj.y2)}" stroke="#161616" stroke-width="${num(obj.thickness / 72)}"${dashArray(obj.dashes)}/>`
+      blocks.push(
+        `<svg class="le-lines" viewBox="0 0 ${num(lengthIn)} ${num(widthIn)}" width="100%" height="100%"><line data-le-object="1" data-le-type="line" data-le-id="${esc(obj.id)}" x1="${num(obj.x1)}" y1="${num(obj.y1)}" x2="${num(obj.x2)}" y2="${num(obj.y2)}" stroke="#161616" stroke-width="${num(obj.thickness / 72)}"${dashArray(obj.dashes)}/></svg>`
       );
       continue;
     }
-    const shown = shownText(layout.objects, obj, fills);
+    const shown = shownText(layout.objects, obj, fills, "mark");
     const attach = holdsData(obj) && obj.attach ? ` data-le-attach="${esc(obj.attach)}"` : "";
     const shapeAttr = obj.type === "shape" ? ` data-le-shape="${obj.shape}"` : "";
+    const inkAttr = holdsData(obj) || obj.type === "shape" ? ` data-le-ink="${obj.ink}" data-le-fill="${obj.fill}"` : "";
+    const paint = holdsData(obj) ? chromeStyle(obj) : "";
     let inner = "";
-    if (obj.type === "text" || obj.type === "memo") inner = `<div class="le-text" style="${textStyle(obj)}">${esc(shown)}</div>`;
-    else if (obj.type === "barcode" || obj.type === "qr") inner = `<div class="le-code">${codeMarkup(obj.type, shown)}</div>`;
-    else if (obj.type === "picture") inner = `<img alt="" src="data:${obj.mime};base64,${obj.bytes}"/>`;
+    if (obj.type === "text" || obj.type === "memo") inner = `<div class="le-text" style="${textStyle(obj)}">${esc(shown.text)}</div>`;
+    else if (obj.type === "barcode" || obj.type === "qr") {
+      const code = shown.error || !shown.text ? esc(shown.text) : codeMarkup(obj.type, shown.text, obj.ink);
+      inner = `<div class="le-code">${code}</div>`;
+    } else if (obj.type === "picture") inner = `<img alt="" src="data:${obj.mime};base64,${obj.bytes}"/>`;
     else if (obj.type === "shape") inner = shapeSvg(obj);
     blocks.push(
-      `<div class="le-obj" data-le-object="1" data-le-type="${obj.type}" data-le-id="${esc(obj.id)}"${attach}${shapeAttr} style="${boxStyle(obj)}">${inner}</div>`
+      `<div class="le-obj" data-le-object="1" data-le-type="${obj.type}" data-le-id="${esc(obj.id)}"${attach}${shapeAttr}${inkAttr} style="${boxStyle(obj)};${paint}">${inner}</div>`
     );
   }
-  const svg = `<svg class="le-lines" viewBox="0 0 ${num(lengthIn)} ${num(widthIn)}" width="100%" height="100%">${lines.join("")}</svg>`;
-  return svg + blocks.join("");
+  return blocks.join("");
 }
 
 export function labelEditorPage(opts: {
@@ -892,7 +1026,11 @@ export function labelEditorStyles(): string {
 .le-code, .le-obj img, .le-obj svg { width: 100%; height: 100%; }
 .le-code { display: flex; flex-direction: column; }
 .le-code img, .le-code svg { flex: 1; min-height: 0; object-fit: fill; }
-.le-caption { text-align: center; line-height: 1; color: #161616; }
+.le-caption { text-align: center; line-height: 1; color: inherit; }
+.le-help { margin: 0; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; }
+.le-help[hidden] { display: none !important; }
+.le-help code { font-family: "Courier New", Courier, monospace; }
+.le-note { margin: 0; font-size: 0.78rem; }
 .le-anchor, .le-line-anchor {
   width: 8px; height: 8px; background: #fff; border: 2px solid #2456a6; box-sizing: border-box;
 }
@@ -952,8 +1090,16 @@ function labelEditorClientSource(): string {
   var alertEl = document.getElementById("le-alert");
   var fileInput = document.getElementById("le-file");
   var drag = null;
+  var formulaEngine = ${formulaEngineSource()};
+  state.helpOpen = false;
+  state.caret = null;
 
   function say(key) { if (alertEl) alertEl.textContent = words[key] || key || ""; }
+  function fillWords(key, vars) {
+    var out = words[key] || key || "";
+    Object.keys(vars || {}).forEach(function (name) { out = out.split("{" + name + "}").join(vars[name]); });
+    return out;
+  }
   function inch(n) { return (Math.round(n * 1000) / 1000) + "in"; }
   function snap(n, free) { if (free) return Math.round(n * 1000) / 1000; return Math.round(n * 8) / 8; }
   function uid() { return "o" + Math.random().toString(36).slice(2, 10); }
@@ -984,11 +1130,17 @@ function labelEditorClientSource(): string {
     }
     return false;
   }
-  function shown(obj) {
-    var raw = obj.attach ? resolve(obj.id) : own(obj);
-    return String(raw).replace(/\{([A-Za-z0-9_:-]+)\}/g, function (all, key) {
+  function bound(obj) {
+    var raw = String(obj.attach ? resolve(obj.id) : own(obj));
+    if (raw.charAt(0) === "=") return formulaEngine.evaluateFormula(raw, state.fills || {});
+    var text = raw.replace(/\{([A-Za-z0-9_:-]+)\}/g, function (all, key) {
       return state.fills && Object.prototype.hasOwnProperty.call(state.fills, key) ? state.fills[key] : all;
     });
+    return { value: text, error: "", errorKey: "", errorVars: {} };
+  }
+  function shown(obj) {
+    var result = bound(obj);
+    return result.error ? "#ERROR" : result.value;
   }
   function hidePops() {
     ["le-open", "le-save-form", "le-new", "le-size", "le-connections", "le-quick-print"].forEach(function (id) {
@@ -1053,14 +1205,14 @@ function labelEditorClientSource(): string {
   function el(tag, cls) { var node = document.createElement(tag); if (cls) node.className = cls; return node; }
   function renderObjects() {
     label.replaceChildren();
-    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("class", "le-lines");
-    svg.setAttribute("viewBox", "0 0 " + state.lengthIn + " " + state.widthIn);
-    svg.setAttribute("width", "100%");
-    svg.setAttribute("height", "100%");
-    label.appendChild(svg);
     state.objects.forEach(function (obj) {
       if (obj.type === "line") {
+        var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("class", "le-lines");
+        svg.setAttribute("viewBox", "0 0 " + state.lengthIn + " " + state.widthIn);
+        svg.setAttribute("width", "100%");
+        svg.setAttribute("height", "100%");
+        label.appendChild(svg);
         var hit = document.createElementNS("http://www.w3.org/2000/svg", "line");
         hit.setAttribute("class", "le-hit");
         hit.setAttribute("data-le-object", "1");
@@ -1103,12 +1255,21 @@ function labelEditorClientSource(): string {
       box.setAttribute("data-le-id", obj.id);
       if (obj.attach) box.setAttribute("data-le-attach", obj.attach);
       if (obj.type === "shape") box.setAttribute("data-le-shape", obj.shape);
+      if (holds(obj) || obj.type === "shape") {
+        box.setAttribute("data-le-ink", obj.ink || "black");
+        box.setAttribute("data-le-fill", obj.fill || "none");
+      }
+      if (holds(obj)) {
+        box.style.background = obj.fill === "black" ? "#000" : obj.fill === "white" ? "#fff" : "transparent";
+        box.style.color = obj.ink === "white" ? "#fff" : "#000";
+      }
       box.style.left = inch(obj.x);
       box.style.top = inch(obj.y);
       box.style.width = inch(obj.w);
       box.style.height = inch(obj.h);
       box.style.transform = "rotate(" + obj.rotate + "deg)";
-      var text = shown(obj);
+      var result = bound(obj);
+      var text = result.error ? "#ERROR" : result.value;
       if (obj.type === "text" || obj.type === "memo") {
         var span = el("div", "le-text");
         span.textContent = text;
@@ -1121,10 +1282,16 @@ function labelEditorClientSource(): string {
         box.appendChild(span);
       } else if (obj.type === "barcode" || obj.type === "qr") {
         var code = el("div", "le-code");
-        var img = document.createElement("img");
-        img.alt = "";
-        if (text) img.src = "/compliance/labels/code.svg?kind=" + obj.type + "&text=" + encodeURIComponent(text);
-        code.appendChild(img);
+        if (result.error) {
+          var err = el("div", "le-text");
+          err.textContent = "#ERROR";
+          code.appendChild(err);
+        } else if (text) {
+          var img = document.createElement("img");
+          img.alt = "";
+          img.src = "/compliance/labels/code.svg?kind=" + obj.type + "&ink=" + (obj.ink === "white" ? "white" : "black") + "&text=" + encodeURIComponent(text);
+          code.appendChild(img);
+        }
         if (obj.caption) {
           var cap = el("div", "le-caption");
           cap.textContent = text;
@@ -1150,8 +1317,9 @@ function labelEditorClientSource(): string {
     });
   }
   function shapeMarkup(obj) {
-    var fill = obj.fill === "black" ? "#000" : "none";
-    var stroke = 'stroke="#000" stroke-width="' + obj.stroke + '" vector-effect="non-scaling-stroke" fill="' + fill + '"';
+    var fill = obj.fill === "black" ? "#000" : obj.fill === "white" ? "#fff" : "none";
+    var strokeColor = obj.ink === "white" ? "#fff" : "#000";
+    var stroke = 'stroke="' + strokeColor + '" stroke-width="' + obj.stroke + '" vector-effect="non-scaling-stroke" fill="' + fill + '"';
     var body = '<rect x="2" y="2" width="96" height="96" ' + stroke + "/>";
     if (obj.shape === "ellipse") body = '<ellipse cx="50" cy="50" rx="46" ry="46" ' + stroke + "/>";
     else if (obj.shape === "roundrect") body = '<rect x="2" y="2" width="96" height="96" rx="14" ' + stroke + "/>";
@@ -1195,13 +1363,104 @@ function labelEditorClientSource(): string {
       return;
     }
     if (state.tool === "picture") { state.pendingAt = { x: x, y: y }; fileInput.click(); return; }
-    if (state.tool === "text") add({ type: "text", x: x, y: y, w: 2, h: 0.4, rotate: 0, text: "Text", font: d.font, size: d.size, bold: d.bold, italic: d.italic, align: d.align, attach: null });
-    else if (state.tool === "memo") add({ type: "memo", x: x, y: y, w: 2, h: 1, rotate: 0, text: "Memo", memo: d.memo, font: d.font, size: d.size, bold: d.bold, italic: d.italic, align: d.align, attach: null });
-    else if (state.tool === "barcode") add({ type: "barcode", x: x, y: y, w: 2.2, h: 0.75, rotate: 0, data: "12345678", caption: d.caption, attach: null });
-    else if (state.tool === "qr") add({ type: "qr", x: x, y: y, w: 1, h: 1, rotate: 0, data: "QR", caption: d.caption, attach: null });
-    else if (state.tool === "shapes") add({ type: "shape", shape: state.shape, x: x, y: y, w: 1, h: 1, rotate: 0, stroke: d.stroke, fill: d.fill });
+    if (state.tool === "text") add({ type: "text", x: x, y: y, w: 2, h: 0.4, rotate: 0, text: "Text", font: d.font, size: d.size, bold: d.bold, italic: d.italic, align: d.align, attach: null, ink: "black", fill: "none" });
+    else if (state.tool === "memo") add({ type: "memo", x: x, y: y, w: 2, h: 1, rotate: 0, text: "Memo", memo: d.memo, font: d.font, size: d.size, bold: d.bold, italic: d.italic, align: d.align, attach: null, ink: "black", fill: "none" });
+    else if (state.tool === "barcode") add({ type: "barcode", x: x, y: y, w: 2.2, h: 0.75, rotate: 0, data: "12345678", caption: d.caption, attach: null, ink: "black", fill: "none" });
+    else if (state.tool === "qr") add({ type: "qr", x: x, y: y, w: 1, h: 1, rotate: 0, data: "QR", caption: d.caption, attach: null, ink: "black", fill: "none" });
+    else if (state.tool === "shapes") add({ type: "shape", shape: state.shape, x: x, y: y, w: 1, h: 1, rotate: 0, stroke: d.stroke, fill: d.fill, ink: "black" });
   }
   function field(labelText, node) { var wrap = el("label"); wrap.appendChild(document.createTextNode(labelText)); wrap.appendChild(node); return wrap; }
+  function watchCaret(input, rec) {
+    function keep() { state.caret = { id: rec.id, start: input.selectionStart || 0, end: input.selectionEnd || 0 }; }
+    input.addEventListener("keyup", keep);
+    input.addEventListener("click", keep);
+    input.addEventListener("select", keep);
+    input.addEventListener("blur", keep);
+  }
+  function paintFormulaNote(rec) {
+    var note = options.querySelector("[data-le-formula-error]");
+    if (!note) return;
+    var raw = String(rec.attach ? resolve(rec.id) : own(rec));
+    note.textContent = "";
+    if (raw.charAt(0) !== "=") return;
+    var result = formulaEngine.evaluateFormula(raw, state.fills || {});
+    if (result.error) note.textContent = fillWords(result.errorKey, result.errorVars);
+  }
+  function formulaHelp() {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = words["Formulas"] || "Formulas";
+    btn.setAttribute("data-le-formulas", "1");
+    var list = el("div", "le-help");
+    list.setAttribute("data-le-formula-help", "1");
+    list.hidden = !state.helpOpen;
+    [
+      ["RIGHT keeps the last characters.", "=RIGHT({package_tag},6)"],
+      ["LEFT keeps the first characters.", "=LEFT({package_tag},6)"],
+      ["MID keeps a run of characters from a start.", "=MID({package_tag},1,6)"],
+      ["LEN counts the characters.", "=LEN({package_tag})"],
+      ["UPPER makes the letters capitals.", "=UPPER({strain})"],
+      ["LOWER makes the letters small.", "=LOWER({item})"],
+      ["TRIM drops end spaces and doubled spaces.", "=TRIM({item})"],
+      ["SUBSTITUTE swaps one text for another.", '=SUBSTITUTE({item}," ","")'],
+      ["CONCAT joins text.", '=CONCAT({strain}," ",{item})'],
+      ["IFBLANK uses the second value when the first is blank.", '=IFBLANK({thc_percent},"")'],
+      ["TEXT formats a date or a number.", '=TEXT({packaged_date},"MM/DD/YY")']
+    ].forEach(function (line) {
+      var p = document.createElement("p");
+      p.appendChild(document.createTextNode((words[line[0]] || line[0]) + " "));
+      var code = document.createElement("code");
+      code.textContent = line[1];
+      p.appendChild(code);
+      list.appendChild(p);
+    });
+    btn.addEventListener("click", function () { state.helpOpen = !state.helpOpen; list.hidden = !state.helpOpen; });
+    options.appendChild(btn);
+    options.appendChild(list);
+  }
+  function inkFill(rec, isCode) {
+    var ink = document.createElement("select");
+    [["black", "Black"], ["white", "White"]].forEach(function (pair) {
+      var opt = document.createElement("option");
+      opt.value = pair[0]; opt.textContent = words[pair[1]] || pair[1];
+      if ((rec.ink || "black") === pair[0]) opt.selected = true;
+      ink.appendChild(opt);
+    });
+    ink.addEventListener("change", function () { rec.ink = ink.value; renderObjects(); renderOptions(); });
+    options.appendChild(field(words["Ink"] || "Ink", ink));
+    var fill = document.createElement("select");
+    [["none", "No fill"], ["black", "Black"], ["white", "White"]].forEach(function (pair) {
+      var opt = document.createElement("option");
+      opt.value = pair[0]; opt.textContent = words[pair[1]] || pair[1];
+      if ((rec.fill || "none") === pair[0]) opt.selected = true;
+      fill.appendChild(opt);
+    });
+    fill.addEventListener("change", function () { rec.fill = fill.value; renderObjects(); renderOptions(); });
+    options.appendChild(field(words["Fill"] || "Fill", fill));
+    if (isCode && (rec.ink || "black") === "white") {
+      var warn = el("p", "le-note");
+      warn.setAttribute("data-le-ink-note", "1");
+      var empty = (rec.fill || "none") === "none";
+      warn.textContent = words[empty ? "White ink on a barcode or QR needs a fill, or it prints nothing." : "A white code on a dark fill scans on fewer scanners. Test the label with the scanner it will meet."] || "";
+      options.appendChild(warn);
+    }
+  }
+  function orderButtons(rec) {
+    var row = el("div", "le-pair");
+    [["front", "Bring to front"], ["back", "Send to back"]].forEach(function (pair) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = words[pair[1]] || pair[1];
+      btn.setAttribute("data-le-order", pair[0]);
+      btn.addEventListener("click", function () {
+        var rest = state.objects.filter(function (item) { return item.id !== rec.id; });
+        state.objects = pair[0] === "front" ? rest.concat([rec]) : [rec].concat(rest);
+        renderObjects();
+      });
+      row.appendChild(btn);
+    });
+    options.appendChild(row);
+  }
   function renderOptions() {
     options.replaceChildren();
     var title = el("p", "le-options-title");
@@ -1287,9 +1546,18 @@ function labelEditorClientSource(): string {
         if (target.type === "memo") target.text = filterMemo(input.value, target.memo);
         else target.text = input.value;
         if (input.value !== target.text) input.value = target.text;
+        state.caret = { id: target.id, start: input.selectionStart || 0, end: input.selectionEnd || 0 };
         renderObjects();
+        paintFormulaNote(target);
       });
+      watchCaret(input, target);
       options.appendChild(field(target.type === "memo" ? words["Memo"] : words["Text"], input));
+      var textNote = el("p", "le-note");
+      textNote.setAttribute("data-le-formula-error", "1");
+      options.appendChild(textNote);
+      paintFormulaNote(target);
+      formulaHelp();
+      inkFill(target, false);
       if (target.type === "memo") {
         var kind = document.createElement("select");
         ["text", "number", "alphanumeric"].forEach(function (value) {
@@ -1315,8 +1583,20 @@ function labelEditorClientSource(): string {
       var data = document.createElement("input");
       data.type = "text"; data.value = target.data;
       if (target.attach) data.disabled = true;
-      data.addEventListener("input", function () { target.data = data.value; renderObjects(); });
+      data.addEventListener("input", function () {
+        target.data = data.value;
+        state.caret = { id: target.id, start: data.selectionStart || 0, end: data.selectionEnd || 0 };
+        renderObjects();
+        paintFormulaNote(target);
+      });
+      watchCaret(data, target);
       options.appendChild(field(words["Barcode"], data));
+      var codeNote = el("p", "le-note");
+      codeNote.setAttribute("data-le-formula-error", "1");
+      options.appendChild(codeNote);
+      paintFormulaNote(target);
+      formulaHelp();
+      inkFill(target, true);
       rotateFields(target, true);
       attachFields(target);
       var cap = document.createElement("input"); cap.type = "checkbox"; cap.checked = !!target.caption;
@@ -1348,23 +1628,17 @@ function labelEditorClientSource(): string {
       sourceIdle.addEventListener("click", openConnections);
       options.appendChild(sourceIdle);
     }
+    if (target) orderButtons(target);
   }
   function strokeFill(rec) {
     var stroke = document.createElement("input");
     stroke.type = "number"; stroke.min = "0.5"; stroke.max = "12"; stroke.step = "0.5"; stroke.value = String(rec.stroke);
     stroke.addEventListener("input", function () { rec.stroke = Math.max(0.5, Math.min(12, Number(stroke.value) || 2)); renderObjects(); });
     options.appendChild(field(words["Thickness"], stroke));
-    var fill = document.createElement("select");
-    [["none", "No fill"], ["black", "Black"]].forEach(function (pair) {
-      var opt = document.createElement("option");
-      opt.value = pair[0]; opt.textContent = words[pair[1]];
-      if (rec.fill === pair[0]) opt.selected = true;
-      fill.appendChild(opt);
-    });
-    fill.addEventListener("change", function () { rec.fill = fill.value; renderObjects(); });
-    options.appendChild(field(words["Fill"], fill));
+    inkFill(rec, false);
   }
   function filterMemo(value, kind) {
+    if (String(value).charAt(0) === "=") return value;
     if (kind === "number") {
       var out = ""; var dot = false;
       for (var i = 0; i < value.length; i++) {
@@ -1605,10 +1879,35 @@ function labelEditorClientSource(): string {
   function insertToken(token) {
     var obj = state.selectedId ? find(state.selectedId) : null;
     if (!obj || !holds(obj)) { say("Select a text box, memo, barcode or QR."); return; }
-    if (obj.type === "text" || obj.type === "memo") obj.text = ((obj.text || "") + " " + token).trim();
-    else obj.data = ((obj.data || "") + " " + token).trim();
+    var start = state.caret && state.caret.id === obj.id ? state.caret.start : null;
+    var end = state.caret && state.caret.id === obj.id ? state.caret.end : null;
+    var next = formulaEngine.insertFieldToken(own(obj), token, start, end);
+    if (obj.type === "text" || obj.type === "memo") obj.text = obj.type === "memo" ? filterMemo(next, obj.memo) : next;
+    else obj.data = next;
+    if (String(next).charAt(0) === "=") {
+      var at = start == null ? next.length : start + token.length;
+      state.caret = { id: obj.id, start: at, end: at };
+    }
     renderObjects();
     renderOptions();
+  }
+  function saveProblem() {
+    var kinds = { text: "The text box holds a formula that cannot be saved. {reason}", memo: "The memo holds a formula that cannot be saved. {reason}", barcode: "The barcode holds a formula that cannot be saved. {reason}", qr: "The QR holds a formula that cannot be saved. {reason}" };
+    for (var i = 0; i < state.objects.length; i++) {
+      var obj = state.objects[i];
+      if (!holds(obj) || String(own(obj)).charAt(0) !== "=") continue;
+      var result = formulaEngine.evaluateFormula(own(obj), {});
+      if (!result.error) continue;
+      var reason = fillWords(result.errorKey, result.errorVars);
+      return (words[kinds[obj.type]] || kinds[obj.type]).split("{reason}").join(reason);
+    }
+    for (var j = 0; j < state.objects.length; j++) {
+      var code = state.objects[j];
+      if ((code.type === "barcode" || code.type === "qr") && code.ink === "white" && (code.fill || "none") === "none") {
+        return words["White ink on a barcode or QR needs a fill, or it prints nothing."] || "";
+      }
+    }
+    return "";
   }
   document.querySelectorAll("[data-le-connect]").forEach(function (box) {
     box.addEventListener("change", function () {
@@ -1644,11 +1943,14 @@ function labelEditorClientSource(): string {
           });
         }
         renderObjects();
+        renderOptions();
       })
       .catch(function () { say("The label could not be read."); });
   });
   var saveForm = document.getElementById("le-save-form");
   saveForm.addEventListener("submit", function (e) {
+    var problem = saveProblem();
+    if (problem) { e.preventDefault(); if (alertEl) alertEl.textContent = problem; return; }
     saveForm.querySelector("[name=length_in]").value = String(state.lengthIn);
     saveForm.querySelector("[name=width_in]").value = String(state.widthIn);
     saveForm.querySelector("[name=layout_json]").value = layoutJson();

@@ -2,7 +2,7 @@ import { HttpError, nowIso, parseGrams, refusal, requireReason, requireText, tex
 import { CONFIG_KEYS, ITEM_KIND_FG, ITEM_KIND_WIP, roundGrams, SYSTEM_REASON } from "./config";
 import { parseInstrumentCsv, isInstrumentSource, IMPORT_STATUS, assertImportUpload, importBasename } from "./imports";
 import { isKeyField, parseColumns, parseRows } from "./labeldata";
-import { emptyFieldsJson, inchesToMm, LayoutError, normalizeLayout, parseLabelInches } from "./labeleditor";
+import { emptyFieldsJson, formulaSaveProblem, inchesToMm, LayoutError, normalizeLayout, parseLabelInches } from "./labeleditor";
 import { mintSoNumber, splitChildCode } from "./marketplace";
 import { dollarsToCents, mintPoNumber } from "./purchasing";
 import {
@@ -330,6 +330,8 @@ export async function saveLabelTemplate(db: D1Database, form: FormData): Promise
     lengthIn = parseLabelInches(form.get("length_in"));
     widthIn = parseLabelInches(form.get("width_in"));
     layout = normalizeLayout(JSON.parse(String(form.get("layout_json") ?? "")));
+    const problem = formulaSaveProblem(layout);
+    if (problem) throw refusal(400, problem);
   } catch (err) {
     if (err instanceof LayoutError) throw refusal(400, { key: err.message, vars: {} });
     if (err instanceof SyntaxError) throw refusal(400, { key: "The label could not be read.", vars: {} });

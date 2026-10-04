@@ -137,6 +137,8 @@ export type XlsxSheet = {
   /** Number cells written as plain integers/decimals without the gram format
    * (a template that wants 22679, not 22,679.00). */
   plainNumbers?: boolean;
+  /** A text line in row 1, above the header. The header and body shift down. */
+  banner?: string;
 };
 
 function xmlEsc(s: string): string {
@@ -183,22 +185,28 @@ function sheetXml(sheet: XlsxSheet): string {
   const cols = widths
     .map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`)
     .join("");
+  const headerRow = sheet.banner ? 2 : 1;
+  const bannerRow = sheet.banner
+    ? `<row r="1"><c r="A1" t="inlineStr"><is><t>${xmlEsc(sheet.banner)}</t></is></c></row>`
+    : "";
   const headerCells = sheet.headers
-    .map((h, i) => `<c r="${colLetter(i)}1" t="inlineStr" s="1"><is><t>${xmlEsc(h)}</t></is></c>`)
+    .map((h, i) => `<c r="${colLetter(i)}${headerRow}" t="inlineStr" s="1"><is><t>${xmlEsc(h)}</t></is></c>`)
     .join("");
   const body = sheet.rows
     .map((row, r) => {
+      const rowNum = r + headerRow + 1;
       const cells = row
-        .map((cell, i) => cellXml(cell, `${colLetter(i)}${r + 2}`, gramSet.has(i), sheet.plainNumbers))
+        .map((cell, i) => cellXml(cell, `${colLetter(i)}${rowNum}`, gramSet.has(i), sheet.plainNumbers))
         .join("");
-      return `<row r="${r + 2}">${cells}</row>`;
+      return `<row r="${rowNum}">${cells}</row>`;
     })
     .join("");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <cols>${cols}</cols>
   <sheetData>
-    <row r="1">${headerCells}</row>
+    ${bannerRow}
+    <row r="${headerRow}">${headerCells}</row>
     ${body}
   </sheetData>
 </worksheet>`;

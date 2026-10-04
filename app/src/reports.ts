@@ -3,7 +3,7 @@
  * TAT metric definitions are provisional (Scribe-derived from the pipeline).
  */
 
-import { dayBefore, etWallClock } from "./farmday";
+import { dayAfter, dayBefore, etInstant, etWallClock, isCalendarDate } from "./farmday";
 import { formatLbs, gramsToLbs, isPotencyAnalyte } from "./compliance";
 import { formatGrams, ITEM_KIND_WET_TOTAL, round2, roundGrams } from "./config";
 import { t, tFill, type Locale } from "./i18n";
@@ -154,6 +154,9 @@ export type ReportView = {
    * and the PDF (rendered as a header row, hidden from the row cells); the
    * CSV and XLSX keep it as a plain column. Rows must arrive sorted by it. */
   groupBy?: string;
+  /** A line under the title. Line packages states its window here, and the
+   * CSV, XLSX and PDF carry the same line. */
+  heading?: string;
 };
 
 /** The column list a table body renders: hidden keys and the group column out. */
@@ -210,7 +213,9 @@ export function reportCellText(column: ReportColumn, raw: string | number | null
 }
 
 export function reportCsv(view: ReportView): string {
-  const lines = [view.columns.map((c) => c.label).join(",")];
+  const lines: string[] = [];
+  if (view.heading) lines.push(csvCell(view.heading));
+  lines.push(view.columns.map((c) => c.label).join(","));
   for (const row of view.rows) {
     lines.push(
       view.columns
@@ -243,7 +248,7 @@ export function reportXlsx(view: ReportView): Uint8Array {
       })
     ),
   };
-  return buildXlsx(sheet);
+  return buildXlsx({ ...sheet, banner: view.heading });
 }
 
 export function reportPdfHtml(
@@ -289,6 +294,7 @@ export function reportPdfHtml(
     <button type="button" onclick="window.print()">${esc(t(locale, "Print or save as PDF"))}</button>
   </div>
   <h1>${esc(t(locale, view.title))}</h1>
+  ${view.heading ? `<p class="report-window">${esc(view.heading)}</p>` : ""}
   <p class="filters">${esc(filterSummary)}</p>
   <table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
   ${footnote}
@@ -806,6 +812,105 @@ export function harvestsView(
 
 const LINE_PACKAGE_ORDER = ["Trim", "Prepack", "Cryo", "Rad"] as const;
 
+const LINE_PACKAGE_COLUMNS: ReportColumn[] = [
+  { key: "line", label: "Line" },
+  { key: "entered", label: "Entered" },
+  { key: "lot", label: "Lot" },
+  { key: "tag", label: "Package tag" },
+  { key: "type", label: "Type" },
+  { key: "grams", label: "Weight (g)", grams: true },
+  { key: "lbs", label: "Weight (lb)", lbs: true },
+  { key: "effective", label: "Effective date" },
+  { key: "operator", label: "Operator" },
+];
+
+/** LINE PACKAGES, A DATE RANGE (canon 0.30.398). Longer than this many inclusive days is refused. */
+export const LINE_PACKAGES_MAX_DAYS = 92;
+export const LINE_PACKAGES_TOO_LONG = "Pick 92 days or fewer.";
+export const LINE_PACKAGES_NOT_A_DATE = "That is not a date.";
+export const LINE_PACKAGES_SWAPPED = "To was before From, so the report swapped them.";
+
+export type LinePackageRangeInput = {
+  from: string | null;
+  to: string | null;
+  date: string | null;
+  start: string | null;
+  today: string;
+  fallbackStart: string;
+};
+
+export type LinePackageRange =
+  | {
+      ok: true;
+      from: string;
+      to: string;
+      start: string;
+      startIso: string;
+      endIso: string;
+      swapped: boolean;
+      startWarned: boolean;
+    }
+  | { ok: false; message: typeof LINE_PACKAGES_TOO_LONG | typeof LINE_PACKAGES_NOT_A_DATE };
+
+function blankDate(value: string | null): boolean {
+  return value == null || value.trim() === "";
+}
+
+/** Inclusive calendar days from From through To. YYYY-MM-DD, so a daylight saving day still counts as one. */
+function inclusiveCalendarDays(from: string, to: string): number {
+  const start = Date.parse(`${from}T00:00:00.000Z`);
+  const end = Date.parse(`${to}T00:00:00.000Z`);
+  return Math.round((end - start) / 86_400_000) + 1;
+}
+
+/** The window is [From at the start time, the day after To at the start time).
+ * From equal to To is that one day. A bare date= with no from or to is From = To.
+ * To before From swaps. A range past 92 days, or a value that is not a date, is refused. */
+export function resolveLinePackageRange(input: LinePackageRangeInput): LinePackageRange {
+  let fromDay: string;
+  let toDay: string;
+  if (blankDate(input.from) && blankDate(input.to)) {
+    const legacy = (input.date ?? "").trim();
+    if (legacy) {
+      if (!isCalendarDate(legacy)) return { ok: false, message: LINE_PACKAGES_NOT_A_DATE };
+      fromDay = legacy;
+      toDay = legacy;
+    } else if (!isCalendarDate(input.today)) {
+      return { ok: false, message: LINE_PACKAGES_NOT_A_DATE };
+    } else {
+      fromDay = input.today;
+      toDay = input.today;
+    }
+  } else {
+    fromDay = blankDate(input.from) ? input.today.trim() : (input.from ?? "").trim();
+    toDay = blankDate(input.to) ? input.today.trim() : (input.to ?? "").trim();
+    if (!isCalendarDate(fromDay) || !isCalendarDate(toDay)) return { ok: false, message: LINE_PACKAGES_NOT_A_DATE };
+  }
+  let swapped = false;
+  if (toDay < fromDay) {
+    const hold = fromDay;
+    fromDay = toDay;
+    toDay = hold;
+    swapped = true;
+  }
+  if (inclusiveCalendarDays(fromDay, toDay) > LINE_PACKAGES_MAX_DAYS) {
+    return { ok: false, message: LINE_PACKAGES_TOO_LONG };
+  }
+  const typed = (input.start ?? "").trim();
+  const startOk = /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(typed);
+  const start = startOk ? typed : input.fallbackStart;
+  return {
+    ok: true,
+    from: fromDay,
+    to: toDay,
+    start,
+    startIso: etInstant(fromDay, start),
+    endIso: etInstant(dayAfter(toDay), start),
+    swapped,
+    startWarned: typed !== "" && !startOk,
+  };
+}
+
 export type LinePackageInput = {
   line: string;
   enteredIso: string;
@@ -817,10 +922,31 @@ export type LinePackageInput = {
   operator: string;
 };
 
-/** THE LINE PACKAGES REPORT (canon 0.30.344). Totals ride the footnote and a _total row the page hides. */
+/** A refused range: the words, and no rows. The caller has not run the query. */
+export function linePackagesRefused(message: string): ReportView {
+  return {
+    key: "line_packages",
+    title: "Line packages",
+    columns: LINE_PACKAGE_COLUMNS,
+    rows: [],
+    empty: message,
+    heading: message,
+  };
+}
+
+/** THE LINE PACKAGES REPORT (canon 0.30.344, 0.30.398). Totals ride the footnote and a _total row the page hides.
+ * The heading is the window, From's start time through the day after To at that time. */
 export function linePackagesView(
   rows: LinePackageInput[],
-  opts: { budCodes: readonly string[]; startWarned: boolean; startUsed: string; locale?: Locale }
+  opts: {
+    budCodes: readonly string[];
+    startWarned: boolean;
+    startUsed: string;
+    locale?: Locale;
+    swapped?: boolean;
+    windowStartIso?: string;
+    windowEndIso?: string;
+  }
 ): ReportView {
   const order = new Map<string, number>(LINE_PACKAGE_ORDER.map((line, index) => [line, index]));
   const sorted = [...rows].sort(
@@ -830,7 +956,15 @@ export function linePackagesView(
   const bud = new Set(opts.budCodes.map((code) => code.toUpperCase()));
   const body: ReportView["rows"] = [];
   const notes: string[] = [];
+  if (opts.swapped) notes.push(t(locale, LINE_PACKAGES_SWAPPED));
   if (opts.startWarned) notes.push(tFill(locale, "Date start was not HH:MM, so the report used {start}.", { start: opts.startUsed }));
+  const heading =
+    opts.windowStartIso && opts.windowEndIso
+      ? tFill(locale, "{start} to {end}, Eastern", {
+          start: etWallClock(opts.windowStartIso),
+          end: etWallClock(opts.windowEndIso),
+        })
+      : undefined;
   for (const line of LINE_PACKAGE_ORDER) {
     const group = sorted.filter((row) => row.line === line);
     if (group.length === 0) continue;
@@ -873,21 +1007,12 @@ export function linePackagesView(
   return {
     key: "line_packages",
     title: "Line packages",
-    columns: [
-      { key: "line", label: "Line" },
-      { key: "entered", label: "Entered" },
-      { key: "lot", label: "Lot" },
-      { key: "tag", label: "Package tag" },
-      { key: "type", label: "Type" },
-      { key: "grams", label: "Weight (g)", grams: true },
-      { key: "lbs", label: "Weight (lb)", lbs: true },
-      { key: "effective", label: "Effective date" },
-      { key: "operator", label: "Operator" },
-    ],
+    columns: LINE_PACKAGE_COLUMNS,
     rows: body,
     groupBy: "line",
     empty: "No packages on this line in this window.",
     footnote: notes.join(" ") || undefined,
+    heading,
   };
 }
 

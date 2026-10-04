@@ -6,6 +6,7 @@
 
 import { dateFromYyddd } from "./mint";
 import { harvestTokens } from "./metrc";
+import { evaluateFormula } from "./labelformula";
 import { t, type Locale } from "./i18n";
 import { esc } from "./ui";
 
@@ -222,7 +223,12 @@ export function dataToken(tableId: string, columnKey: string): string {
   return `{d:${tableId}:${columnKey}}`;
 }
 
-export function bindText(raw: string, fills: Record<string, string>): string {
+export function bindText(raw: string, fills: Record<string, string>, onError: "mark" | "blank" = "mark"): string {
+  if (raw.startsWith("=")) {
+    const result = evaluateFormula(raw, fills);
+    if (result.error) return onError === "blank" ? "" : "#ERROR";
+    return result.value;
+  }
   return raw.replace(/\{([A-Za-z0-9_:-]+)\}/g, (all, key: string) => (Object.prototype.hasOwnProperty.call(fills, key) ? fills[key] : all));
 }
 

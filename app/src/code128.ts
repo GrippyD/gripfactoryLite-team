@@ -107,7 +107,7 @@ export function encodeCode128(text: string): Code128Encoding {
   return { codes: withCheck, checksum, bits, pattern: body + STOP_BITS };
 }
 
-export function code128Svg(text: string, height = 48): string {
+export function code128Svg(text: string, height = 48, color = "#000"): string {
   const { bits } = encodeCode128(text);
   const module = 2;
   const width = bits.length * module;
@@ -122,7 +122,7 @@ export function code128Svg(text: string, height = 48): string {
       continue;
     }
     if (on && run > 0) {
-      bars.push(`<rect x="${x}" y="0" width="${run * module}" height="${height}"/>`);
+      bars.push(`<rect x="${x}" y="0" width="${run * module}" height="${height}" fill="${color}"/>`);
     }
     x += run * module;
     run = 1;
