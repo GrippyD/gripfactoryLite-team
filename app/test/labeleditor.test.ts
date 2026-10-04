@@ -209,6 +209,9 @@ describe("label editor layout", () => {
       stocks: [{ value: "4x6", label: "4 x 6 in" }],
       loaded: null,
     });
+    expect(editor).toContain("data-le-handle");
+    const script = editor.slice(editor.lastIndexOf("<script>(function"), editor.lastIndexOf("</script>"));
+    expect(() => new Function(script.slice(8))).not.toThrow();
     expect(editor).toContain("Connections");
     expect(editor).toContain("Source Data");
     expect(editor).toContain("Coming in the next slice");

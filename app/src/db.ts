@@ -5324,12 +5324,43 @@ export type LinePackageRow = {
   grams: number;
   effective: string;
   operator: string;
+  /** Last 6 of the harvest package tag, or "" when the row has none. */
+  harvestLast6: string;
 };
 
-/** THE LINE PACKAGES REPORT (canon 0.30.344). The window is [start, end) on created_at, or the Rad run's started_at. */
+const FIVE_DIGIT_CODE = /^\d{5}$/;
+
+/** The one mirror tag, live or gone, whose last five characters are this code.
+ * A code that is not five digits, or that ends no tag or more than one, has none. */
+async function harvestLast6ByFive(db: D1Database, codes: readonly string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(codes.filter((code) => FIVE_DIGIT_CODE.test(code)))];
+  const seen = new Map<string, { last6: string; n: number }>();
+  const chunk = 50;
+  for (let i = 0; i < unique.length; i += chunk) {
+    const part = unique.slice(i, i + chunk);
+    const marks = part.map(() => "?").join(", ");
+    const result = await db
+      .prepare(`SELECT tag FROM metrc_packages WHERE substr(tag, -5) IN (${marks})`)
+      .bind(...part)
+      .all<{ tag: string }>();
+    for (const row of result.results ?? []) {
+      const tag = String(row.tag ?? "");
+      const tail = tag.slice(-5);
+      const prior = seen.get(tail);
+      if (prior) prior.n += 1;
+      else seen.set(tail, { last6: tag.slice(-6), n: 1 });
+    }
+  }
+  const out = new Map<string, string>();
+  for (const [tail, hit] of seen) if (hit.n === 1) out.set(tail, hit.last6);
+  return out;
+}
+
+/** THE LINE PACKAGES REPORT (canon 0.30.344, 0.30.403). The window is [start, end) on created_at, or the Rad run's started_at.
+ * Trim reads its harvest package from its five digit package code. Prepack reads its parent's. Cryo and Rad have none. */
 export async function listLinePackages(
   db: D1Database,
-  input: { startIso: string; endIso: string; line: string; operator: string }
+  input: { startIso: string; endIso: string; line: string; operator: string; harvestLast6?: string }
 ): Promise<LinePackageRow[]> {
   const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour));
   const bound = [input.startIso, input.endIso];
@@ -5357,7 +5388,8 @@ export async function listLinePackages(
     .all<{ created_at: string; package_code: string; package_type_code: string; weight_grams: number; cryo_date: string | null; cryo_operator: string | null; hbn: string | null }>();
   const prepack = await db
     .prepare(
-      `SELECT l.created_at, l.tag, l.unit_grams, l.bags, l.grams, l.work_date, pe.display_name AS operator, b.hbn
+      `SELECT l.created_at, l.tag, l.unit_grams, l.bags, l.grams, l.work_date, pe.display_name AS operator, b.hbn,
+              parent.package_code AS parent_code
        FROM prepack_lines l
        LEFT JOIN people pe ON pe.id = l.created_by AND pe.deleted_at IS NULL
        LEFT JOIN wip_packages parent ON parent.id = l.parent_package_id
@@ -5367,7 +5399,7 @@ export async function listLinePackages(
        WHERE l.deleted_at IS NULL AND l.created_at >= ? AND l.created_at < ?`
     )
     .bind(...bound)
-    .all<{ created_at: string; tag: string; unit_grams: number; bags: number; grams: number; work_date: string | null; operator: string | null; hbn: string | null }>();
+    .all<{ created_at: string; tag: string; unit_grams: number; bags: number; grams: number; work_date: string | null; operator: string | null; hbn: string | null; parent_code: string | null }>();
   const rad = await db
     .prepare(
       `SELECT r.started_at, r.grey, p.tag, p.item_type, p.grams, pe.display_name AS operator
@@ -5379,8 +5411,14 @@ export async function listLinePackages(
     )
     .bind(...bound)
     .all<{ started_at: string; grey: number; tag: string; item_type: string | null; grams: number | null; operator: string | null }>();
+  const trimRows = trim.results ?? [];
+  const prepackRows = prepack.results ?? [];
+  const harvestByCode = await harvestLast6ByFive(db, [
+    ...trimRows.map((row) => row.package_code),
+    ...prepackRows.map((row) => row.parent_code ?? ""),
+  ]);
   const rows: LinePackageRow[] = [];
-  for (const row of trim.results ?? []) {
+  for (const row of trimRows) {
     rows.push({
       line: "Trim",
       enteredIso: row.created_at,
@@ -5390,6 +5428,7 @@ export async function listLinePackages(
       grams: Number(row.weight_grams),
       effective: row.trim_date ?? "",
       operator: row.trim_operator ?? "",
+      harvestLast6: harvestByCode.get(row.package_code) ?? "",
     });
   }
   for (const row of cryo.results ?? []) {
@@ -5402,9 +5441,10 @@ export async function listLinePackages(
       grams: Number(row.weight_grams),
       effective: row.cryo_date ?? "",
       operator: row.cryo_operator ?? "",
+      harvestLast6: "",
     });
   }
-  for (const row of prepack.results ?? []) {
+  for (const row of prepackRows) {
     rows.push({
       line: "Prepack",
       enteredIso: row.created_at,
@@ -5414,6 +5454,7 @@ export async function listLinePackages(
       grams: Number(row.grams),
       effective: row.work_date ?? "",
       operator: row.operator ?? "",
+      harvestLast6: row.parent_code ? harvestByCode.get(row.parent_code) ?? "" : "",
     });
   }
   for (const row of rad.results ?? []) {
@@ -5427,6 +5468,7 @@ export async function listLinePackages(
       grams: Number(row.grams ?? 0),
       effective: farmDay(row.started_at, startHour),
       operator: row.operator ?? "",
+      harvestLast6: "",
     });
   }
   const want = input.line;
@@ -5436,5 +5478,7 @@ export async function listLinePackages(
     : want === "cryo_rad" ? rows.filter((row) => row.line === "Cryo" || row.line === "Rad")
     : rows;
   const needle = input.operator.trim().toLowerCase();
-  return needle ? lined.filter((row) => row.operator.toLowerCase().includes(needle)) : lined;
+  const operated = needle ? lined.filter((row) => row.operator.toLowerCase().includes(needle)) : lined;
+  const harvest = (input.harvestLast6 ?? "").trim();
+  return harvest ? operated.filter((row) => row.harvestLast6 === harvest) : operated;
 }

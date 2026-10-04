@@ -8,6 +8,7 @@
 import { bindText, fieldGroup, fieldWords, isFieldKey, LABEL_FIELD_KEYS } from "./labeldata";
 import { code128Svg } from "./code128";
 import { evaluateFormula, formulaEngineSource } from "./labelformula";
+import { labelGeomSource, shapeSvg as shapeMarkupSvg } from "./labelgeom";
 import { t, type Locale } from "./i18n";
 import { labelIcon, type LabelIconName } from "./labelicons";
 import { qrSvg } from "./qr";
@@ -87,6 +88,7 @@ export type ShapeObj = Box & {
   stroke: number;
   fill: BoxFill;
   ink: Ink;
+  pts?: [number, number][];
 };
 
 export type LineObj = {
@@ -230,6 +232,19 @@ function boxOf(raw: Record<string, unknown>, id: string, rotate: number): Box {
   return { id, x: num(raw.x), y: num(raw.y), w, h, rotate };
 }
 
+function storedTrianglePts(raw: unknown): [number, number][] | undefined {
+  if (!Array.isArray(raw) || raw.length !== 3) return undefined;
+  const pts: [number, number][] = [];
+  for (const pair of raw) {
+    if (!Array.isArray(pair) || pair.length < 2) return undefined;
+    const x = Number(pair[0]);
+    const y = Number(pair[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+    pts.push([Math.round(x * 10000) / 10000, Math.round(y * 10000) / 10000]);
+  }
+  return pts;
+}
+
 function attachOf(raw: unknown): string | null {
   if (raw == null || raw === "") return null;
   const id = String(raw);
@@ -336,6 +351,7 @@ export function normalizeLayout(raw: unknown): LabelLayout {
     }
     if (type === "shape") {
       const shape = row.shape === "ellipse" || row.shape === "roundrect" || row.shape === "triangle" ? row.shape : "rect";
+      const pts = shape === "triangle" ? storedTrianglePts(row.pts) : undefined;
       return {
         ...boxOf(row, id, wholeDeg(row.rotate)),
         type: "shape",
@@ -343,6 +359,7 @@ export function normalizeLayout(raw: unknown): LabelLayout {
         stroke: clampStroke(row.stroke),
         fill: boxFillOf(row.fill),
         ink: inkOf(row.ink),
+        ...(pts ? { pts } : {}),
       };
     }
     if (type === "line") {
@@ -460,13 +477,7 @@ function dashArray(dashes: DashKind): string {
 }
 
 function shapeSvg(obj: ShapeObj): string {
-  const fill = obj.fill === "black" ? "#000" : obj.fill === "white" ? "#fff" : "none";
-  const stroke = `stroke="${inkColor(obj.ink)}" stroke-width="${obj.stroke}" vector-effect="non-scaling-stroke" fill="${fill}"`;
-  let body = `<rect x="2" y="2" width="96" height="96" ${stroke}/>`;
-  if (obj.shape === "ellipse") body = `<ellipse cx="50" cy="50" rx="46" ry="46" ${stroke}/>`;
-  else if (obj.shape === "roundrect") body = `<rect x="2" y="2" width="96" height="96" rx="14" ${stroke}/>`;
-  else if (obj.shape === "triangle") body = `<polygon points="50,4 96,96 4,96" ${stroke}/>`;
-  return `<svg viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">${body}</svg>`;
+  return shapeMarkupSvg(obj);
 }
 
 function boxStyle(obj: Box): string {
@@ -666,6 +677,8 @@ const WORD_KEYS = [
   "White",
   "Bring to front",
   "Send to back",
+  "Resize",
+  "Joint",
   "RIGHT keeps the last characters.",
   "LEFT keeps the first characters.",
   "MID keeps a run of characters from a start.",
@@ -1021,7 +1034,7 @@ export function labelEditorStyles(): string {
 .le-lines { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .le-lines .le-hit { pointer-events: stroke; cursor: move; }
 .le-obj { position: absolute; box-sizing: border-box; cursor: move; }
-.le-obj.is-selected { outline: 2px solid #2456a6; outline-offset: 1px; }
+.le-obj.is-selected { outline: 2px solid #2456a6; outline-offset: -2px; }
 .le-text { width: 100%; height: 100%; overflow: hidden; }
 .le-code, .le-obj img, .le-obj svg { width: 100%; height: 100%; }
 .le-code { display: flex; flex-direction: column; }
@@ -1031,12 +1044,24 @@ export function labelEditorStyles(): string {
 .le-help[hidden] { display: none !important; }
 .le-help code { font-family: "Courier New", Courier, monospace; }
 .le-note { margin: 0; font-size: 0.78rem; }
-.le-anchor, .le-line-anchor {
+.le-handle, .le-line-anchor {
   width: 8px; height: 8px; background: #fff; border: 2px solid #2456a6; box-sizing: border-box;
 }
-.le-anchor { position: absolute; right: -5px; bottom: -5px; cursor: nwse-resize; display: none; }
-.le-obj.is-selected .le-anchor { display: block; }
+.le-handle { position: absolute; margin-left: -4px; margin-top: -4px; z-index: 4; }
+.le-h-nw { left: 0; top: 0; }
+.le-h-n { left: 50%; top: 0; }
+.le-h-ne { left: 100%; top: 0; }
+.le-h-e { left: 100%; top: 50%; }
+.le-h-se { left: 100%; top: 100%; }
+.le-h-s { left: 50%; top: 100%; }
+.le-h-sw { left: 0; top: 100%; }
+.le-h-w { left: 0; top: 50%; }
+.le-joint {
+  position: absolute; width: 9px; height: 9px; margin-left: -4.5px; margin-top: -4.5px; z-index: 5;
+  background: #fff; border: 2px solid #2456a6; border-radius: 50%; box-sizing: border-box; cursor: move;
+}
 .le-line-anchor { position: absolute; margin-left: -4px; margin-top: -4px; cursor: move; z-index: 4; }
+.le-guides { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 6; }
 .le-icon-sheet { display: flex; flex-wrap: wrap; gap: 0.8rem; color: var(--accent, var(--gold, #4f6b4a)); }
 .le-icon-sheet figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 0.25rem; font-size: 0.75rem; }
 .le-at-28 .le-icon { width: 28px; height: 28px; }
@@ -1091,6 +1116,7 @@ function labelEditorClientSource(): string {
   var fileInput = document.getElementById("le-file");
   var drag = null;
   var formulaEngine = ${formulaEngineSource()};
+  var geom = ${labelGeomSource()};
   state.helpOpen = false;
   state.caret = null;
 
@@ -1308,23 +1334,90 @@ function labelEditorClientSource(): string {
         box.innerHTML = shapeMarkup(obj);
       }
       if (state.selectedId === obj.id) {
-        var anchor = el("div", "le-anchor");
-        anchor.setAttribute("data-le-anchor", "se");
-        anchor.setAttribute("data-le-id", obj.id);
-        box.appendChild(anchor);
+        geom.HANDLES.forEach(function (name) {
+          var handle = el("div", "le-handle le-h-" + name);
+          handle.setAttribute("data-le-handle", name);
+          handle.setAttribute("data-le-anchor", name);
+          handle.setAttribute("data-le-id", obj.id);
+          handle.style.cursor = geom.cursorFor(name, obj.rotate || 0);
+          handle.setAttribute("aria-label", words["Resize"] || "Resize");
+          box.appendChild(handle);
+        });
+        if (obj.type === "shape" && obj.shape === "triangle") {
+          geom.trianglePts(obj).forEach(function (p, i) {
+            var joint = el("div", "le-joint");
+            joint.setAttribute("data-le-joint", String(i));
+            joint.setAttribute("data-le-anchor", "j" + i);
+            joint.setAttribute("data-le-id", obj.id);
+            joint.style.left = (p[0] * 100) + "%";
+            joint.style.top = (p[1] * 100) + "%";
+            joint.setAttribute("aria-label", words["Joint"] || "Joint");
+            box.appendChild(joint);
+          });
+        }
       }
       label.appendChild(box);
     });
+    if (drag && drag.guides) paintGuides(drag.guides);
   }
   function shapeMarkup(obj) {
-    var fill = obj.fill === "black" ? "#000" : obj.fill === "white" ? "#fff" : "none";
-    var strokeColor = obj.ink === "white" ? "#fff" : "#000";
-    var stroke = 'stroke="' + strokeColor + '" stroke-width="' + obj.stroke + '" vector-effect="non-scaling-stroke" fill="' + fill + '"';
-    var body = '<rect x="2" y="2" width="96" height="96" ' + stroke + "/>";
-    if (obj.shape === "ellipse") body = '<ellipse cx="50" cy="50" rx="46" ry="46" ' + stroke + "/>";
-    else if (obj.shape === "roundrect") body = '<rect x="2" y="2" width="96" height="96" rx="14" ' + stroke + "/>";
-    else if (obj.shape === "triangle") body = '<polygon points="50,4 96,96 4,96" ' + stroke + "/>";
-    return '<svg viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none">' + body + "</svg>";
+    return geom.shapeSvg(obj);
+  }
+  function paintGuides(guides) {
+    if (!guides || !guides.length) return;
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "le-guides");
+    svg.setAttribute("data-le-guides", "1");
+    svg.setAttribute("viewBox", "0 0 " + state.lengthIn + " " + state.widthIn);
+    svg.setAttribute("width", "100%");
+    svg.setAttribute("height", "100%");
+    var rect = label.getBoundingClientRect();
+    var px = rect.width / state.lengthIn;
+    var ring = 8 / (px || 96);
+    guides.forEach(function (g) {
+      if (g.kind === "lock") {
+        var ringEl = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        ringEl.setAttribute("data-le-guide", "lock");
+        ringEl.setAttribute("cx", String(g.x));
+        ringEl.setAttribute("cy", String(g.y));
+        ringEl.setAttribute("r", String(ring));
+        ringEl.setAttribute("fill", "none");
+        ringEl.setAttribute("stroke", "#2456a6");
+        ringEl.setAttribute("stroke-width", "2");
+        ringEl.setAttribute("vector-effect", "non-scaling-stroke");
+        svg.appendChild(ringEl);
+        return;
+      }
+      var lines = g.lines || null;
+      if (g.kind === "vline") lines = [[g.x, g.y1, g.x, g.y2]];
+      if (g.kind === "hline") lines = [[g.x1, g.y, g.x2, g.y]];
+      (lines || []).forEach(function (ln) {
+        var line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("data-le-guide", "dash");
+        line.setAttribute("x1", String(ln[0]));
+        line.setAttribute("y1", String(ln[1]));
+        line.setAttribute("x2", String(ln[2]));
+        line.setAttribute("y2", String(ln[3]));
+        line.setAttribute("stroke", "#2456a6");
+        line.setAttribute("stroke-width", "1.5");
+        line.setAttribute("stroke-dasharray", "4 3");
+        line.setAttribute("vector-effect", "non-scaling-stroke");
+        svg.appendChild(line);
+        [[ln[0], ln[1]], [ln[2], ln[3]]].forEach(function (pt) {
+          var dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          dot.setAttribute("data-le-guide", "dash");
+          dot.setAttribute("cx", String(pt[0]));
+          dot.setAttribute("cy", String(pt[1]));
+          dot.setAttribute("r", String(ring * 0.45));
+          dot.setAttribute("fill", "none");
+          dot.setAttribute("stroke", "#2456a6");
+          dot.setAttribute("stroke-width", "1.5");
+          dot.setAttribute("vector-effect", "non-scaling-stroke");
+          svg.appendChild(dot);
+        });
+      });
+    });
+    label.appendChild(svg);
   }
   function paintSelection() {
     label.querySelectorAll(".le-obj").forEach(function (node) {
@@ -1367,7 +1460,11 @@ function labelEditorClientSource(): string {
     else if (state.tool === "memo") add({ type: "memo", x: x, y: y, w: 2, h: 1, rotate: 0, text: "Memo", memo: d.memo, font: d.font, size: d.size, bold: d.bold, italic: d.italic, align: d.align, attach: null, ink: "black", fill: "none" });
     else if (state.tool === "barcode") add({ type: "barcode", x: x, y: y, w: 2.2, h: 0.75, rotate: 0, data: "12345678", caption: d.caption, attach: null, ink: "black", fill: "none" });
     else if (state.tool === "qr") add({ type: "qr", x: x, y: y, w: 1, h: 1, rotate: 0, data: "QR", caption: d.caption, attach: null, ink: "black", fill: "none" });
-    else if (state.tool === "shapes") add({ type: "shape", shape: state.shape, x: x, y: y, w: 1, h: 1, rotate: 0, stroke: d.stroke, fill: d.fill, ink: "black" });
+    else if (state.tool === "shapes") {
+      var dropped = { type: "shape", shape: state.shape, x: x, y: y, w: 1, h: 1, rotate: 0, stroke: d.stroke, fill: d.fill, ink: "black" };
+      if (state.shape === "triangle") dropped.pts = geom.NEW_TRIANGLE.map(function (p) { return [p[0], p[1]]; });
+      add(dropped);
+    }
   }
   function field(labelText, node) { var wrap = el("label"); wrap.appendChild(document.createTextNode(labelText)); wrap.appendChild(node); return wrap; }
   function watchCaret(input, rec) {
@@ -1690,6 +1787,12 @@ function labelEditorClientSource(): string {
     label.setPointerCapture(e.pointerId);
     e.preventDefault();
   });
+  function tolInches() {
+    var rect = label.getBoundingClientRect();
+    var px = rect.width / state.lengthIn;
+    if (!(px > 0)) return 9 / 96;
+    return 9 / px;
+  }
   label.addEventListener("pointermove", function (e) {
     if (!drag) return;
     var rect = label.getBoundingClientRect();
@@ -1697,24 +1800,67 @@ function labelEditorClientSource(): string {
     var dy = ((e.clientY - drag.py) / rect.height) * state.widthIn;
     var obj = find(drag.id);
     var src = drag.src;
+    var tol = tolInches();
+    var alt = !!e.altKey;
+    var shift = !!e.shiftKey;
+    var others = geom.anchorTargets(state.objects, obj.id, state.lengthIn, state.widthIn);
+    drag.guides = null;
     if (drag.kind === "move") {
       if (obj.type === "line") {
-        obj.x1 = snap(src.x1 + dx, e.shiftKey); obj.y1 = snap(src.y1 + dy, e.shiftKey);
-        obj.x2 = snap(src.x2 + dx, e.shiftKey); obj.y2 = snap(src.y2 + dy, e.shiftKey);
+        var proposed = { type: "line", x1: src.x1 + dx, y1: src.y1 + dy, x2: src.x2 + dx, y2: src.y2 + dy };
+        var moved = geom.moveSnap(proposed.x1, proposed.y1, geom.objectJoints(proposed), others, tol, alt, shift);
+        obj.x1 = moved.x;
+        obj.y1 = moved.y;
+        obj.x2 = src.x2 + (moved.x - src.x1);
+        obj.y2 = src.y2 + (moved.y - src.y1);
+        drag.guides = moved.guides;
       } else {
-        obj.x = snap(src.x + dx, e.shiftKey); obj.y = snap(src.y + dy, e.shiftKey);
+        var proposedBox = { type: src.type, shape: src.shape, pts: src.pts, x: src.x + dx, y: src.y + dy, w: src.w, h: src.h, rotate: src.rotate || 0 };
+        var movedBox = geom.moveSnap(proposedBox.x, proposedBox.y, geom.objectJoints(proposedBox), others, tol, alt, shift);
+        obj.x = movedBox.x;
+        obj.y = movedBox.y;
+        drag.guides = movedBox.guides;
       }
+      if (!drag.guides) clampBox(obj);
     } else if (obj.type === "line") {
-      if (drag.kind === "a") { obj.x1 = snap(src.x1 + dx, e.shiftKey); obj.y1 = snap(src.y1 + dy, e.shiftKey); }
-      else { obj.x2 = snap(src.x2 + dx, e.shiftKey); obj.y2 = snap(src.y2 + dy, e.shiftKey); }
+      var endX = (drag.kind === "a" ? src.x1 : src.x2) + dx;
+      var endY = (drag.kind === "a" ? src.y1 : src.y2) + dy;
+      var end = geom.dragJoint(endX, endY, null, null, others, tol, alt, shift);
+      if (drag.kind === "a") { obj.x1 = end.x; obj.y1 = end.y; }
+      else { obj.x2 = end.x; obj.y2 = end.y; }
+      drag.guides = end.guides;
+      if (!drag.guides) clampBox(obj);
+    } else if (drag.kind.charAt(0) === "j") {
+      var idx = Number(drag.kind.charAt(1));
+      var pts = geom.trianglePts(src);
+      var page = geom.pageOf(src, pts[idx][0], pts[idx][1]);
+      var prev = geom.pageOf(src, pts[(idx + 2) % 3][0], pts[(idx + 2) % 3][1]);
+      var next = geom.pageOf(src, pts[(idx + 1) % 3][0], pts[(idx + 1) % 3][1]);
+      var joint = geom.dragJoint(page[0] + dx, page[1] + dy, prev, next, others, tol, alt, shift);
+      var frac = geom.fractionOf(src, joint.x, joint.y);
+      pts[idx] = frac;
+      obj.pts = pts;
+      drag.guides = joint.guides;
     } else {
-      obj.w = Math.max(0.125, snap(src.w + dx, e.shiftKey));
-      obj.h = Math.max(0.125, snap(src.h + dy, e.shiftKey));
+      var resized = geom.resizeSnapped(src, drag.kind, dx, dy, others, tol, alt, shift);
+      obj.x = resized.box.x;
+      obj.y = resized.box.y;
+      obj.w = resized.box.w;
+      obj.h = resized.box.h;
+      drag.guides = resized.guides;
     }
-    clampBox(obj);
     renderObjects();
   });
-  label.addEventListener("pointerup", function () { drag = null; });
+  label.addEventListener("pointerup", function () {
+    if (!drag) return;
+    drag = null;
+    renderObjects();
+  });
+  label.addEventListener("pointercancel", function () {
+    if (!drag) return;
+    drag = null;
+    renderObjects();
+  });
   label.addEventListener("click", function (e) {
     if (e.target.closest("[data-le-object]") || e.target.closest("[data-le-anchor]")) return;
     if (!state.tool) { state.selectedId = null; renderObjects(); renderOptions(); return; }
