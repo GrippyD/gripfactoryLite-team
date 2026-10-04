@@ -1,8 +1,8 @@
 /**
  * L1 THE LABEL EDITOR (canon 0.30.386).
  * The layout is versioned JSON (v: 1). Length is across, width is down, inches.
- * Print is one browser page the size of the label. Codes are the app's own
- * Code 128 and QR, drawn as vectors.
+ * Print is one browser page per label, the page the label's size. Codes are
+ * the app's own Code 128 and QR, drawn as vectors. L3 prints a run of pages.
  */
 
 import { bindText, fieldGroup, fieldWords, isFieldKey, LABEL_FIELD_KEYS } from "./labeldata";
@@ -388,15 +388,7 @@ function textStyle(obj: TextObj | MemoObj): string {
   return `font-family:${FONT_CSS[obj.font]};font-size:${obj.size}pt;font-weight:${obj.bold ? 700 : 400};font-style:${obj.italic ? "italic" : "normal"};text-align:${obj.align};${obj.type === "memo" ? "white-space:pre-wrap;" : "white-space:nowrap;"}`;
 }
 
-/** The print document. `@page` size is the label, and every object is placed in inches. */
-export function labelLayoutPrintHtml(
-  layout: LabelLayout,
-  lengthIn: number,
-  widthIn: number,
-  name: string,
-  locale: Locale = "en",
-  fills?: Record<string, string>
-): string {
+function oneLabel(layout: LabelLayout, lengthIn: number, widthIn: number, fills: Record<string, string> | undefined, page: number): string {
   const blocks: string[] = [];
   const lines: string[] = [];
   for (const obj of layout.objects) {
@@ -431,6 +423,33 @@ export function labelLayoutPrintHtml(
     lines.length === 0
       ? ""
       : `<svg class="le-print-lines" viewBox="0 0 ${num(lengthIn)} ${num(widthIn)}" width="${num(lengthIn)}in" height="${num(widthIn)}in">${lines.join("")}</svg>`;
+  return `<div class="label" data-label-page="${page}">${blocks.join("")}${lineSvg}</div>`;
+}
+
+/** The print document. `@page` size is the label. One call is one page. */
+export function labelLayoutPrintHtml(
+  layout: LabelLayout,
+  lengthIn: number,
+  widthIn: number,
+  name: string,
+  locale: Locale = "en",
+  fills?: Record<string, string>
+): string {
+  return labelRunPrintHtml(layout, lengthIn, widthIn, name, locale, [fills]);
+}
+
+/** One browser print job. Each entry is one label on its own page. */
+export function labelRunPrintHtml(
+  layout: LabelLayout,
+  lengthIn: number,
+  widthIn: number,
+  name: string,
+  locale: Locale = "en",
+  pageFills: Array<Record<string, string> | undefined> = [undefined]
+): string {
+  const pages = (pageFills.length === 0 ? [undefined] : pageFills)
+    .map((fills, index) => oneLabel(layout, lengthIn, widthIn, fills, index + 1))
+    .join("");
   return `<!DOCTYPE html>
 <html lang="${locale}">
 <head>
@@ -439,7 +458,8 @@ export function labelLayoutPrintHtml(
   <style>
     @page { size: ${num(lengthIn)}in ${num(widthIn)}in; margin: 0; }
     html, body { margin: 0; padding: 0; background: #fff; color: #000; }
-    .label { position: relative; width: ${num(lengthIn)}in; height: ${num(widthIn)}in; background: #fff; color: #000; overflow: hidden; }
+    .label { position: relative; width: ${num(lengthIn)}in; height: ${num(widthIn)}in; background: #fff; color: #000; overflow: hidden; break-after: page; page-break-after: always; }
+    .label:last-child { break-after: auto; page-break-after: auto; }
     .le-print-obj { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; transform-origin: center center; }
     .le-print-text { width: 100%; height: 100%; overflow: hidden; margin: 0; }
     .le-print-code { flex: 1; min-height: 0; }
@@ -451,9 +471,9 @@ export function labelLayoutPrintHtml(
     @media print { .print-bar { display: none; } }
   </style>
 </head>
-<body data-label-print="1">
+<body data-label-print="1" data-label-pages="${pageFills.length === 0 ? 1 : pageFills.length}">
   <div class="print-bar"><button type="button" onclick="window.print()">${esc(t(locale, "Print"))}</button></div>
-  <div class="label">${blocks.join("")}${lineSvg}</div>
+  ${pages}
   <script>window.addEventListener("load", function () { window.print(); });</script>
 </body>
 </html>`;
@@ -606,6 +626,7 @@ export function labelEditorPage(opts: {
   fills?: Record<string, string>;
   routes?: Record<string, string>;
   previewTag?: string;
+  printModal?: string;
 }): string {
   const locale = opts.locale;
   const rows: EditorTemplate[] = opts.templates.map((row) => ({
@@ -669,6 +690,7 @@ export function labelEditorPage(opts: {
     fills: opts.fills ?? {},
     routes: opts.routes ?? {},
     previewTag: opts.previewTag ?? "",
+    templateId: opts.loaded ? String(opts.loaded.id ?? "") : "",
     catalog: LABEL_FIELD_KEYS.map((key) => ({ key, group: fieldGroup(key), label: t(locale, fieldWords(key)) })),
   };
   const bootJson = JSON.stringify(boot).replaceAll("<", "\\u003c");
@@ -766,13 +788,6 @@ export function labelEditorPage(opts: {
         <button type="button" data-le-new="clear">${esc(t(locale, "Continue without saving"))}</button>
         <button type="button" data-le-new="cancel">${esc(t(locale, "Cancel"))}</button>
       </div>
-      <form id="le-print-form" method="post" action="/compliance/labels/print" target="_blank" hidden>
-        <input type="hidden" name="name" value="${esc(name)}">
-        <input type="hidden" name="length_in" value="${num(lengthIn)}">
-        <input type="hidden" name="width_in" value="${num(widthIn)}">
-        <input type="hidden" name="layout_json" value="">
-        <input type="hidden" name="preview_tag" value="">
-      </form>
       <input id="le-file" type="file" accept=".jpg,.jpeg,.png,.bmp,image/jpeg,image/png,image/bmp" hidden>
     </div>
     <div class="le-work">
@@ -796,6 +811,11 @@ export function labelEditorPage(opts: {
       </div>
     </div>
   </div>
+  ${
+    opts.printModal
+      ? `<div id="le-quick-print" class="qp-modal" data-qp-modal hidden><div class="qp-card"><h2>${esc(t(locale, "Quick Print"))}</h2>${opts.printModal}</div></div>`
+      : ""
+  }
   <script type="application/json" id="le-boot">${bootJson}</script>
   <script>${labelEditorClientSource()}</script>`;
 }
@@ -894,6 +914,15 @@ export function labelEditorStyles(): string {
   .le-shell { grid-template-columns: 1fr; }
   .le-scroll { max-height: 70vh; }
 }
+.qp-modal { position: fixed; inset: 0; z-index: 30; display: flex; align-items: flex-start; justify-content: center; padding: 2rem 1rem; overflow: auto; background: color-mix(in srgb, var(--text, #000) 35%, transparent); }
+.qp-modal[hidden] { display: none !important; }
+.qp-card { width: min(28rem, 100%); padding: 1rem; display: flex; flex-direction: column; gap: 0.6rem; background: var(--panel, var(--surface, #fffdf8)); color: var(--text, var(--ink, #1c1914)); border: 1px solid var(--line, var(--border, #c9c0ae)); border-radius: 8px; }
+.qp-form { display: flex; flex-direction: column; gap: 0.45rem; }
+.qp-form label, .qp-card label { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.85rem; }
+.qp-templates { list-style: none; margin: 0; padding: 0; max-height: 8rem; overflow: auto; border: 1px solid var(--line, var(--border, #c9c0ae)); border-radius: 6px; }
+.qp-templates li[hidden] { display: none; }
+.qp-templates button { width: 100%; text-align: left; background: transparent; color: inherit; border: 0; padding: 0.35rem 0.5rem; cursor: pointer; }
+.qp-templates button[aria-selected="true"] { font-weight: 700; }
 `;
 }
 
@@ -962,7 +991,7 @@ function labelEditorClientSource(): string {
     });
   }
   function hidePops() {
-    ["le-open", "le-save-form", "le-new", "le-size", "le-connections"].forEach(function (id) {
+    ["le-open", "le-save-form", "le-new", "le-size", "le-connections", "le-quick-print"].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.hidden = true;
     });
@@ -1450,7 +1479,18 @@ function labelEditorClientSource(): string {
       if (tool === "open") { hidePops(); document.getElementById("le-open").hidden = false; return; }
       if (tool === "save") { hidePops(); document.getElementById("le-save-form").hidden = false; return; }
       if (tool === "new") { hidePops(); document.getElementById("le-new").hidden = false; return; }
-      if (tool === "print") { fillPrint(); document.getElementById("le-print-form").submit(); return; }
+      if (tool === "print") {
+        if (!boot.templateId) { say("Save first"); return; }
+        hidePops();
+        var modal = document.getElementById("le-quick-print");
+        if (modal) {
+          modal.hidden = false;
+          var preview = document.getElementById("le-preview-tag");
+          var pkg = modal.querySelector("[data-qp-package]");
+          if (pkg && preview && preview.value.trim() && !pkg.value) pkg.value = preview.value.trim().toUpperCase();
+        }
+        return;
+      }
       setTool(state.tool === tool ? null : tool);
     });
   });
@@ -1607,15 +1647,6 @@ function labelEditorClientSource(): string {
       })
       .catch(function () { say("The label could not be read."); });
   });
-  function fillPrint() {
-    var form = document.getElementById("le-print-form");
-    form.querySelector("[name=length_in]").value = String(state.lengthIn);
-    form.querySelector("[name=width_in]").value = String(state.widthIn);
-    form.querySelector("[name=layout_json]").value = layoutJson();
-    form.querySelector("[name=name]").value = state.name || "Label";
-    var preview = document.getElementById("le-preview-tag");
-    form.querySelector("[name=preview_tag]").value = preview ? preview.value.trim() : "";
-  }
   var saveForm = document.getElementById("le-save-form");
   saveForm.addEventListener("submit", function (e) {
     saveForm.querySelector("[name=length_in]").value = String(state.lengthIn);

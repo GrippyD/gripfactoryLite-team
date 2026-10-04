@@ -3565,6 +3565,44 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Test date": { en: "Test date", es: "Fecha de prueba" },
   "Lab test status": { en: "Lab test status", es: "Estado de prueba" },
   "Production batch": { en: "Production batch", es: "Lote de produccion" },
+  // L3 QUICK PRINT (canon 0.30.386).
+  "Package ID": { en: "Package ID", es: "ID de paquete" },
+  "Roll ID with print": { en: "Roll ID with print", es: "Rodar el ID al imprimir" },
+  "Container Qty": { en: "Container Qty", es: "Cantidad de contenedores" },
+  "Labels per container": { en: "Labels per container", es: "Etiquetas por contenedor" },
+  "A package ID is 24 characters: 1A4, the license's facility characters, and a numeric tail.": {
+    en: "A package ID is 24 characters: 1A4, the license's facility characters, and a numeric tail.",
+    es: "Un ID de paquete tiene 24 caracteres: 1A4, los caracteres de la instalacion de la licencia y una cola numerica.",
+  },
+  "That package ID cannot roll that far. The numeric tail would pass its width.": {
+    en: "That package ID cannot roll that far. The numeric tail would pass its width.",
+    es: "Ese ID de paquete no puede rodar tanto. La cola numerica pasaria su ancho.",
+  },
+  "Changing Roll ID to Yes needs the Admin PIN.": {
+    en: "Changing Roll ID to Yes needs the Admin PIN.",
+    es: "Cambiar Rodar el ID a Si necesita el PIN de Admin.",
+  },
+  "Container Qty is a whole number from 1 to 500.": {
+    en: "Container Qty is a whole number from 1 to 500.",
+    es: "La cantidad de contenedores es un numero entero de 1 a 500.",
+  },
+  "Labels per container is a whole number from 1 to 50.": {
+    en: "Labels per container is a whole number from 1 to 50.",
+    es: "Las etiquetas por contenedor son un numero entero de 1 a 50.",
+  },
+  "Select a template.": { en: "Select a template.", es: "Elija una plantilla." },
+  "This package ID is not in the app. Its fields will print blank.": {
+    en: "This package ID is not in the app. Its fields will print blank.",
+    es: "Este ID de paquete no esta en la aplicacion. Sus campos se imprimiran en blanco.",
+  },
+  "This run prints {n} labels.": { en: "This run prints {n} labels.", es: "Esta corrida imprime {n} etiquetas." },
+  "Blank fields": { en: "Blank fields", es: "Campos en blanco" },
+  "Recent runs": { en: "Recent runs", es: "Corridas recientes" },
+  "No runs yet.": { en: "No runs yet.", es: "Aun no hay corridas." },
+  "Reprint": { en: "Reprint", es: "Reimprimir" },
+  "Printed": { en: "Printed", es: "Impreso" },
+  "Roll": { en: "Roll", es: "Rodar" },
+  "Containers": { en: "Containers", es: "Contenedores" },
 };
 
 /** Look a display string up by its English key; unknown keys render as-is. */

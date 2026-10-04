@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { HttpError, nowIso, refusal, textOrNull } from "./audit";
+import { HttpError, nowIso, textOrNull } from "./audit";
 import {
   CONFIG_KEYS,
   ITEM_KIND_FG,
@@ -209,8 +209,9 @@ import {
 import { auditsPage, complianceMenuPage, externalRowFromLab, testingPage, type AuditNoteRow, type AuditRow } from "./compliance";
 import { loadRadBoard, radOperationPage, radSchedulePage } from "./rad";
 import { labelDataPage, listDataTables, loadLabelFacts, nameFills, parseDataTable, routeMap, valueFills } from "./labeldata";
-import { labelsMenuPage, labelsSoonPage } from "./labels";
-import { labelCodeSvg, labelEditorPage, labelIconSheet, labelLayoutPrintHtml, LayoutError, normalizeLayout, parseLabelInches } from "./labeleditor";
+import { labelsMenuPage } from "./labels";
+import { labelCodeSvg, labelEditorPage, labelIconSheet } from "./labeleditor";
+import { choicesOf, listPrintRuns, quickPrintForm, quickPrintPage, submitQuickPrint, valuesFromQuery } from "./labelprint";
 import { listingsWithMatch, marketplacePage, parseMarketplacePane, salesOrderPage, type ListingRow, type MarketplacePane, type SalesOrderRow } from "./marketplace";
 import { listZohoMenuItems, listZohoMounts, mountZohoInventory } from "./zohoinv";
 import { buildLiveSalesHelperMenu, decorateSalesHelperPage } from "./saleshelper";
@@ -3756,10 +3757,7 @@ app.get("/compliance/labels", async (c) => {
   return html(c, s, "Labels", labelsMenuPage(s.locale));
 });
 
-app.get("/compliance/labels/quick-print", async (c) => {
-  const s = await shell(c);
-  return html(c, s, "Quick Print", labelsSoonPage(s.locale));
-});
+app.get("/compliance/labels/quick-print", (c) => c.redirect("/compliance/labels/print", 302));
 
 app.get("/compliance/labels/data", async (c) => {
   const s = await shell(c);
@@ -3841,6 +3839,19 @@ app.get("/compliance/labels/editor", async (c) => {
       fills: facts ? valueFills(facts, previewTag, tables) : nameFills(),
       routes: facts ? routeMap(facts, previewTag, tables) : {},
       previewTag,
+      printModal: quickPrintForm(
+        s.locale,
+        choicesOf(templates),
+        {
+          templateId: loaded ? String(loaded.id ?? "") : "",
+          templateName: loaded ? String(loaded.name ?? "") : "",
+          packageId: previewTag.trim().toUpperCase(),
+          roll: "no",
+          containerQty: "1",
+          labelsPer: "1",
+        },
+        { modal: true }
+      ),
     })
   );
 });
@@ -3856,49 +3867,18 @@ app.get("/compliance/labels/code.svg", (c) => {
   return c.body(body, 200, { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "no-store" });
 });
 
-async function labelPrintResponse(c: AppContext, layoutRaw: string, lengthRaw: string, widthRaw: string, name: string, previewTag = "") {
-  const s = await shell(c);
-  try {
-    const layout = normalizeLayout(JSON.parse(layoutRaw));
-    const lengthIn = parseLabelInches(lengthRaw);
-    const widthIn = parseLabelInches(widthRaw);
-    const tables = (await listDataTables(c.env.DB)).map((row) => parseDataTable(row));
-    const fills = previewTag ? valueFills(await loadLabelFacts(c.env.DB, previewTag), previewTag, tables) : nameFills();
-    if (!previewTag) {
-      for (const table of tables) for (const column of table.columns) fills[`d:${table.id}:${column.key}`] = column.label;
-    }
-    return c.html(labelLayoutPrintHtml(layout, lengthIn, widthIn, name || "Label", s.locale, fills), {
-      headers: { "cache-control": "no-store" },
-    });
-  } catch (err) {
-    if (err instanceof LayoutError) throw refusal(400, { key: err.message, vars: {} });
-    throw refusal(400, { key: "The label could not be read.", vars: {} });
-  }
-}
-
 app.get("/compliance/labels/print", async (c) => {
-  const template = await getRow(c.env.DB, "label_templates", c.req.query("template") ?? "");
-  if (!template || template.deleted_at) return c.notFound();
-  return labelPrintResponse(
-    c,
-    String(template.layout_json ?? ""),
-    String(template.length_in ?? ""),
-    String(template.width_in ?? ""),
-    String(template.name ?? ""),
-    c.req.query("preview") ?? ""
-  );
+  const s = await shell(c);
+  const templates = await listLabelTemplates(c.env.DB);
+  const values = valuesFromQuery(new URL(c.req.url).searchParams);
+  return html(c, s, "Quick Print", quickPrintPage(s.locale, choicesOf(templates), await listPrintRuns(c.env.DB), values));
 });
 
 app.post("/compliance/labels/print", async (c) => {
-  const form = await c.req.formData();
-  return labelPrintResponse(
-    c,
-    String(form.get("layout_json") ?? ""),
-    String(form.get("length_in") ?? ""),
-    String(form.get("width_in") ?? ""),
-    String(form.get("name") ?? ""),
-    String(form.get("preview_tag") ?? "")
-  );
+  const s = await shell(c);
+  const result = await submitQuickPrint(c.env.DB, actorForm(c, await c.req.formData()), await listLabelTemplates(c.env.DB), s.locale);
+  if (result.kind === "print") return c.html(result.html, { headers: { "cache-control": "no-store" } });
+  return html(c, s, "Quick Print", result.html);
 });
 
 app.all("/api/lab/*", async (c) => {

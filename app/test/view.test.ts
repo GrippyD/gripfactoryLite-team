@@ -360,10 +360,12 @@ describe("device pill and phone mode (owner ruling 2026-09-01)", () => {
       expect(sheet).toContain("body.device-phone .station-triple { flex-direction: column; }");
       expect(sheet).toContain(".station-triple { display: flex; flex-wrap: wrap; gap: 1.2rem; align-items: flex-start; }");
       // THE PANES ANCHOR TO THE SIDES (canon 0.30.201): equal thirds from a zero
-      // basis, and the three-pane page leaves the 76rem reading column.
+      // basis, and the three-pane page leaves the reading column. The column
+      // is 89rem in computer view (canon 0.30.393, the owner: "another inch or
+      // so on both sides of the working area").
       expect(sheet).toContain(".station-triple > * { flex: 1 1 0; min-width: 16rem; }");
       expect(sheet).toContain("main:has(.station-triple) { max-width: none; }");
-      expect(sheet).toContain("main { max-width: 76rem; margin: 0 auto;");
+      expect(sheet).toContain("main { max-width: 89rem; margin: 0 auto;");
       expect(sheet).toContain("@media (max-width: 480px) { .station-triple { flex-direction: column; } }");
       expect(sheet).toContain(".shuttle-btn {");
       expect(sheet).toContain("body.device-phone .tiles { grid-template-columns: 1fr; }");

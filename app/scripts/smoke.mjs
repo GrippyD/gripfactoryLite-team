@@ -409,8 +409,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 93 migration(s)")) {
-      throw new Error(`from-zero apply must say 92 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 94 migration(s)")) {
+      throw new Error(`from-zero apply must say 94 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -4143,8 +4143,9 @@ async function run() {
         !labelMenu.body.includes('name="field"'),
       "Labels must open on Quick Print, Label Editor, and Custom Label Data"
     );
-    const soon = await text("/compliance/labels/quick-print");
-    assert(soon.body.includes("Coming in the next slices"), "Quick Print answers that it comes in the next slices");
+    const soon = await text("/compliance/labels/print");
+    assert(soon.res.status === 200 && soon.body.includes("data-quick-print"), "Quick Print is the print screen");
+    assert(!soon.body.includes("Coming in the next slices"), "Quick Print no longer waits on a later slice");
     const smokeLayout = {
       v: 1,
       objects: [
@@ -4169,6 +4170,7 @@ async function run() {
     if (!tplId) fail("label template", "no template id");
     const opened = await text(`/compliance/labels/editor?template=${encodeURIComponent(tplId)}`);
     assert(opened.res.status === 200, `open template expected 200 got ${opened.res.status}`);
+    assert(opened.body.includes("data-qp-modal") && opened.body.includes(`name="template_id" value="${tplId}"`), "Print opens Quick Print with this template");
     assert(opened.body.includes('data-le-count="5"'), "opening smoke tag must bring five objects back");
     assert(opened.body.includes('data-le-type="text"') && opened.body.includes('data-le-attach="t1"'), "the barcode must stay attached to the text box");
     assert(opened.body.includes('data-le-type="barcode"') && opened.body.includes('data-le-type="qr"'), "the codes must come back");
@@ -4176,9 +4178,8 @@ async function run() {
     const cleared = await text("/compliance/labels/editor");
     assert(cleared.body.includes('data-le-count="0"'), "a new editor must have no objects");
     const printed = await text(`/compliance/labels/print?template=${encodeURIComponent(tplId)}`);
-    assert(printed.res.status === 200, `label print expected 200 got ${printed.res.status}`);
-    assert(printed.body.includes("@page { size: 4in 6in; margin: 0; }"), "label print must size the page to 4 in by 6 in");
-    assert(printed.body.includes("left:0.5in") && printed.body.includes('class="code128"') && printed.body.includes('class="qrcode"'), "label print must place the objects and draw the codes");
+    assert(printed.res.status === 200, `quick print expected 200 got ${printed.res.status}`);
+    assert(printed.body.includes("data-quick-print") && printed.body.includes("smoke tag"), "Quick Print lists the saved template");
 
     // BRIEF V24, THE LAB STATION (canon 0.30.362): Compliance, Testing, the Internal tab IS the
     // station, and its two old drops (POST /compliance/testing/internal) came off. The station's own
@@ -9466,6 +9467,48 @@ async function run() {
     assert(l2Open.body.includes('data-le-route="the package\'s own passed sample"') || l2Open.body.includes("the package's own passed sample"), "the preview must name the THC route");
     assert(l2Open.body.includes('data-le-route="the keyed row"'), "the preview must name the custom table route");
     assert(l2Open.body.includes('data-le-connections'), "Connections must open a panel");
+
+    // BRIEF L3: a package ID's tail is five digits. The guard tag carries a hex digit there,
+    // and that package may already have left the live sheet. A live smoke package gets a numeric tail.
+    const invForQp = await text("/inventory");
+    const qpRows = [...invForQp.body.matchAll(/<tr[\s\S]*?<\/tr>/g)].map((m) => m[0]);
+    const guardRow = qpRows.find((row) => row.includes(GUARD_TAG) && row.includes("/record/local_inventory_items/"));
+    const liveRow = guardRow || qpRows.find((row) => row.includes("/record/local_inventory_items/")) || "";
+    const guardItem = (liveRow.match(/\/record\/local_inventory_items\/([0-9a-f-]+)\/edit/) || [])[1];
+    assert(guardItem, "a live smoke package must be on the inventory sheet");
+    const QP = "1A40503000311FB000000111";
+    const retag = await req(`/record/local_inventory_items/${guardItem}/edit`, {
+      method: "POST",
+      body: form({ metrc_tag: QP, reason: "smoke: quick print package id" }),
+    });
+    assert(retag.status === 303, `the package id pencil expected 303 got ${retag.status} ${await retag.text()}`);
+    const qpFields = { template_id: tplId, package_id: QP, roll: "yes", container_qty: "3", labels_per: "2", step: "preview" };
+    const qpNoPin = await req("/compliance/labels/print", { method: "POST", body: form(qpFields) });
+    const qpNoPinBody = await qpNoPin.text();
+    assert(qpNoPin.status === 403 && qpNoPinBody.includes("Changing Roll ID to Yes needs the Admin PIN."), `roll without the PIN expected a refusal, got ${qpNoPin.status} ${qpNoPinBody.slice(0, 300)}`);
+    const qpPreview = await req("/compliance/labels/print", { method: "POST", body: form({ ...qpFields, pin: ADMIN_PIN }) });
+    const qpPreviewBody = await qpPreview.text();
+    assert(qpPreview.status === 200 && qpPreviewBody.includes("data-qp-preview"), `quick print preview expected 200 got ${qpPreview.status} ${qpPreviewBody.slice(0, 400)}`);
+    const qpIds = [QP, "1A40503000311FB000000112", "1A40503000311FB000000113"];
+    assert(qpIds.every((id) => qpPreviewBody.includes(id)), `the preview must list three IDs, got ${qpIds.filter((id) => !qpPreviewBody.includes(id)).join(" ")}`);
+    assert((qpPreviewBody.match(/data-qp-container=/g) || []).length === 3, "the preview lists one row per container");
+    assert((qpPreviewBody.match(/data-qp-unknown="1"/g) || []).length === 2, "the two rolled IDs the app does not know are warned");
+    assert(qpPreviewBody.includes("This run prints 6 labels."), "3 containers by 2 labels is six labels");
+    const qpPrint = await req("/compliance/labels/print", { method: "POST", body: form({ ...qpFields, pin: ADMIN_PIN, step: "print" }) });
+    const qpPrintBody = await qpPrint.text();
+    assert(qpPrint.status === 200, `the print page expected 200 got ${qpPrint.status} ${qpPrintBody.slice(0, 300)}`);
+    assert(qpPrintBody.includes("@page { size: 4in 6in; margin: 0; }"), "the print page sizes each page to the template, 4 in by 6 in");
+    assert((qpPrintBody.match(/data-label-page="/g) || []).length === 6, "the print page holds six pages");
+    assert(qpPrintBody.includes("left:0.5in") && qpPrintBody.includes('class="code128"') && qpPrintBody.includes('class="qrcode"'), "the print page draws the template");
+    const qpLog = await text("/compliance/labels/print");
+    assert((qpLog.body.match(/data-qp-run=/g) || []).length === 1, "the run is logged once");
+    assert(qpLog.body.includes(QP), "the log shows the run's package ID");
+    const reprint = (qpLog.body.match(/data-qp-reprint href="([^"]+)"/) || [])[1];
+    assert(reprint, "the log has Reprint");
+    const qpAgain = await text(reprint.replaceAll("&amp;", "&"));
+    assert(qpAgain.body.includes(`value="${QP}"`), "Reprint refills the package ID");
+    assert(qpAgain.body.includes('value="3"') && qpAgain.body.includes('value="2"'), "Reprint refills the counts");
+    assert(qpAgain.body.includes('value="yes" selected'), "Reprint refills Roll ID Yes");
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

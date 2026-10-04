@@ -1,6 +1,6 @@
 # BRIEF L3: QUICK PRINT (canon 0.30.386)
 
-For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155): the last of the three Labels slices: print a saved template for a run of containers, each label filled from its package. Built on the worktree exactly as it stands after BRIEF L2, CONNECTIONS AND CUSTOM LABEL DATA, is merged and pushed (the Scribe writes the tree hash into this line at the paste; if the hash on the disk differs, stop and say so). Migration 0094; the smoke pin moves to 94.
+For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155): the last of the three Labels slices: print a saved template for a run of containers, each label filled from its package. Built on the worktree exactly as it stands LIVE after BRIEF L2, CONNECTIONS AND CUSTOM LABEL DATA (worker `6a8d8e95`, main `8f4e60f`, the app tree `00811dcfb247ec3b`, 292 files, migrations 0001-0093; if the hash on the disk differs, stop and say so). Migration 0094; the smoke pin moves to 94.
 
 ## The sources (verbatim)
 
