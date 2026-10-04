@@ -185,7 +185,7 @@ describe("THE CURE PANES (canon 0.30.164)", () => {
     expect(row).not.toContain("<details open");
     // THE PANES RIDE THE STRIP (owner, 2026-09-22): two inv-gauge tiles and the clock script, no wrapper of their own.
     expect(html).not.toContain("cure-panes");
-    expect(html.startsWith('<div class="inv-gauge cure-pane" data-cure-pane="CSA" title="2026-09-21 11:56 ET">')).toBe(true);
+    expect(html.startsWith('<div class="inv-gauge cure-pane dry-tile" data-cure-pane="CSA" title="2026-09-21 11:56 ET" data-dry-tile>')).toBe(true);
     expect(html.indexOf('data-cure-pane="CSA"')).toBeLessThan(html.indexOf('data-cure-pane="CSB"'));
     expect(html.indexOf('data-cure-pane="CSB"')).toBeLessThan(html.indexOf("<script>"));
     const es = curePanes({ ...data, readings: { CSA: null, CSB: null } }, "es");

@@ -173,7 +173,7 @@ import {
 } from "./config";
 import { HttpError, nowIso, textOrNull } from "./audit";
 import { getConfigValue, insertLog, TRIM_SCHEDULED_SQL } from "./db";
-import { formatClock, siloStrip } from "./drying";
+import { formatClock, siloStrip, type DryingStripFigures } from "./drying";
 import { fulfillmentSection, emptyFulfillment, type FulfillmentDay } from "./fulfillmentboard";
 import { dayBefore, etClockMinutes, etDate, etDayBounds, FARM_DAY_START_HOUR_DEFAULT, FARM_TIME_ZONE, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHour } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
@@ -1078,6 +1078,8 @@ export type HarvestConsolePageInput = {
   envFlags?: Record<string, string[]>;
   /** THE DRYING TOTALS (canon 0.30.183): in dry spaces (loaded only, with the dry estimate), in cure spaces, dry queued; omitted draws no line. */
   dryingTotals?: DryingTotals;
+  /** THE ROWS (canon 0.30.383): the freezer cube's grams and the hang lots. Omitted leaves the cube off. */
+  stripFigures?: DryingStripFigures;
   /** THE TESTING GATE (canon 0.30.293). Omitted reads as an empty gate. */
   testing?: TestingFigures;
   /** THE PREPACK (canon 0.30.188). Omitted reads as an empty day. */
@@ -2576,7 +2578,7 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
     </details>
     <details class="hc-section" data-hc-section="drying">
       <summary>${esc(t(locale, "Drying"))}</summary>
-      ${siloStrip(page.live, page.nowIso, locale, page.cureTiles ?? "", page.envFlags ?? {})}
+      ${siloStrip(page.live, page.nowIso, locale, page.cureTiles ?? "", page.envFlags ?? {}, page.stripFigures ?? {})}
       ${page.dryingTotals ? dryingTotalsMarkup(page.dryingTotals, locale) : ""}
     </details>
     ${trimmingSection(page.input, locale)}

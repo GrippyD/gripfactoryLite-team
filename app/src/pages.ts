@@ -97,7 +97,7 @@ export function adminPage(
       <label class="field">Name <input type="text" name="name" required></label>
       <label class="field">Capacity <input type="number" name="capacity" step="0.01" min="0"></label>
       <label class="field">Capacity UOM <select name="capacity_uom">${capacityUomOpts}</select></label>
-      <label class="field">Freezer, Dry Room, or Silo? <select name="space_type">${spaceTypeOpts}</select></label>
+      <label class="field">Freezer, Dry Room, Silo, or Cure Space? <select name="space_type">${spaceTypeOpts}</select></label>
       <label class="field">Kind <select name="kind">${kindOpts}</select></label>
       <label class="field">Farm <select name="farm_code">${farmOpts}</select></label>
       <button type="submit">Add dry space</button>
@@ -186,7 +186,7 @@ export function lookupSectionPage(
       <label class="field">Name <input type="text" name="name" required></label>
       <label class="field">Capacity <input type="number" name="capacity" step="0.01" min="0"></label>
       <label class="field">Capacity UOM <select name="capacity_uom">${capacityUomOpts}</select></label>
-      <label class="field">Freezer, Dry Room, or Silo? <select name="space_type">${spaceTypeOpts}</select></label>
+      <label class="field">Freezer, Dry Room, Silo, or Cure Space? <select name="space_type">${spaceTypeOpts}</select></label>
       <label class="field">Kind <select name="kind">${kindOpts}</select></label>
       <label class="field">Farm <select name="farm_code">${farmOpts}</select></label>
       <button type="submit">Add dry space</button>

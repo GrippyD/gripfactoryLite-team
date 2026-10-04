@@ -44,7 +44,9 @@ describe("THE CURE CAPS (canon 0.30.341)", () => {
 
   it("fills the tile from the bottom as a bar to the percent full, and folds the lots under the fullness line", () => {
     const empty = tile(0);
-    expect(empty.startsWith('<div class="inv-gauge cure-pane" data-cure-pane="CSA">')).toBe(true);
+    expect(empty.startsWith('<div class="inv-gauge cure-pane dry-tile" data-cure-pane="CSA" data-dry-tile>')).toBe(true);
+    expect(empty).toContain('aria-expanded="false"');
+    expect(empty).toContain('data-dry-status>0% full - 0 Lots</span>');
     expect(empty).toContain('class="cure-shade" style="height:0.0%" data-cure-shade data-cure-fill="0.0"');
     expect(empty).toContain('data-cure-count="0" data-cure-cap="36" data-cure-pct="0"');
     expect(empty).toContain(">0% full - 0 Lots</summary>");
@@ -105,11 +107,16 @@ describe("THE CURE CAPS (canon 0.30.341)", () => {
     expect((noReason as HttpError).message).toBe("Reason is required.");
     const saved = await saveLotCap(m.db, formOf({ person_id: person, lot_cap: "1", reason: "one lot fills the room" }), CONFIG_KEYS.csb_lot_cap);
     expect(saved.redirect).toBe("/admin/lookups/csb_lot_cap?ok=saved");
-    expect(await getConfigValue(m.db, CONFIG_KEYS.csb_lot_cap)).toBe("1");
+    expect(await getConfigValue(m.db, CONFIG_KEYS.csb_lot_cap)).toBe("8");
+    const space = m.get(`SELECT id, capacity, capacity_uom, kind FROM dry_spaces WHERE name = 'CSB' AND deleted_at IS NULL`) as { id: string; capacity: number; capacity_uom: string; kind: string };
+    expect(space.kind).toBe("cure");
+    expect(space.capacity_uom).toBe("ea");
+    expect(Number(space.capacity)).toBe(1);
     expect(
       m.all(
-        `SELECT record_table, record_id, field, old_value, new_value, reason FROM record_change_log WHERE record_table = 'app_config' AND record_id = 'csb_lot_cap' AND field = 'value'`
+        `SELECT record_table, record_id, field, old_value, new_value, reason FROM record_change_log WHERE record_table = 'dry_spaces' AND record_id = ? AND field = 'capacity'`,
+        space.id
       )
-    ).toEqual([{ record_table: "app_config", record_id: "csb_lot_cap", field: "value", old_value: "8", new_value: "1", reason: "one lot fills the room" }]);
+    ).toEqual([{ record_table: "dry_spaces", record_id: space.id, field: "capacity", old_value: "8", new_value: "1", reason: "one lot fills the room" }]);
   });
 });

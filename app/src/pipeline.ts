@@ -319,7 +319,7 @@ export const EDITABLE_FIELDS: Record<string, EditFieldDef[]> = {
     },
     {
       name: "space_type",
-      label: "Freezer, Dry Room, or Silo?",
+      label: "Freezer, Dry Room, Silo, or Cure Space?",
       input: "text",
       options: DRY_SPACE_TYPES.map((v) => ({ value: v, label: DRY_SPACE_TYPE_LABELS[v] })),
     },

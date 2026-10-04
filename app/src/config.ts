@@ -125,11 +125,11 @@ export const DRY_SPACE_KINDS = ["silo", "hang", "truck"] as const;
  * 0057): the silo is the cone-topped cylinder in the silo colors, the dry room
  * the wire cuboid in the silo colors, the freezer the cube in the FFZ blue with
  * the slow fade to white, its running word Chilling Out and its own unload law. */
-export const DRY_SPACE_TYPES = ["silo", "dry_room", "freezer"] as const;
+export const DRY_SPACE_TYPES = ["silo", "dry_room", "freezer", "cure"] as const;
 export type DrySpaceType = (typeof DRY_SPACE_TYPES)[number];
-export const DRY_SPACE_TYPE_LABELS: Record<DrySpaceType, string> = { silo: "Silo", dry_room: "Dry Room", freezer: "Freezer" };
+export const DRY_SPACE_TYPE_LABELS: Record<DrySpaceType, string> = { silo: "Silo", dry_room: "Dry Room", freezer: "Freezer", cure: "Cure Space" };
 export function drySpaceTypeOf(raw: string | null | undefined): DrySpaceType {
-  return raw === "dry_room" || raw === "freezer" ? raw : "silo";
+  return raw === "dry_room" || raw === "freezer" || raw === "cure" ? raw : "silo";
 }
 
 /** THE ROOM HOLDS MANY (canon 0.30.132). Owner, 2026-09-20, verbatim: "Dry rooms

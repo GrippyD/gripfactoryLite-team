@@ -98,7 +98,7 @@ describe("the silo strip and the Load Silo page", () => {
     // under a running clock, Silo 4 is paused, Silo 3 and 5 are empty.
     const live = assembleSiloVisuals(SILOS, loads, [{ dry_space_id: "s1", status: "weighing", weight_grams: 2000, lots: 1 }], CAP);
     const html = siloStrip(live, NOW);
-    expect((html.match(/class="inv-gauge silo-gauge"/g) || []).length).toBe(5);
+    expect((html.match(/class="inv-gauge silo-gauge dry-tile"/g) || []).length).toBe(5);
     expect((html.match(/<svg class="silo-shape"/g) || []).length).toBe(5);
     expect(html).toContain("data-silo-strip");
     expect(html).toContain('data-silo="s1" data-silo-state="filling"');

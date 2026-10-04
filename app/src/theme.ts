@@ -338,18 +338,20 @@ select option[data-occupied] { color: var(--text-dim, #888); }
 .cure-pane { flex: 0 0 auto; width: 13.6rem; min-width: 0; font-size: 0.8rem; position: relative; overflow: hidden; }
 .inv-gauge.cure-pane { padding-bottom: 0; }
 .cure-pane > * { width: 100%; }
+/* THE V7 GATE (canon 0.30.384): an opened cure tile lays its body out as the pane itself, so V28's bar stands as built. */
+.cure-pane > .dry-tile-body:not([hidden]) { display: contents; }
 /* THE PANE IS A BAR (canon 0.30.355): the green rises from the tile's bottom to the percent full (its inline height), the silo tiles' width (13.6rem, owner 2026-10-02: "match width of the columns above").
    THE COUNT SITS ON THE BAR (canon 0.30.378): the lots fold lives inside the shade; opened, the shade grows (height auto, at least the percent full) and the tile grows with it. The summary and the rows read in the theme's text colour on the green; links keep the theme's link colour. */
-.cure-pane > .cure-shade { position: absolute; left: 0; right: 0; bottom: 0; top: auto; width: auto; background: rgba(46, 158, 79, 0.6); border-top: 2px solid #2e9e4f; pointer-events: auto; transition: height 0.6s ease; box-sizing: border-box; display: flex; flex-direction: column; min-height: min-content; }
-.cure-pane > .cure-shade[data-cure-fill="0.0"] { border-top: 0; background: transparent; }
-.cure-pane:has(.cure-lots[open]) > .cure-shade { position: relative; left: auto; right: auto; bottom: auto; align-self: stretch; width: calc(100% + 1.6rem); height: auto !important; min-height: var(--cure-fill, 0%); margin-top: auto; margin-left: -0.8rem; margin-right: -0.8rem; }
+.cure-pane > .cure-shade, .cure-pane > .dry-tile-body > .cure-shade { position: absolute; left: 0; right: 0; bottom: 0; top: auto; width: auto; background: rgba(46, 158, 79, 0.6); border-top: 2px solid #2e9e4f; pointer-events: auto; transition: height 0.6s ease; box-sizing: border-box; display: flex; flex-direction: column; min-height: min-content; }
+.cure-pane > .cure-shade[data-cure-fill="0.0"], .cure-pane > .dry-tile-body > .cure-shade[data-cure-fill="0.0"] { border-top: 0; background: transparent; }
+.cure-pane:has(.cure-lots[open]) > .cure-shade, .cure-pane:has(.cure-lots[open]) > .dry-tile-body > .cure-shade { position: relative; left: auto; right: auto; bottom: auto; align-self: stretch; width: calc(100% + 1.6rem); height: auto !important; min-height: var(--cure-fill, 0%); margin-top: auto; margin-left: -0.8rem; margin-right: -0.8rem; }
 .cure-shade > .cure-lots { margin: 0; width: 100%; }
 .cure-shade > .cure-lots > summary.cure-count { margin: 0; padding: 0.12rem 0.25rem 0.2rem; }
 .cure-lots > summary.cure-count { cursor: pointer; list-style: none; }
 .cure-lots > summary.cure-count::-webkit-details-marker { display: none; }
 .cure-lots > summary.cure-count::before { content: "▸ "; font-size: 0.8em; opacity: 0.7; }
 .cure-lots[open] > summary.cure-count::before { content: "▾ "; }
-.cure-pane > :not(.cure-shade) { position: relative; z-index: 1; }
+.cure-pane > :not(.cure-shade), .cure-pane > .dry-tile-body > :not(.cure-shade) { position: relative; z-index: 1; }
 .cure-count { margin: 0.1rem 0 0.35rem; font-weight: 600; }
 .cure-over { color: #7c1b1b; }
 /* POST HARVEST PUZZLES (canon 0.30.351): the ten best and the ten worst. */
@@ -710,6 +712,33 @@ table.data th { background: var(--panel-2); }
 .silo-shape { width: 11.2rem; height: 8.4rem; display: block; margin: 0.15rem auto 0.25rem; overflow: visible; }
 /* THE WIDE SILO (canon 0.30.71): the silo card widens to hold the shape; its height is untouched. */
 .silo-gauge { width: 13.6rem; }
+/* THE ROWS (canon 0.30.383): one row per kind, a fixed total at the left, tiles in a line. Past five, the row scrolls. */
+.dry-row { display: flex; align-items: stretch; gap: 0.45rem; margin: 0.35rem 0 0.7rem; }
+.dry-row-total { flex: 0 0 9.2rem; padding: 0.35rem 0.4rem; border: 1px solid var(--line, #888); border-radius: 0.35rem; font-size: 0.75rem; }
+.dry-row-total-label { font-weight: 800; margin-bottom: 0.2rem; }
+.dry-row-total-value { font-variant-numeric: tabular-nums; }
+.dry-row-scroller { display: flex; align-items: stretch; gap: 0.25rem; min-width: 0; }
+.dry-row-tiles { display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0.45rem; overflow-x: auto; max-width: calc(5 * 13.6rem + 4 * 0.45rem); scroll-behavior: smooth; }
+.dry-row-tiles > .inv-gauge, .dry-row-tiles > .silo-gauge, .dry-row-tiles > .cure-pane { flex: 0 0 13.6rem; width: 13.6rem; }
+.dry-row-arrow { flex: 0 0 auto; align-self: center; min-width: 1.8rem; min-height: 2.4rem; font-size: 1.2rem; }
+.dry-tile-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.4rem; width: 100%; text-align: left; background: transparent; color: inherit; border: 0; padding: 0; cursor: pointer; font: inherit; }
+.dry-tile-name { font-weight: 800; }
+.dry-tile-status, .dry-tile-weight { font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.dry-tile-icon { position: relative; width: 1.45rem; height: 1.15rem; display: inline-block; border: 2px solid var(--accent); box-sizing: border-box; overflow: hidden; flex: 0 0 auto; }
+.dry-icon-silo { border-radius: 40% 40% 8% 8%; }
+.dry-icon-cube { border-color: #2563eb; }
+.dry-icon-cure { border-color: #2e9e4f; }
+.dry-icon-fill, .dry-cure-icon-fill { position: absolute; left: 0; right: 0; bottom: 0; }
+.dry-icon-fill.silo-fill-green, .dry-cure-icon-fill { background: #2e9e4f; }
+.dry-icon-fill.silo-fill-red { background: #d23b2f; }
+.dry-icon-fill.silo-fill-blue, .dry-icon-fill.ffz-fill { background: #1d4ed8; }
+.dry-icon-fill.silo-throb { animation: silo-throb 1.6s ease-in-out infinite; }
+.dry-icon-fill.ffz-throb { animation: ffz-icon-throb 4.2s ease-in-out infinite; }
+@keyframes ffz-icon-throb { 0%, 100% { background: #1d4ed8; } 50% { background: #eef4ff; } }
+.dry-tile-body[hidden] { display: none; }
+/* THE V7 GATE (canon 0.30.384): a collapsed tile is only its head, and an arrow hidden by the row script stays hidden. */
+.dry-tile:has(> .dry-tile-body[hidden]) { min-height: 0; }
+.dry-row-arrow[hidden] { display: none; }
 .silo-wire { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
 .silo-fill { fill: transparent; fill-opacity: 0.55; transition: y 0.6s ease, height 0.6s ease; }
 .silo-fill-green { fill: #2e9e4f; }
@@ -1491,6 +1520,33 @@ table.data tbody tr:hover td { background: var(--surface-2); }
 .silo-shape { width: 11.2rem; height: 8.4rem; display: block; margin: 0.15rem auto 0.25rem; overflow: visible; }
 /* THE WIDE SILO (canon 0.30.71): the silo card widens to hold the shape; its height is untouched. */
 .silo-gauge { width: 13.6rem; }
+/* THE ROWS (canon 0.30.383): one row per kind, a fixed total at the left, tiles in a line. Past five, the row scrolls. */
+.dry-row { display: flex; align-items: stretch; gap: 0.45rem; margin: 0.35rem 0 0.7rem; }
+.dry-row-total { flex: 0 0 9.2rem; padding: 0.35rem 0.4rem; border: 1px solid var(--line, #888); border-radius: 0.35rem; font-size: 0.75rem; }
+.dry-row-total-label { font-weight: 800; margin-bottom: 0.2rem; }
+.dry-row-total-value { font-variant-numeric: tabular-nums; }
+.dry-row-scroller { display: flex; align-items: stretch; gap: 0.25rem; min-width: 0; }
+.dry-row-tiles { display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0.45rem; overflow-x: auto; max-width: calc(5 * 13.6rem + 4 * 0.45rem); scroll-behavior: smooth; }
+.dry-row-tiles > .inv-gauge, .dry-row-tiles > .silo-gauge, .dry-row-tiles > .cure-pane { flex: 0 0 13.6rem; width: 13.6rem; }
+.dry-row-arrow { flex: 0 0 auto; align-self: center; min-width: 1.8rem; min-height: 2.4rem; font-size: 1.2rem; }
+.dry-tile-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.4rem; width: 100%; text-align: left; background: transparent; color: inherit; border: 0; padding: 0; cursor: pointer; font: inherit; }
+.dry-tile-name { font-weight: 800; }
+.dry-tile-status, .dry-tile-weight { font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.dry-tile-icon { position: relative; width: 1.45rem; height: 1.15rem; display: inline-block; border: 2px solid var(--accent, var(--primary, #d9a24a)); box-sizing: border-box; overflow: hidden; flex: 0 0 auto; }
+.dry-icon-silo { border-radius: 40% 40% 8% 8%; }
+.dry-icon-cube { border-color: #2563eb; }
+.dry-icon-cure { border-color: #2e9e4f; }
+.dry-icon-fill, .dry-cure-icon-fill { position: absolute; left: 0; right: 0; bottom: 0; }
+.dry-icon-fill.silo-fill-green, .dry-cure-icon-fill { background: #2e9e4f; }
+.dry-icon-fill.silo-fill-red { background: #d23b2f; }
+.dry-icon-fill.silo-fill-blue, .dry-icon-fill.ffz-fill { background: #1d4ed8; }
+.dry-icon-fill.silo-throb { animation: silo-throb 1.6s ease-in-out infinite; }
+.dry-icon-fill.ffz-throb { animation: ffz-icon-throb 4.2s ease-in-out infinite; }
+@keyframes ffz-icon-throb { 0%, 100% { background: #1d4ed8; } 50% { background: #eef4ff; } }
+.dry-tile-body[hidden] { display: none; }
+/* THE V7 GATE (canon 0.30.384): a collapsed tile is only its head, and an arrow hidden by the row script stays hidden. */
+.dry-tile:has(> .dry-tile-body[hidden]) { min-height: 0; }
+.dry-row-arrow[hidden] { display: none; }
 .silo-wire { fill: none; stroke: var(--primary); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
 .silo-fill { fill: transparent; fill-opacity: 0.55; transition: y 0.6s ease, height 0.6s ease; }
 .silo-fill-green { fill: #2e9e4f; }
@@ -2219,6 +2275,33 @@ legend { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; c
 .silo-shape { width: 11.2rem; height: 8.4rem; display: block; margin: 0.15rem auto 0.25rem; overflow: visible; }
 /* THE WIDE SILO (canon 0.30.71): the silo card widens to hold the shape; its height is untouched. */
 .silo-gauge { width: 13.6rem; }
+/* THE ROWS (canon 0.30.383): one row per kind, a fixed total at the left, tiles in a line. Past five, the row scrolls. */
+.dry-row { display: flex; align-items: stretch; gap: 0.45rem; margin: 0.35rem 0 0.7rem; }
+.dry-row-total { flex: 0 0 9.2rem; padding: 0.35rem 0.4rem; border: 1px solid var(--line, #888); border-radius: 0.35rem; font-size: 0.75rem; }
+.dry-row-total-label { font-weight: 800; margin-bottom: 0.2rem; }
+.dry-row-total-value { font-variant-numeric: tabular-nums; }
+.dry-row-scroller { display: flex; align-items: stretch; gap: 0.25rem; min-width: 0; }
+.dry-row-tiles { display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0.45rem; overflow-x: auto; max-width: calc(5 * 13.6rem + 4 * 0.45rem); scroll-behavior: smooth; }
+.dry-row-tiles > .inv-gauge, .dry-row-tiles > .silo-gauge, .dry-row-tiles > .cure-pane { flex: 0 0 13.6rem; width: 13.6rem; }
+.dry-row-arrow { flex: 0 0 auto; align-self: center; min-width: 1.8rem; min-height: 2.4rem; font-size: 1.2rem; }
+.dry-tile-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.4rem; width: 100%; text-align: left; background: transparent; color: inherit; border: 0; padding: 0; cursor: pointer; font: inherit; }
+.dry-tile-name { font-weight: 800; }
+.dry-tile-status, .dry-tile-weight { font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.dry-tile-icon { position: relative; width: 1.45rem; height: 1.15rem; display: inline-block; border: 2px solid var(--gold, #d9a24a); box-sizing: border-box; overflow: hidden; flex: 0 0 auto; }
+.dry-icon-silo { border-radius: 40% 40% 8% 8%; }
+.dry-icon-cube { border-color: #2563eb; }
+.dry-icon-cure { border-color: #2e9e4f; }
+.dry-icon-fill, .dry-cure-icon-fill { position: absolute; left: 0; right: 0; bottom: 0; }
+.dry-icon-fill.silo-fill-green, .dry-cure-icon-fill { background: #2e9e4f; }
+.dry-icon-fill.silo-fill-red { background: #d23b2f; }
+.dry-icon-fill.silo-fill-blue, .dry-icon-fill.ffz-fill { background: #1d4ed8; }
+.dry-icon-fill.silo-throb { animation: silo-throb 1.6s ease-in-out infinite; }
+.dry-icon-fill.ffz-throb { animation: ffz-icon-throb 4.2s ease-in-out infinite; }
+@keyframes ffz-icon-throb { 0%, 100% { background: #1d4ed8; } 50% { background: #eef4ff; } }
+.dry-tile-body[hidden] { display: none; }
+/* THE V7 GATE (canon 0.30.384): a collapsed tile is only its head, and an arrow hidden by the row script stays hidden. */
+.dry-tile:has(> .dry-tile-body[hidden]) { min-height: 0; }
+.dry-row-arrow[hidden] { display: none; }
 .silo-wire { fill: none; stroke: var(--gold); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
 .silo-fill { fill: transparent; fill-opacity: 0.55; transition: y 0.6s ease, height 0.6s ease; }
 .silo-fill-green { fill: #3ecf6b; }
@@ -2538,7 +2621,7 @@ body.device-phone .ops-map-phone .ops-node { width: 100%; max-width: 18rem; }
 ${walkSliceChrome("cerberus")}
 .php-best { background: color-mix(in srgb, var(--ok, #3ecf6b) 28%, transparent); color: var(--ok, #3ecf6b); }
 .php-worst { background: color-mix(in srgb, #ba2929 28%, transparent); color: #ba2929; }
-.cure-pane > .cure-shade { background: rgba(62, 207, 107, 0.5); border-top-color: #3ecf6b; }
+.cure-pane > .cure-shade, .cure-pane > .dry-tile-body > .cure-shade { background: rgba(62, 207, 107, 0.5); border-top-color: #3ecf6b; }
 .cure-over { color: #ba2929; }
 /* =====================================================================
    BOOT SCRAWL (owner ruling 2026-09-01)

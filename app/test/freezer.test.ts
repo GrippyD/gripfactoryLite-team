@@ -49,7 +49,8 @@ describe("the type decides the shape and the formatting (canon 0.30.106)", () =>
     expect(spaceTypeOf({ shape: "box" })).toBe("dry_room");
     expect(spaceTypeOf({})).toBe("silo");
     expect(drySpaceTypeOf("garbage")).toBe("silo");
-    expect(DRY_SPACE_TYPES).toEqual(["silo", "dry_room", "freezer"]);
+    expect(DRY_SPACE_TYPES).toEqual(["silo", "dry_room", "freezer", "cure"]);
+    expect(drySpaceTypeOf("cure")).toBe("cure");
     expect(CAPACITY_UOMS).toEqual(["ea", "lb", "g", "sqft"]);
     expect(capacityUomOf("LB")).toBe("lb");
     expect(capacityUomOf("tons")).toBeNull();
@@ -85,7 +86,8 @@ describe("the type decides the shape and the formatting (canon 0.30.106)", () =>
   it("the freezer tile wears the FFZ chrome: status and percent on one line, the lot lines muted, the wet line, the cube", () => {
     const v = siloVisual({ ...base, capacityGrams: 800 * LB_GRAMS, loadedGrams: 749.03 * LB_GRAMS, clock: "running", freezer: true });
     const tile = siloTile({ id: "bf", name: "Blast Freezer(s)", visual: v, body: '<div class="inv-lot">Lot 26023</div>', shape: "cube" });
-    expect(tile).toContain('<div class="inv-gauge silo-gauge ffz-gauge freezer-gauge" data-silo="bf" data-silo-state="drying" data-silo-shape-kind="cube" data-space-type="freezer">');
+    expect(tile).toContain('<div class="inv-gauge silo-gauge ffz-gauge freezer-gauge dry-tile" data-silo="bf" data-silo-state="drying" data-silo-shape-kind="cube" data-space-type="freezer" data-dry-tile>');
+    expect(tile).toContain('aria-expanded="false"');
     expect(tile).toContain('<div class="inv-gauge-name">Blast Freezer(s)</div>');
     expect(tile).toContain('<svg class="silo-shape silo-shape-cube" data-silo-shape data-silo-state="drying"');
     expect(tile).toContain('<div class="silo-state ffz-state freezer-state"><span data-silo-label>Chilling Out</span> · <span data-silo-pct>94% full</span></div>');
@@ -176,13 +178,13 @@ describe("Admin, Lookups, Dry spaces: his four fields (canon 0.30.106)", () => {
   it("the pencil carries name, capacity, capacity UOM, the type toggle, then kind and farm", () => {
     expect(EDITABLE_FIELDS.dry_spaces.map((f) => f.name)).toEqual(["name", "capacity", "capacity_uom", "space_type", "kind", "farm_code"]);
     const type = EDITABLE_FIELDS.dry_spaces.find((f) => f.name === "space_type")!;
-    expect(type.label).toBe("Freezer, Dry Room, or Silo?");
-    expect(type.options!.map((o) => o.label)).toEqual(["Silo", "Dry Room", "Freezer"]);
+    expect(type.label).toBe("Freezer, Dry Room, Silo, or Cure Space?");
+    expect(type.options!.map((o) => o.label)).toEqual(["Silo", "Dry Room", "Freezer", "Cure Space"]);
     const uom = EDITABLE_FIELDS.dry_spaces.find((f) => f.name === "capacity_uom")!;
     expect(uom.options!.map((o) => o.value)).toEqual(["ea", "lb", "g", "sqft"]);
     expect(uom.optional).toBe(true);
     const html = editPage("dry_spaces", "bf", { name: "Blast Freezer(s)", capacity: 800, capacity_uom: "lb", space_type: "freezer", kind: "silo", farm_code: "PNN" }, { farms: [{ value: "PNN", label: "PNN" }] });
-    expect(html).toContain('<select name="space_type"><option value="silo">Silo</option><option value="dry_room">Dry Room</option><option value="freezer" selected>Freezer</option></select>');
+    expect(html).toContain('<select name="space_type"><option value="silo">Silo</option><option value="dry_room">Dry Room</option><option value="freezer" selected>Freezer</option><option value="cure">Cure Space</option></select>');
     expect(html).toContain('<select name="capacity_uom"><option value=""></option><option value="ea">ea</option><option value="lb" selected>lb</option><option value="g">g</option><option value="sqft">sqft</option></select>');
     expect(html).toContain('<input type="number" name="capacity" value="800" step="0.01">');
   });
@@ -206,13 +208,14 @@ describe("Admin, Lookups, Dry spaces: his four fields (canon 0.30.106)", () => {
     expect(html).toContain("<td>Silo 1</td><td>15000</td><td>lb</td><td>Silo</td>");
     expect(html).toContain('<label class="field">Capacity <input type="number" name="capacity" step="0.01" min="0"></label>');
     expect(html).toContain('<label class="field">Capacity UOM <select name="capacity_uom"><option value=""></option><option value="ea">ea</option><option value="lb">lb</option><option value="g">g</option><option value="sqft">sqft</option></select></label>');
-    expect(html).toContain('<label class="field">Freezer, Dry Room, or Silo? <select name="space_type"><option value="silo">Silo</option><option value="dry_room">Dry Room</option><option value="freezer">Freezer</option></select></label>');
+    expect(html).toContain('<label class="field">Freezer, Dry Room, Silo, or Cure Space? <select name="space_type"><option value="silo">Silo</option><option value="dry_room">Dry Room</option><option value="freezer">Freezer</option><option value="cure">Cure Space</option></select></label>');
   });
 
   it("the add form's parsers refuse in words", () => {
     expect(parseDrySpaceType("freezer")).toBe("freezer");
     expect(() => parseDrySpaceType("fridge")).toThrow(HttpError);
-    expect(() => parseDrySpaceType("fridge")).toThrow("Pick Silo, Dry Room or Freezer.");
+    expect(() => parseDrySpaceType("fridge")).toThrow("Pick Silo, Dry Room, Freezer or Cure Space.");
+    expect(parseDrySpaceType("cure")).toBe("cure");
     expect(parseCapacity("800")).toBe(800);
     expect(parseCapacity("1,234.567")).toBe(1234.57);
     expect(parseCapacity("")).toBeNull();

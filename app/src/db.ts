@@ -126,7 +126,7 @@ export async function listLookup(db: D1Database, name: LookupName): Promise<Look
       return mapLookup(
         await db
           .prepare(
-            `SELECT id AS value, name AS label FROM dry_spaces WHERE deleted_at IS NULL ORDER BY name`
+            `SELECT id AS value, name AS label FROM dry_spaces WHERE deleted_at IS NULL AND kind <> 'cure' ORDER BY name`
           )
           .all<LookupOption>()
       );
@@ -2099,7 +2099,7 @@ export async function listNonTruckDrySpaces(db: D1Database): Promise<DrySpaceRow
   const result = await db
     .prepare(
       `SELECT id, name, kind FROM dry_spaces
-       WHERE deleted_at IS NULL AND kind <> 'truck'
+       WHERE deleted_at IS NULL AND kind <> 'truck' AND kind <> 'cure'
        ORDER BY CASE kind WHEN 'silo' THEN 0 ELSE 1 END, name`
     )
     .all<DrySpaceRow>();
@@ -3233,7 +3233,7 @@ export async function listDrySpaceInventory(db: D1Database): Promise<DrySpaceInv
       `SELECT d.id, d.name, d.kind, d.farm_code, COALESCE(f.display_name, d.farm_code, '') AS farm_name
        FROM dry_spaces d
        LEFT JOIN farms f ON f.code = d.farm_code AND f.deleted_at IS NULL
-       WHERE d.deleted_at IS NULL AND d.kind <> 'truck'
+       WHERE d.deleted_at IS NULL AND d.kind <> 'truck' AND d.kind <> 'cure'
        ORDER BY d.farm_code, d.name`
     )
     .all<{ id: string; name: string; kind: string; farm_code: string | null; farm_name: string }>();
@@ -4546,6 +4546,39 @@ export type SiloRow = {
   capacity_uom?: string | null;
   location_name?: string | null;
 };
+
+/** THE ROWS (canon 0.30.383). Fresh Frozen is the Blast Freezer ledger grams plus
+ * every cryo package that is not already in that ledger sum. Hang Drying adds
+ * the wet grams of lots drying in a kind hang space (those spaces are not on the strip). */
+export async function dryingRowFigures(db: D1Database): Promise<{ ffzGrams: number; hangGrams: number; hangLots: number }> {
+  const ffz = await db
+    .prepare(
+      `SELECT
+         COALESCE((SELECT SUM(qty) FROM local_inventory_items WHERE deleted_at IS NULL AND location = 'Blast Freezer'), 0)
+         + COALESCE((
+             SELECT SUM(p.weight_grams) FROM wip_packages p
+             WHERE p.deleted_at IS NULL AND p.source = 'cryo'
+               AND NOT EXISTS (
+                 SELECT 1 FROM local_inventory_items i
+                 WHERE i.deleted_at IS NULL AND i.wip_package_id = p.id AND i.location = 'Blast Freezer'
+               )
+           ), 0) AS grams`
+    )
+    .first<{ grams: number }>();
+  const hang = await db
+    .prepare(
+      `SELECT COALESCE(SUM(w.weight_grams), 0) AS grams, COUNT(*) AS lots
+       FROM wet_weight_entries w
+       JOIN dry_spaces d ON d.id = w.actual_dryspc AND d.deleted_at IS NULL AND d.kind = 'hang'
+       WHERE w.deleted_at IS NULL AND w.status = 'drying'`
+    )
+    .first<{ grams: number; lots: number }>();
+  return {
+    ffzGrams: Number(ffz?.grams ?? 0),
+    hangGrams: Number(hang?.grams ?? 0),
+    hangLots: Number(hang?.lots ?? 0),
+  };
+}
 
 /** The silos (kind silo): the silos first in name order, then the dry rooms, then the freezers. */
 export async function listSilos(db: D1Database): Promise<SiloRow[]> {

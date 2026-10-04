@@ -695,7 +695,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(drying).toContain('data-silo="s6" data-silo-state="filling" data-silo-shape-kind="box"');
     expect(drying).toContain('<div class="inv-gauge-name">Arlington Dry Room</div>');
     expect(drying).toContain('class="silo-shape silo-shape-box"');
-    expect(drying).not.toContain("data-ffz");
+    expect(drying).not.toContain("data-ffz=");
     expect(drying).toContain('fetch("/silos/live.json"');
     expect(drying).not.toContain("paintFfz");
   });
@@ -706,11 +706,18 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
       '<div class="inv-gauge cure-pane" data-cure-pane="CSB"><div class="inv-gauge-name">CSB</div></div>';
     const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z", cureTiles });
     const drying = html.slice(html.indexOf('data-hc-section="drying"'), html.indexOf('data-hc-section="trimming"'));
-    const row = drying.slice(drying.indexOf('<div class="inv-gauges">'), drying.indexOf("</section>"));
+    const row = drying.slice(drying.indexOf('data-silo-strip'), drying.indexOf("</section>"));
+    expect(row).toContain('data-dry-row="silo"');
+    expect(row).toContain('data-dry-row="cure"');
+    expect(row).toContain('data-dry-row="dry_room"');
+    expect(row).not.toContain('data-dry-row="freezer"');
+    expect(row.indexOf('data-dry-row="silo"')).toBeLessThan(row.indexOf('data-dry-row="cure"'));
+    expect(row.indexOf('data-dry-row="cure"')).toBeLessThan(row.indexOf('data-dry-row="dry_room"'));
     expect(row).toContain('data-cure-pane="CSA"');
     expect(row).toContain('data-cure-pane="CSB"');
-    expect(row.indexOf('data-silo="s6"')).toBeLessThan(row.indexOf('data-cure-pane="CSA"'));
+    expect(row.indexOf('data-silo="s1"')).toBeLessThan(row.indexOf('data-cure-pane="CSA"'));
     expect(row.indexOf('data-cure-pane="CSA"')).toBeLessThan(row.indexOf('data-cure-pane="CSB"'));
+    expect(row.indexOf('data-cure-pane="CSB"')).toBeLessThan(row.indexOf('data-silo="s6"'));
     // Nothing of the panes stands outside the strip.
     expect(drying.slice(drying.indexOf("</section>"))).not.toContain("data-cure-pane");
     // Without the tiles the strip renders as before.

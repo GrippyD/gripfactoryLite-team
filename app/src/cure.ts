@@ -12,7 +12,6 @@
 import { HttpError } from "./audit";
 import { CONFIG_KEYS, CSA_LOT_CAP_DEFAULT, CSB_LOT_CAP_DEFAULT, formatGrams, parseLotCap, SCHEDULE_STATUS, shortLotId } from "./config";
 import { formatLbs } from "./compliance";
-import { getConfigValue } from "./db";
 import { etWallClock } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
 import { listEnvironmentFlags } from "./environment";
@@ -198,6 +197,18 @@ const LOTS_SQL = `SELECT w.id, w.status, w.dry_weight_grams, b.hbn, b.metrc_harv
      JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
      WHERE w.deleted_at IS NULL AND w.status IN ('unloaded', 'trimmed')`;
 
+/** THE CAP LIVES ON THE SPACE (canon 0.30.383): the pane reads the cure space's capacity (uom ea). */
+export async function cureSpaceCap(db: D1Database, room: "CSA" | "CSB"): Promise<{ value: number; stored: boolean }> {
+  const fallback = room === "CSA" ? CSA_LOT_CAP_DEFAULT : CSB_LOT_CAP_DEFAULT;
+  const row = await db
+    .prepare(`SELECT capacity, capacity_uom FROM dry_spaces WHERE name = ? AND kind = 'cure' AND deleted_at IS NULL`)
+    .bind(room)
+    .first<{ capacity: number | null; capacity_uom: string | null }>();
+  const uom = String(row?.capacity_uom ?? "").trim().toLowerCase();
+  if (!row || uom !== "ea" || row.capacity == null || String(row.capacity).trim() === "") return { value: fallback, stored: false };
+  return { value: parseLotCap(String(row.capacity), fallback), stored: true };
+}
+
 export async function listCurePanes(db: D1Database, nowIso: string, locale: Locale = "en"): Promise<CurePanesData> {
   const lots = await db.prepare(LOTS_SQL).all<LotSql>();
   const tests = await db
@@ -240,8 +251,8 @@ export async function listCurePanes(db: D1Database, nowIso: string, locale: Loca
   csa.sort(byId);
   csb.sort(byId);
   const caps = {
-    CSA: parseLotCap(await getConfigValue(db, CONFIG_KEYS.csa_lot_cap), CSA_LOT_CAP_DEFAULT),
-    CSB: parseLotCap(await getConfigValue(db, CONFIG_KEYS.csb_lot_cap), CSB_LOT_CAP_DEFAULT),
+    CSA: (await cureSpaceCap(db, "CSA")).value,
+    CSB: (await cureSpaceCap(db, "CSB")).value,
   };
   return { csa, csb, readings, nowIso, flags, caps };
 }
@@ -403,7 +414,14 @@ function paneCard(name: CurePaneName, lots: CureLot[], cap: number, reading: Cur
     ? lots.map((lot) => lotRow(lot, nowIso, locale)).join("")
     : `<p class="muted" data-cure-empty>${esc(t(locale, "No lots."))}</p>`;
   const hover = reading ? ` title="${esc(readingTitle(reading))}"` : "";
-  return `<div class="inv-gauge cure-pane" data-cure-pane="${name}"${hover}>
+  const dry = lots.reduce((sum, lot) => sum + Number(lot.dryGrams ?? 0), 0);
+  const bodyId = `dry-body-${name}`;
+  const weight = `${esc(t(locale, "Dry"))} <strong>${esc(formatLbs(dry))}</strong> lb · <strong>${esc(formatGrams(Math.round(dry)))}</strong> g`;
+  const icon = `<span class="dry-tile-icon dry-icon-cure" data-dry-icon aria-hidden="true"><span class="dry-cure-icon-fill" style="height:${fill}%"></span></span>`;
+  const head = `<button type="button" class="dry-tile-head" data-dry-head aria-expanded="false" aria-controls="${bodyId}">${icon}<span class="dry-tile-name">${name}</span><span class="dry-tile-status${over ? " cure-over" : ""}" data-dry-status>${esc(count)}</span><span class="dry-tile-weight" data-dry-weight>${weight}</span></button>`;
+  return `<div class="inv-gauge cure-pane dry-tile" data-cure-pane="${name}"${hover} data-dry-tile>
+      ${head}
+      <div class="dry-tile-body" id="${bodyId}" hidden>
       <div class="inv-gauge-name">${name}</div>
       <p class="cure-conditions${cond.stale || alert ? " cure-stale" : ""}" data-cure-conditions>${esc(text)}</p>
       <div class="cure-shade" style="height:${fill}%" data-cure-shade data-cure-fill="${fill}">
@@ -411,6 +429,7 @@ function paneCard(name: CurePaneName, lots: CureLot[], cap: number, reading: Cur
         <summary class="cure-count${over ? " cure-over" : ""}" data-cure-count="${n}" data-cure-cap="${cap}" data-cure-pct="${pctShown}" title="${esc(capLine)}">${esc(count)}</summary>
         ${body}
       </details>
+      </div>
       </div>
     </div>`;
 }
