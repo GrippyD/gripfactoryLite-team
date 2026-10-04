@@ -504,7 +504,7 @@ header.app-bar {
 }
 .brand { font-weight: 700; letter-spacing: 0.04em; }
 nav a { margin-right: 0.9rem; font-weight: 600; }
-main { max-width: 76rem; margin: 0 auto; padding: 1.2rem; }
+main { max-width: 89rem; margin: 0 auto; padding: 1.2rem; }
 h1 { font-size: 1.8rem; margin: 0 0 1rem; }
 h2 { font-size: 1.3rem; margin: 1.4rem 0 0.6rem; }
 .tiles {
@@ -1250,7 +1250,7 @@ header.app-bar {
 .brand { font-weight: 700; letter-spacing: 0.04em; }
 nav a { margin-right: 0.9rem; font-weight: 600; text-decoration: none; }
 nav a:hover { text-decoration: underline; }
-main { max-width: 76rem; margin: 0 auto; padding: 1.6rem 1.2rem 2.5rem; }
+main { max-width: 89rem; margin: 0 auto; padding: 1.6rem 1.2rem 2.5rem; }
 h1, h2, h3 { font-family: var(--font-display); font-weight: 700; }
 h1 { font-size: 2.1rem; line-height: 1.12; margin: 0 0 1.1rem; text-wrap: balance; }
 h2 { font-size: 1.35rem; line-height: 1.15; margin: 1.4rem 0 0.6rem; }
@@ -2044,7 +2044,7 @@ nav a {
   border-bottom: 1px solid transparent;
 }
 nav a:hover, nav a:focus { color: var(--gold); border-bottom-color: var(--gold); }
-main { max-width: 76rem; margin: 0 auto; padding: 1.2rem; position: relative; z-index: 1; }
+main { max-width: 89rem; margin: 0 auto; padding: 1.2rem; position: relative; z-index: 1; }
 h1 { font-size: 1.35rem; margin: 0 0 1rem; letter-spacing: 0.12em; }
 h2 { font-size: 1.05rem; margin: 1.4rem 0 0.6rem; letter-spacing: 0.1em; }
 h3 { font-size: 0.95rem; }

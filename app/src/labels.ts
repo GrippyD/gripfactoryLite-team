@@ -82,7 +82,7 @@ export function labelsMenuPage(locale: Locale = "en"): string {
     `<a class="le-menu-btn" data-labels="${key}" href="${href}">${esc(t(locale, label))}</a>`;
   return `<h1>${esc(t(locale, "Labels"))}</h1>
     <nav class="le-menu" data-labels-menu>
-      ${button("quick-print", "/compliance/labels/quick-print", "Quick Print")}
+      ${button("quick-print", "/compliance/labels/print", "Quick Print")}
       ${button("editor", "/compliance/labels/editor", "Label Editor")}
       ${button("data", "/compliance/labels/data", "Custom Label Data")}
     </nav>`;

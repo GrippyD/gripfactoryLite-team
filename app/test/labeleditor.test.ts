@@ -190,7 +190,8 @@ describe("label editor layout", () => {
     expect(menu).not.toContain('name="package"');
     expect(menu).not.toContain('name="field"');
     expect(menu).not.toContain("Print preview");
-    expect(menu).not.toContain("/compliance/labels/print");
+    expect(menu).toContain('href="/compliance/labels/print"');
+    expect(menu).not.toContain("/compliance/labels/quick-print");
     const es = labelsMenuPage("es");
     expect(es).toContain("Impresion rapida");
     expect(es).toContain("Editor de etiquetas");
