@@ -1,7 +1,7 @@
-import { HttpError, nowIso, parseGrams, requireReason, requireText, textOrNull } from "./audit";
+import { HttpError, nowIso, parseGrams, refusal, requireReason, requireText, textOrNull } from "./audit";
 import { CONFIG_KEYS, ITEM_KIND_FG, ITEM_KIND_WIP, roundGrams, SYSTEM_REASON } from "./config";
 import { parseInstrumentCsv, isInstrumentSource, IMPORT_STATUS, assertImportUpload, importBasename } from "./imports";
-import { LABEL_FIELD_KEYS, type LabelFieldKey, serializeLabelFields, stockMm } from "./labels";
+import { emptyFieldsJson, inchesToMm, LayoutError, normalizeLayout, parseLabelInches } from "./labeleditor";
 import { mintSoNumber, splitChildCode } from "./marketplace";
 import { dollarsToCents, mintPoNumber } from "./purchasing";
 import {
@@ -317,34 +317,94 @@ export async function saveExternalResult(db: D1Database, form: FormData): Promis
   return { redirect: "/compliance/testing?tab=external&ok=saved" };
 }
 
+const LABEL_SAVE_REASON = "label template saved";
+
 export async function saveLabelTemplate(db: D1Database, form: FormData): Promise<ActionOk> {
   const actor = await requireActor(db, personIdFrom(form));
   const name = requireText(form.get("name"), "Name");
-  const stock = textOrNull(form.get("stock")) ?? "";
-  const mm = stockMm(stock, textOrNull(form.get("width_mm")), textOrNull(form.get("height_mm")));
-  const picked = form.getAll("field").map((v) => String(v)).filter((k): k is LabelFieldKey =>
-    (LABEL_FIELD_KEYS as readonly string[]).includes(k)
-  );
-  const fields_json = serializeLabelFields({
-    fields: picked,
-    free_text: textOrNull(form.get("free_text")) ?? undefined,
-    barcode_mode: (textOrNull(form.get("barcode_mode")) as "1d" | "2d" | "both") ?? "1d",
-  });
-  const id = crypto.randomUUID();
+  let lengthIn: number;
+  let widthIn: number;
+  let layout;
+  try {
+    lengthIn = parseLabelInches(form.get("length_in"));
+    widthIn = parseLabelInches(form.get("width_in"));
+    layout = normalizeLayout(JSON.parse(String(form.get("layout_json") ?? "")));
+  } catch (err) {
+    if (err instanceof LayoutError) throw refusal(400, { key: err.message, vars: {} });
+    if (err instanceof SyntaxError) throw refusal(400, { key: "The label could not be read.", vars: {} });
+    throw err;
+  }
+  const width_mm = inchesToMm(lengthIn);
+  const height_mm = inchesToMm(widthIn);
+  const fields_json = emptyFieldsJson();
+  const layout_json = JSON.stringify(layout);
   const ts = nowIso();
-  const record = { id, name, width_mm: mm.width_mm, height_mm: mm.height_mm, fields_json, created_at: ts };
+  const existing = await db
+    .prepare(`SELECT * FROM label_templates WHERE deleted_at IS NULL AND name = ?`)
+    .bind(name)
+    .all<Record<string, unknown>>();
+  const prior = (existing.results ?? []).find((row) => String(row.name) === name) ?? null;
+  const clearAfter = textOrNull(form.get("then")) === "clear";
+  if (prior && textOrNull(form.get("overwrite")) !== "yes") {
+    throw refusal(409, { key: "A template with that name is already saved. Confirm to replace it.", vars: {} });
+  }
+  if (prior) {
+    const id = String(prior.id);
+    const next = { name, width_mm, height_mm, fields_json, layout_json, length_in: lengthIn, width_in: widthIn };
+    const logs = Object.entries(next)
+      .filter(([field, value]) => String(prior[field] ?? "") !== String(value ?? ""))
+      .map(([field, value]) =>
+        insertLog(db, {
+          record_table: "label_templates",
+          record_id: id,
+          field,
+          old_value: prior[field] == null ? null : String(prior[field]),
+          new_value: value == null ? null : String(value),
+          actor_person_id: actor.id,
+          reason: LABEL_SAVE_REASON,
+          changed_at: ts,
+        })
+      );
+    await db.batch([
+      db
+        .prepare(
+          `UPDATE label_templates SET name = ?, width_mm = ?, height_mm = ?, fields_json = ?, layout_json = ?, length_in = ?, width_in = ?, updated_at = ?, updated_by = ? WHERE id = ?`
+        )
+        .bind(name, width_mm, height_mm, fields_json, layout_json, lengthIn, widthIn, ts, actor.id, id),
+      ...logs,
+    ]);
+    const redirect = clearAfter
+      ? "/compliance/labels/editor?ok=saved"
+      : `/compliance/labels/editor?template=${id}&ok=saved`;
+    return { redirect };
+  }
+  const id = crypto.randomUUID();
+  const record = {
+    id,
+    name,
+    width_mm,
+    height_mm,
+    fields_json,
+    layout_json,
+    length_in: lengthIn,
+    width_in: widthIn,
+    created_at: ts,
+  };
   await db.batch([
     db
       .prepare(
         `INSERT INTO label_templates (
-          id, name, width_mm, height_mm, fields_json,
+          id, name, width_mm, height_mm, fields_json, layout_json, length_in, width_in,
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`
       )
-      .bind(id, name, mm.width_mm, mm.height_mm, fields_json, ts, actor.id, ts, actor.id),
-    ...logsForInsert(db, "label_templates", id, record, actor.id, SYSTEM_REASON.create, ts),
+      .bind(id, name, width_mm, height_mm, fields_json, layout_json, lengthIn, widthIn, ts, actor.id, ts, actor.id),
+    ...logsForInsert(db, "label_templates", id, record, actor.id, LABEL_SAVE_REASON, ts),
   ]);
-  return { redirect: "/compliance/labels?ok=saved" };
+  const redirect = clearAfter
+    ? "/compliance/labels/editor?ok=saved"
+    : `/compliance/labels/editor?template=${id}&ok=saved`;
+  return { redirect };
 }
 
 export async function addSupplier(db: D1Database, form: FormData): Promise<ActionOk> {

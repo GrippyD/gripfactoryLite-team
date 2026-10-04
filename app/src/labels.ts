@@ -1,8 +1,5 @@
-import { formatGrams } from "./config";
-import { code128Svg } from "./code128";
 import { t, type Locale } from "./i18n";
-import { qrSvg } from "./qr";
-import { esc, fieldBlock } from "./ui";
+import { esc } from "./ui";
 
 export const LABEL_FIELD_KEYS = [
   "item_or_strain",
@@ -79,118 +76,22 @@ export type LabelPackage = {
   facility_name: string;
 };
 
-export function labelsPage(
-  templates: LabelTemplateRow[],
-  packages: LabelPackage[],
-  stocks: Array<{ value: string; label: string }>,
-  printers: Array<{ value: string; label: string }>,
-  locale: Locale = "en"
-): string {
-  const stockOpts = stocks.map((s) => `<option value="${esc(s.value)}">${esc(s.label)}</option>`).join("");
-  const pkgOpts = packages
-    .map((p) => `<option value="${esc(p.id)}">${esc(p.tag)} ${esc(p.item_or_strain)}</option>`)
-    .join("");
-  const tplOpts = templates.map((trow) => `<option value="${esc(trow.id)}">${esc(trow.name)}</option>`).join("");
-  const boxes = LABEL_FIELD_KEYS.map(
-    (key) => `<label class="field"><span><input type="checkbox" name="field" value="${esc(key)}"> ${esc(t(locale, LABEL_FIELD_LABELS[key]))}</span></label>`
-  ).join("");
-  const printerList =
-    printers.length === 0
-      ? `<p class="muted">${esc(t(locale, "No printers registered yet. Add names in Admin."))}</p>`
-      : `<ul>${printers.map((p) => `<li>${esc(p.label)}</li>`).join("")}</ul>`;
-  const saved =
-    templates.length === 0
-      ? `<p class="muted">${esc(t(locale, "No templates yet."))}</p>`
-      : `<table class="data"><thead><tr><th>${esc(t(locale, "Name"))}</th><th>mm</th></tr></thead><tbody>${templates
-          .map(
-            (row) =>
-              `<tr><td>${esc(row.name)}</td><td>${esc(String(row.width_mm))} x ${esc(String(row.height_mm))}</td></tr>`
-          )
-          .join("")}</tbody></table>`;
+/** L1 THE LABEL EDITOR (canon 0.30.386). Three buttons. The old template form is gone. */
+export function labelsMenuPage(locale: Locale = "en"): string {
+  const button = (key: string, href: string, label: string) =>
+    `<a class="le-menu-btn" data-labels="${key}" href="${href}">${esc(t(locale, label))}</a>`;
   return `<h1>${esc(t(locale, "Labels"))}</h1>
-    <p class="muted">${esc(t(locale, "Printers are browser-printed devices on standard hardware. The Worker has no driver integration. Pick any OS-installed label printer in the browser dialog."))}</p>
-    <h2>${esc(t(locale, "Printers on the floor"))}</h2>
-    ${printerList}
-    <p class="muted">${esc(t(locale, "Register printer names and stock in Admin\\Data Lookups\\Business Operations\\Label printers"))}</p>
-    <h2>${esc(t(locale, "Templates"))}</h2>
-    ${saved}
-    <form class="stack" method="post" action="/compliance/labels/templates">
-      ${fieldBlock(locale, "Name", `<input type="text" name="name" required>`, "Template name the floor picks at print time.")}
-      ${fieldBlock(locale, "Stock", `<select name="stock"><option value="">${esc(t(locale, "Custom mm"))}</option>${stockOpts}</select>`, "Thermal stock size. Admin\\Data Lookups\\Business Operations\\Label stock")}
-      ${fieldBlock(locale, "Width mm", `<input type="number" name="width_mm" step="0.1" min="1">`, "Custom width in millimeters when stock is not picked.")}
-      ${fieldBlock(locale, "Height mm", `<input type="number" name="height_mm" step="0.1" min="1">`, "Custom height in millimeters when stock is not picked.")}
-      <fieldset>
-        <legend>${esc(t(locale, "Fields"))}</legend>
-        ${boxes}
-      </fieldset>
-      ${fieldBlock(locale, "Barcode", `<select name="barcode_mode"><option value="1d">1D</option><option value="2d">2D</option><option value="both">${esc(t(locale, "both"))}</option></select>`, "1D is Code 128. 2D is QR. Both prints both.")}
-      ${fieldBlock(locale, "Free-text line", `<input type="text" name="free_text">`, "Optional line printed when Free-text line is checked.")}
-      <button type="submit">${esc(t(locale, "Save template"))}</button>
-    </form>
-    <h2>${esc(t(locale, "Print"))}</h2>
-    <form class="stack" method="get" action="/compliance/labels/print">
-      ${fieldBlock(locale, "Template", `<select name="template" required>${tplOpts}</select>`, "Saved template that sizes the page.")}
-      ${fieldBlock(locale, "Package", `<select name="package" required>${pkgOpts}</select>`, "Live package from local inventory or testing. The tag is never typed.")}
-      <button type="submit">${esc(t(locale, "Print preview"))}</button>
-    </form>`;
+    <nav class="le-menu" data-labels-menu>
+      ${button("quick-print", "/compliance/labels/quick-print", "Quick Print")}
+      ${button("editor", "/compliance/labels/editor", "Label Editor")}
+      ${button("data", "/compliance/labels/data", "Custom Label Data")}
+    </nav>`;
 }
 
-export function labelPrintHtml(
-  template: LabelTemplateRow,
-  pkg: LabelPackage,
-  locale: Locale = "en"
-): string {
-  const spec = parseLabelFields(template.fields_json);
-  const mode = spec.barcode_mode ?? "1d";
-  const blocks: string[] = [];
-  for (const key of spec.fields) {
-    if (key === "item_or_strain") blocks.push(`<div class="lbl-line lbl-name">${esc(pkg.item_or_strain)}</div>`);
-    else if (key === "package_tag") blocks.push(`<div class="lbl-line lbl-tag">${esc(pkg.tag)}</div>`);
-    else if (key === "tag_barcode") {
-      const codes: string[] = [];
-      if (mode === "1d" || mode === "both") codes.push(code128Svg(pkg.tag));
-      if (mode === "2d" || mode === "both") codes.push(qrSvg(pkg.tag));
-      blocks.push(`<div class="lbl-codes">${codes.join("")}</div>`);
-    } else if (key === "potency") blocks.push(`<div class="lbl-line">${esc(t(locale, "Potency"))}: ${esc(pkg.potency)}</div>`);
-    else if (key === "net_weight") {
-      const w = pkg.net_weight_grams == null ? "" : `${formatGrams(pkg.net_weight_grams)} g`;
-      blocks.push(`<div class="lbl-line">${esc(t(locale, "Net weight"))}: ${esc(w)}</div>`);
-    } else if (key === "packaged_date") {
-      blocks.push(`<div class="lbl-line">${esc(t(locale, "Packaged date"))}: ${esc(pkg.packaged_date)}</div>`);
-    } else if (key === "license_number") {
-      blocks.push(`<div class="lbl-line">${esc(t(locale, "License number"))}: ${esc(pkg.license_number)}</div>`);
-    } else if (key === "facility_name") {
-      blocks.push(`<div class="lbl-line">${esc(t(locale, "Facility name"))}: ${esc(pkg.facility_name)}</div>`);
-    } else if (key === "free_text") {
-      blocks.push(`<div class="lbl-line">${esc(spec.free_text ?? "")}</div>`);
-    }
-  }
-  const w = Number(template.width_mm);
-  const h = Number(template.height_mm);
-  return `<!DOCTYPE html>
-<html lang="${locale}">
-<head>
-  <meta charset="utf-8">
-  <title>${esc(template.name)}</title>
-  <style>
-    @page { size: ${w}mm ${h}mm; margin: 0; }
-    html, body { margin: 0; padding: 0; width: ${w}mm; height: ${h}mm; background: #fff; color: #000; }
-    .label { box-sizing: border-box; width: ${w}mm; height: ${h}mm; padding: 2mm; font-family: sans-serif; font-size: 11pt; background: #fff; color: #000; }
-    .lbl-name { font-weight: 700; font-size: 14pt; }
-    .lbl-tag { font-family: ui-monospace, monospace; }
-    .lbl-codes svg { max-width: 100%; height: auto; display: block; margin: 1mm 0; }
-    .print-bar { margin: 8px; }
-    @media print { .print-bar { display: none; } }
-  </style>
-</head>
-<body data-label-print="1">
-  <div class="print-bar">
-    <button type="button" onclick="window.print()">${esc(t(locale, "Print"))}</button>
-  </div>
-  <div class="label">${blocks.join("")}</div>
-  <script>window.addEventListener("load", function () { window.print(); });</script>
-</body>
-</html>`;
+export function labelsSoonPage(locale: Locale = "en"): string {
+  return `<h1>${esc(t(locale, "Labels"))}</h1>
+    <p data-labels-soon="slices">${esc(t(locale, "Coming in the next slices"))}</p>
+    <p><a href="/compliance/labels">${esc(t(locale, "Labels"))}</a></p>`;
 }
 
 export function stockMm(stock: string, widthRaw: string | null, heightRaw: string | null): { width_mm: number; height_mm: number } {

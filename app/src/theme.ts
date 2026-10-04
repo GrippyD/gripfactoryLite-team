@@ -1,4 +1,5 @@
 import { DEFAULT_VIEW, type ViewName } from "./config";
+import { labelEditorStyles } from "./labeleditor";
 
 /** Owner ruling 2026-09-01 (brand slice): the brand marks, inlined once here
  * so every surface (the bar lockup, the view pill's CO segment, the boot
@@ -40,13 +41,14 @@ export function coMarkSvg(cls: string, ariaLabel?: string): string {
  * and orthogonal to the THEME env (grip and c10 render alike under every
  * view; the env token blocks still ship in the lite sheet). */
 export function themeStylesheet(view: ViewName = DEFAULT_VIEW): string {
-  if (view === "lite") return liteStylesheet();
-  // Owner dispatch 2026-09-02: the CO stylesheet landed (Christine Selden's
-  // styles.css, vendored at prompts/2026-08-17_continuum_styles.css). The co
-  // sheet below translates its tokens and design language onto our selectors;
-  // the placeholder seam closes here.
-  if (view === "co") return coStylesheet();
-  return cerberusStylesheet();
+  // L1 THE LABEL EDITOR (canon 0.30.386): one sheet appended to every view.
+  const sheet =
+    view === "lite"
+      ? liteStylesheet()
+      : view === "co"
+        ? coStylesheet()
+        : cerberusStylesheet();
+  return sheet + labelEditorStyles();
 }
 
 /** Walk-slice chrome shared by all three sheets: vendored icon imgs, license

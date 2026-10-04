@@ -3938,7 +3938,13 @@ export async function listInternalTestingReport(
 
 export async function listLabelTemplates(db: D1Database): Promise<Array<Record<string, unknown>>> {
   const result = await db
-    .prepare(`SELECT * FROM label_templates WHERE deleted_at IS NULL ORDER BY name`)
+    .prepare(
+      `SELECT t.*, COALESCE(p.display_name, '') AS saved_by_name
+       FROM label_templates t
+       LEFT JOIN people p ON p.id = t.updated_by
+       WHERE t.deleted_at IS NULL
+       ORDER BY t.name`
+    )
     .all<Record<string, unknown>>();
   return result.results ?? [];
 }
