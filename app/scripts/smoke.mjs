@@ -409,9 +409,9 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-if (!String(applyOut).includes("About to apply 91 migration(s)")) {
-  throw new Error(`from-zero apply must say 91 migrations\n${String(applyOut).slice(-2000)}`);
-}
+    if (!String(applyOut).includes("About to apply 92 migration(s)")) {
+      throw new Error(`from-zero apply must say 92 migrations\n${String(applyOut).slice(-2000)}`);
+    }
     return new Promise((resolve, reject) => {
       const child = spawn(
         // THE SHEET SYNC (canon 0.30.162): the cron is walked through /__scheduled, and the
@@ -4133,23 +4133,52 @@ async function run() {
     assert(rfPage.body.includes("RF report: reserved"), "RF page must name the open question");
     assert(!rfPage.body.includes("format-bar"), "RF reserved page must hide the format bar");
 
+    const labelMenu = await text("/compliance/labels");
+    assert(labelMenu.res.status === 200, `GET /compliance/labels expected 200 got ${labelMenu.res.status}`);
+    assert(
+      labelMenu.body.includes('data-labels="quick-print"') &&
+        labelMenu.body.includes('data-labels="editor"') &&
+        labelMenu.body.includes('data-labels="data"') &&
+        !labelMenu.body.includes('name="package"') &&
+        !labelMenu.body.includes('name="field"'),
+      "Labels must open on Quick Print, Label Editor, and Custom Label Data"
+    );
+    const soon = await text("/compliance/labels/quick-print");
+    assert(soon.body.includes("Coming in the next slices"), "Quick Print answers that it comes in the next slices");
+    const smokeLayout = {
+      v: 1,
+      objects: [
+        { id: "t1", type: "text", x: 0.5, y: 0.5, w: 2, h: 0.4, rotate: 0, text: "Smoke", font: "Arial", size: 14, bold: true, italic: false, align: "left", attach: null },
+        { id: "b1", type: "barcode", x: 0.5, y: 1.25, w: 2.5, h: 0.8, rotate: 0, data: "12345678", caption: true, attach: "t1" },
+        { id: "q1", type: "qr", x: 3.2, y: 0.5, w: 1, h: 1, rotate: 0, data: "QR", caption: false, attach: null },
+        { id: "s1", type: "shape", shape: "rect", x: 0.5, y: 2.5, w: 1, h: 1, rotate: 0, stroke: 2, fill: "none" },
+        { id: "l1", type: "line", x1: 0.5, y1: 4, x2: 3, y2: 4.5, thickness: 2, dashes: "solid" },
+      ],
+    };
     const tpl = await req("/compliance/labels/templates", {
       method: "POST",
       body: form({
-        name: "Smoke 4x6",
-        stock: "4x6",
-        barcode_mode: "1d",
-        field: ["package_tag", "tag_barcode"],
+        name: "smoke tag",
+        length_in: "4",
+        width_in: "6",
+        layout_json: JSON.stringify(smokeLayout),
       }),
     });
     assert(tpl.status === 303, `label template expected 303 got ${tpl.status}`);
-    const labels = await text("/compliance/labels");
-    const tplId = optionValue(labels.body, "Smoke 4x6");
-    const labelPkgId = firstSelectValue(labels.body, "package");
-    const printed = await text(`/compliance/labels/print?template=${encodeURIComponent(tplId)}&package=${encodeURIComponent(labelPkgId)}`);
+    const tplId = new URL(tpl.headers.get("location") || "", base).searchParams.get("template");
+    if (!tplId) fail("label template", "no template id");
+    const opened = await text(`/compliance/labels/editor?template=${encodeURIComponent(tplId)}`);
+    assert(opened.res.status === 200, `open template expected 200 got ${opened.res.status}`);
+    assert(opened.body.includes('data-le-count="5"'), "opening smoke tag must bring five objects back");
+    assert(opened.body.includes('data-le-type="text"') && opened.body.includes('data-le-attach="t1"'), "the barcode must stay attached to the text box");
+    assert(opened.body.includes('data-le-type="barcode"') && opened.body.includes('data-le-type="qr"'), "the codes must come back");
+    assert(opened.body.includes('data-le-shape="rect"') && opened.body.includes('data-le-type="line"'), "the rectangle and the line must come back");
+    const cleared = await text("/compliance/labels/editor");
+    assert(cleared.body.includes('data-le-count="0"'), "a new editor must have no objects");
+    const printed = await text(`/compliance/labels/print?template=${encodeURIComponent(tplId)}`);
     assert(printed.res.status === 200, `label print expected 200 got ${printed.res.status}`);
-    assert(printed.body.includes("@page { size: 101.6mm 152.4mm; margin: 0; }"), "label print must size the 4x6 stock");
-    assert(printed.body.includes("<svg"), "label print must carry a barcode svg");
+    assert(printed.body.includes("@page { size: 4in 6in; margin: 0; }"), "label print must size the page to 4 in by 6 in");
+    assert(printed.body.includes("left:0.5in") && printed.body.includes('class="code128"') && printed.body.includes('class="qrcode"'), "label print must place the objects and draw the codes");
 
     // BRIEF V24, THE LAB STATION (canon 0.30.362): Compliance, Testing, the Internal tab IS the
     // station, and its two old drops (POST /compliance/testing/internal) came off. The station's own
@@ -4333,8 +4362,8 @@ async function run() {
     );
     const v25Labels = await text("/compliance/labels");
     assert(
-      v25Labels.body.includes(`<option value="${v24Open.id}">1A40503000311FB000056901 Smoke Lab Trim</option>`) && !v25Labels.body.includes(`value="${v24Rnd.id}"`),
-      "Labels must list the station's compliance samples by source tag, R&D out"
+      v25Labels.body.includes('data-labels="editor"') && !v25Labels.body.includes(`value="${v24Rnd.id}"`) && !v25Labels.body.includes('name="package"'),
+      "Labels is the three-button menu; the package list, and R&D with it, is gone"
     );
     const inTest = await text("/reports/internal_testing");
     assert(inTest.res.status === 200 && !inTest.body.includes("HBN-SMOKE"), "the internal testing report still renders; the Internal tab's instrument drops no longer feed it");

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { asDevice, asView, DEFAULT_VIEW, DEVICES, VIEWS } from "../src/config";
 import { layout } from "../src/html";
 import { t } from "../src/i18n";
+import { labelEditorStyles } from "../src/labeleditor";
 import { cerberusStylesheet, coStylesheet, liteStylesheet, salesHelperCerberusSkin, themeStylesheet } from "../src/theme";
 
 describe("view normalizer (owner ruling 2026-09-01; canon 0.30.28 makes co the default)", () => {
@@ -209,11 +210,12 @@ describe("cerberus view layout (owner ruling 2026-09-01)", () => {
   });
 
   it("dispatches the stylesheet by view and defaults to co (canon 0.30.28)", () => {
-    expect(themeStylesheet("lite")).toBe(liteStylesheet());
-    expect(themeStylesheet("cerberus")).toBe(cerberusStylesheet());
-    expect(themeStylesheet()).toBe(coStylesheet());
+    const editor = labelEditorStyles();
+    expect(themeStylesheet("lite")).toBe(liteStylesheet() + editor);
+    expect(themeStylesheet("cerberus")).toBe(cerberusStylesheet() + editor);
+    expect(themeStylesheet()).toBe(coStylesheet() + editor);
     // Owner dispatch 2026-09-02: the placeholder seam closed; co is its own sheet.
-    expect(themeStylesheet("co")).toBe(coStylesheet());
+    expect(themeStylesheet("co")).toBe(coStylesheet() + editor);
     expect(coStylesheet()).not.toBe(cerberusStylesheet());
     expect(liteStylesheet()).not.toContain("--gold");
     expect(coStylesheet()).not.toContain("--gold");

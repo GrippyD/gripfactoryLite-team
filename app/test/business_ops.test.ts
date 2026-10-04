@@ -38,7 +38,7 @@ import {
   parseOrangePhotonicsCsv,
   testingPage,
 } from "../src/compliance";
-import { labelPrintHtml, serializeLabelFields } from "../src/labels";
+import { emptyFieldsJson, normalizeLayout } from "../src/labeleditor";
 import {
   listingMatches,
   listingsWithMatch,
@@ -522,39 +522,55 @@ describe("labels, Code 128, and QR", () => {
     expect(qrVendorWired()).toBe(true);
   });
 
-  it("saves a template and prints at stock mm with a barcode svg", async () => {
+  it("saves a template with millimeters equal to its inches", async () => {
     const db = makeBizDb();
-    const form = fd({ name: "4x6 floor", stock: "4x6", barcode_mode: "1d" });
-    form.append("field", "package_tag");
-    form.append("field", "tag_barcode");
+    const layout = normalizeLayout({
+      v: 1,
+      objects: [
+        {
+          id: "t1",
+          type: "text",
+          x: 0.5,
+          y: 0.5,
+          w: 2,
+          h: 0.4,
+          rotate: 0,
+          text: "Smoke",
+          font: "Arial",
+          size: 14,
+          bold: true,
+          italic: false,
+          align: "left",
+          attach: null,
+        },
+      ],
+    });
+    const form = fd({
+      name: "4x6 floor",
+      length_in: "4",
+      width_in: "6",
+      layout_json: JSON.stringify(layout),
+    });
     const saved = await saveLabelTemplate(db as unknown as D1Database, form);
-    expect(saved.redirect).toContain("/compliance/labels");
+    expect(saved.redirect).toContain("/compliance/labels/editor?template=");
     const tpl = db.tables.label_templates[0];
     expect(tpl?.width_mm).toBe(101.6);
     expect(tpl?.height_mm).toBe(152.4);
-    const print = labelPrintHtml(
-      {
-        id: String(tpl.id),
-        name: String(tpl.name),
-        width_mm: Number(tpl.width_mm),
-        height_mm: Number(tpl.height_mm),
-        fields_json: String(tpl.fields_json),
-      },
-      {
-        id: "pkg1",
-        tag: "1A405010000000000000001",
-        item_or_strain: "Gelato",
-        potency: "22.1",
-        net_weight_grams: 448,
-        packaged_date: "2026-09-04",
-        license_number: "AU-P-000694",
-        facility_name: "PNN",
-      }
-    );
-    expect(print).toContain("@page { size: 101.6mm 152.4mm; margin: 0; }");
-    expect(print).toContain("<svg");
-    expect(print).toContain("class=\"code128\"");
-    expect(serializeLabelFields({ fields: ["package_tag"], barcode_mode: "1d" })).toContain("package_tag");
+    expect(tpl?.length_in).toBe(4);
+    expect(tpl?.width_in).toBe(6);
+    expect(tpl?.fields_json).toBe(emptyFieldsJson());
+    expect(db.tables.record_change_log.some((row) => row.record_table === "label_templates" && row.actor_person_id === "p-dev")).toBe(true);
+    const again = fd({
+      name: "4x6 floor",
+      length_in: "4",
+      width_in: "6",
+      layout_json: JSON.stringify(layout),
+    });
+    await expect(saveLabelTemplate(db as unknown as D1Database, again)).rejects.toThrow(/already saved/);
+    again.set("overwrite", "yes");
+    const replaced = await saveLabelTemplate(db as unknown as D1Database, again);
+    expect(replaced.redirect).toContain(String(tpl?.id));
+    expect(db.tables.label_templates).toHaveLength(1);
   });
 });
 

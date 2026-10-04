@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { HttpError, nowIso, textOrNull } from "./audit";
+import { HttpError, nowIso, refusal, textOrNull } from "./audit";
 import {
   CONFIG_KEYS,
   ITEM_KIND_FG,
@@ -206,7 +206,8 @@ import {
 } from "./biz";
 import { auditsPage, complianceMenuPage, externalRowFromLab, testingPage, type AuditNoteRow, type AuditRow } from "./compliance";
 import { loadRadBoard, radOperationPage, radSchedulePage } from "./rad";
-import { labelPrintHtml, labelsPage, type LabelPackage, type LabelTemplateRow } from "./labels";
+import { labelsMenuPage, labelsSoonPage } from "./labels";
+import { labelCodeSvg, labelEditorPage, labelIconSheet, labelLayoutPrintHtml, LayoutError, normalizeLayout, parseLabelInches } from "./labeleditor";
 import { listingsWithMatch, marketplacePage, parseMarketplacePane, salesOrderPage, type ListingRow, type MarketplacePane, type SalesOrderRow } from "./marketplace";
 import { listZohoMenuItems, listZohoMounts, mountZohoInventory } from "./zohoinv";
 import { buildLiveSalesHelperMenu, decorateSalesHelperPage } from "./saleshelper";
@@ -362,8 +363,6 @@ import {
   listLaborHours,
   listLinePackages,
   listLabelTemplates,
-  listLabelPackages,
-  latestFinalizedPotency,
   listSuppliers,
   listPurchaseOrders,
   getPurchaseOrder,
@@ -3751,34 +3750,40 @@ app.post("/compliance/audits/:id/finish", async (c) => {
 
 app.get("/compliance/labels", async (c) => {
   const s = await shell(c);
-  const templates = (await listLabelTemplates(c.env.DB)) as LabelTemplateRow[];
-  const rawPkgs = await listLabelPackages(c.env.DB);
-  const packages: LabelPackage[] = [];
-  for (const row of rawPkgs) {
-    const tag = String(row.tag ?? "");
-    if (!tag) continue;
-    packages.push({
-      id: String(row.id),
-      tag,
-      item_or_strain: String(row.item_or_strain ?? ""),
-      potency: await latestFinalizedPotency(c.env.DB, tag),
-      net_weight_grams: row.net_weight_grams == null ? null : Number(row.net_weight_grams),
-      packaged_date: String(row.packaged_date ?? "").slice(0, 10),
-      license_number: String(row.license_number ?? ""),
-      facility_name: String(row.facility_name ?? ""),
-    });
-  }
+  return html(c, s, "Labels", labelsMenuPage(s.locale));
+});
+
+app.get("/compliance/labels/quick-print", async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Quick Print", labelsSoonPage(s.locale));
+});
+
+app.get("/compliance/labels/data", async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Custom Label Data", labelsSoonPage(s.locale));
+});
+
+app.get("/compliance/labels/icon-sheet", async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Label Editor", labelIconSheet(s.locale));
+});
+
+app.get("/compliance/labels/editor", async (c) => {
+  const s = await shell(c);
+  const templates = await listLabelTemplates(c.env.DB);
+  const id = c.req.query("template") ?? "";
+  const loaded = id ? templates.find((row) => String(row.id) === id) ?? null : null;
+  if (id && !loaded) return c.notFound();
   return html(
     c,
     s,
-    "Labels",
-    labelsPage(
+    "Label Editor",
+    labelEditorPage({
+      locale: s.locale,
       templates,
-      packages,
-      await listLookupValues(c.env.DB, "label_stock"),
-      await listLookupValues(c.env.DB, "label_printer"),
-      s.locale
-    )
+      stocks: await listLookupValues(c.env.DB, "label_stock"),
+      loaded,
+    })
   );
 });
 
@@ -3787,37 +3792,48 @@ app.post("/compliance/labels/templates", async (c) => {
   return c.redirect(result.redirect, 303);
 });
 
-app.get("/compliance/labels/print", async (c) => {
-  const templateId = c.req.query("template") ?? "";
-  const packageId = c.req.query("package") ?? "";
-  const template = await getRow(c.env.DB, "label_templates", templateId);
-  if (!template || template.deleted_at) return c.notFound();
-  const pkgs = await listLabelPackages(c.env.DB);
-  const raw = pkgs.find((p) => String(p.id) === packageId);
-  if (!raw) return c.notFound();
-  const tag = String(raw.tag ?? "");
+app.get("/compliance/labels/code.svg", (c) => {
+  const svg = labelCodeSvg(c.req.query("kind") ?? "barcode", c.req.query("text") ?? "");
+  const body = svg || `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"></svg>`;
+  return c.body(body, 200, { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "no-store" });
+});
+
+async function labelPrintResponse(c: AppContext, layoutRaw: string, lengthRaw: string, widthRaw: string, name: string) {
   const s = await shell(c);
-  const htmlPage = labelPrintHtml(
-    {
-      id: String(template.id),
-      name: String(template.name),
-      width_mm: Number(template.width_mm),
-      height_mm: Number(template.height_mm),
-      fields_json: String(template.fields_json),
-    },
-    {
-      id: String(raw.id),
-      tag,
-      item_or_strain: String(raw.item_or_strain ?? ""),
-      potency: await latestFinalizedPotency(c.env.DB, tag),
-      net_weight_grams: raw.net_weight_grams == null ? null : Number(raw.net_weight_grams),
-      packaged_date: String(raw.packaged_date ?? "").slice(0, 10),
-      license_number: String(raw.license_number ?? ""),
-      facility_name: String(raw.facility_name ?? ""),
-    },
-    s.locale
+  try {
+    const layout = normalizeLayout(JSON.parse(layoutRaw));
+    const lengthIn = parseLabelInches(lengthRaw);
+    const widthIn = parseLabelInches(widthRaw);
+    return c.html(labelLayoutPrintHtml(layout, lengthIn, widthIn, name || "Label", s.locale), {
+      headers: { "cache-control": "no-store" },
+    });
+  } catch (err) {
+    if (err instanceof LayoutError) throw refusal(400, { key: err.message, vars: {} });
+    throw refusal(400, { key: "The label could not be read.", vars: {} });
+  }
+}
+
+app.get("/compliance/labels/print", async (c) => {
+  const template = await getRow(c.env.DB, "label_templates", c.req.query("template") ?? "");
+  if (!template || template.deleted_at) return c.notFound();
+  return labelPrintResponse(
+    c,
+    String(template.layout_json ?? ""),
+    String(template.length_in ?? ""),
+    String(template.width_in ?? ""),
+    String(template.name ?? "")
   );
-  return c.html(htmlPage, { headers: { "cache-control": "no-store" } });
+});
+
+app.post("/compliance/labels/print", async (c) => {
+  const form = await c.req.formData();
+  return labelPrintResponse(
+    c,
+    String(form.get("layout_json") ?? ""),
+    String(form.get("length_in") ?? ""),
+    String(form.get("width_in") ?? ""),
+    String(form.get("name") ?? "")
+  );
 });
 
 app.all("/api/lab/*", async (c) => {
