@@ -817,6 +817,7 @@ const LINE_PACKAGE_COLUMNS: ReportColumn[] = [
   { key: "entered", label: "Entered" },
   { key: "lot", label: "Lot" },
   { key: "tag", label: "Package tag" },
+  { key: "harvest", label: "Harvest package" },
   { key: "type", label: "Type" },
   { key: "grams", label: "Weight (g)", grams: true },
   { key: "lbs", label: "Weight (lb)", lbs: true },
@@ -829,6 +830,7 @@ export const LINE_PACKAGES_MAX_DAYS = 92;
 export const LINE_PACKAGES_TOO_LONG = "Pick 92 days or fewer.";
 export const LINE_PACKAGES_NOT_A_DATE = "That is not a date.";
 export const LINE_PACKAGES_SWAPPED = "To was before From, so the report swapped them.";
+export const LINE_PACKAGES_NO_HARVEST = "No harvest package ends in {text}. Type all six characters.";
 
 export type LinePackageRangeInput = {
   from: string | null;
@@ -920,6 +922,7 @@ export type LinePackageInput = {
   grams: number;
   effective: string;
   operator: string;
+  harvestLast6?: string;
 };
 
 /** A refused range: the words, and no rows. The caller has not run the query. */
@@ -934,8 +937,9 @@ export function linePackagesRefused(message: string): ReportView {
   };
 }
 
-/** THE LINE PACKAGES REPORT (canon 0.30.344, 0.30.398). Totals ride the footnote and a _total row the page hides.
- * The heading is the window, From's start time through the day after To at that time. */
+/** THE LINE PACKAGES REPORT (canon 0.30.344, 0.30.398, 0.30.403). Totals ride the footnote and a _total row the page hides.
+ * The heading is the window, From's start time through the day after To at that time.
+ * A typed last 6 keeps the rows whose harvest package last 6 is those six characters. */
 export function linePackagesView(
   rows: LinePackageInput[],
   opts: {
@@ -946,6 +950,7 @@ export function linePackagesView(
     swapped?: boolean;
     windowStartIso?: string;
     windowEndIso?: string;
+    harvestLast6?: string;
   }
 ): ReportView {
   const order = new Map<string, number>(LINE_PACKAGE_ORDER.map((line, index) => [line, index]));
@@ -953,6 +958,7 @@ export function linePackagesView(
     (a, b) => (order.get(a.line) ?? 9) - (order.get(b.line) ?? 9) || a.enteredIso.localeCompare(b.enteredIso) || a.tag.localeCompare(b.tag)
   );
   const locale = opts.locale ?? "en";
+  const harvestText = (opts.harvestLast6 ?? "").trim();
   const bud = new Set(opts.budCodes.map((code) => code.toUpperCase()));
   const body: ReportView["rows"] = [];
   const notes: string[] = [];
@@ -974,6 +980,7 @@ export function linePackagesView(
         entered: etWallClock(row.enteredIso),
         lot: row.lot,
         tag: row.tag,
+        harvest: row.harvestLast6 ?? "",
         type: row.type,
         grams: row.grams,
         lbs: row.grams,
@@ -1002,7 +1009,7 @@ export function linePackagesView(
       });
     }
     notes.push(sentence);
-    body.push({ line, entered: sentence, lot: "", tag: "", type: "", grams: "", lbs: "", effective: "", operator: "", _total: "1" });
+    body.push({ line, entered: sentence, lot: "", tag: "", harvest: "", type: "", grams: "", lbs: "", effective: "", operator: "", _total: "1" });
   }
   return {
     key: "line_packages",
@@ -1010,7 +1017,10 @@ export function linePackagesView(
     columns: LINE_PACKAGE_COLUMNS,
     rows: body,
     groupBy: "line",
-    empty: "No packages on this line in this window.",
+    empty:
+      rows.length === 0 && harvestText !== ""
+        ? tFill(locale, LINE_PACKAGES_NO_HARVEST, { text: harvestText })
+        : "No packages on this line in this window.",
     footnote: notes.join(" ") || undefined,
     heading,
   };

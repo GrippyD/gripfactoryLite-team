@@ -2809,6 +2809,12 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "No packages on this line in this window.",
     es: "Sin paquetes en esta linea en esta ventana.",
   },
+  "Last 6 of Harvest Package": { en: "Last 6 of Harvest Package", es: "Ultimos 6 del paquete de cosecha" },
+  "Harvest package": { en: "Harvest package", es: "Paquete de cosecha" },
+  "No harvest package ends in {text}. Type all six characters.": {
+    en: "No harvest package ends in {text}. Type all six characters.",
+    es: "Ningun paquete de cosecha termina en {text}. Escriba los seis caracteres.",
+  },
   "Date start was not HH:MM, so the report used {start}.": {
     en: "Date start was not HH:MM, so the report used {start}.",
     es: "El inicio del dia no era HH:MM, asi que el reporte uso {start}.",
@@ -3616,6 +3622,8 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "White": { en: "White", es: "Blanco" },
   "Bring to front": { en: "Bring to front", es: "Traer al frente" },
   "Send to back": { en: "Send to back", es: "Enviar atras" },
+  "Resize": { en: "Resize", es: "Cambiar tamano" },
+  "Joint": { en: "Joint", es: "Nudo" },
   "RIGHT keeps the last characters.": { en: "RIGHT keeps the last characters.", es: "RIGHT guarda los ultimos caracteres." },
   "LEFT keeps the first characters.": { en: "LEFT keeps the first characters.", es: "LEFT guarda los primeros caracteres." },
   "MID keeps a run of characters from a start.": { en: "MID keeps a run of characters from a start.", es: "MID guarda un tramo de caracteres desde un inicio." },

@@ -3,7 +3,9 @@ import { formatGrams } from "../src/config";
 import { formatLbs } from "../src/compliance";
 import { dayAfter, etInstant, etWallClock } from "../src/farmday";
 import { t } from "../src/i18n";
+import { reportPage } from "../src/html";
 import {
+  LINE_PACKAGES_NO_HARVEST,
   LINE_PACKAGES_NOT_A_DATE,
   LINE_PACKAGES_SWAPPED,
   LINE_PACKAGES_TOO_LONG,
@@ -97,7 +99,7 @@ describe("THE LINE PACKAGES REPORT (canon 0.30.344)", () => {
     expect(data.map((item) => item.line)).toEqual(["Trim", "Trim", "Trim", "Trim", "Prepack", "Cryo", "Rad"]);
     expect(data.map((item) => item.tag)).toEqual(["BUD-1", "SHAKE-1", "SMALLS-1", "TRIM-1", "P1", "C1", "R1"]);
     expect(view.groupBy).toBe("line");
-    expect(view.columns.map((c) => c.label)).toEqual(["Line", "Entered", "Lot", "Package tag", "Type", "Weight (g)", "Weight (lb)", "Effective date", "Operator"]);
+    expect(view.columns.map((c) => c.label)).toEqual(["Line", "Entered", "Lot", "Package tag", "Harvest package", "Type", "Weight (g)", "Weight (lb)", "Effective date", "Operator"]);
     expect(view.columns.find((c) => c.key === "lbs")?.lbs).toBe(true);
     const trimGrams = 332518 + 16666 + 225294 + 930950;
     const budGrams = 332518 + 16666 + 225294;
@@ -253,5 +255,52 @@ describe("LINE PACKAGES, A DATE RANGE (canon 0.30.398)", () => {
     expect(t("es", "From the From date's start time to the day after To at the same time, Eastern. The default is Admin's farm day start hour.")).toContain(
       "dia siguiente a Hasta"
     );
+  });
+});
+
+describe("LINE PACKAGES, LAST 6 OF HARVEST PACKAGE (canon 0.30.403)", () => {
+  const row = {
+    line: "Trim",
+    enteredIso: "2026-10-02T15:00:00.000Z",
+    lot: "26002",
+    tag: "56838",
+    type: "TRIM",
+    grams: 100,
+    effective: "2026-10-02",
+    operator: "Les",
+    harvestLast6: "056838",
+  };
+
+  it("carries the harvest column on the page and in the three exports, and says so when nothing matches", () => {
+    const view = linePackagesView([row], { budCodes: [], startWarned: false, startUsed: "06:00" });
+    expect(view.columns.map((c) => c.label)).toContain("Harvest package");
+    expect(view.rows.find((item) => item.tag === "56838")?.harvest).toBe("056838");
+    expect(view.footnote).toContain("Trim: 1 packages");
+    const page = reportPage(view, "", "");
+    expect(page).toContain("Harvest package");
+    expect(page).toContain(">056838<");
+    const csv = reportCsv(view);
+    expect(csv).toContain("Harvest package");
+    expect(csv).toContain("056838");
+    const sheet = new TextDecoder("latin1").decode(reportXlsx(view));
+    expect(sheet).toContain("Harvest package");
+    expect(sheet).toContain("056838");
+    const pdf = reportPdfHtml(view, "", "Gripfactory Lite", "2026-10-02");
+    expect(pdf).toContain("Harvest package");
+    expect(pdf).toContain("056838");
+
+    const none = linePackagesView([], { budCodes: [], startWarned: false, startUsed: "06:00", harvestLast6: " 56838 " });
+    expect(none.empty).toBe("No harvest package ends in 56838. Type all six characters.");
+    expect(reportPage(none, "", "")).toContain("No harvest package ends in 56838. Type all six characters.");
+    expect(reportPdfHtml(none, "", "Gripfactory Lite", "2026-10-02")).toContain("No harvest package ends in 56838. Type all six characters.");
+    expect(reportCsv(none)).toContain("Harvest package");
+
+    const es = linePackagesView([], { budCodes: [], startWarned: false, startUsed: "06:00", locale: "es", harvestLast6: "56838" });
+    expect(es.empty).toBe("Ningun paquete de cosecha termina en 56838. Escriba los seis caracteres.");
+    expect(reportPage(es, "", "", "es")).toContain("Paquete de cosecha");
+    expect(reportPage(es, "", "", "es")).toContain(es.empty);
+    expect(t("es", "Last 6 of Harvest Package")).toBe("Ultimos 6 del paquete de cosecha");
+    expect(t("es", "Harvest package")).toBe("Paquete de cosecha");
+    expect(t("es", LINE_PACKAGES_NO_HARVEST)).toBe("Ningun paquete de cosecha termina en {text}. Escriba los seis caracteres.");
   });
 });

@@ -9072,6 +9072,8 @@ async function run() {
     assert(!/name="date"/.test(linePackages.body), "the filter must no longer carry a single Date");
     assert(linePackages.body.includes("From the From date's start time to the day after To at the same time, Eastern. The default is Admin's farm day start hour."), "the help line must state the range");
     assert(linePackages.body.includes("BUD-SMOKE-1") && linePackages.body.includes('data-report-group="Trim"'), "the Trim group must list a package entered in this run");
+    assert(linePackages.body.includes("Last 6 of Harvest Package") && linePackages.body.indexOf('name="operator"') < linePackages.body.indexOf('name="harvest_last6"'), "the last 6 box must sit beside Operator");
+    assert(linePackages.body.includes("Harvest package"), "the page must gain a Harvest package column");
     assert(linePackages.body.includes("2026-09-08"), "the Effective date column must keep the day the smoke typed");
     assert(linePackages.body.includes('data-report-group="Cryo"') && linePackages.body.includes('data-report-group="Prepack"') && linePackages.body.includes('data-report-group="Rad"'), "Cryo, Prepack and Rad must each group");
     assert(linePackages.body.includes("g x "), "a prepack row must read unit grams by bags");
@@ -9110,6 +9112,22 @@ async function run() {
     const lineOnlyYesterday = await text(`/reports/line_packages?from=${lineYesterday}&to=${lineYesterday}&start=06:00`);
     assert(lineOnlyYesterday.body.includes("YDAY-SMOKE") && !lineOnlyYesterday.body.includes("BUD-SMOKE-1"), "yesterday's day must keep today's package out");
     await localD1("DELETE FROM wip_packages WHERE id = 'pkg-yday-smoke';\n");
+    const harvestIso = etInstantSmoke(lineDate, "12:00");
+    const harvestTag = "1A40503000311FB000094731";
+    const harvestCode = "94731";
+    const harvestLast6 = "094731";
+    await localD1(`INSERT INTO metrc_packages (tag, license_value, mount_id, first_seen_at, changed_at) VALUES ('${harvestTag}', 'AU-P-000694', 'smoke-harvest', '${harvestIso}', '${harvestIso}');
+INSERT INTO wip_packages (id, package_code, package_type_code, weight_grams, status, created_at, updated_at, trim_date, trim_operator, source) VALUES ('pkg-harvest-smoke', '${harvestCode}', 'TRIM', 40, 'testing_queue', '${harvestIso}', '${harvestIso}', '2026-09-08', 'Les', 'trim');\n`);
+    const harvestHit = await text(`/reports/line_packages?from=${lineDate}&to=${lineDate}&start=06:00&harvest_last6=${harvestLast6}`);
+    assert(harvestHit.body.includes(`<td>${harvestCode}</td>`) && harvestHit.body.includes(`<td>${harvestLast6}</td>`), "the last 6 must list the trim entry whose code ends the mirror tag");
+    assert(!harvestHit.body.includes("BUD-SMOKE-1") && !harvestHit.body.includes('data-report-group="Cryo"') && !harvestHit.body.includes('data-report-group="Prepack"') && !harvestHit.body.includes('data-report-group="Rad"'), "the last 6 must list that entry alone");
+    assert(harvestHit.body.includes("Trim: 1 packages"), "the footnote must count the one matching row");
+    const harvestFive = await text(`/reports/line_packages?from=${lineDate}&to=${lineDate}&start=06:00&harvest_last6=${harvestCode}`);
+    assert(harvestFive.body.includes(`No harvest package ends in ${harvestCode}. Type all six characters.`), "five digits must list nothing and say to type all six");
+    assert(!harvestFive.body.includes(`<td>${harvestCode}</td>`) && !harvestFive.body.includes("BUD-SMOKE-1"), "five digits must not list a package");
+    const harvestBlank = await text(`/reports/line_packages?from=${lineDate}&to=${lineDate}&start=06:00`);
+    assert(harvestBlank.body.includes("BUD-SMOKE-1") && harvestBlank.body.includes(`<td>${harvestCode}</td>`), "a blank last 6 must list every row");
+    await localD1(`DELETE FROM wip_packages WHERE id = 'pkg-harvest-smoke';\nDELETE FROM metrc_packages WHERE tag = '${harvestTag}';\n`);
     const puzzles = await text("/reports/post_harvest_puzzles?year=2026");
     assert(puzzles.res.status === 200, `GET Post Harvest Puzzles expected 200 got ${puzzles.res.status}`);
     const phpCols = [...puzzles.body.matchAll(/data-php-col="([^"]*)"/g)].map((match) => match[1]);
@@ -9601,6 +9619,40 @@ async function run() {
     const l4WhiteSvg = await (await req("/compliance/labels/code.svg?kind=barcode&ink=white&text=12345678")).text();
     assert(l4Body.includes(l4DateSvg), "the barcode encodes the formatted date");
     assert(l4Body.includes("Knockout") && l4Body.includes("background:#000") && l4Body.includes("color:#fff") && l4Body.includes(l4WhiteSvg) && l4Body.includes("print-color-adjust: exact"), "the print page carries white on black");
+    assert(l4Body.includes('x="0" y="0" width="100" height="100"') && !l4Body.includes('width="96"'), "the smoke tag rectangle draws to its box");
+
+    // BRIEF L5: a triangle joint locked onto a rectangle corner, then the
+    // rectangle moved so one corner shares only the triangle's y. Save, reopen,
+    // and print keep that geometry.
+    const l5Layout = {
+      v: 1,
+      objects: [
+        { id: "r5", type: "shape", shape: "rect", x: 1, y: 1.5, w: 1, h: 1, rotate: 0, stroke: 2, fill: "none", ink: "black" },
+        { id: "t5", type: "shape", shape: "triangle", x: 2.5, y: 1.5, w: 1, h: 1, rotate: 0, stroke: 2, fill: "none", ink: "black", pts: [[-0.5, -0.5], [1, 1], [0, 1]] },
+      ],
+    };
+    const l5Save = await req("/compliance/labels/templates", {
+      method: "POST",
+      body: form({ name: "smoke anchors", length_in: "4", width_in: "6", layout_json: JSON.stringify(l5Layout) }),
+    });
+    assert(l5Save.status === 303, `anchor template expected 303 got ${l5Save.status}`);
+    const l5Id = new URL(l5Save.headers.get("location") || "", base).searchParams.get("template");
+    if (!l5Id) fail("anchor template", "no template id");
+    const l5Open = await text(`/compliance/labels/editor?template=${encodeURIComponent(l5Id)}`);
+    assert(l5Open.res.status === 200, `open anchors expected 200 got ${l5Open.res.status}`);
+    assert(l5Open.body.includes('data-le-count="2"'), "the anchor template must bring the rectangle and the triangle back");
+    assert(l5Open.body.includes("left:1in;top:1.5in;width:1in;height:1in"), "the rectangle stays where its corner aligns");
+    assert(l5Open.body.includes("left:2.5in;top:1.5in;width:1in;height:1in"), "the triangle stays where it was dropped");
+    assert(l5Open.body.includes('points="-50,-50 100,100 0,100"'), "the dragged joint stays on the corner it locked to");
+    assert(l5Open.body.includes('data-le-handle'), "the editor draws a handle for every side and corner");
+    const l5Print = await req("/compliance/labels/print", {
+      method: "POST",
+      body: form({ template_id: l5Id, package_id: QP, roll: "no", container_qty: "1", labels_per: "1", step: "print" }),
+    });
+    const l5Body = await l5Print.text();
+    assert(l5Print.status === 200, `the anchor print expected 200 got ${l5Print.status} ${l5Body.slice(0, 300)}`);
+    assert((l5Body.match(/data-label-page="/g) || []).length === 1, "the anchor print is one page");
+    assert(l5Body.includes("left:1in;top:1.5in;width:1in;height:1in") && l5Body.includes('points="-50,-50 100,100 0,100"'), "the print page draws the saved geometry");
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

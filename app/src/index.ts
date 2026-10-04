@@ -3582,6 +3582,7 @@ function reportFilterForm(key: string, params: URLSearchParams, locale: Locale):
       <label class="field">${t(locale, "To")} <input type="date" name="to" value="${escQuery(params.get("to"))}"></label>
       <label class="field">${t(locale, "Date start")} <input type="time" name="start" step="60" value="${escQuery(params.get("start"))}"></label>
       <label class="field">${t(locale, "Operator")} <input type="text" name="operator" value="${escQuery(params.get("operator"))}"></label>
+      <label class="field">${t(locale, "Last 6 of Harvest Package")} <input type="text" name="harvest_last6" value="${escQuery(params.get("harvest_last6"))}"></label>
       <p class="muted">${t(locale, "From the From date's start time to the day after To at the same time, Eastern. The default is Admin's farm day start hour.")}</p>`;
   }
   if (key === "internal_testing") {
@@ -3673,11 +3674,13 @@ async function buildReportView(
       fallbackStart: fallback,
     });
     if (!range.ok) return linePackagesRefused(t(locale, range.message));
+    const harvestLast6 = params.get("harvest_last6") ?? "";
     const rows = await listLinePackages(db, {
       startIso: range.startIso,
       endIso: range.endIso,
       line: params.get("line") || "all",
       operator: params.get("operator") ?? "",
+      harvestLast6,
     });
     const radTags = rows.filter((row) => row.line === "Rad").map((row) => row.tag);
     if (radTags.length > 0) {
@@ -3693,6 +3696,7 @@ async function buildReportView(
       swapped: range.swapped,
       windowStartIso: range.startIso,
       windowEndIso: range.endIso,
+      harvestLast6,
     });
   }
   if (key === "internal_testing") {
