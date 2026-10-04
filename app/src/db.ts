@@ -2432,6 +2432,7 @@ const ALLOWED_TABLES = new Set([
   "internal_test_results",
   "external_test_results",
   "label_templates",
+  "label_data_tables",
   "suppliers",
   "purchase_orders",
   "purchase_order_lines",

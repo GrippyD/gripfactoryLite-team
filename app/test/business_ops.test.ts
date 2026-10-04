@@ -11,6 +11,8 @@ import {
   issuePurchaseOrder,
   queueInstrumentImport,
   saveExternalResult,
+  deleteLabelDataTable,
+  saveLabelDataTable,
   saveLabelTemplate,
   savePoEval,
   splitPackage,
@@ -571,6 +573,31 @@ describe("labels, Code 128, and QR", () => {
     const replaced = await saveLabelTemplate(db as unknown as D1Database, again);
     expect(replaced.redirect).toContain(String(tpl?.id));
     expect(db.tables.label_templates).toHaveLength(1);
+  });
+
+  it("saves a custom table and refuses a delete without the PIN", async () => {
+    const db = makeBizDb();
+    const form = fd({
+      name: "By strain",
+      mode: "keyed",
+      key_field: "strain",
+      columns_json: JSON.stringify([
+        { key: "c0", label: "Strain", type: "text" },
+        { key: "c1", label: "Note", type: "text" },
+      ]),
+      rows_json: JSON.stringify([["Jokerz", "Room 4"]]),
+    });
+    const saved = await saveLabelDataTable(db as unknown as D1Database, form);
+    expect(saved.redirect).toContain("/compliance/labels");
+    const row = db.tables.label_data_tables[0];
+    expect(row?.mode).toBe("keyed");
+    expect(db.tables.record_change_log.some((log) => log.record_table === "label_data_tables")).toBe(true);
+    const missing = fd({ id: String(row?.id), pin: "00000" });
+    await expect(deleteLabelDataTable(db as unknown as D1Database, missing)).rejects.toThrow(/Wrong PIN/);
+    const gone = fd({ id: String(row?.id), pin: "21319" });
+    const deleted = await deleteLabelDataTable(db as unknown as D1Database, gone);
+    expect(deleted.redirect).toContain("/compliance/labels/data");
+    expect(row?.deleted_at).toBeTruthy();
   });
 });
 
