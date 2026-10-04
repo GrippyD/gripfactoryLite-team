@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { labelsMenuPage, labelsSoonPage } from "../src/labels";
+import { code128Svg } from "../src/code128";
+import { t } from "../src/i18n";
+import { qrSvg } from "../src/qr";
 import {
   PICTURE_MAX_BYTES,
+  bringToFront,
+  formulaSaveProblem,
   inchesToMm,
   labelEditorPage,
   labelLayoutPrintHtml,
   normalizeLayout,
   parseLabelInches,
   resolveData,
+  sendToBack,
   stockToInches,
   wouldCycle,
 } from "../src/labeleditor";
@@ -208,5 +214,143 @@ describe("label editor layout", () => {
     expect(editor).toContain("Coming in the next slice");
     expect(editor).toContain('data-le-count="0"');
     expect(editor).not.toContain('name="package"');
+  });
+});
+
+function box(type: "text" | "memo" | "barcode" | "qr", id: string, extra: Record<string, unknown>) {
+  return {
+    id,
+    type,
+    x: 0.25,
+    y: 0.25,
+    w: 1.5,
+    h: 0.6,
+    rotate: 0,
+    attach: null,
+    font: "Arial",
+    size: 12,
+    bold: false,
+    italic: false,
+    align: "left",
+    text: "Hi",
+    memo: "text",
+    data: "12345678",
+    caption: false,
+    ...extra,
+  };
+}
+
+describe("label ink, fill, and formulas on the page", () => {
+  it("round-trips ink and fill, and an old layout reads black and none", () => {
+    const old = normalizeLayout({
+      v: 1,
+      objects: [box("text", "t1", { text: "Hi" }), box("memo", "m1", { text: "Note" }), box("barcode", "b1", {}), box("qr", "q1", { data: "QR" })],
+    });
+    for (const obj of old.objects) {
+      if (obj.type === "line" || obj.type === "picture" || obj.type === "shape") continue;
+      expect(obj.ink).toBe("black");
+      expect(obj.fill).toBe("none");
+    }
+    const painted = normalizeLayout({
+      v: 1,
+      objects: [
+        box("text", "t1", { ink: "white", fill: "black" }),
+        box("memo", "m1", { ink: "white", fill: "white" }),
+        box("barcode", "b1", { ink: "white", fill: "black" }),
+        box("qr", "q1", { data: "QR", ink: "black", fill: "white" }),
+        { id: "s1", type: "shape", shape: "rect", x: 0, y: 1, w: 1, h: 1, rotate: 0, stroke: 2, fill: "white", ink: "white" },
+      ],
+    });
+    const again = normalizeLayout(JSON.parse(JSON.stringify(painted)));
+    expect(again).toEqual(painted);
+    expect(again.objects[0]).toMatchObject({ ink: "white", fill: "black" });
+    expect(again.objects[4]).toMatchObject({ type: "shape", fill: "white", ink: "white" });
+  });
+
+  it("refuses a broken formula by name, and white ink with no fill on a code", () => {
+    const broken = normalizeLayout({ v: 1, objects: [box("text", "t1", { text: "=RIGHT({nope},6)" })] });
+    const problem = formulaSaveProblem(broken);
+    expect(problem?.key).toContain("text box");
+    expect(problem?.vars.name).toBe("nope");
+    expect(t("es", problem?.key ?? "")).toContain("caja de texto");
+    const bare = normalizeLayout({ v: 1, objects: [box("barcode", "b1", { ink: "white", fill: "none" })] });
+    expect(formulaSaveProblem(bare)?.key).toContain("needs a fill");
+    expect(t("es", formulaSaveProblem(bare)?.key ?? "")).toContain("relleno");
+    const filled = normalizeLayout({ v: 1, objects: [box("barcode", "b1", { ink: "white", fill: "black", data: "=RIGHT({package_tag},6)" })] });
+    expect(formulaSaveProblem(filled)).toBeNull();
+  });
+
+  it("prints the fill, the ink, and exact colors, and encodes a formula result", () => {
+    const tag = "1A40503000311FB000000111";
+    const layout = normalizeLayout({
+      v: 1,
+      objects: [
+        { id: "s1", type: "shape", shape: "rect", x: 0.2, y: 0.2, w: 3, h: 2, rotate: 0, stroke: 1, fill: "black", ink: "white" },
+        box("text", "t1", { text: `=RIGHT({package_tag},6)`, ink: "white", fill: "black" }),
+        box("barcode", "b1", { data: `=TEXT({packaged_date},"MM/DD/YY")`, caption: true, ink: "white", fill: "black" }),
+        box("qr", "q1", { data: "own", attach: "t1", caption: true, ink: "white", fill: "black" }),
+      ],
+    });
+    const html = labelLayoutPrintHtml(layout, 4, 6, "ink", "en", { package_tag: tag, packaged_date: "2026-09-24" });
+    expect(html).toContain("print-color-adjust: exact");
+    expect(html).toContain("background:#000");
+    expect(html).toContain("color:#fff");
+    expect(html).toContain(">000111<");
+    expect(html).toContain(">09/24/26<");
+    expect(html).not.toContain("=RIGHT");
+    expect(html).not.toContain("=TEXT");
+    const bars = code128Svg("09/24/26", 48, "#fff");
+    const qr = qrSvg("000111", 3, "#fff");
+    expect(html).toContain(bars);
+    expect(html).toContain(qr);
+    expect(bars).toContain('fill="#fff"');
+    const width = Number(bars.match(/viewBox="0 0 (\d+)/)?.[1]);
+    const xs = [...bars.matchAll(/<rect x="(\d+)"/g)].map((match) => Number(match[1]));
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(20);
+    expect(Math.max(...[...bars.matchAll(/<rect x="(\d+)" y="0" width="(\d+)"/g)].map((match) => Number(match[1]) + Number(match[2])))).toBeLessThanOrEqual(width - 20);
+    const qrDim = Number(qr.match(/viewBox="0 0 (\d+)/)?.[1]);
+    const qrRects = [...qr.matchAll(/<rect x="(\d+)" y="(\d+)" width="(\d+)"/g)].map((match) => ({
+      x: Number(match[1]),
+      y: Number(match[2]),
+      w: Number(match[3]),
+    }));
+    expect(Math.min(...qrRects.map((rect) => rect.x))).toBeGreaterThanOrEqual(12);
+    expect(Math.min(...qrRects.map((rect) => rect.y))).toBeGreaterThanOrEqual(12);
+    expect(Math.max(...qrRects.map((rect) => rect.x + rect.w))).toBeLessThanOrEqual(qrDim - 12);
+    expect(Math.max(...qrRects.map((rect) => rect.y + rect.w))).toBeLessThanOrEqual(qrDim - 12);
+  });
+
+  it("brings an object to the front and sends it to the back, and the order saves", () => {
+    const layout = normalizeLayout(sample);
+    const front = bringToFront(layout.objects, "t1");
+    expect(front[front.length - 1].id).toBe("t1");
+    const saved = normalizeLayout({ v: 1, objects: front });
+    expect(saved.objects[saved.objects.length - 1].id).toBe("t1");
+    const back = sendToBack(saved.objects, "t1");
+    expect(back[0].id).toBe("t1");
+    expect(normalizeLayout({ v: 1, objects: back }).objects[0].id).toBe("t1");
+  });
+
+  it("shows a formula, its help, and an error on the editor", () => {
+    const page = labelEditorPage({
+      locale: "en",
+      templates: [],
+      stocks: [],
+      loaded: {
+        id: "bad",
+        name: "Bad",
+        length_in: 4,
+        width_in: 6,
+        layout_json: JSON.stringify({ v: 1, objects: [box("text", "t1", { text: "=RIGHT({nope},6)" })] }),
+      },
+    });
+    expect(page).toContain("#ERROR");
+    expect(page).toContain("=RIGHT({package_tag},6)");
+    expect(page).toContain("function createFormulaEngine");
+    expect(page).toContain("Bring to front");
+    const es = labelEditorPage({ locale: "es", templates: [], stocks: [], loaded: null });
+    expect(es).toContain("Tinta");
+    expect(es).toContain("Traer al frente");
+    expect(es).toContain("La formula nombra un campo");
   });
 });

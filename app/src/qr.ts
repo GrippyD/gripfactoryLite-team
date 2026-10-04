@@ -13,7 +13,7 @@ export function qrMatrix(text: string): boolean[][] {
   return rows;
 }
 
-export function qrSvg(text: string, modulePx = 3): string {
+export function qrSvg(text: string, modulePx = 3, color = "#000"): string {
   const matrix = qrMatrix(text);
   const n = matrix.length;
   const quiet = 4;
@@ -24,7 +24,7 @@ export function qrSvg(text: string, modulePx = 3): string {
       if (!matrix[y][x]) continue;
       const px = (x + quiet) * modulePx;
       const py = (y + quiet) * modulePx;
-      rects.push(`<rect x="${px}" y="${py}" width="${modulePx}" height="${modulePx}"/>`);
+      rects.push(`<rect x="${px}" y="${py}" width="${modulePx}" height="${modulePx}" fill="${color}"/>`);
     }
   }
   return `<svg class="qrcode" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${dim} ${dim}" width="${dim}" height="${dim}" role="img" aria-label="QR">${rects.join("")}</svg>`;

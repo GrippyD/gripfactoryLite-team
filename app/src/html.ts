@@ -797,7 +797,9 @@ export function reportPage(
       <button type="submit">${esc(t(locale, "Apply filters"))}</button>
     </form>
     <p class="format-bar">${formats}</p>`;
+  const heading = view.heading ? `<p class="report-window">${esc(view.heading)}</p>` : "";
   return `<h1>${esc(t(locale, view.title))}</h1>
+    ${heading}
     ${filterBlock}
     <table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
     ${footnote}`;
