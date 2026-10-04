@@ -4585,7 +4585,23 @@ export async function editRecord(
         next = hit.value;
       }
       if (table === "dry_spaces" && field.name === "space_type" && next) {
-        const shape = next === "freezer" ? "cube" : next === "dry_room" ? "box" : "cylinder";
+        const shape = next === "freezer" ? "cube" : next === "dry_room" ? "box" : next === "cure" ? "bar" : "cylinder";
+        if (next === "cure" && String(existing.kind ?? "") !== "cure") {
+          sets.push("kind = ?");
+          values.push("cure");
+          logs.push(
+            insertLog(db, {
+              record_table: table,
+              record_id: id,
+              field: "kind",
+              old_value: existing.kind == null ? null : String(existing.kind),
+              new_value: "cure",
+              actor_person_id: actor.id,
+              reason,
+              changed_at: ts,
+            })
+          );
+        }
         if (String(existing.shape ?? "") !== shape) {
           sets.push("shape = ?");
           values.push(shape);
@@ -5125,7 +5141,7 @@ export async function addStrain(db: D1Database, form: FormData): Promise<ActionO
 /** THE DRY SPACE TYPE (canon 0.30.106): the type must be one of his three words. */
 export function parseDrySpaceType(raw: unknown): string {
   const v = String(raw ?? "").trim();
-  if (!(DRY_SPACE_TYPES as readonly string[]).includes(v)) throw new HttpError(400, "Pick Silo, Dry Room or Freezer.");
+  if (!(DRY_SPACE_TYPES as readonly string[]).includes(v)) throw new HttpError(400, "Pick Silo, Dry Room, Freezer or Cure Space.");
   return v;
 }
 
@@ -5161,7 +5177,9 @@ export async function addDrySpace(db: D1Database, form: FormData): Promise<Actio
   const capacity = parseCapacity(form.get("capacity"));
   const capacityUom = parseCapacityUom(form.get("capacity_uom"));
   if ((capacity == null) !== (capacityUom == null)) throw new HttpError(400, "Capacity and its UOM go together.");
-  const shape = spaceType === "freezer" ? "cube" : spaceType === "dry_room" ? "box" : "cylinder";
+  // A cure space is kind cure, so Load Silo and Move To (kind silo) never list it.
+  const kindStored = spaceType === "cure" ? "cure" : kind;
+  const shape = spaceType === "freezer" ? "cube" : spaceType === "dry_room" ? "box" : spaceType === "cure" ? "bar" : "cylinder";
   const id = crypto.randomUUID();
   const ts = nowIso();
   await db.batch([
@@ -5172,7 +5190,7 @@ export async function addDrySpace(db: D1Database, form: FormData): Promise<Actio
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
       )
-      .bind(id, name, kind, farmCode, shape, spaceType, capacity, capacityUom, ts, actor.id, ts, actor.id),
+      .bind(id, name, kindStored, farmCode, shape, spaceType, capacity, capacityUom, ts, actor.id, ts, actor.id),
     ...logsForInsert(
       db,
       "dry_spaces",
@@ -5180,7 +5198,7 @@ export async function addDrySpace(db: D1Database, form: FormData): Promise<Actio
       {
         id,
         name,
-        kind,
+        kind: kindStored,
         farm_code: farmCode,
         shape,
         space_type: spaceType,
@@ -6318,13 +6336,40 @@ export async function savePhpPrice(db: D1Database, form: FormData, key: string):
   return saveConfigNumber(db, actor, key, String(value), reason, `/admin/lookups/${key}?ok=saved`);
 }
 
-/** THE CURE CAPS (canon 0.30.341): CSA or CSB's lot cap, a whole number 1 to 999, logged like the Trim Bogey. */
+/** THE CURE CAPS (canon 0.30.341), THE CAP LIVES ON THE SPACE (canon 0.30.383):
+ * CSA or CSB's lot cap, a whole number 1 to 999, written to that cure space's
+ * capacity (uom ea) and logged on the space. The app_config keys stay unread. */
 export async function saveLotCap(db: D1Database, form: FormData, key: string): Promise<ActionOk> {
   const actor = await requireActor(db, personIdFrom(form));
   const value = lotCapOf(form.get("lot_cap"));
   if (value == null) throw refusal(400, { key: "Lot cap must be a whole number of lots, 1 to 999.", vars: {} });
   const reason = requireReason(textOrNull(form.get("reason")));
-  return saveConfigNumber(db, actor, key, String(value), reason, `/admin/lookups/${key}?ok=saved`);
+  const room = key === CONFIG_KEYS.csa_lot_cap ? "CSA" : key === CONFIG_KEYS.csb_lot_cap ? "CSB" : "";
+  if (!room) throw new HttpError(404, "Unknown lookup.");
+  const row = await db
+    .prepare(`SELECT id, capacity FROM dry_spaces WHERE name = ? AND kind = 'cure' AND deleted_at IS NULL`)
+    .bind(room)
+    .first<{ id: string; capacity: number | null }>();
+  if (!row) throw new HttpError(400, `${room} is not a cure space.`);
+  const text = String(value);
+  const old = row.capacity == null ? null : String(row.capacity);
+  const redirect = `/admin/lookups/${key}?ok=saved`;
+  if (old === text) return { redirect };
+  const ts = nowIso();
+  await db.batch([
+    db.prepare(`UPDATE dry_spaces SET capacity = ?, capacity_uom = 'ea', updated_at = ?, updated_by = ? WHERE id = ?`).bind(value, ts, actor.id, row.id),
+    insertLog(db, {
+      record_table: "dry_spaces",
+      record_id: row.id,
+      field: "capacity",
+      old_value: old,
+      new_value: text,
+      actor_person_id: actor.id,
+      reason,
+      changed_at: ts,
+    }),
+  ]);
+  return { redirect };
 }
 
 /** THE MAX TOTE WEIGHT (canon 0.30.350): a wet weight above the Admin limit is refused, in words, before it is saved. */

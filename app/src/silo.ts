@@ -348,6 +348,13 @@ export function siloUnloadLine(v: Pick<SiloVisual, "state" | "unloadedDryGrams" 
   )}%</strong> ${esc(t(locale, "of expected"))}</div>`;
 }
 
+/** THE TILE COLLAPSES (canon 0.30.383): a small shape that keeps the fill's colour and throb. */
+export function tileIcon(fillClass: string, level: number, shape: SiloShape, freezer = false): string {
+  const kind = freezer || shape === "cube" ? "dry-icon-cube" : shape === "box" ? "dry-icon-box" : "dry-icon-silo";
+  const h = Math.round(Math.min(1, Math.max(0, level)) * 100);
+  return `<span class="dry-tile-icon ${kind}" data-dry-icon aria-hidden="true"><span class="dry-icon-fill ${esc(fillClass)}" data-dry-icon-fill style="height:${h}%"></span></span>`;
+}
+
 /** "Wet 27.22 lb · 12,345.00 g", the line at the bottom of every tile. */
 export function siloWetLine(wetGrams: number, locale: Locale = "en"): string {
   return `<div class="silo-wet" data-silo-wet>${esc(t(locale, "Wet"))} <strong data-silo-wet-lb>${esc(formatLbs(wetGrams))}</strong> lb · <strong data-silo-wet-g>${esc(
@@ -416,14 +423,19 @@ export function siloTile(input: {
   const flagLine = `<div class="silo-flags" data-silo-flags>${esc((input.flags ?? []).join(" "))}</div>`;
   const quiet = v.state === "empty" || v.state === "filling" || v.state === "loading";
   const emptyLine = v.freezer ? "" : emptyClockLine(quiet ? (input.emptySince ?? null) : null, input.nowIso ?? new Date().toISOString(), locale);
+  const bodyId = `dry-body-${input.id}`;
+  const status = v.freezer ? `${t(locale, v.label)} · ${siloPctLabel(v, locale)}` : t(locale, v.label);
+  const weight = `${esc(t(locale, "Wet"))} <strong data-silo-wet-lb>${esc(formatLbs(v.wetGrams))}</strong> lb · <strong data-silo-wet-g>${esc(formatGrams(v.wetGrams))}</strong> g`;
+  const head = `<button type="button" class="dry-tile-head" data-dry-head aria-expanded="false" aria-controls="${esc(bodyId)}">${tileIcon(siloFillClass(v), v.level, shape, v.freezer)}<span class="dry-tile-name">${esc(input.name)}</span><span class="dry-tile-status" data-dry-status>${esc(status)}</span><span class="dry-tile-weight" data-dry-weight>${weight}</span></button><div class="dry-tile-body" id="${esc(bodyId)}" hidden>`;
   if (v.freezer) {
     // THE BLAST FREEZER(S) (canon 0.30.106; owner: "Merge the blast freezer
     // formatting to the FFZ inventory one"; his pick: the status and the percent
     // on one line, the lot and its clock muted beneath, the wet weight at the
     // bottom, the fill in the FFZ blue). The tile carries the FFZ chrome.
-    return `<div class="inv-gauge silo-gauge ffz-gauge freezer-gauge${input.extraClass ? ` ${esc(input.extraClass)}` : ""}" data-silo="${esc(
+    return `<div class="inv-gauge silo-gauge ffz-gauge freezer-gauge dry-tile${input.extraClass ? ` ${esc(input.extraClass)}` : ""}" data-silo="${esc(
       input.id
-    )}" data-silo-state="${esc(v.state)}" data-silo-shape-kind="${shape}" data-space-type="freezer">
+    )}" data-silo-state="${esc(v.state)}" data-silo-shape-kind="${shape}" data-space-type="freezer" data-dry-tile>
+          ${head}
           <div class="inv-gauge-name">${esc(input.name)}</div>
           ${flagLine}
           ${siloSvg(v, input.id, locale, shape)}
@@ -433,9 +445,11 @@ export function siloTile(input: {
           ${siloUnloadLine(v, locale)}
           <div class="muted ffz-source freezer-lines">${input.body}</div>
           ${siloWetLine(v.wetGrams, locale)}
+          </div>
         </div>`;
   }
-  return `<div class="inv-gauge silo-gauge${input.extraClass ? ` ${esc(input.extraClass)}` : ""}" data-silo="${esc(input.id)}" data-silo-state="${esc(v.state)}" data-silo-shape-kind="${shape}">
+  return `<div class="inv-gauge silo-gauge dry-tile${input.extraClass ? ` ${esc(input.extraClass)}` : ""}" data-silo="${esc(input.id)}" data-silo-state="${esc(v.state)}" data-silo-shape-kind="${shape}" data-dry-tile>
+          ${head}
           <div class="inv-gauge-name">${esc(input.name)}</div>
           ${flagLine}
           ${siloSvg(v, input.id, locale, shape)}
@@ -444,6 +458,54 @@ export function siloTile(input: {
           ${siloUnloadLine(v, locale)}
           ${input.body}
           ${siloWetLine(v.wetGrams, locale)}
+          </div>
+        </div>`;
+}
+
+/** THE FFZ INVENTORY CUBE (canon 0.30.73, back on the freezer row, canon 0.30.383). Capacity 4,800 lb. */
+export const FFZ_CAPACITY_LBS = 4800;
+
+export function ffzLive(grams: number, locale: Locale = "en"): { grams: number; lb: string; g: string; level: number; pctLabel: string; fillClass: string } {
+  const cap = FFZ_CAPACITY_LBS * LB_GRAMS;
+  const level = cap > 0 ? Math.min(1, Math.max(0, grams / cap)) : 0;
+  const visual = { fill: grams > 0 ? ("blue" as const) : null, throb: grams > 0 ? ("blue" as const) : null, freezer: true };
+  return {
+    grams,
+    lb: formatLbs(grams),
+    g: formatGrams(grams),
+    level,
+    pctLabel: `${Math.round(level * 100)}% ${t(locale, "full")}`,
+    fillClass: siloFillClass(visual),
+  };
+}
+
+export function ffzInventoryTile(grams: number, locale: Locale = "en"): string {
+  const cap = FFZ_CAPACITY_LBS * LB_GRAMS;
+  const level = cap > 0 ? Math.min(1, Math.max(0, grams / cap)) : 0;
+  const visual: SiloVisual = {
+    state: "loaded",
+    label: "full",
+    freezer: true,
+    wetGrams: grams,
+    level,
+    throb: grams > 0 ? "blue" : null,
+    fill: grams > 0 ? "blue" : null,
+    unloadedDryGrams: 0,
+    unloadedShare: 0,
+    expectedDryGrams: 0,
+  };
+  const pct = `${Math.round(level * 100)}% ${t(locale, "full")}`;
+  const bodyId = "dry-body-ffz";
+  const weight = `<strong data-ffz-lb>${esc(formatLbs(grams))}</strong> lb · <strong data-ffz-g>${esc(formatGrams(grams))}</strong> g`;
+  const head = `<button type="button" class="dry-tile-head" data-dry-head aria-expanded="false" aria-controls="${bodyId}">${tileIcon(siloFillClass(visual), level, "cube", true)}<span class="dry-tile-name">${esc(t(locale, "FFZ Inventory"))}</span><span class="dry-tile-status" data-ffz-status>${esc(pct)}</span><span class="dry-tile-weight" data-dry-weight>${weight}</span></button>`;
+  return `<div class="inv-gauge silo-gauge ffz-gauge dry-tile" data-ffz data-dry-tile data-ffz-grams="${esc(String(Math.round(grams)))}">
+          ${head}
+          <div class="dry-tile-body" id="${bodyId}" hidden>
+          <div class="inv-gauge-name">${esc(t(locale, "FFZ Inventory"))}</div>
+          ${siloSvg(visual, "ffz", locale, "cube")}
+          <div class="silo-state ffz-state freezer-state" data-ffz-status-open>${esc(pct)}</div>
+          <div class="silo-wet" data-ffz-wet>${weight}</div>
+          </div>
         </div>`;
 }
 
@@ -524,10 +586,10 @@ export function siloLiveScript(): string {
   function paintFill(tile, level, cls) {
     var h = Math.round((BODY_BOTTOM - BODY_TOP) * Math.min(1, Math.max(0, level)) * 100) / 100;
     var y = Math.round((BODY_BOTTOM - h) * 100) / 100;
-    var fill = tile.querySelector("[data-silo-fill]");
-    if (fill) { fill.setAttribute("y", String(y)); fill.setAttribute("height", String(h)); fill.setAttribute("class", cls); }
-    var side = tile.querySelector("[data-silo-fill-side]");
-    if (side) { side.setAttribute("y", String(y)); side.setAttribute("height", String(h)); side.setAttribute("class", cls + " silo-fill-side"); }
+    tile.querySelectorAll("[data-silo-fill]").forEach(function (fill) { fill.setAttribute("y", String(y)); fill.setAttribute("height", String(h)); fill.setAttribute("class", cls); });
+    tile.querySelectorAll("[data-silo-fill-side]").forEach(function (side) { side.setAttribute("y", String(y)); side.setAttribute("height", String(h)); side.setAttribute("class", cls + " silo-fill-side"); });
+    var icon = tile.querySelector("[data-dry-icon-fill]");
+    if (icon) { icon.setAttribute("class", "dry-icon-fill " + cls); icon.style.height = Math.round(Math.min(1, Math.max(0, level)) * 100) + "%"; }
     var top = tile.querySelector("[data-silo-fill-top]");
     if (top) {
       var b = (top.getAttribute("data-box") || "").split(" ").map(Number);
@@ -539,10 +601,8 @@ export function siloLiveScript(): string {
     }
   }
   function paintWet(tile, lb, g) {
-    var lbEl = tile.querySelector("[data-silo-wet-lb]");
-    var gEl = tile.querySelector("[data-silo-wet-g]");
-    if (lbEl) lbEl.textContent = lb;
-    if (gEl) gEl.textContent = g;
+    tile.querySelectorAll("[data-silo-wet-lb]").forEach(function (lbEl) { lbEl.textContent = lb; });
+    tile.querySelectorAll("[data-silo-wet-g]").forEach(function (gEl) { gEl.textContent = g; });
   }
   function paint(entry) {
     document.querySelectorAll('[data-silo="' + entry.id + '"]').forEach(function (tile) {
@@ -557,8 +617,10 @@ export function siloLiveScript(): string {
       if (entry.fillClass) cls = entry.fillClass;
       paintFill(tile, entry.level, cls);
       var freezer = tile.getAttribute("data-space-type") === "freezer";
-      var label = tile.querySelector("[data-silo-label]");
-      if (label) { label.textContent = entry.label; if (!freezer) label.className = "silo-state silo-state-" + entry.state; }
+      tile.querySelectorAll("[data-silo-label]").forEach(function (label) { label.textContent = entry.label; if (!freezer) label.className = "silo-state silo-state-" + entry.state; });
+      var status = entry.label;
+      if (freezer && entry.pctLabel) status = entry.label + " · " + entry.pctLabel;
+      tile.querySelectorAll("[data-dry-status]").forEach(function (el) { el.textContent = status; });
       var pct = tile.querySelector("[data-silo-pct]");
       if (pct && entry.pctLabel != null) pct.textContent = entry.pctLabel;
       var unload = tile.querySelector("[data-silo-unload]");
@@ -615,6 +677,14 @@ export function siloLiveScript(): string {
       .then(function (data) {
         if (!data) return;
         if (Array.isArray(data.silos)) data.silos.forEach(paint);
+        if (data.ffz && data.ffz.lb != null) {
+          document.querySelectorAll("[data-ffz]").forEach(function (tile) {
+            tile.querySelectorAll("[data-ffz-lb]").forEach(function (el) { el.textContent = data.ffz.lb; });
+            tile.querySelectorAll("[data-ffz-g]").forEach(function (el) { el.textContent = data.ffz.g; });
+            if (data.ffz.pctLabel) tile.querySelectorAll("[data-ffz-status], [data-ffz-status-open]").forEach(function (el) { el.textContent = data.ffz.pctLabel; });
+            if (data.ffz.level != null && data.ffz.fillClass) paintFill(tile, data.ffz.level, data.ffz.fillClass);
+          });
+        }
       })
       .catch(function () {});
   }

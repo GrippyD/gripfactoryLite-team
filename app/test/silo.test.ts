@@ -108,7 +108,8 @@ describe("THE SILO SHAPE AND THE LIVE WET WEIGHT (canon 0.30.69)", () => {
 
   it("wraps the shape as a tile: name, shape, state word, the caller's body, the wet weight at the bottom", () => {
     const html = siloTile({ id: "s2", name: "Silo 2", visual: siloVisual({ ...base, loadedGrams: 3360000, clock: "running" }), body: '<div class="inv-lot">x</div>' });
-    expect(html).toContain('<div class="inv-gauge silo-gauge" data-silo="s2" data-silo-state="drying" data-silo-shape-kind="cylinder">');
+    expect(html).toContain('<div class="inv-gauge silo-gauge dry-tile" data-silo="s2" data-silo-state="drying" data-silo-shape-kind="cylinder" data-dry-tile>');
+    expect(html).toContain('aria-expanded="false"');
     expect(html.indexOf('<div class="inv-gauge-name">Silo 2</div>')).toBeLessThan(html.indexOf('<svg class="silo-shape"'));
     expect(html.indexOf('<svg class="silo-shape"')).toBeLessThan(html.indexOf('data-silo-label>drying</div>'));
     expect(html.indexOf('data-silo-label>drying</div>')).toBeLessThan(html.indexOf('<div class="inv-lot">x</div>'));
@@ -226,7 +227,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the wire box and the FFZ cube", (
     expect(script).toContain('[data-silo-fill-top]');
     expect(script).toContain('getAttribute("data-box")');
     expect(script).not.toContain("paintFfz");
-    expect(script).not.toContain("data.ffz");
+    expect(script).toContain("data.ffz");
   });
 });
 

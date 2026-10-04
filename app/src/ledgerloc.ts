@@ -80,7 +80,7 @@ export async function listDryingLocations(db: D1Database): Promise<DryingLocatio
   const result = await db
     .prepare(
       `SELECT name, kind, space_type, location_name, farm_code FROM dry_spaces
-       WHERE deleted_at IS NULL AND kind <> 'truck'
+       WHERE deleted_at IS NULL AND kind <> 'truck' AND kind <> 'cure'
        ORDER BY CASE WHEN space_type = 'freezer' THEN 2 WHEN space_type = 'dry_room' THEN 1 ELSE 0 END, name`
     )
     .all<{ name: string; kind: string; space_type: string | null; location_name: string | null; farm_code: string | null }>();

@@ -38,10 +38,6 @@ import {
   trimBogeyOf,
   parseMaxToteLbs,
   maxToteLbsOf,
-  parseLotCap,
-  lotCapOf,
-  CSA_LOT_CAP_DEFAULT,
-  CSB_LOT_CAP_DEFAULT,
   parseBtrTypeCodes,
   parsePhpPrice,
   phpPriceOf,
@@ -215,7 +211,8 @@ import { listingsWithMatch, marketplacePage, parseMarketplacePane, salesOrderPag
 import { listZohoMenuItems, listZohoMounts, mountZohoInventory } from "./zohoinv";
 import { buildLiveSalesHelperMenu, decorateSalesHelperPage } from "./saleshelper";
 import { parseSendBody, sendSalesOrderMail, SH_MAIL_TO_DEFAULT, SH_SEND_GATE_KEY, type ShSendBody } from "./sendmail";
-import { dryingTotals, loadSiloVisuals, siloLiveEntry, spaceShapeOf, SILO_LIVE_PATH } from "./silo";
+import { dryingTotals, ffzLive, loadSiloVisuals, siloLiveEntry, spaceShapeOf, SILO_LIVE_PATH } from "./silo";
+import { dryingRowFigures } from "./db";
 import {
   attachLoadChecks,
   fulfillLabSample,
@@ -499,7 +496,7 @@ import {
   prepackPage,
   voidPrepackLine,
 } from "./prepack";
-import { curePanes, listCurePanes, SENSOR_PATH, storeSensorReadings } from "./cure";
+import { curePanes, cureSpaceCap, listCurePanes, SENSOR_PATH, storeSensorReadings } from "./cure";
 import { environmentPage, loadEnvironmentPage, saveEnvironmentRange, saveSensorBinding, saveStaleMinutes, listEnvironmentFlags } from "./environment";
 import { pullSensorPush, refreshSensorCatalog } from "./sensorpush";
 import {
@@ -1554,6 +1551,7 @@ app.get(HARVEST_PATH, async (c) => {
     loadFulfillmentSection(c.env.DB, input.day),
   ]);
   const checkedLive = await attachLoadChecks(c.env.DB, silos.live, now);
+  const stripFigures = await stripFiguresFor(c.env.DB, cure, silos.dryYieldPct);
   return html(
     c,
     s,
@@ -1565,6 +1563,7 @@ app.get(HARVEST_PATH, async (c) => {
       locale: s.locale,
       ok: c.req.query("ok") ?? undefined,
       cureTiles: curePanes(cure, s.locale),
+      stripFigures,
       envFlags: await listEnvironmentFlags(c.env.DB, now, s.locale),
       // THE DRYING TOTALS (canon 0.30.183): loaded in the silos and the dry rooms with the estimate
       // at the Admin percent, the cure panes' dry grams, the Unloaded Queue for trim.
@@ -2289,16 +2288,31 @@ app.get("/continuum/:file", async (c) => {
 
 /** Canon 0.30.6: the silo strip above every Drying Operations page including
  * the menu; canon 0.30.69: five cone-topped cylinders with their live fill. */
+async function stripFiguresFor(
+  db: D1Database,
+  cure: { csa: { dryGrams: number }[]; csb: { dryGrams: number }[] },
+  dryYieldPct: number
+) {
+  const figures = await dryingRowFigures(db);
+  const lots = [...cure.csa, ...cure.csb];
+  return {
+    ...figures,
+    cureGrams: lots.reduce((sum, lot) => sum + Number(lot.dryGrams ?? 0), 0),
+    cureLots: lots.length,
+    dryYieldPct,
+  };
+}
+
 async function siloStripFor(c: AppContext): Promise<string> {
   const s = await shell(c);
-  // THE CURE PANES ride the strip's row after the last space tile.
   const now = nowIso();
-  const [{ live }, cure, flags] = await Promise.all([
+  const [{ live, dryYieldPct }, cure, flags] = await Promise.all([
     loadSiloVisuals(c.env.DB),
     listCurePanes(c.env.DB, now, s.locale),
     listEnvironmentFlags(c.env.DB, now, s.locale),
   ]);
-  return siloStrip(await attachLoadChecks(c.env.DB, live, now), now, s.locale, curePanes(cure, s.locale), flags);
+  const figures = await stripFiguresFor(c.env.DB, cure, dryYieldPct);
+  return siloStrip(await attachLoadChecks(c.env.DB, live, now), now, s.locale, curePanes(cure, s.locale), flags, figures);
 }
 
 app.post(SENSOR_PATH, async (c) => {
@@ -2327,6 +2341,7 @@ app.get(SILO_LIVE_PATH, async (c) => {
   const { live, capacityGrams } = await loadSiloVisuals(c.env.DB);
   const flags = await listEnvironmentFlags(c.env.DB, now, s.locale);
   const checked = await attachLoadChecks(c.env.DB, live, now);
+  const figures = await dryingRowFigures(c.env.DB);
   return c.json(
     {
       capacityGrams,
@@ -2334,6 +2349,7 @@ app.get(SILO_LIVE_PATH, async (c) => {
       silos: checked.map((l) =>
         siloLiveEntry(l.silo.id, l.silo.name, l.visual, s.locale, spaceShapeOf(l.silo), flags[l.silo.name] ?? [], l.emptySince, liveChecksOf(l.loadChecks))
       ),
+      ffz: ffzLive(figures.ffzGrams, s.locale),
     },
     200,
     { "cache-control": "no-store" }
@@ -2362,14 +2378,15 @@ app.get("/station/load_silo", async (c) => {
   const pickedLoad = loadId ? await getSiloLoad(c.env.DB, loadId) : null;
   // THE DRYING SCHEDULE (canon 0.30.226): a drying surface's >> carries its space type and the planned space.
   const kindRaw = c.req.query("kind") ?? "";
-  const kind = (DRY_SPACE_TYPES as readonly string[]).includes(kindRaw) ? (kindRaw as DrySpaceType) : null;
+  const kind = kindRaw !== "cure" && (DRY_SPACE_TYPES as readonly string[]).includes(kindRaw) ? (kindRaw as Exclude<DrySpaceType, "cure">) : null;
   const now = nowIso();
-  const flags = await listEnvironmentFlags(c.env.DB, now, s.locale);
+  const [flags, cure] = await Promise.all([listEnvironmentFlags(c.env.DB, now, s.locale), listCurePanes(c.env.DB, now, s.locale)]);
+  const figures = await stripFiguresFor(c.env.DB, cure, siloVisuals.dryYieldPct);
   return html(
     c,
     s,
     "Load Silo",
-    siloStrip(await attachLoadChecks(c.env.DB, siloVisuals.live, now), now, s.locale, "", flags) +
+    siloStrip(await attachLoadChecks(c.env.DB, siloVisuals.live, now), now, s.locale, curePanes(cure, s.locale), flags, figures) +
       loadSiloPage({
         barnLots,
         silos,
@@ -2428,7 +2445,7 @@ app.get(`${PRODUCTION_SCHEDULING_PATH}/:stage`, async (c) => {
       c,
       s,
       SCHEDULE_STAGE_TITLES[drying],
-      siloStrip(await attachLoadChecks(c.env.DB, visuals.live, now), now, s.locale, curePanes(cure, s.locale), flags) +
+      siloStrip(await attachLoadChecks(c.env.DB, visuals.live, now), now, s.locale, curePanes(cure, s.locale), flags, await stripFiguresFor(c.env.DB, cure, visuals.dryYieldPct)) +
         dryingSchedulingPage({
           stage: drying,
           lots,
@@ -3209,10 +3226,8 @@ app.get("/admin/lookups/:section", async (c) => {
   }
   if (section === "csa_lot_cap" || section === "csb_lot_cap") {
     const room = section === "csa_lot_cap" ? "CSA" : "CSB";
-    const key = room === "CSA" ? CONFIG_KEYS.csa_lot_cap : CONFIG_KEYS.csb_lot_cap;
-    const fallback = room === "CSA" ? CSA_LOT_CAP_DEFAULT : CSB_LOT_CAP_DEFAULT;
-    const raw = await getConfigValue(c.env.DB, key);
-    return html(c, s, room === "CSA" ? "CSA Lot Cap" : "CSB Lot Cap", lotCapPage(room, parseLotCap(raw, fallback), lotCapOf(raw) != null, s.locale, c.req.query("ok") || undefined));
+    const cap = await cureSpaceCap(c.env.DB, room);
+    return html(c, s, room === "CSA" ? "CSA Lot Cap" : "CSB Lot Cap", lotCapPage(room, cap.value, cap.stored, s.locale, c.req.query("ok") || undefined));
   }
   if (section === "terp_recipes") {
     const recipes = await listTerpRecipes(c.env.DB);

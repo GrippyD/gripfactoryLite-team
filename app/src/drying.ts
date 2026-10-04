@@ -34,7 +34,8 @@ import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmDayBounds } from "./farmday";
 import { esc, lockOnSubmitScript, time24MaskScript } from "./html";
 import { t, tFill, type Locale } from "./i18n";
 import { checkCountdownScript, loadCheckLines, tileCheckSummary } from "./labsample";
-import { lotStrainLine, siloLiveScript, siloTile, siloWaitingLines, spaceShapeOf, spaceTypeOf, type SiloLive } from "./silo";
+import { formatLbs } from "./compliance";
+import { lotStrainLine, ffzInventoryTile, PROJECTED_DRY_YIELD_PCT_DEFAULT, siloLiveScript, siloTile, siloWaitingLines, spaceShapeOf, spaceTypeOf, type SiloLive } from "./silo";
 
 export type ClockState = "not_started" | "running" | "paused";
 
@@ -133,41 +134,192 @@ export function clockMarkup(load: SiloLoadRow, nowIso: string, locale: Locale): 
   )}" data-paused-seconds="${esc(String(load.paused_seconds ?? 0))}">${esc(seconds == null ? "0d 00:00:00" : formatClock(seconds))}</span> <span class="muted silo-clock-state">${esc(label)}</span>`;
 }
 
-/** The five silos, persistent above every Drying Operations page. THE SILO SHAPE
- * AND THE LIVE WET WEIGHT (canon 0.30.69): each is a cone-topped cylinder
- * wireframe with the fill inside it (green and throbbing while the wet weight
- * screen fills it, red and throbbing once the clock runs), the state word under
- * the shape, the load's lot link and clock, and the wet weight at the bottom;
- * the live script keeps every tile current. */
-export function siloStrip(live: SiloLive[], nowIso: string, locale: Locale = "en", extraTiles = "", flags: Readonly<Record<string, string[]>> = {}): string {
-  const tiles = live
-    .map(({ silo, visual, loads, waiting, emptySince, loadChecks }) => {
-      const checks = loadChecks ?? [];
-      // THE LOADING SILO (canon 0.30.81): the lots waiting in the barn for this silo ride under its word.
-      // THE MAINTENANCE NODE (canon 0.30.293): each load's next aW and MC check under its clock.
-      const body =
-        tileCheckSummary(checks, nowIso, locale) +
-        loads
-          .map(
-            (load) => `<div class="inv-lot" data-load="${esc(load.id)}">
+/** THE ROWS (canon 0.30.383): figures the strip's panels read. ffzGrams null omits the cube. */
+export type DryingStripFigures = {
+  ffzGrams?: number | null;
+  hangGrams?: number;
+  hangLots?: number;
+  cureGrams?: number;
+  cureLots?: number;
+  dryYieldPct?: number;
+};
+
+export type DryingRowKey = "silo" | "freezer" | "cure" | "dry_room";
+
+/** Wet of the open loads on one space type, plus the hang lots on the dry room row. */
+export function dryingRowTotals(live: readonly SiloLive[], figures: DryingStripFigures = {}): {
+  siloGrams: number;
+  siloLots: number;
+  estimateGrams: number;
+  dryYieldPct: number;
+  roomGrams: number;
+  roomLots: number;
+  hangGrams: number;
+  hangLots: number;
+  hangTotalGrams: number;
+  hangTotalLots: number;
+  ffzGrams: number | null;
+  cureGrams: number;
+  cureLots: number;
+} {
+  let siloGrams = 0;
+  let siloLots = 0;
+  let roomGrams = 0;
+  let roomLots = 0;
+  for (const row of live) {
+    const type = spaceTypeOf(row.silo);
+    if (type !== "silo" && type !== "dry_room") continue;
+    for (const load of row.loads) {
+      const grams = Number(load.weight_grams ?? 0);
+      if (type === "silo") {
+        siloGrams += grams;
+        siloLots += 1;
+      } else {
+        roomGrams += grams;
+        roomLots += 1;
+      }
+    }
+  }
+  const pct = Number.isFinite(figures.dryYieldPct) && (figures.dryYieldPct ?? 0) >= 0 ? Number(figures.dryYieldPct) : PROJECTED_DRY_YIELD_PCT_DEFAULT;
+  const hangGrams = Number(figures.hangGrams ?? 0);
+  const hangLots = Number(figures.hangLots ?? 0);
+  return {
+    siloGrams,
+    siloLots,
+    estimateGrams: Math.round((siloGrams * pct) / 100),
+    dryYieldPct: pct,
+    roomGrams,
+    roomLots,
+    hangGrams,
+    hangLots,
+    hangTotalGrams: roomGrams + hangGrams,
+    hangTotalLots: roomLots + hangLots,
+    ffzGrams: figures.ffzGrams == null ? null : Number(figures.ffzGrams),
+    cureGrams: Number(figures.cureGrams ?? 0),
+    cureLots: Number(figures.cureLots ?? 0),
+  };
+}
+
+const ROW_LABEL: Record<DryingRowKey, string> = {
+  silo: "Drying in Silos",
+  freezer: "Fresh Frozen",
+  cure: "Curing",
+  dry_room: "Hang Drying",
+};
+
+function rowTotalPanel(key: DryingRowKey, grams: number, lots: number | null, estimate: string, locale: Locale, hangGrams: number | null): string {
+  const figure = `<strong>${esc(formatLbs(grams))}</strong> lb · <strong>${esc(formatGrams(Math.round(grams)))}</strong> g`;
+  const lotLine = lots == null ? "" : `<div class="dry-row-total-sub muted">${esc(t(locale, lots === 1 ? "{n} lot" : "{n} lots").replace("{n}", formatGrams(lots)))}${estimate ? ` · ${esc(estimate)}` : ""}</div>`;
+  const hangAttr = hangGrams == null ? "" : ` data-dry-hang-grams="${esc(String(Math.round(hangGrams)))}"`;
+  return `<aside class="dry-row-total" data-dry-total="${key}" data-dry-total-grams="${esc(String(Math.round(grams)))}"${lots == null ? "" : ` data-dry-total-lots="${lots}"`}${hangAttr}>
+      <div class="dry-row-total-label">${esc(t(locale, ROW_LABEL[key]))}</div>
+      <div class="dry-row-total-value">${figure}</div>
+      ${lotLine}
+    </aside>`;
+}
+
+function rowMarkup(key: DryingRowKey, tiles: string, count: number, panel: string, locale: Locale): string {
+  if (!tiles.trim()) return "";
+  const prev = count > 5 ? `<button type="button" class="dry-row-arrow" data-dry-arrow="prev" hidden aria-label="${esc(t(locale, "Scroll back"))}">‹</button>` : "";
+  const next = count > 5 ? `<button type="button" class="dry-row-arrow" data-dry-arrow="next" aria-label="${esc(t(locale, "Scroll forward"))}">›</button>` : "";
+  return `<div class="dry-row" data-dry-row="${key}" data-dry-count="${count}">
+      ${panel}
+      <div class="dry-row-scroller">${prev}<div class="dry-row-tiles inv-gauges" data-dry-tiles>${tiles}</div>${next}</div>
+    </div>`;
+}
+
+/** The five silos, persistent above every Drying Operations page. THE ROWS
+ * (canon 0.30.383): one row per kind, Silo, Freezer, Cure Space, Dry Room.
+ * Each row's total sits at its left. Past five tiles the row scrolls. */
+export function siloStrip(
+  live: SiloLive[],
+  nowIso: string,
+  locale: Locale = "en",
+  extraTiles = "",
+  flags: Readonly<Record<string, string[]>> = {},
+  figures: DryingStripFigures = {}
+): string {
+  const drawn = live.map(({ silo, visual, loads, waiting, emptySince, loadChecks }) => {
+    const checks = loadChecks ?? [];
+    // THE LOADING SILO (canon 0.30.81): the lots waiting in the barn for this silo ride under its word.
+    // THE MAINTENANCE NODE (canon 0.30.293): each load's next aW and MC check under its clock.
+    const body =
+      tileCheckSummary(checks, nowIso, locale) +
+      loads
+        .map(
+          (load) => `<div class="inv-lot" data-load="${esc(load.id)}">
             <div class="inv-lot-id"><a href="/station/load_silo?load=${esc(load.id)}">${esc(
-              t(locale, "Lot")
-            )} ${esc(shortLotId(load.hbn ?? "", load.metrc_harvest_tag))}</a></div>
+            t(locale, "Lot")
+          )} ${esc(shortLotId(load.hbn ?? "", load.metrc_harvest_tag))}</a></div>
             ${lotStrainLine(load.strain_label)}
             <div class="inv-lot-time">${clockMarkup(load, nowIso, locale)}</div>
             ${loadCheckLines(checks, load.id, nowIso, locale)}
           </div>`
-          )
-          .join("") + siloWaitingLines(waiting ?? [], locale);
-      // THE HARVEST CONSOLE (canon 0.30.73): the silo's shape is data; the
-      // Arlington Dry Room draws as the wire box beside the five cylinders.
-      // THE DRY SPACE TYPE (canon 0.30.106): the type decides the shape.
-      return siloTile({ id: silo.id, name: silo.name, visual, body, locale, shape: spaceShapeOf(silo), flags: flags[silo.name] ?? [], emptySince: emptySince ?? null, nowIso });
-    })
-    .join("");
-  return `<section class="silo-strip" data-silo-strip>
-    <div class="inv-gauges">${tiles}${extraTiles}</div>
-  </section>${clockScript()}${checkCountdownScript()}${siloLiveScript()}`;
+        )
+        .join("") + siloWaitingLines(waiting ?? [], locale);
+    const type = spaceTypeOf(silo);
+    const row: DryingRowKey = type === "freezer" ? "freezer" : type === "dry_room" ? "dry_room" : "silo";
+    return {
+      row,
+      html: siloTile({ id: silo.id, name: silo.name, visual, body, locale, shape: spaceShapeOf(silo), flags: flags[silo.name] ?? [], emptySince: emptySince ?? null, nowIso }),
+    };
+  });
+  const of = (key: DryingRowKey) => drawn.filter((tile) => tile.row === key).map((tile) => tile.html);
+  const totals = dryingRowTotals(live, figures);
+  const estimate = t(locale, "est. dry {lb} lb at {pct}%").replace("{lb}", formatLbs(totals.estimateGrams)).replace("{pct}", formatGrams(totals.dryYieldPct));
+  const siloTiles = of("silo");
+  const freezerTiles = of("freezer");
+  if (totals.ffzGrams != null) freezerTiles.push(ffzInventoryTile(totals.ffzGrams, locale));
+  const cureCount = (extraTiles.match(/data-cure-pane=/g) || []).length;
+  const roomTiles = of("dry_room");
+  const rows = [
+    rowMarkup("silo", siloTiles.join(""), siloTiles.length, rowTotalPanel("silo", totals.siloGrams, totals.siloLots, estimate, locale, null), locale),
+    rowMarkup("freezer", freezerTiles.join(""), freezerTiles.length, rowTotalPanel("freezer", totals.ffzGrams ?? 0, null, "", locale, null), locale),
+    rowMarkup("cure", extraTiles, cureCount, rowTotalPanel("cure", totals.cureGrams, totals.cureLots, "", locale, null), locale),
+    rowMarkup(
+      "dry_room",
+      roomTiles.join(""),
+      roomTiles.length,
+      rowTotalPanel("dry_room", totals.hangTotalGrams, totals.hangTotalLots, "", locale, totals.hangGrams),
+      locale
+    ),
+  ].join("");
+  return `<section class="silo-strip" data-silo-strip>${rows}</section>${clockScript()}${checkCountdownScript()}${siloLiveScript()}${dryingRowScript()}`;
+}
+
+/** Collapsed by default on each load. An arrow shows only when that side has more to see. */
+export function dryingRowScript(): string {
+  return `<script>
+(function () {
+  document.querySelectorAll("[data-dry-head]:not([data-dry-bound])").forEach(function (btn) {
+    btn.setAttribute("data-dry-bound", "1");
+    btn.addEventListener("click", function () {
+      var tile = btn.closest("[data-dry-tile]");
+      var body = tile ? tile.querySelector(":scope > .dry-tile-body") : null;
+      if (!body) return;
+      var open = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", open ? "false" : "true");
+      body.hidden = open;
+    });
+  });
+  document.querySelectorAll("[data-dry-row]:not([data-dry-bound])").forEach(function (row) {
+    row.setAttribute("data-dry-bound", "1");
+    var scroller = row.querySelector("[data-dry-tiles]");
+    var prev = row.querySelector("[data-dry-arrow='prev']");
+    var next = row.querySelector("[data-dry-arrow='next']");
+    if (!scroller || !prev || !next) return;
+    function sync() {
+      var more = scroller.scrollWidth > scroller.clientWidth + 2;
+      prev.hidden = !more || scroller.scrollLeft <= 2;
+      next.hidden = !more || scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 2;
+    }
+    prev.addEventListener("click", function () { scroller.scrollBy({ left: -Math.max(120, scroller.clientWidth * 0.8), behavior: "smooth" }); });
+    next.addEventListener("click", function () { scroller.scrollBy({ left: Math.max(120, scroller.clientWidth * 0.8), behavior: "smooth" }); });
+    scroller.addEventListener("scroll", sync);
+    sync();
+  });
+})();
+</script>`;
 }
 
 /** Keeps every [data-clock] ticking once a second from its data attributes;

@@ -182,7 +182,7 @@ function firstSelectValue(html, name) {
 }
 
 function loadPageStripHasSpaces(page) {
-  return page.res.status === 200 && page.body.includes("data-silo-strip") && !page.body.includes("data-ffz");
+  return page.res.status === 200 && page.body.includes("data-silo-strip") && page.body.includes("data-ffz") && page.body.includes('data-dry-row="cure"');
 }
 
 function drySpaceIdByName(html, name) {
@@ -409,9 +409,9 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 90 migration(s)")) {
-      throw new Error(`from-zero apply must say 90 migrations\n${String(applyOut).slice(-2000)}`);
-    }
+if (!String(applyOut).includes("About to apply 91 migration(s)")) {
+  throw new Error(`from-zero apply must say 91 migrations\n${String(applyOut).slice(-2000)}`);
+}
     return new Promise((resolve, reject) => {
       const child = spawn(
         // THE SHEET SYNC (canon 0.30.162): the cron is walked through /__scheduled, and the
@@ -2128,7 +2128,10 @@ async function run() {
       const stripEnd = page.indexOf("</section>", stripAt);
       const row = page.slice(stripAt, stripEnd);
       assert(stripAt >= 0 && row.includes('data-cure-pane="CSA"') && row.includes('data-cure-pane="CSB"'), `${label}: CSA and CSB must ride the strip's row`);
-      assert(!row.includes("data-ffz") && row.lastIndexOf("data-silo=") < row.indexOf('data-cure-pane="CSA"') && row.indexOf('data-cure-pane="CSA"') < row.indexOf('data-cure-pane="CSB"'), `${label}: the panes must follow the last space tile`);
+      assert(row.includes('data-dry-row="silo"') && row.includes('data-dry-row="freezer"') && row.includes('data-dry-row="cure"') && row.includes('data-dry-row="dry_room"'), `${label}: the four drying rows`);
+      assert(row.indexOf('data-dry-row="silo"') < row.indexOf('data-dry-row="freezer"') && row.indexOf('data-dry-row="freezer"') < row.indexOf('data-dry-row="cure"') && row.indexOf('data-dry-row="cure"') < row.indexOf('data-dry-row="dry_room"'), `${label}: rows run Silo, Freezer, Cure Space, Dry Room`);
+      assert(row.includes("data-ffz") && row.indexOf('data-cure-pane="CSA"') < row.indexOf('data-cure-pane="CSB"'), `${label}: the FFZ cube rides the freezer row and CSA precedes CSB`);
+      assert(row.includes("Drying in Silos") && row.includes("Fresh Frozen") && row.includes("Curing") && row.includes("Hang Drying"), `${label}: each row names its total`);
       assert(!page.slice(stripEnd).includes("data-cure-pane"), `${label}: no pane may stand outside the strip`);
       assert(!page.includes("cure-panes"), `${label}: the old wrapper must be gone`);
     }
@@ -2354,7 +2357,7 @@ async function run() {
     const capSaved = await text("/admin/lookups/csb_lot_cap?ok=saved");
     assert(capSaved.body.includes("Lot cap saved."), "saving the cap must flash Lot cap saved.");
     const capLog = await text("/log");
-    assert(/<td>app_config<\/td>\s*<td>csb_lot_cap<\/td>\s*<td>value<\/td>\s*<td>8<\/td>\s*<td>1<\/td>/.test(capLog.body), "the change log must carry app_config csb_lot_cap from 8 to 1");
+    assert(/<td>dry_spaces<\/td>\s*<td>[^<]+<\/td>\s*<td>capacity<\/td>\s*<td>8<\/td>\s*<td>1<\/td>/.test(capLog.body), "the change log must carry the CSB space capacity from 8 to 1");
     const harvestCapped = await text("/harvest");
     const csbCapped = cureStats(harvestCapped.body, "CSB");
     if (csbCapped.n > 1) {
@@ -3890,7 +3893,7 @@ async function run() {
     const roomLiveJson = await roomLive.json();
     const roomEntry = (roomLiveJson.silos || []).find((x) => x.id === silo2Id);
     assert(roomEntry && roomEntry.shape === "cylinder" && roomEntry.state === "drying", "live.json must carry Silo 2 drying");
-    assert(!("ffz" in roomLiveJson), "live.json must not carry an FFZ cube");
+    assert(roomLiveJson.ffz && typeof roomLiveJson.ffz.grams === "number" && Array.isArray(roomLiveJson.silos), "live.json keeps its silos and adds the FFZ figure");
     const invRoomCsv = await text("/reports/inventory_by_location?format=csv");
     // Canon 0.30.23: the CSV reads Site,Location,Origin farm,Product type,Total,UOM;
     // the origin farm stays the HBN's (ARL) while the material sits at PNN.
@@ -5161,15 +5164,15 @@ async function run() {
     // box after them; THE BLAST FREEZER (canon 0.30.98) is the seventh gauge,
     // and THE DRY SPACE TYPE (canon 0.30.106) draws it as the freezer cube in
     // the FFZ chrome. The FFZ inventory cube left the strip (canon 0.30.225).
-    assert((dryingMenu.body.match(/class="inv-gauge silo-gauge"/g) || []).length === 6, "the strip must show the five silos and the Arlington Dry Room in the silo chrome");
-    assert((dryingMenu.body.match(/class="inv-gauge silo-gauge ffz-gauge freezer-gauge"/g) || []).length === 1, "the strip must show the Blast Freezer(s) in the freezer chrome");
+    assert((dryingMenu.body.match(/class="inv-gauge silo-gauge dry-tile"/g) || []).length === 6, "the strip must show the five silos and the Arlington Dry Room in the silo chrome");
+    assert((dryingMenu.body.match(/class="inv-gauge silo-gauge ffz-gauge freezer-gauge dry-tile"/g) || []).length === 1, "the strip must show the Blast Freezer(s) in the freezer chrome");
     assert(dryingMenu.body.includes('<div class="inv-gauge-name">Blast Freezer(s)</div>'), "the Drying Operations strip must name the Blast Freezer(s)");
     assert(!dryingMenu.body.includes('<div class="inv-gauge-name">Blast Freezer</div>'), "the old tile word must be gone");
-    assert(!dryingMenu.body.includes("data-ffz"), "the FFZ inventory cube must leave the Drying Operations strip");
-    assert(!dryingMenu.body.includes('<div class="inv-gauge-name">FFZ inventory</div>'), "the strip must not name an FFZ inventory");
-    assert(dryingMenu.body.lastIndexOf('data-silo-shape-kind="cylinder"') < dryingMenu.body.indexOf('data-silo-shape-kind="box"'), "the wire box must follow the five cylinders on the strip");
-    assert(dryingMenu.body.indexOf('data-silo-shape-kind="box"') < dryingMenu.body.indexOf('data-silo-shape-kind="cube"'), "the freezer cube must follow the dry room box");
-    assert(loadPageStripHasSpaces(await text("/station/load_silo")), "the Load Silo strip must keep the spaces and leave the FFZ cube");
+    assert(dryingMenu.body.includes("data-ffz") && dryingMenu.body.includes("FFZ Inventory"), "the freezer row carries the FFZ inventory cube");
+    assert(dryingMenu.body.includes('aria-expanded="false"'), "tiles start collapsed");
+    assert(dryingMenu.body.lastIndexOf('data-silo-shape-kind="cylinder"') < dryingMenu.body.indexOf('data-silo-shape-kind="box"') || dryingMenu.body.indexOf('data-dry-row="silo"') < dryingMenu.body.indexOf('data-dry-row="dry_room"'), "the silo row precedes the dry room row");
+    assert(dryingMenu.body.indexOf('data-silo-shape-kind="cube"') < dryingMenu.body.indexOf('data-silo-shape-kind="box"'), "the freezer cube precedes the dry room");
+    assert(loadPageStripHasSpaces(await text("/station/load_silo")), "the Load Silo strip keeps the rows and the FFZ cube");
     const lot1132Batch = await passEntry(lot1132);
     const loadPage = await text("/station/load_silo");
     assert(loadPage.res.status === 200, `load silo page expected 200 got ${loadPage.res.status}`);
@@ -5702,18 +5705,18 @@ async function run() {
     // THE BLAST FREEZER (canon 0.30.98): a second wire box beside the Arlington Dry Room.
     assert((consoleDrying.match(/data-silo-shape-kind="box"/g) || []).length === 1, "the Arlington Dry Room as the wire box on the console");
     assert((consoleDrying.match(/data-silo-shape-kind="cube"/g) || []).length === 1, "the Blast Freezer(s) as the freezer cube on the console");
-    assert(!consoleDrying.includes("data-ffz"), "the FFZ inventory cube must leave the console");
+    assert(consoleDrying.includes("data-ffz"), "the freezer row carries the FFZ inventory cube");
     assert(consoleDrying.includes('<svg class="silo-shape silo-shape-cube"'), "the Blast Freezer(s) must draw as the cube");
-    assert(consoleDrying.indexOf('data-silo-shape-kind="box"') < consoleDrying.indexOf('data-silo-shape-kind="cube"'), "the freezer cube stands after the dry room");
+    assert(consoleDrying.indexOf('data-silo-shape-kind="cube"') < consoleDrying.indexOf('data-silo-shape-kind="box"'), "the freezer row precedes the dry room");
     const ffzLive = await (await req("/silos/live.json")).json();
-    assert(!("ffz" in ffzLive), "live.json must not carry an FFZ cube");
+    assert(ffzLive.ffz && typeof ffzLive.ffz.grams === "number" && Array.isArray(ffzLive.silos), "live.json keeps its silos and adds the FFZ figure");
     assert(consolePage.body.includes('fetch("/silos/live.json"'), "the console must repaint from live.json");
     // Spanish console, then back to English for the walk that follows.
     const toEsConsole = await req("/locale", { method: "POST", body: form({ locale: "es" }) });
     await toEsConsole.text();
     const consoleEs = await text("/harvest");
     assert(consoleEs.body.includes('<summary>Plantas <span class="muted hc-year">Año de cosecha') && consoleEs.body.includes("<summary>Secado</summary>"), "the console must speak Spanish");
-    assert(!consoleEs.body.includes("Inventario FFZ") && !consoleEs.body.includes("data-ffz"), "the Spanish console must not carry the FFZ cube");
+    assert(consoleEs.body.includes("Inventario FFZ") && consoleEs.body.includes("Secando en silos") && consoleEs.body.includes("Curando"), "the Spanish console names the rows and the FFZ cube");
     const toEnConsole = await req("/locale", { method: "POST", body: form({ locale: "en" }) });
     await toEnConsole.text();
     const loadLoc = doLoad.headers.get("location") || "";
@@ -6689,16 +6692,17 @@ async function run() {
     assert(drySpacesNow.body.includes("<td>Blast Freezer(s)</td><td>800</td><td>lb</td><td>Freezer</td><td>silo</td><td>PNN</td>"), "the Blast Freezer(s) must read as a freezer of 800 lb");
     assert(drySpacesNow.body.includes("<td>Arlington Dry Room</td><td>15000</td><td>lb</td><td>Dry Room</td>"), "the Arlington Dry Room must read as a dry room of 15,000 lb");
     assert(drySpacesNow.body.includes("<td>Silo 4</td><td>15000</td><td>lb</td><td>Silo</td>"), "a silo must read as a silo of 15,000 lb");
-    assert(drySpacesNow.body.includes('<label class="field">Freezer, Dry Room, or Silo? <select name="space_type">'), "the add form must carry the type toggle");
+    assert(drySpacesNow.body.includes("<td>CSA</td>") && drySpacesNow.body.includes("<td>Cure Space</td>") && drySpacesNow.body.includes("<td>CSB</td>"), "Admin lists CSA and CSB as cure spaces");
+    assert(drySpacesNow.body.includes('<label class="field">Freezer, Dry Room, Silo, or Cure Space? <select name="space_type">'), "the add form must carry the type toggle");
     assert(drySpacesNow.body.includes('<label class="field">Capacity UOM <select name="capacity_uom">'), "the add form must carry the capacity UOM");
     const bfId = drySpaceIdByName(drySpacesNow.body, "Blast Freezer(s)");
     assert(bfId === "a1000001-0000-4000-8000-0000000000bf", `the Blast Freezer(s) must keep its seeded id, got ${bfId}`);
     const bfPencil = await text(`/record/dry_spaces/${bfId}/edit`);
-    assert(bfPencil.body.includes('<select name="space_type"><option value="silo">Silo</option><option value="dry_room">Dry Room</option><option value="freezer" selected>Freezer</option></select>'), "the pencil must offer the type toggle with Freezer picked");
+    assert(bfPencil.body.includes('<select name="space_type"><option value="silo">Silo</option><option value="dry_room">Dry Room</option><option value="freezer" selected>Freezer</option><option value="cure">Cure Space</option></select>'), "the pencil must offer the type toggle with Freezer picked");
     assert(bfPencil.body.includes('<input type="number" name="capacity" value="800" step="0.01">'), "the pencil must carry the 800 capacity");
     assert(bfPencil.body.includes('<option value="lb" selected>lb</option>'), "the pencil must carry lb");
     const badType = await req(`/record/dry_spaces/${bfId}/edit`, { method: "POST", body: form({ space_type: "fridge", reason: "smoke: a type the farm refuses" }) });
-    assert(badType.status === 400 && (await badType.text()).includes("Freezer, Dry Room, or Silo? must be one of Silo, Dry Room, Freezer."), "an unknown type must refuse in words");
+    assert(badType.status === 400 && (await badType.text()).includes("Freezer, Dry Room, Silo, or Cure Space? must be one of Silo, Dry Room, Freezer, Cure Space."), "an unknown type must refuse in words");
     const badCap = await req(`/record/dry_spaces/${bfId}/edit`, { method: "POST", body: form({ capacity: "-1", reason: "smoke: a capacity the farm refuses" }) });
     assert(badCap.status === 400 && (await badCap.text()).includes("Capacity must be a number above zero, or blank."), "a bad capacity must refuse in words");
     const badAdd = await req("/admin/lookups/dry_spaces", { method: "POST", body: form({ action: "add", name: "Smoke Freezer", kind: "silo", farm_code: "PNN", space_type: "freezer", capacity: "500", capacity_uom: "" }) });
