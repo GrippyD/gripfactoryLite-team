@@ -1,6 +1,7 @@
 import { HttpError, nowIso, parseGrams, refusal, requireReason, requireText, textOrNull } from "./audit";
 import { CONFIG_KEYS, ITEM_KIND_FG, ITEM_KIND_WIP, roundGrams, SYSTEM_REASON } from "./config";
 import { parseInstrumentCsv, isInstrumentSource, IMPORT_STATUS, assertImportUpload, importBasename } from "./imports";
+import { isKeyField, parseColumns, parseRows } from "./labeldata";
 import { emptyFieldsJson, inchesToMm, LayoutError, normalizeLayout, parseLabelInches } from "./labeleditor";
 import { mintSoNumber, splitChildCode } from "./marketplace";
 import { dollarsToCents, mintPoNumber } from "./purchasing";
@@ -405,6 +406,102 @@ export async function saveLabelTemplate(db: D1Database, form: FormData): Promise
     ? "/compliance/labels/editor?ok=saved"
     : `/compliance/labels/editor?template=${id}&ok=saved`;
   return { redirect };
+}
+
+const LABEL_DATA_REASON = "label data table saved";
+
+export async function saveLabelDataTable(db: D1Database, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const name = requireText(form.get("name"), "Name");
+  const mode = textOrNull(form.get("mode")) === "keyed" ? "keyed" : "static";
+  const keyField = mode === "keyed" ? textOrNull(form.get("key_field")) : null;
+  if (mode === "keyed" && !isKeyField(keyField ?? "")) {
+    throw refusal(400, { key: "Choose Strain, Item, Category or Harvest name.", vars: {} });
+  }
+  let columns;
+  let rows;
+  try {
+    columns = parseColumns(JSON.parse(String(form.get("columns_json") ?? "")));
+    rows = parseRows(JSON.parse(String(form.get("rows_json") ?? "[]")), columns.length);
+  } catch (err) {
+    const key = err instanceof Error ? err.message : "The table could not be read.";
+    throw refusal(400, { key, vars: {} });
+  }
+  const columns_json = JSON.stringify(columns);
+  const rows_json = JSON.stringify(rows);
+  const ts = nowIso();
+  const existingId = textOrNull(form.get("id"));
+  const prior = existingId ? await getRow(db, "label_data_tables", existingId) : null;
+  if (prior && !prior.deleted_at) {
+    const id = String(prior.id);
+    const next = { name, mode, key_field: keyField, columns_json, rows_json };
+    const logs = Object.entries(next)
+      .filter(([field, value]) => String(prior[field] ?? "") !== String(value ?? ""))
+      .map(([field, value]) =>
+        insertLog(db, {
+          record_table: "label_data_tables",
+          record_id: id,
+          field,
+          old_value: prior[field] == null ? null : String(prior[field]),
+          new_value: value == null ? null : String(value),
+          actor_person_id: actor.id,
+          reason: LABEL_DATA_REASON,
+          changed_at: ts,
+        })
+      );
+    await db.batch([
+      db
+        .prepare(
+          `UPDATE label_data_tables SET name = ?, mode = ?, key_field = ?, columns_json = ?, rows_json = ?, updated_at = ?, updated_by = ? WHERE id = ?`
+        )
+        .bind(name, mode, keyField, columns_json, rows_json, ts, actor.id, id),
+      ...logs,
+    ]);
+    return { redirect: "/compliance/labels?ok=saved" };
+  }
+  const id = crypto.randomUUID();
+  const record = { id, name, mode, key_field: keyField, columns_json, rows_json, created_at: ts };
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO label_data_tables (
+          id, name, mode, key_field, columns_json, rows_json,
+          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`
+      )
+      .bind(id, name, mode, keyField, columns_json, rows_json, ts, actor.id, ts, actor.id),
+    ...logsForInsert(db, "label_data_tables", id, record, actor.id, LABEL_DATA_REASON, ts),
+  ]);
+  return { redirect: "/compliance/labels?ok=saved" };
+}
+
+export async function deleteLabelDataTable(db: D1Database, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const pin = await getConfigValue(db, CONFIG_KEYS.admin_pin);
+  if (!pin || textOrNull(form.get("pin")) !== pin) throw refusal(401, { key: "Wrong PIN.", vars: {} });
+  const id = requireText(form.get("id"), "Table");
+  const prior = await getRow(db, "label_data_tables", id);
+  if (!prior || prior.deleted_at) throw refusal(404, { key: "That table is not saved.", vars: {} });
+  const ts = nowIso();
+  const reason = "label data table deleted";
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE label_data_tables SET deleted_at = ?, deleted_by = ?, delete_reason = ?, updated_at = ?, updated_by = ? WHERE id = ?`
+      )
+      .bind(ts, actor.id, reason, ts, actor.id, id),
+    insertLog(db, {
+      record_table: "label_data_tables",
+      record_id: id,
+      field: "deleted_at",
+      old_value: null,
+      new_value: ts,
+      actor_person_id: actor.id,
+      reason,
+      changed_at: ts,
+    }),
+  ]);
+  return { redirect: "/compliance/labels/data?ok=deleted" };
 }
 
 export async function addSupplier(db: D1Database, form: FormData): Promise<ActionOk> {

@@ -409,7 +409,7 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 92 migration(s)")) {
+    if (!String(applyOut).includes("About to apply 93 migration(s)")) {
       throw new Error(`from-zero apply must say 92 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
@@ -9399,6 +9399,73 @@ async function run() {
     const finishQty = [...(await text("/log")).body.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].find((row) => row[1].includes("<td>qty</td>") && row[1].includes("<td>inv_minted</td>"));
     const finishQtyNext = finishQty ? ([...finishQty[1].matchAll(/<td>([^<]*)<\/td>/g)].map((cell) => cell[1])[5] || "") : "";
     assert(finishQtyNext === "150", `the re-finish must set the package to the lot's live total, got ${finishQtyNext}`);
+
+    const l2Tag = GUARD_TAG;
+    const l2First = await (await req(`/compliance/labels/preview.json?tag=${encodeURIComponent(l2Tag)}`)).json();
+    assert(l2First.values && l2First.values.harvest_date && l2First.routes.harvest_date, `the smoke package must resolve a harvest date, got ${JSON.stringify(l2First.routes && l2First.routes.harvest_date)}`);
+    assert(l2First.values.strain, "the smoke package must resolve a strain to key a custom table");
+    const l2Sample = await req("/api/lab/compliance", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-lab-client": "station" },
+      body: JSON.stringify({
+        id: "cs_smokel2potency",
+        program: "compliance",
+        license: "AU-G-C-000832",
+        source_metrc_tag: l2Tag,
+        sample_tag: "1A4050300000000000000E99",
+        status: "passed",
+        required_test: "Full Compliance",
+        thc_potency_pct: 22.4,
+        finished_testing_on: "2026-09-24",
+        testing_facility: "SC Labs",
+        harvest_batch: l2First.values.hbn || "",
+      }),
+    });
+    assert(l2Sample.status === 201, `L2 potency sample expected 201 got ${l2Sample.status} ${await l2Sample.text()}`);
+    const l2Table = await req("/compliance/labels/data", {
+      method: "POST",
+      body: form({
+        name: "smoke strain notes",
+        mode: "keyed",
+        key_field: "strain",
+        columns_json: JSON.stringify([
+          { key: "c0", label: "Strain", type: "text" },
+          { key: "c1", label: "Note", type: "text" },
+        ]),
+        rows_json: JSON.stringify([[l2First.values.strain, "Room 4"]]),
+      }),
+    });
+    assert(l2Table.status === 303, `custom table expected 303 got ${l2Table.status}`);
+    const l2List = await text("/compliance/labels/data");
+    assert(l2List.body.includes("smoke strain notes") && l2List.body.includes("Add New Table"), "Custom Label Data must list the saved table");
+    const l2TableId = (l2List.body.match(/\/compliance\/labels\/data\?table=([0-9a-f-]+)/) || [])[1];
+    if (!l2TableId) fail("custom table", "no table id");
+    const l2Token = `{d:${l2TableId}:c1}`;
+    const l2Layout = {
+      v: 1,
+      connections: ["harvest", "test", `table:${l2TableId}`],
+      objects: [
+        { id: "t1", type: "text", x: 0.4, y: 0.3, w: 2.2, h: 0.4, rotate: 0, text: "{harvest_date}", font: "Arial", size: 12, bold: false, italic: false, align: "left", attach: null },
+        { id: "t2", type: "text", x: 0.4, y: 0.8, w: 2.2, h: 0.4, rotate: 0, text: "{thc_percent}", font: "Arial", size: 12, bold: false, italic: false, align: "left", attach: null },
+        { id: "t3", type: "text", x: 0.4, y: 1.3, w: 2.2, h: 0.4, rotate: 0, text: l2Token, font: "Arial", size: 12, bold: false, italic: false, align: "left", attach: null },
+      ],
+    };
+    const l2Save = await req("/compliance/labels/templates", {
+      method: "POST",
+      body: form({ name: "smoke connections", length_in: "4", width_in: "6", layout_json: JSON.stringify(l2Layout) }),
+    });
+    assert(l2Save.status === 303, `connections template expected 303 got ${l2Save.status}`);
+    const l2Id = new URL(l2Save.headers.get("location") || "", base).searchParams.get("template");
+    if (!l2Id) fail("connections template", "no template id");
+    const l2Open = await text(`/compliance/labels/editor?template=${encodeURIComponent(l2Id)}&preview=${encodeURIComponent(l2Tag)}`);
+    assert(l2Open.res.status === 200, `preview editor expected 200 got ${l2Open.res.status}`);
+    assert(l2Open.body.includes(l2First.values.harvest_date), "the preview must show the harvest date");
+    assert(l2Open.body.includes("22.4"), "the preview must show the THC percent");
+    assert(l2Open.body.includes("Room 4"), "the preview must show the custom column");
+    assert(l2Open.body.includes('data-le-route="the app\'s harvest"') || l2Open.body.includes("data-le-route=\"the app's harvest\""), "the preview must name the harvest date route");
+    assert(l2Open.body.includes('data-le-route="the package\'s own passed sample"') || l2Open.body.includes("the package's own passed sample"), "the preview must name the THC route");
+    assert(l2Open.body.includes('data-le-route="the keyed row"'), "the preview must name the custom table route");
+    assert(l2Open.body.includes('data-le-connections'), "Connections must open a panel");
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

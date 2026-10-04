@@ -1,6 +1,6 @@
-# BRIEF L2: CONNECTIONS AND CUSTOM LABEL DATA (canon 0.30.386)
+# BRIEF L2: CONNECTIONS AND CUSTOM LABEL DATA (canon 0.30.388)
 
-For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155): the second of the three Labels slices: a label's fields bind to the data a package carries, including the two METRC is worst at (the harvest date and the THC percent), and the owner keeps his own label data tables. Built on the worktree exactly as it stands after BRIEF L1, THE LABEL EDITOR, is merged and pushed (the Scribe writes the tree hash into this line at the paste; if the hash on the disk differs, stop and say so). Migration 0093; the smoke pin moves to 93.
+For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155): the second of the three Labels slices: a label's fields bind to the data a package carries, including the two METRC is worst at (the harvest date and the THC percent), and the owner keeps his own label data tables. Built on the worktree exactly as it stands LIVE after BRIEF L1, THE LABEL EDITOR (worker `1c7885b6`, main `4c6aef1`, the app tree `ea557ac9390d821e`, 289 files, migrations 0001-0092; if the hash on the disk differs, stop and say so). Migration 0093; the smoke pin moves to 93.
 
 ## The sources (verbatim)
 

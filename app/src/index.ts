@@ -198,6 +198,8 @@ import {
   loadComplianceKpis,
   saveAuditHeader,
   saveExternalResult,
+  deleteLabelDataTable,
+  saveLabelDataTable,
   saveLabelTemplate,
   savePoEval,
   startAudit,
@@ -206,6 +208,7 @@ import {
 } from "./biz";
 import { auditsPage, complianceMenuPage, externalRowFromLab, testingPage, type AuditNoteRow, type AuditRow } from "./compliance";
 import { loadRadBoard, radOperationPage, radSchedulePage } from "./rad";
+import { labelDataPage, listDataTables, loadLabelFacts, nameFills, parseDataTable, routeMap, valueFills } from "./labeldata";
 import { labelsMenuPage, labelsSoonPage } from "./labels";
 import { labelCodeSvg, labelEditorPage, labelIconSheet, labelLayoutPrintHtml, LayoutError, normalizeLayout, parseLabelInches } from "./labeleditor";
 import { listingsWithMatch, marketplacePage, parseMarketplacePane, salesOrderPage, type ListingRow, type MarketplacePane, type SalesOrderRow } from "./marketplace";
@@ -3760,7 +3763,50 @@ app.get("/compliance/labels/quick-print", async (c) => {
 
 app.get("/compliance/labels/data", async (c) => {
   const s = await shell(c);
-  return html(c, s, "Custom Label Data", labelsSoonPage(s.locale));
+  const tables = await listDataTables(c.env.DB);
+  const id = c.req.query("table") ?? "";
+  const row = id ? tables.find((item) => String(item.id) === id) ?? null : null;
+  if (id && !row) return c.notFound();
+  const editing = row ? parseDataTable(row) : null;
+  return html(
+    c,
+    s,
+    "Custom Label Data",
+    labelDataPage(
+      s.locale,
+      tables.map((item) => ({
+        id: String(item.id ?? ""),
+        name: String(item.name ?? ""),
+        mode: String(item.mode ?? ""),
+        key_field: String(item.key_field ?? ""),
+        columns_json: String(item.columns_json ?? "[]"),
+        rows_json: String(item.rows_json ?? "[]"),
+        updated_at: String(item.updated_at ?? ""),
+      })),
+      editing
+    )
+  );
+});
+
+app.post("/compliance/labels/data", async (c) => {
+  const result = await saveLabelDataTable(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/compliance/labels/data/delete", async (c) => {
+  const result = await deleteLabelDataTable(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.get("/compliance/labels/preview.json", async (c) => {
+  const tag = c.req.query("tag") ?? "";
+  const facts = await loadLabelFacts(c.env.DB, tag);
+  const tables = (await listDataTables(c.env.DB)).map((row) => parseDataTable(row));
+  return c.json(
+    { values: valueFills(facts, tag, tables), routes: routeMap(facts, tag, tables), names: nameFills() },
+    200,
+    { "cache-control": "no-store" }
+  );
 });
 
 app.get("/compliance/labels/icon-sheet", async (c) => {
@@ -3774,6 +3820,9 @@ app.get("/compliance/labels/editor", async (c) => {
   const id = c.req.query("template") ?? "";
   const loaded = id ? templates.find((row) => String(row.id) === id) ?? null : null;
   if (id && !loaded) return c.notFound();
+  const tables = (await listDataTables(c.env.DB)).map((row) => parseDataTable(row));
+  const previewTag = c.req.query("preview") ?? "";
+  const facts = previewTag ? await loadLabelFacts(c.env.DB, previewTag) : null;
   return html(
     c,
     s,
@@ -3783,6 +3832,15 @@ app.get("/compliance/labels/editor", async (c) => {
       templates,
       stocks: await listLookupValues(c.env.DB, "label_stock"),
       loaded,
+      dataTables: tables.map((table) => ({
+        id: table.id,
+        name: table.name,
+        mode: table.mode,
+        columns: table.columns.map((column) => ({ key: column.key, label: column.label })),
+      })),
+      fills: facts ? valueFills(facts, previewTag, tables) : nameFills(),
+      routes: facts ? routeMap(facts, previewTag, tables) : {},
+      previewTag,
     })
   );
 });
@@ -3798,13 +3856,18 @@ app.get("/compliance/labels/code.svg", (c) => {
   return c.body(body, 200, { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "no-store" });
 });
 
-async function labelPrintResponse(c: AppContext, layoutRaw: string, lengthRaw: string, widthRaw: string, name: string) {
+async function labelPrintResponse(c: AppContext, layoutRaw: string, lengthRaw: string, widthRaw: string, name: string, previewTag = "") {
   const s = await shell(c);
   try {
     const layout = normalizeLayout(JSON.parse(layoutRaw));
     const lengthIn = parseLabelInches(lengthRaw);
     const widthIn = parseLabelInches(widthRaw);
-    return c.html(labelLayoutPrintHtml(layout, lengthIn, widthIn, name || "Label", s.locale), {
+    const tables = (await listDataTables(c.env.DB)).map((row) => parseDataTable(row));
+    const fills = previewTag ? valueFills(await loadLabelFacts(c.env.DB, previewTag), previewTag, tables) : nameFills();
+    if (!previewTag) {
+      for (const table of tables) for (const column of table.columns) fills[`d:${table.id}:${column.key}`] = column.label;
+    }
+    return c.html(labelLayoutPrintHtml(layout, lengthIn, widthIn, name || "Label", s.locale, fills), {
       headers: { "cache-control": "no-store" },
     });
   } catch (err) {
@@ -3821,7 +3884,8 @@ app.get("/compliance/labels/print", async (c) => {
     String(template.layout_json ?? ""),
     String(template.length_in ?? ""),
     String(template.width_in ?? ""),
-    String(template.name ?? "")
+    String(template.name ?? ""),
+    c.req.query("preview") ?? ""
   );
 });
 
@@ -3832,7 +3896,8 @@ app.post("/compliance/labels/print", async (c) => {
     String(form.get("layout_json") ?? ""),
     String(form.get("length_in") ?? ""),
     String(form.get("width_in") ?? ""),
-    String(form.get("name") ?? "")
+    String(form.get("name") ?? ""),
+    String(form.get("preview_tag") ?? "")
   );
 });
 

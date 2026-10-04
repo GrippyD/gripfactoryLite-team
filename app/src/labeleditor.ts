@@ -5,6 +5,7 @@
  * Code 128 and QR, drawn as vectors.
  */
 
+import { bindText, fieldGroup, fieldWords, isFieldKey, LABEL_FIELD_KEYS } from "./labeldata";
 import { code128Svg } from "./code128";
 import { t, type Locale } from "./i18n";
 import { labelIcon, type LabelIconName } from "./labelicons";
@@ -90,7 +91,7 @@ export type LineObj = {
 };
 
 export type LabelObject = TextObj | MemoObj | CodeObj | PictureObj | ShapeObj | LineObj;
-export type LabelLayout = { v: 1; objects: LabelObject[] };
+export type LabelLayout = { v: 1; objects: LabelObject[]; connections?: string[] };
 
 export class LayoutError extends Error {
   constructor(message: string) {
@@ -259,7 +260,7 @@ function pictureBytes(raw: unknown, mimeHint: unknown): { mime: PictureMime; byt
 
 export function normalizeLayout(raw: unknown): LabelLayout {
   if (!raw || typeof raw !== "object") throw new LayoutError("The label could not be read.");
-  const body = raw as { v?: unknown; objects?: unknown };
+  const body = raw as { v?: unknown; objects?: unknown; connections?: unknown };
   if (body.v !== 1 || !Array.isArray(body.objects)) throw new LayoutError("The label could not be read.");
   const seen = new Set<string>();
   const objects: LabelObject[] = body.objects.map((item) => {
@@ -332,17 +333,20 @@ export function normalizeLayout(raw: unknown): LabelLayout {
     if (!target || !holdsData(target)) throw new LayoutError("Attach only to an object that holds text or a code.");
     if (wouldCycle(objects, obj.id, obj.attach)) throw new LayoutError("Those objects attach in a circle.");
   }
-  return { v: 1, objects };
+  const connections = (Array.isArray(body.connections) ? body.connections : [])
+    .map((item) => String(item))
+    .filter((item) => item === "package" || item === "harvest" || item === "test" || item === "company" || /^table:[A-Za-z0-9_-]+$/.test(item));
+  return connections.length > 0 ? { v: 1, objects, connections } : { v: 1, objects };
 }
 
 export function emptyFieldsJson(): string {
   return JSON.stringify({ fields: [] });
 }
 
-function shownText(objects: LabelObject[], obj: LabelObject): string {
+function shownText(objects: LabelObject[], obj: LabelObject, fills?: Record<string, string>): string {
   if (!holdsData(obj)) return "";
-  if (obj.attach) return resolveData(objects, obj.id).text;
-  return ownData(obj);
+  const raw = obj.attach ? resolveData(objects, obj.id).text : ownData(obj);
+  return fills ? bindText(raw, fills) : raw;
 }
 
 function codeMarkup(kind: "barcode" | "qr", text: string): string {
@@ -385,7 +389,14 @@ function textStyle(obj: TextObj | MemoObj): string {
 }
 
 /** The print document. `@page` size is the label, and every object is placed in inches. */
-export function labelLayoutPrintHtml(layout: LabelLayout, lengthIn: number, widthIn: number, name: string, locale: Locale = "en"): string {
+export function labelLayoutPrintHtml(
+  layout: LabelLayout,
+  lengthIn: number,
+  widthIn: number,
+  name: string,
+  locale: Locale = "en",
+  fills?: Record<string, string>
+): string {
   const blocks: string[] = [];
   const lines: string[] = [];
   for (const obj of layout.objects) {
@@ -395,7 +406,7 @@ export function labelLayoutPrintHtml(layout: LabelLayout, lengthIn: number, widt
       );
       continue;
     }
-    const shown = shownText(layout.objects, obj);
+    const shown = shownText(layout.objects, obj, fills);
     let inner = "";
     if (obj.type === "text" || obj.type === "memo") {
       inner = `<div class="le-print-text" style="${textStyle(obj)}">${esc(shown)}</div>`;
@@ -531,6 +542,13 @@ const WORD_KEYS = [
   "Those objects attach in a circle.",
   "Length and width are inches from 0.5 to 12.",
   "Replace",
+  "Package",
+  "Harvest",
+  "Test",
+  "Company",
+  "Preview with package",
+  "Preview",
+  "Select a text box, memo, barcode or QR.",
 ] as const;
 
 function wordsFor(locale: Locale): Record<string, string> {
@@ -553,7 +571,7 @@ function whenSaved(iso: string): string {
   return iso.replace("T", " ").slice(0, 16);
 }
 
-function editorObjectsHtml(layout: LabelLayout, lengthIn: number, widthIn: number): string {
+function editorObjectsHtml(layout: LabelLayout, lengthIn: number, widthIn: number, fills?: Record<string, string>): string {
   const blocks: string[] = [];
   const lines: string[] = [];
   for (const obj of layout.objects) {
@@ -563,7 +581,7 @@ function editorObjectsHtml(layout: LabelLayout, lengthIn: number, widthIn: numbe
       );
       continue;
     }
-    const shown = shownText(layout.objects, obj);
+    const shown = shownText(layout.objects, obj, fills);
     const attach = holdsData(obj) && obj.attach ? ` data-le-attach="${esc(obj.attach)}"` : "";
     const shapeAttr = obj.type === "shape" ? ` data-le-shape="${obj.shape}"` : "";
     let inner = "";
@@ -584,6 +602,10 @@ export function labelEditorPage(opts: {
   templates: Array<Record<string, unknown>>;
   stocks: Array<{ value: string; label: string }>;
   loaded: Record<string, unknown> | null;
+  dataTables?: Array<{ id: string; name: string; mode?: string; columns: Array<{ key: string; label: string }> }>;
+  fills?: Record<string, string>;
+  routes?: Record<string, string>;
+  previewTag?: string;
 }): string {
   const locale = opts.locale;
   const rows: EditorTemplate[] = opts.templates.map((row) => ({
@@ -638,10 +660,16 @@ export function labelEditorPage(opts: {
     widthIn,
     name,
     objects: layout.objects,
+    connections: layout.connections ?? [],
     templates: rows.map((row) => ({ id: row.id, name: row.name })),
     stocks,
     fonts: LABEL_FONTS,
     words,
+    tables: opts.dataTables ?? [],
+    fills: opts.fills ?? {},
+    routes: opts.routes ?? {},
+    previewTag: opts.previewTag ?? "",
+    catalog: LABEL_FIELD_KEYS.map((key) => ({ key, group: fieldGroup(key), label: t(locale, fieldWords(key)) })),
   };
   const bootJson = JSON.stringify(boot).replaceAll("<", "\\u003c");
   const openRows =
@@ -698,7 +726,25 @@ export function labelEditorPage(opts: {
         <button type="button" data-le-action="source-data">${esc(t(locale, "Source Data"))}</button>
       </div>
       <p id="le-alert" class="le-alert" role="alert"></p>
-      <p id="le-soon-text" hidden>${esc(t(locale, "Coming in the next slice"))}</p>
+      <div id="le-connections" class="le-pop" data-le-connections hidden>
+        <p class="le-options-title">${esc(t(locale, "Connections"))}</p>
+        <label><input type="checkbox" data-le-connect="package"> ${esc(t(locale, "Package"))}</label>
+        <label><input type="checkbox" data-le-connect="harvest"> ${esc(t(locale, "Harvest"))}</label>
+        <label><input type="checkbox" data-le-connect="test"> ${esc(t(locale, "Test"))}</label>
+        <label><input type="checkbox" data-le-connect="company"> ${esc(t(locale, "Company"))}</label>
+        <div id="le-table-checks"></div>
+        <div id="le-fields"></div>
+        <label>${esc(t(locale, "Preview with package"))} <input id="le-preview-tag" value="${esc(opts.previewTag ?? "")}"></label>
+        <button type="button" id="le-preview">${esc(t(locale, "Preview"))}</button>
+        <dl id="le-routes" data-le-preview>${Object.entries(opts.routes ?? {})
+          .filter(([, route]) => route)
+          .map(
+            ([key, route]) =>
+              `<div data-le-field="${esc(key)}" data-le-route="${esc(route)}"><dt>${esc(isFieldKey(key) ? t(locale, fieldWords(key)) : key)}</dt><dd>${esc(opts.fills?.[key] ?? "")}</dd><dd>${esc(route)}</dd></div>`
+          )
+          .join("")}</dl>
+        <button type="button" data-le-close="connections">${esc(t(locale, "Cancel"))}</button>
+      </div>
       <a class="le-tool le-exit" href="/compliance/labels">${labelIcon("exit", t(locale, "Exit"))}<span>${esc(t(locale, "Exit"))}</span></a>
       <div id="le-open" class="le-pop" hidden>
         ${openRows}
@@ -725,6 +771,7 @@ export function labelEditorPage(opts: {
         <input type="hidden" name="length_in" value="${num(lengthIn)}">
         <input type="hidden" name="width_in" value="${num(widthIn)}">
         <input type="hidden" name="layout_json" value="">
+        <input type="hidden" name="preview_tag" value="">
       </form>
       <input id="le-file" type="file" accept=".jpg,.jpeg,.png,.bmp,image/jpeg,image/png,image/bmp" hidden>
     </div>
@@ -735,7 +782,7 @@ export function labelEditorPage(opts: {
           <div id="le-ruler-x" class="le-ruler-x"></div>
           <div id="le-ruler-y" class="le-ruler-y"></div>
           <div class="le-canvas">
-            <div id="le-label" class="le-label" style="width:${num(lengthIn)}in;height:${num(widthIn)}in">${editorObjectsHtml(layout, lengthIn, widthIn)}</div>
+            <div id="le-label" class="le-label" style="width:${num(lengthIn)}in;height:${num(widthIn)}in">${editorObjectsHtml(layout, lengthIn, widthIn, opts.fills)}</div>
           </div>
         </div>
       </div>
@@ -760,6 +807,8 @@ export function labelEditorStyles(): string {
 .le-tools { position: relative; display: flex; flex-direction: column; gap: 0.35rem; max-height: calc(100vh - 7.5rem); overflow: auto; }
 /* THE L1 GATE (canon 0.30.387): the column's children keep their height, so the options pane holds every option and the column scrolls. */
 .le-tools > * { flex-shrink: 0; }
+.ld-col, .ld-delete { display: flex; gap: 0.35rem; align-items: end; flex-wrap: wrap; }
+.ld-delete { display: inline-flex; margin-left: 0.4rem; }
 .le-pair, .le-shapes { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
 .le-tool {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.15rem;
@@ -860,6 +909,8 @@ function labelEditorClientSource(): string {
     widthIn: Number(boot.widthIn) || 6,
     name: boot.name || "",
     objects: boot.objects || [],
+    connections: boot.connections || [],
+    fills: boot.fills || {},
     selectedId: null,
     tool: null,
     shape: "rect",
@@ -904,9 +955,14 @@ function labelEditorClientSource(): string {
     }
     return false;
   }
-  function shown(obj) { return obj.attach ? resolve(obj.id) : own(obj); }
+  function shown(obj) {
+    var raw = obj.attach ? resolve(obj.id) : own(obj);
+    return String(raw).replace(/\{([A-Za-z0-9_:-]+)\}/g, function (all, key) {
+      return state.fills && Object.prototype.hasOwnProperty.call(state.fills, key) ? state.fills[key] : all;
+    });
+  }
   function hidePops() {
-    ["le-open", "le-save-form", "le-new", "le-size"].forEach(function (id) {
+    ["le-open", "le-save-form", "le-new", "le-size", "le-connections"].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.hidden = true;
     });
@@ -1223,7 +1279,7 @@ function labelEditorClientSource(): string {
         var source = document.createElement("button");
         source.type = "button"; source.textContent = words["Source Data"];
         source.setAttribute("data-le-action", "source-data");
-        source.addEventListener("click", function () { say("Coming in the next slice"); });
+        source.addEventListener("click", openConnections);
         options.appendChild(source);
       }
     } else if (target && (target.type === "barcode" || target.type === "qr")) {
@@ -1260,7 +1316,7 @@ function labelEditorClientSource(): string {
       var sourceIdle = document.createElement("button");
       sourceIdle.type = "button"; sourceIdle.textContent = words["Source Data"];
       sourceIdle.setAttribute("data-le-action", "source-data");
-      sourceIdle.addEventListener("click", function () { say("Coming in the next slice"); });
+      sourceIdle.addEventListener("click", openConnections);
       options.appendChild(sourceIdle);
     }
   }
@@ -1407,8 +1463,14 @@ function labelEditorClientSource(): string {
       setTool("shapes");
     });
   });
-  app.querySelectorAll("[data-le-action='connections'], [data-le-action='source-data']").forEach(function (btn) {
-    btn.addEventListener("click", function () { say("Coming in the next slice"); });
+  function openConnections() {
+    hidePops();
+    var panel = document.getElementById("le-connections");
+    if (panel) panel.hidden = false;
+    renderConnections();
+  }
+  app.querySelectorAll("[data-le-action='connections']").forEach(function (btn) {
+    btn.addEventListener("click", openConnections);
   });
   document.querySelectorAll("[data-le-close]").forEach(function (btn) {
     btn.addEventListener("click", hidePops);
@@ -1454,13 +1516,105 @@ function labelEditorClientSource(): string {
     document.getElementById("le-size").hidden = true;
     renderObjects(); rulers(); syncMeta();
   }
-  function layoutJson() { return JSON.stringify({ v: 1, objects: state.objects }); }
+  function layoutJson() { return JSON.stringify({ v: 1, objects: state.objects, connections: state.connections }); }
+  function renderConnections() {
+    var tables = document.getElementById("le-table-checks");
+    var fields = document.getElementById("le-fields");
+    if (!tables || !fields) return;
+    tables.replaceChildren();
+    (boot.tables || []).forEach(function (table) {
+      var label = document.createElement("label");
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = state.connections.indexOf("table:" + table.id) >= 0;
+      box.addEventListener("change", function () {
+        var token = "table:" + table.id;
+        state.connections = state.connections.filter(function (item) { return item !== token; });
+        if (box.checked) state.connections.push(token);
+        renderConnections();
+      });
+      label.appendChild(box);
+      label.appendChild(document.createTextNode(" " + table.name));
+      tables.appendChild(label);
+    });
+    document.querySelectorAll("[data-le-connect]").forEach(function (box) {
+      var group = box.getAttribute("data-le-connect");
+      box.checked = state.connections.indexOf(group) >= 0;
+    });
+    fields.replaceChildren();
+    (boot.catalog || []).forEach(function (field) {
+      if (state.connections.indexOf(field.group) < 0) return;
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = field.label;
+      btn.addEventListener("click", function () { insertToken("{" + field.key + "}"); });
+      fields.appendChild(btn);
+    });
+    (boot.tables || []).forEach(function (table) {
+      if (state.connections.indexOf("table:" + table.id) < 0) return;
+      (table.columns || []).forEach(function (column) {
+        if (table.mode === "keyed" && column.key === "c0") return;
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = table.name + " " + column.label;
+        btn.addEventListener("click", function () { insertToken("{d:" + table.id + ":" + column.key + "}"); });
+        fields.appendChild(btn);
+      });
+    });
+  }
+  function insertToken(token) {
+    var obj = state.selectedId ? find(state.selectedId) : null;
+    if (!obj || !holds(obj)) { say("Select a text box, memo, barcode or QR."); return; }
+    if (obj.type === "text" || obj.type === "memo") obj.text = ((obj.text || "") + " " + token).trim();
+    else obj.data = ((obj.data || "") + " " + token).trim();
+    renderObjects();
+    renderOptions();
+  }
+  document.querySelectorAll("[data-le-connect]").forEach(function (box) {
+    box.addEventListener("change", function () {
+      var group = box.getAttribute("data-le-connect");
+      state.connections = state.connections.filter(function (item) { return item !== group; });
+      if (box.checked) state.connections.push(group);
+      renderConnections();
+    });
+  });
+  var previewBtn = document.getElementById("le-preview");
+  if (previewBtn) previewBtn.addEventListener("click", function () {
+    var tag = document.getElementById("le-preview-tag").value.trim();
+    if (!tag) { state.fills = boot.fills || {}; renderObjects(); return; }
+    fetch("/compliance/labels/preview.json?tag=" + encodeURIComponent(tag), { headers: { accept: "application/json" } })
+      .then(function (res) { return res.json(); })
+      .then(function (body) {
+        state.fills = body.values || {};
+        var list = document.getElementById("le-routes");
+        if (list) {
+          list.replaceChildren();
+          Object.keys(body.routes || {}).forEach(function (key) {
+            if (!body.routes[key]) return;
+            var row = document.createElement("div");
+            row.setAttribute("data-le-field", key);
+            row.setAttribute("data-le-route", body.routes[key]);
+            var value = document.createElement("dd");
+            value.textContent = (body.values && body.values[key]) || "";
+            var route = document.createElement("dd");
+            route.textContent = body.routes[key];
+            row.appendChild(value);
+            row.appendChild(route);
+            list.appendChild(row);
+          });
+        }
+        renderObjects();
+      })
+      .catch(function () { say("The label could not be read."); });
+  });
   function fillPrint() {
     var form = document.getElementById("le-print-form");
     form.querySelector("[name=length_in]").value = String(state.lengthIn);
     form.querySelector("[name=width_in]").value = String(state.widthIn);
     form.querySelector("[name=layout_json]").value = layoutJson();
     form.querySelector("[name=name]").value = state.name || "Label";
+    var preview = document.getElementById("le-preview-tag");
+    form.querySelector("[name=preview_tag]").value = preview ? preview.value.trim() : "";
   }
   var saveForm = document.getElementById("le-save-form");
   saveForm.addEventListener("submit", function (e) {
