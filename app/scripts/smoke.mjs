@@ -5402,7 +5402,13 @@ async function run() {
     for (const label of ["Plants Remaining/Total Plants", "Plants Harvested", "% Complete", "Wet Weight/plant AVG", "Dry Weight/plant AVG", "Weight Harvested"]) {
       assert((consolePage.body.match(new RegExp(`<dt>${label.replace(/[/%]/g, (c) => "\\" + c)}`, "g")) || []).length === 4, `every box must carry the ${label} line`);
     }
-    assert((consolePage.body.match(/<dt>Harvest Hours /g) || []).length === 1, "only the Total box carries Harvest Hours");
+    assert((consolePage.body.match(/<dt>Harvest Hours <span/g) || []).length === 1, "only the Total box carries Harvest Hours");
+    const hoursAt = consolePage.body.indexOf('data-hc-metric="hours"');
+    const toDateAt = consolePage.body.indexOf('data-hc-metric="hours_to_date"');
+    const dlhAt = consolePage.body.indexOf('data-hc-metric="weight_per_dlh"');
+    assert(hoursAt >= 0 && toDateAt > hoursAt && dlhAt > toDateAt, "Harvest Hours to date sits after Harvest Hours and before Weight/DLH");
+    assert((consolePage.body.match(/data-hc-metric="hours_to_date"/g) || []).length === 1, "Harvest Hours to date is on the Total pane only");
+    assert(consolePage.body.includes('data-hc="hours_to_date">type hours<'), "with no hours yet the to-date line says type hours");
     assert((consolePage.body.match(/<dt>Weight\/DLH /g) || []).length === 1, "only the Total box carries Weight/DLH");
     assert((consolePage.body.match(/<dt>Harvest Year Total /g) || []).length === 4, "every box carries Harvest Year Total");
     // THE YEAR PANE (canon 0.30.346): its own inset in every box, last on Total beneath Weight/DLH.
@@ -5527,6 +5533,16 @@ async function run() {
     const consoleSaved = await text("/harvest?ok=hours");
     assert(consoleSaved.body.includes('data-hc-flash>Hours saved.</p>'), "the save must flash");
     assert(/value="8"[^>]*aria-label="Harvest Hours"/.test(consoleSaved.body), "the Total box must keep its typed 8");
+    assert(consoleSaved.body.includes('data-hc="hours_to_date">8<') && consoleSaved.body.includes(`since ${consoleToday}`), "the to-date figure is the 8 typed today, from that day");
+    const laterDay = dayAfterSmoke(consoleToday);
+    const laterHours = await req("/harvest/hours", { method: "POST", body: form({ farm: "ALL", work_date: laterDay, hours: "5" }) });
+    assert(laterHours.status === 303, `a later day's hours expected 303 got ${laterHours.status}`);
+    const todayWithLater = await text("/harvest");
+    assert(todayWithLater.body.includes('data-hc="hours_to_date">8<'), "a later day's hours do not count on an earlier day");
+    const earlierHours = await text(`/harvest?day=${pickedDay}`);
+    assert(earlierHours.body.includes('data-hc="hours_to_date">type hours<'), "an earlier day does not count hours typed after it");
+    const clearLater = await req("/harvest/hours", { method: "POST", body: form({ farm: "ALL", work_date: laterDay, hours: "" }) });
+    assert(clearLater.status === 303, "the later day's hours must clear");
     const laborHoursReport = await text(`/reports/labor_hours?from=${consoleToday}&to=${consoleToday}`);
     assert(laborHoursReport.body.includes("<td>Harvest hours</td>"), "the labor hours report names the one farm-wide row Harvest hours");
     const totalSaved = consoleSaved.body.slice(consoleSaved.body.indexOf('data-hc-farm="Total"'), consoleSaved.body.indexOf('data-hc-section="drying"'));
