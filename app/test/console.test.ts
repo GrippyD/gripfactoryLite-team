@@ -12,6 +12,7 @@ import {
   HARVEST_PATH,
   HARVEST_TRIM_HOURS_PATH,
   harvestConsolePage,
+  harvestHoursThrough,
   consoleDayOf,
   loadHarvestConsole,
   parseHours,
@@ -147,9 +148,11 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(total.pct).toBeCloseTo(850 / 2350, 9);
     expect(by("Total", "pct").value).toBe("36.2%");
     expect(by("Total", "hours")).toEqual({ key: "hours", label: "Harvest Hours", value: "8" });
+    expect(by("Total", "hours_to_date")).toEqual({ key: "hours_to_date", label: "Harvest Hours to date", value: "type hours" });
+    expect(by("PNN", "hours_to_date")).toBeUndefined();
     expect(by("Total", "weight_per_dlh")).toEqual({ key: "weight_per_dlh", label: "Weight/DLH", value: "26.58 lb/h", sub: "11,907 g/h" });
     // THE YEAR PANE (canon 0.30.346): last on Total, beneath Weight/DLH.
-    expect(total.metrics.map((m) => m.key).slice(-7)).toEqual(["hours", "weight_per_dlh", "weight_harvested_year", "assumed_dry", "estimated_bud", "ff_dry_equiv", "estimated_dry_total"]);
+    expect(total.metrics.map((m) => m.key).slice(-8)).toEqual(["hours", "hours_to_date", "weight_per_dlh", "weight_harvested_year", "assumed_dry", "estimated_bud", "ff_dry_equiv", "estimated_dry_total"]);
     // THE PLANTS FROM ADMIN'S TOTAL (canon 0.30.346): a typed total less the remaining is the harvested, and drives the percent.
     const typed = consoleBoxes({ ...input, plantCounts: { PNN: 5000, ARL: null, PNS: 10 } });
     const tby = (farm: string, key: string) => typed.find((b) => b.farm === farm)!.metrics.find((m) => m.key === key)!.value;
@@ -279,7 +282,9 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
       "Estimated Bud",
     ];
     for (const label of labels) expect(html.match(new RegExp(`<dt>${label.replace(/[%/]/g, (c) => (c === "%" ? "%" : "\\/"))}`, "g"))).toHaveLength(4);
-    expect(html.match(/<dt>Harvest Hours/g)).toHaveLength(1);
+    expect(html.match(/<dt>Harvest Hours <span/g)).toHaveLength(1);
+    expect(html).toContain('<dt>Harvest Hours to date</dt>');
+    expect(html).toContain('data-hc="hours_to_date">type hours</span>');
     expect(html.match(/<dt>Weight\/DLH/g)).toHaveLength(1);
     expect(html).toContain('<span class="hc-value" data-hc="remaining_total">1,200 / 2,000</span>');
     expect(html).toContain('<span class="hc-value" data-hc="weight_per_dlh">26.58 lb/h</span><span class="hc-sub muted">11,907 g/h</span>');
@@ -1428,5 +1433,56 @@ describe("the Rad is the second way a tag is pasteurized", () => {
     const ready = figures.panes.find((pane) => pane.gate === "ready");
     expect(ready?.packages).toBe(1);
     expect(ready?.grams).toBe(100);
+  });
+});
+
+describe("HARVEST HOURS TO DATE (canon 0.30.409)", () => {
+  const row = (work_date: string, farm_code: string, hours: number) => ({ work_date, farm_code, hours });
+
+  it("sums each date by the day's rule through the day under view", () => {
+    const farmsOnly = [row("2026-07-20", "PNN", 10), row("2026-07-20", "ARL", 5.5)];
+    expect(harvestHoursThrough(farmsOnly, "2026-07-20", 2026)).toEqual({ hours: 15.5, since: "2026-07-20" });
+    const allOnly = [row("2026-09-29", "ALL", 100)];
+    expect(harvestHoursThrough(allOnly, "2026-09-29", 2026)).toEqual({ hours: 100, since: "2026-09-29" });
+    const both = [
+      ...farmsOnly,
+      row("2026-09-29", "ALL", 1600),
+      row("2026-09-29", "PNN", 999),
+      row("2026-09-30", "ALL", 1700),
+      row("2026-10-01", "ALL", 1600),
+      row("2026-10-02", "ALL", 1635),
+      row("2026-07-20", "ALL", 25631.84),
+    ];
+    // An ALL row on 07-20 replaces the farm rows. The 10-03 row is after the day. 2025 stays out.
+    const mixed = [
+      row("2026-07-20", "PNN", 20000),
+      row("2026-07-20", "ARL", 5631.84),
+      row("2026-09-29", "ALL", 1600),
+      row("2026-09-29", "PNS", 50),
+      row("2026-09-30", "ALL", 1700),
+      row("2026-10-01", "ALL", 1600),
+      row("2026-10-02", "ALL", 1635),
+      row("2026-10-03", "ALL", 9),
+      row("2025-12-31", "PNN", 400),
+    ];
+    expect(harvestHoursThrough(mixed, "2026-09-28", 2026)).toEqual({ hours: 25631.84, since: "2026-07-20" });
+    expect(harvestHoursThrough(mixed, "2026-10-02", 2026)).toEqual({ hours: 32166.84, since: "2026-07-20" });
+    expect(harvestHoursThrough(both, "2026-10-02", 2026).hours).toBe(32166.84);
+    expect(harvestHoursThrough([], "2026-10-02", 2026)).toEqual({ hours: null, since: null });
+    const words = consoleBoxes({ ...input, hoursToDate: null, hoursToDateSince: null });
+    expect(words.find((b) => b.farm === "Total")!.metrics.find((m) => m.key === "hours_to_date")).toEqual({
+      key: "hours_to_date",
+      label: "Harvest Hours to date",
+      value: "type hours",
+    });
+    const shown = consoleBoxes({ ...input, hoursToDate: 32166.84, hoursToDateSince: "2026-07-20" }, "es");
+    const metric = shown.find((b) => b.farm === "Total")!.metrics.find((m) => m.key === "hours_to_date")!;
+    expect(metric.value).toBe("32166.84");
+    expect(metric.sub).toBe("desde 2026-07-20");
+    expect(shown.find((b) => b.farm === "PNN")!.metrics.find((m) => m.key === "hours_to_date")).toBeUndefined();
+    const keys = shown.find((b) => b.farm === "Total")!.metrics.map((m) => m.key);
+    expect(keys.indexOf("hours_to_date")).toBe(keys.indexOf("hours") + 1);
+    expect(shown.find((b) => b.farm === "Total")!.metrics.find((m) => m.key === "hours")!.value).toBe("8");
+    expect(shown.find((b) => b.farm === "Total")!.metrics.find((m) => m.key === "weight_per_dlh")!.value).toContain("lb/h");
   });
 });

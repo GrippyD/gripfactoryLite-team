@@ -1219,6 +1219,8 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Wet Weight/plant AVG": { en: "Wet Weight/plant AVG", es: "Peso humedo/planta PROM" },
   "Dry Weight/plant AVG": { en: "Dry Weight/plant AVG", es: "Peso seco/planta PROM" },
   "Harvest Hours": { en: "Harvest Hours", es: "Horas de cosecha" },
+  "Harvest Hours to date": { en: "Harvest Hours to date", es: "Horas de cosecha a la fecha" },
+  "since {date}": { en: "since {date}", es: "desde {date}" },
   "Weight/DLH": { en: "Weight/DLH", es: "Peso/hora de trabajo" },
   "Weight Harvested": { en: "Weight Harvested", es: "Peso cosechado" },
   "Harvest Year Total": { en: "Harvest Year Total", es: "Total del año de cosecha" },

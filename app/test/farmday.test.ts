@@ -202,6 +202,7 @@ describe("THE CONSOLE DAY (canon 0.30.152; owner: \"on the dashboard, can we do 
     expect(trim?.args).toEqual(["2026-09-20", "2026-09-20T10:00:00.000Z", "2026-09-21T10:00:00.000Z"]);
     const hours = db.seen.find((q) => q.sql.includes("FROM harvest_labor_hours WHERE work_date = ?"));
     expect(hours?.args).toEqual(["2026-09-20"]);
+    expect(db.seen.find((q) => q.sql.includes("work_date >= ? AND work_date <= ?"))?.args).toEqual(["2026-01-01", "2026-09-20"]);
     expect(db.seen.find((q) => q.sql.includes("FROM trim_line_inputs"))).toBeUndefined();
     expect(db.seen.find((q) => q.sql.includes("l.new_value = 'trimmed'"))?.args).toEqual(["2026-09-20T10:00:00.000Z", "2026-09-21T10:00:00.000Z"]);
     expect(db.seen.find((q) => q.sql.includes("p.created_at >= ?") && !q.sql.includes("trim_date") && !q.sql.includes("source = 'cryo'"))?.args).toEqual(["2026-09-21T05:00:00.000Z"]);
@@ -219,6 +220,7 @@ describe("THE CONSOLE DAY (canon 0.30.152; owner: \"on the dashboard, can we do 
     expect(pickedInput.dayPicked).toBe(true);
     expect(picked.seen.find((q) => q.sql.includes("FROM wet_weights x"))?.args).toEqual(["2026-09-15T10:00:00.000Z", "2026-09-16T10:00:00.000Z"]);
     expect(picked.seen.find((q) => q.sql.includes("FROM trim_labor_hours WHERE work_date = ?"))?.args).toEqual(["2026-09-15"]);
+    expect(picked.seen.find((q) => q.sql.includes("work_date >= ? AND work_date <= ?"))?.args).toEqual(["2026-01-01", "2026-09-15"]);
   });
 
   it("the control: a date box under the title, today by default, capped at today, the picked state named, a way back", () => {

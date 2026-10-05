@@ -262,6 +262,10 @@ export type HarvestConsoleInput = {
   hours: Record<ConsoleFarm, number | null>;
   /** THE HARVEST HOURS (canon 0.30.310): the one typed row, farm_code ALL, for the day under view. */
   harvestHoursAll?: number | null;
+  /** HARVEST HOURS TO DATE (canon 0.30.409): hours of the harvest year through the day under view. Null when none are typed. */
+  hoursToDate?: number | null;
+  /** The earliest work date in that sum. */
+  hoursToDateSince?: string | null;
   /** Farm Plant Count for the harvest year: the constant denominator, null when none is saved. */
   plantCounts: Record<ConsoleFarm, number | null>;
   /** THE TRIMMING SECTION (canon 0.30.88): the console day's trim room, by shift; absent renders the section empty. */
@@ -1047,8 +1051,16 @@ export function consoleBoxes(input: HarvestConsoleInput, locale: Locale = "en"):
         hours = any ? sum : null;
       }
       const perDlh = hours != null && hours > 0 ? wetDay / hours : null;
+      const toDate = input.hoursToDate ?? null;
+      const since = toDate == null ? null : input.hoursToDateSince ?? null;
       metrics.push(
         { key: "hours", label: "Harvest Hours", value: hours == null ? NA : String(hours) },
+        {
+          key: "hours_to_date",
+          label: "Harvest Hours to date",
+          value: toDate == null ? t(locale, "type hours") : String(toDate),
+          ...(since ? { sub: tFill(locale, "since {date}", { date: since }) } : {}),
+        },
         {
           key: "weight_per_dlh",
           label: "Weight/DLH",
@@ -2717,6 +2729,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     dayWet,
     yearWet,
     hoursRows,
+    hoursThroughRows,
     trimPackages,
     trimHoursRows,
     btrRaw,
@@ -2803,6 +2816,13 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
       .prepare(`SELECT farm_code, hours FROM harvest_labor_hours WHERE work_date = ?`)
       .bind(day)
       .all<{ farm_code: string; hours: number }>(),
+    db
+      .prepare(
+        `SELECT work_date, farm_code, hours FROM harvest_labor_hours
+         WHERE work_date >= ? AND work_date <= ?`
+      )
+      .bind(`${year}-01-01`, day)
+      .all<{ work_date: string; farm_code: string; hours: number }>(),
     // THE TRIMMING SECTION (canon 0.30.88): the console day's trim room packages,
     // dated by the typed trim date (a row without one by its entry instant).
     db
@@ -2979,6 +2999,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
       if (farm) hours[farm] = Number(row.hours);
     }
   }
+  const hoursThrough = harvestHoursThrough(hoursThroughRows.results ?? [], day, year);
   const plantCounts = {} as Record<ConsoleFarm, number | null>;
   for (const farm of CONSOLE_FARMS) plantCounts[farm] = null;
   for (const row of plantCountRows.results ?? []) {
@@ -3040,6 +3061,8 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     yearWet: (yearWet.results ?? []).map((r) => ({ farm: r.farm, wet_grams: Number(r.wet_grams ?? 0) })),
     hours,
     harvestHoursAll,
+    hoursToDate: hoursThrough.hours,
+    hoursToDateSince: hoursThrough.since,
     plantCounts,
     trim,
     trimLive,
@@ -3074,6 +3097,48 @@ function yieldLotsOf(
 }
 
 /* -------------------------------------------------------------- the hours */
+
+export type HarvestHourRow = { work_date: string; farm_code: string; hours: number };
+
+/** HARVEST HOURS TO DATE (canon 0.30.409). Each work date of the harvest year through the day
+ * under view counts the way the day does: the ALL row when one stands, else the farm rows.
+ * A later date and another year stay out. No row gives no hours. */
+export function harvestHoursThrough(
+  rows: readonly HarvestHourRow[],
+  day: string,
+  year: number
+): { hours: number | null; since: string | null } {
+  const byDate = new Map<string, { all: number | null; farms: number; farmSeen: boolean }>();
+  const yearText = String(year);
+  for (const row of rows) {
+    const date = row.work_date;
+    if (!date.startsWith(yearText) || date > day) continue;
+    const isAll = row.farm_code === "ALL";
+    const isFarm = !isAll && (CONSOLE_FARMS as readonly string[]).includes(row.farm_code);
+    if (!isAll && !isFarm) continue;
+    let bucket = byDate.get(date);
+    if (!bucket) {
+      bucket = { all: null, farms: 0, farmSeen: false };
+      byDate.set(date, bucket);
+    }
+    if (isAll) bucket.all = Number(row.hours);
+    else {
+      bucket.farms += Number(row.hours);
+      bucket.farmSeen = true;
+    }
+  }
+  if (byDate.size === 0) return { hours: null, since: null };
+  let cents = 0;
+  let since: string | null = null;
+  for (const [date, bucket] of byDate) {
+    const hours = bucket.all != null ? bucket.all : bucket.farmSeen ? bucket.farms : null;
+    if (hours == null) continue;
+    cents += Math.round(hours * 100);
+    if (since == null || date < since) since = date;
+  }
+  if (since == null) return { hours: null, since: null };
+  return { hours: cents / 100, since };
+}
 
 /** The typed hours: a number of hours, zero or more, quarter hours welcome; blank clears the day. */
 export function parseHours(raw: string | null): number | null {
