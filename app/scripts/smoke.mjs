@@ -386,14 +386,28 @@ function releaseFormId(html) {
   return m[1];
 }
 
-function localD1(sql) {
+function smokeDb() {
   const dir = join(appRoot, ".smoke-persist", "v3", "d1", "miniflare-D1DatabaseObject");
   const name = readdirSync(dir).find((file) => file.endsWith(".sqlite") && file !== "metadata.sqlite");
   if (!name) throw new Error("the smoke persist has no D1 file");
   const db = new DatabaseSync(join(dir, name));
+  db.exec("PRAGMA busy_timeout = 5000");
+  return db;
+}
+
+function localD1(sql) {
+  const db = smokeDb();
   try {
-    db.exec("PRAGMA busy_timeout = 5000");
     db.exec(sql);
+  } finally {
+    db.close();
+  }
+}
+
+function localD1All(sql) {
+  const db = smokeDb();
+  try {
+    return db.prepare(sql).all();
   } finally {
     db.close();
   }
@@ -5688,6 +5702,40 @@ async function run() {
     const trimTotals = trimSection.slice(trimSection.indexOf("data-hc-trim-totals"));
     assert(trimTotals.indexOf('data-hc-trim-total="btr"') > trimTotals.indexOf('data-hc-trim-total="per"'), "the weighted BTR must stand right of Lbs/DLH");
     assert(trimTotals.includes('data-hc-trim-total="btr"><div class="hc-gate-name">Weighted BTR</div><span class="hc-value">49.4%</span>'), "the weighted BTR must read 49.4% (39 of 79)");
+    // WEIGHTED BTR TO DATE (canon 0.30.407): the fifth cell, this season's live trim packages (source null), one pool.
+    const seasonYear = Number(String(farmToday).slice(0, 4));
+    const codeRows = localD1All("SELECT value FROM app_config WHERE key = 'btr_type_codes' AND deleted_at IS NULL");
+    const codeText = String((codeRows[0] && codeRows[0].value) || "");
+    const budCodes = codeText.split(",").map((part) => part.trim().toUpperCase()).filter(Boolean);
+    const budSet = new Set(budCodes.length ? budCodes : ["BUD", "SMALLS", "SHAKE"]);
+    const seasonRows = localD1All(
+      `SELECT p.wet_weight_entry_id AS lot_id, UPPER(TRIM(COALESCE(p.package_type_code, ''))) AS type_code, SUM(p.weight_grams) AS grams
+       FROM wip_packages p
+       JOIN wet_weight_entries w ON w.id = p.wet_weight_entry_id AND w.deleted_at IS NULL
+       JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
+       WHERE p.deleted_at IS NULL AND p.source IS NULL AND b.harvest_year = ${seasonYear}
+       GROUP BY p.wet_weight_entry_id, UPPER(TRIM(COALESCE(p.package_type_code, '')))`
+    );
+    let seasonGrams = 0;
+    let seasonBud = 0;
+    const seasonLots = new Set();
+    for (const row of seasonRows) {
+      const grams = Number(row.grams || 0);
+      seasonGrams += grams;
+      seasonLots.add(row.lot_id);
+      if (budSet.has(row.type_code)) seasonBud += grams;
+    }
+    assert(trimTotals.indexOf('data-hc-trim-total="btr_to_date"') > trimTotals.indexOf('data-hc-trim-total="btr"'), "Weighted BTR to date must stand to the right of Weighted BTR");
+    if (seasonGrams <= 0) {
+      assert(trimTotals.includes('data-hc-trim-total="btr_to_date"') && trimTotals.includes("no trim this season"), "an empty season must say no trim this season");
+    } else {
+      const seasonPct = ((seasonBud / seasonGrams) * 100).toFixed(1) + "%";
+      const seasonLb = (Math.round((seasonGrams / 448) * 100) / 100).toFixed(2).replace(/\B(?=(\d{3})+\.)/g, ",");
+      assert(
+        trimTotals.includes(`data-hc-trim-total="btr_to_date"><div class="hc-gate-name">Weighted BTR to date</div><span class="hc-value">${seasonPct}</span><span class="hc-sub muted">${seasonLots.size} lots, ${seasonLb} lb trimmed this season</span>`),
+        `Weighted BTR to date must read the smoke's own ${seasonPct} (${seasonBud} of ${seasonGrams} g, ${seasonLots.size} lots)`
+      );
+    }
     // THE TRIM BOGEY (canon 0.30.249): 40 until saved; at 35 the 69 consumed reach four product cells, from the 66th.
     const wasteOf = (card) => {
       const at = card.indexOf('<svg class="hc-bud"');

@@ -1,6 +1,6 @@
-# MINI BRIEF R3: WEIGHTED BTR TO DATE ON THE TRIM TOTALS BAR (canon 0.30.407)
+# MINI BRIEF R3: WEIGHTED BTR TO DATE ON THE TRIM TOTALS BAR (canon 0.30.407, re-pinned 0.30.411)
 
-For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155). One more figure at the far right of the trim totals bar on the dashboard. Built on the worktree exactly as it stands LIVE after L5 and R2 (worker `79db4872`, main `2bd6f36`, the app tree `335dfa13121944d5`, 299 files, migrations 0001-0094). The tree hash is canon's command, run in `app/`: `(find src test scripts migrations -type f; echo wrangler.toml; echo tsconfig.json; echo package.json) | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-16`; if the disk differs, stop and say so. One build agent in this worktree at a time. No migration.
+For the build session (Claude Code or Cursor) opened in the worktree `branches/GFLiteOpsDashboard` (its `app/` is the app), under THE DISPATCH RULE (canon 0.30.155). One more figure at the far right of the trim totals bar on the dashboard. Built on the worktree exactly as it stands LIVE after R4 (worker `ce7c3ace`, main `cc69686`, the app tree `d5c56d6a8251056e`, 299 files, migrations 0001-0094). R4 (Harvest Hours to date, the Total pane) is live in `src/console.ts`; leave it as it is. The tree hash is canon's command, run in `app/`: `(find src test scripts migrations -type f; echo wrangler.toml; echo tsconfig.json; echo package.json) | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-16`; if the disk differs, stop and say so. One build agent in this worktree at a time. No migration.
 
 ## The source (verbatim)
 
@@ -14,7 +14,7 @@ What the code holds (the live tree): `trimTotalsLine` in `src/console.ts` draws 
 2. THE FIGURE. Every live trim package (`wip_packages`, source null, not deleted) of this season's lots (the lot's harvest year is the farm day's year) weighed up to now: the grams of the bud types in Admin's `btr_type_codes` over the grams of every type, weighted by weight (one pool, never an average of percents). Lots still being trimmed count with what they have weighed so far; the day's own packages count too. No package yet: "no trim this season" in its place.
 3. NOTHING ELSE MOVES. The four cells and their figures stay as they are; the season BTR that farms borrow (0.30.376) stays its own figure. Lite, CO and Cerberus, computer and phone (on a phone the bar wraps as it does now).
 
-On the snapshot `db_backups/20261004-205213_wip_template` the Scribe reads, for the check: 2,629 live trim packages of 2026 lots, 37 lots, 47,022,171 g; bud types 15,225,788 g (BUD 8,686,419, SMALLS 5,984,173, SHAKE 555,196); so about 32.4 percent.
+On the snapshot `db_backups/20261005-194819_pre_r4` the Scribe reads, for the check: 2,715 live trim packages of 2026 lots, 39 lots, 48,021,086 g; bud types 15,596,703 g (BUD 8,930,615, SMALLS 6,100,631, SHAKE 565,457); so about 32.5 percent.
 
 ## The tests and the smoke
 
