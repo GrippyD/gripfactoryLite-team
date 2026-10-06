@@ -437,6 +437,13 @@ body.device-phone .station-triple.field-triple > *, body.device-phone .station-t
 .field-tote-pin { display: inline-flex; gap: 0.35rem; align-items: center; }
 .field-tote-hbn.js:not(.changed) .field-tote-pin { display: none; }
 .field-tote-pin input[type="password"] { width: 4.5rem; }
+/* FLOOR VS METRC (canon 0.30.415): the tables scroll inside their box. A grid
+   column of minmax(0, 1fr) keeps that box on the page, including on a phone. */
+.floor-metrc { display: grid; grid-template-columns: minmax(0, 1fr); max-width: 100%; }
+.report-scroll { display: block; width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.report-scroll > table.data { width: max-content; min-width: 100%; }
+.report-scroll > table.data th, .report-scroll > table.data td { white-space: nowrap; }
+body.device-phone .report-scroll > table.data { display: table; overflow: visible; white-space: nowrap; }
 ${tones}
 `;
 }

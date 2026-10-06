@@ -34,6 +34,7 @@ export const REPORT_KEYS = [
   "labor_hours",
   "line_packages",
   "post_harvest_puzzles",
+  "floor_vs_metrc",
 ] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
@@ -348,6 +349,11 @@ export const REPORT_CARDS: Array<{ key: ReportKey; title: string; blurb: string 
     key: "post_harvest_puzzles",
     title: "Post Harvest Puzzles",
     blurb: "One row per strain for a harvest year: the 2025 history from the workbook, later years from the lots.",
+  },
+  {
+    key: "floor_vs_metrc",
+    title: "Floor vs METRC",
+    blurb: "The floor's packages beside the METRC mirror, by tag and by lot.",
   },
 ];
 

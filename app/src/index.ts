@@ -471,6 +471,7 @@ import {
   type TatLine,
   type TatMetricKey,
 } from "./reports";
+import { floorVsMetrcCsv, floorVsMetrcPage, loadFloorVsMetrc, shownFloorVsMetrc } from "./floormetrc";
 import {
   PIPELINE,
   TABLE_EXPORTS,
@@ -936,6 +937,38 @@ app.get("/reports/:key", async (c) => {
             })
           : "";
     return html(c, s, "Post Harvest Puzzles", postHarvestHtml(puzzle, s.locale, flash || undefined));
+  }
+  if (key === "floor_vs_metrc") {
+    if (!url.searchParams.get("finding")) url.searchParams.set("finding", "differences");
+    const today = await farmToday(c.env.DB, nowIso());
+    const year = Number(today.slice(0, 4));
+    const model = await loadFloorVsMetrc(c.env.DB, Number.isInteger(year) ? year : new Date().getUTCFullYear());
+    const filter = {
+      finding: url.searchParams.get("finding") || "differences",
+      itemKind: (url.searchParams.get("item_kind") || "").trim(),
+      lot: url.searchParams.get("lot") || "",
+    };
+    const shown = shownFloorVsMetrc(model, filter);
+    if (format === "csv") {
+      return new Response(floorVsMetrcCsv(shown, model.changedAt), {
+        headers: {
+          "content-type": "text/csv; charset=utf-8",
+          "content-disposition": `attachment; filename="floor_vs_metrc_${reportFileStamp()}.csv"`,
+        },
+      });
+    }
+    return html(
+      c,
+      s,
+      "Floor vs METRC",
+      floorVsMetrcPage({
+        changedAt: model.changedAt,
+        packages: shown.packages,
+        lots: shown.lots,
+        filter,
+        locale: s.locale,
+      })
+    );
   }
   const view = await buildReportView(c.env.DB, key, url.searchParams, s.locale);
   if (view.reserved) {
