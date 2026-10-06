@@ -1365,6 +1365,13 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "both shifts, Total Bud over the shift totals",
     es: "ambos turnos, flor total sobre los totales de turno",
   },
+  // WEIGHTED BTR TO DATE (canon 0.30.407): the fifth cell of the trim totals bar.
+  "Weighted BTR to date": { en: "Weighted BTR to date", es: "BTR ponderado a la fecha" },
+  "no trim this season": { en: "no trim this season", es: "sin recorte esta temporada" },
+  "{n} lots, {lb} lb trimmed this season": {
+    en: "{n} lots, {lb} lb trimmed this season",
+    es: "{n} lotes, {lb} lb recortados esta temporada",
+  },
   "Bulk + Prepack": { en: "Bulk + Prepack", es: "Granel + preempacada" },
   "Total Bud / shift total (weighed + WIP left)": { en: "Total Bud / shift total (weighed + WIP left)", es: "Flor total / total del turno (pesado + WIP restante)" },
   "Shift total": { en: "Shift total", es: "Total del turno" },

@@ -24,6 +24,7 @@ import {
   trimFigures,
   trimLinePicture,
   trimmingSection,
+  weightedBtrToDate,
   liveTrimLine,
   trimDuty,
   btrBar,
@@ -37,6 +38,7 @@ import {
   isPasteurizedTag,
   type HarvestConsoleInput,
   type TrimInput,
+  type TrimSeasonRow,
   type YieldLot,
 } from "../src/console";
 import { CONFIG_KEYS, parseBtrTypeCodes, parseCryoTypeCategories, parseNameList, parseShiftWindow, parseTrimBogey, shiftWindowHolds, TRIM_BOGEY_DEFAULT, TRIM_SHIFT_HOURS_DEFAULT, trimBogeyOf } from "../src/config";
@@ -1283,6 +1285,69 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(quiet).toMatch(/data-hc-trim-total="btr"[\s\S]*?<span class="hc-value">no packages on the day<\/span><\/div>/);
     const esTotals = trimmingSection({ ...withTrim, trim: { ...trim, hours: { day: 5, second: 3 } } }, "es");
     expect(esTotals).toContain('<div class="hc-gate-name">BTR ponderado</div><span class="hc-value">51.4%</span><span class="hc-sub muted">ambos turnos, flor total sobre los totales de turno</span>');
+  });
+
+  it("WEIGHTED BTR TO DATE (canon 0.30.407): one pool of this season's live trim packages, after the day's Weighted BTR", () => {
+    const row = (lot: string, year: number, type: string, grams: number): TrimSeasonRow => ({
+      lot_id: lot,
+      harvest_year: year,
+      type_code: type,
+      weight_grams: grams,
+      source: null,
+      deleted: false,
+      lot_deleted: false,
+    });
+    // Lot A is 100% bud. Lot B is 0%. The mean of the percents is 50%. The pool is 100 of 400, 25%.
+    const pool = [row("a", 2026, "BUD", 100), row("b", 2026, "TRIM", 300)];
+    const open = weightedBtrToDate(pool, 2026);
+    expect(open.btr).toBeCloseTo(0.25, 9);
+    expect(open.btr).not.toBeCloseTo(0.5, 2);
+    expect(open.lots).toBe(2);
+    expect(open.grams).toBe(400);
+    // A code moved into the bud set, and one moved out, moves the one pool.
+    const mixed = [row("a", 2026, "BUD", 100), row("a", 2026, "SHAKE", 100), row("a", 2026, "TRIM", 200)];
+    expect(weightedBtrToDate(mixed, 2026).btr).toBeCloseTo(0.5, 9);
+    expect(weightedBtrToDate(mixed, 2026, ["BUD"]).btr).toBeCloseTo(0.25, 9);
+    expect(weightedBtrToDate(mixed, 2026, ["BUD", "TRIM"]).btr).toBeCloseTo(0.75, 9);
+    // Last season, a deleted package, a deleted lot, cryo, metrc, and a stored source of trim stay out.
+    // The lot still being trimmed (b, unloaded, not finished) counts what it has weighed.
+    const kept = weightedBtrToDate(
+      [
+        ...pool,
+        row("old", 2025, "BUD", 1000),
+        { ...row("gone", 2026, "BUD", 1000), deleted: true },
+        { ...row("voidlot", 2026, "BUD", 1000), lot_deleted: true },
+        { ...row("cryo", 2026, "BUD", 1000), source: "cryo" },
+        { ...row("mirror", 2026, "BUD", 1000), source: "metrc" },
+        { ...row("named", 2026, "BUD", 1000), source: "trim" },
+      ],
+      2026
+    );
+    expect(kept.grams).toBe(400);
+    expect(kept.lots).toBe(2);
+    expect(kept.btr).toBeCloseTo(0.25, 9);
+    expect(weightedBtrToDate([], 2026)).toEqual({ btr: null, lots: 0, grams: 0 });
+    // The season's borrowed BTR stays finished lots only. This pool includes the lot still open.
+    const yields = consoleYields([
+      { farm: "PNN", status: "trimmed", wet_grams: 1000, dry_grams: 400, freezer: false, packages: [{ type_code: "BUD", weight_grams: 100 }, { type_code: "TRIM", weight_grams: 0 }] },
+      { farm: "ARL", status: "unloaded", wet_grams: 8000, dry_grams: 2000, freezer: false, packages: [{ type_code: "TRIM", weight_grams: 300 }] },
+    ]);
+    expect(yields.farms.PNS.btrSource).toBe("season");
+    expect(yields.farms.PNS.btrRate).toBeCloseTo(1, 9);
+    const page = trimmingSection({ ...withTrim, trimSeason: pool, btrTypeCodes: ["BUD", "SMALLS", "SHAKE"] });
+    expect(page.indexOf('data-hc-trim-total="btr_to_date"')).toBeGreaterThan(page.indexOf('data-hc-trim-total="btr"'));
+    expect(page).toContain(
+      '<div class="hc-trim-total" data-hc-trim-total="btr"><div class="hc-gate-name">Weighted BTR</div><span class="hc-value">51.4%</span><span class="hc-sub muted">both shifts, Total Bud over the shift totals</span></div>'
+    );
+    expect(page).toContain(
+      '<div class="hc-trim-total" data-hc-trim-total="btr_to_date"><div class="hc-gate-name">Weighted BTR to date</div><span class="hc-value">25.0%</span><span class="hc-sub muted">2 lots, 0.89 lb trimmed this season</span></div>'
+    );
+    const quiet = trimmingSection(withTrim);
+    expect(quiet).toMatch(/data-hc-trim-total="btr_to_date"[\s\S]*?<span class="hc-value">no trim this season<\/span><\/div>/);
+    const es = trimmingSection({ ...withTrim, trimSeason: pool, btrTypeCodes: ["BUD", "SMALLS", "SHAKE"] }, "es");
+    expect(es).toContain('<div class="hc-gate-name">BTR ponderado a la fecha</div><span class="hc-value">25.0%</span><span class="hc-sub muted">2 lotes, 0.89 lb recortados esta temporada</span>');
+    expect(es).not.toContain("sin recorte esta temporada");
+    expect(trimmingSection(withTrim, "es")).toContain("sin recorte esta temporada");
   });
 
   it("the sheet read line has left the console; the long footnotes stay off the page", () => {

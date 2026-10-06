@@ -216,6 +216,22 @@ export type YieldLot = {
   packages: YieldPackage[];
 };
 
+/** WEIGHTED BTR TO DATE (canon 0.30.407): one live trim package group of a season lot.
+ * source null is a trim package. cryo, metrc, and a stored trim stay out.
+ * A deleted package or a package on a deleted lot stays out. Another harvest year stays out. */
+export type TrimSeasonRow = {
+  lot_id: string;
+  harvest_year: number;
+  type_code: string | null;
+  weight_grams: number;
+  source: string | null;
+  deleted: boolean;
+  lot_deleted: boolean;
+};
+
+/** The season pool: bud-type grams over every type, one ratio, and the lots and grams in it. */
+export type TrimToDate = { btr: number | null; lots: number; grams: number };
+
 /** Which rate Estimated Bud used. own: this farm's trimmed lots. season: the pooled rate, this farm has no trimmed lot yet. none: no rate to use. */
 export type BtrSource = "own" | "season" | "none";
 
@@ -286,6 +302,8 @@ export type HarvestConsoleInput = {
   yieldLots?: YieldLot[];
   /** The BTR type codes. Absent reads as the seeded BUD, SMALLS and SHAKE. */
   btrTypeCodes?: string[];
+  /** WEIGHTED BTR TO DATE (canon 0.30.407): this season's live trim packages. Absent reads as none. */
+  trimSeason?: TrimSeasonRow[];
 };
 
 /* ------------------------------------------------------------ the trimming */
@@ -1265,7 +1283,29 @@ function trimLineScript(): string {
   return `<script>(function(){try{if(!(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches))return;document.querySelectorAll(".hc-trimline animate").forEach(function(a){a.setAttribute("dur","${TRIM_LINE_FLOW_MS * 2}ms");});}catch(e){}})();</script>`;
 }
 
-function trimTotalsLine(figures: TrimFigures, locale: Locale): string {
+/** WEIGHTED BTR TO DATE (canon 0.30.407). One pool of this season's live trim
+ * packages: the bud types in btr_type_codes over every type, weighted by grams.
+ * A lot still being trimmed counts what it has weighed. No package yet is null. */
+export function weightedBtrToDate(rows: readonly TrimSeasonRow[], year: number, budCodes?: readonly string[]): TrimToDate {
+  const bud = new Set((budCodes && budCodes.length > 0 ? budCodes : parseBtrTypeCodes(null)).map((c) => c.trim().toUpperCase()));
+  let budGrams = 0;
+  let grams = 0;
+  const lots = new Set<string>();
+  for (const row of rows) {
+    if (row.deleted || row.lot_deleted) continue;
+    if (row.source != null) continue;
+    if (Number(row.harvest_year) !== year) continue;
+    const weight = Number(row.weight_grams ?? 0);
+    if (!row.lot_id) continue;
+    grams += weight;
+    lots.add(row.lot_id);
+    if (bud.has(String(row.type_code ?? "").trim().toUpperCase())) budGrams += weight;
+  }
+  if (lots.size === 0 || grams <= 0) return { btr: null, lots: 0, grams: 0 };
+  return { btr: budGrams / grams, lots: lots.size, grams };
+}
+
+function trimTotalsLine(figures: TrimFigures, locale: Locale, toDate: TrimToDate): string {
   const grams = figures.shifts.reduce((n, shift) => n + shift.grams, 0) + figures.unassignedGrams;
   const typed = figures.shifts.map((shift) => shift.hours).filter((h): h is number => h != null);
   const hours = typed.length === 0 ? null : typed.reduce((n, h) => n + h, 0);
@@ -1282,11 +1322,17 @@ function trimTotalsLine(figures: TrimFigures, locale: Locale): string {
   const budGrams = figures.shifts.reduce((n, shift) => n + shift.budGrams, 0);
   const shiftGrams = figures.shifts.reduce((n, shift) => n + shift.totalGrams, 0);
   const btr = shiftGrams > 0 ? budGrams / shiftGrams : null;
+  const toDateValue = toDate.btr == null ? t(locale, "no trim this season") : fmtPct(toDate.btr);
+  const toDateSub =
+    toDate.btr == null
+      ? ""
+      : tFill(locale, "{n} lots, {lb} lb trimmed this season", { n: String(toDate.lots), lb: formatLbs(toDate.grams) });
   return `<div class="hc-trim-totals" data-hc-trim-totals>
       ${cell("lbs", "Total Lbs", lbs.value, lbs.sub)}
       ${cell("hours", "Total Hours", hours == null ? t(locale, "type hours") : String(hours))}
       ${cell("per", "Lbs/DLH", per == null ? (hours == null ? t(locale, "type hours") : NA) : `${formatLbs(per)} lb/h`, per == null ? "" : `${formatGrams(roundGrams(per))} g/h`)}
       ${cell("btr", "Weighted BTR", btr == null ? t(locale, "no packages on the day") : fmtPct(btr), btr == null ? "" : t(locale, "both shifts, Total Bud over the shift totals"))}
+      ${cell("btr_to_date", "Weighted BTR to date", toDateValue, toDateSub)}
     </div>`;
 }
 
@@ -1322,6 +1368,7 @@ function trimRightNow(input: HarvestConsoleInput, locale: Locale): string {
 /** THE TRIMMING SECTION (canon 0.30.310): Right now, then the two shift cards for the day picked, then the day's totals. */
 export function trimmingSection(input: HarvestConsoleInput, locale: Locale = "en", open = true): string {
   const figures = trimFigures(input.trim ?? emptyTrimInput());
+  const toDate = weightedBtrToDate(input.trimSeason ?? [], input.year, input.btrTypeCodes ?? input.trim?.budCodes);
   const cards = figures.shifts.map((shift) => trimShiftCard(shift, input, locale)).join("");
   const unassigned =
     figures.unassignedGrams > 0
@@ -1340,7 +1387,7 @@ export function trimmingSection(input: HarvestConsoleInput, locale: Locale = "en
       <summary>${esc(t(locale, "Trimming"))}</summary>
       ${trimRightNow(input, locale)}
       <div class="hc-shifts">${cards}</div>
-      ${trimTotalsLine(figures, locale)}
+      ${trimTotalsLine(figures, locale, toDate)}
       ${unassigned}${unassignedRunning}
       ${trimLineScript()}
     </details>`;
@@ -2625,6 +2672,18 @@ const YIELD_PACKAGES_SQL = `SELECT p.wet_weight_entry_id AS lot_id, p.package_ty
      WHERE p.deleted_at IS NULL AND ${NON_TRIM_SOURCE_SQL} AND b.harvest_year = ?
      GROUP BY p.wet_weight_entry_id, p.package_type_code`;
 
+/** WEIGHTED BTR TO DATE (canon 0.30.407). Live trim packages of this season's lots:
+ * source null, not deleted, the lot and its batch live, the batch's harvest year
+ * the farm day's year. A package still being weighed on an open lot is in.
+ * Grouped by lot and type. The season BTR the farms borrow stays on YIELD_PACKAGES_SQL. */
+const TRIM_SEASON_SQL = `SELECT p.wet_weight_entry_id AS lot_id, b.harvest_year AS harvest_year,
+            p.package_type_code AS type_code, COALESCE(SUM(p.weight_grams), 0) AS weight_grams
+     FROM wip_packages p
+     JOIN wet_weight_entries w ON w.id = p.wet_weight_entry_id AND w.deleted_at IS NULL
+     JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
+     WHERE p.deleted_at IS NULL AND p.source IS NULL AND b.harvest_year = ?
+     GROUP BY p.wet_weight_entry_id, b.harvest_year, p.package_type_code`;
+
 /** THE CONSOLE DAY: the day the console reads. A blank, invalid, future or
  * equal-to-today pick reads today. Any real day before today is a pick. */
 export function consoleDayOf(picked: string | null | undefined, today: string): { day: string; dayPicked: boolean } {
@@ -2761,6 +2820,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     radRunning,
     yieldLotRows,
     yieldPkgRows,
+    trimSeasonRows,
   ] = await Promise.all([
     db
       .prepare(
@@ -2938,6 +2998,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     loadRadRunning(db),
     db.prepare(YIELD_LOTS_SQL).bind(year).all<{ id: string; farm: string | null; status: string; wet_grams: number; dry_grams: number | null; freezer: number }>(),
     db.prepare(YIELD_PACKAGES_SQL).bind(year).all<{ lot_id: string; type_code: string | null; weight_grams: number }>(),
+    db.prepare(TRIM_SEASON_SQL).bind(year).all<{ lot_id: string; harvest_year: number; type_code: string | null; weight_grams: number }>(),
   ]);
   const trimHours: Record<TrimShiftKey, number | null> = { day: null, second: null };
   for (const row of trimHoursRows.results ?? []) {
@@ -3073,6 +3134,15 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     radRunning,
     yieldLots: yieldLotsOf(yieldLotRows.results ?? [], yieldPkgRows.results ?? []),
     btrTypeCodes: trim.budCodes,
+    trimSeason: (trimSeasonRows.results ?? []).map((r) => ({
+      lot_id: r.lot_id,
+      harvest_year: Number(r.harvest_year),
+      type_code: r.type_code,
+      weight_grams: Number(r.weight_grams ?? 0),
+      source: null,
+      deleted: false,
+      lot_deleted: false,
+    })),
   };
 }
 
