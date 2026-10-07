@@ -5,10 +5,7 @@ import {
   formatGrams,
   formatGramsWhole,
   GRAM_FIELDS,
-  ADMIN_SHEET_SYNC_PATH,
-  ENVIRONMENT_PATH,
   ADMIN_METRC_API_PATH,
-  TESTING_PATH,
   HARVEST_PATH,
   MODELS_PATH,
   MODEL_TOOLS,
@@ -342,11 +339,7 @@ export function layout(opts: {
       // view, so the page below owns the whole screen. The PIN gate on /admin*
       // is untouched; the nav still carries Home and Log only.
       ""
-    }<div class="bar-actions">
-      <a class="maintenance-link" href="/maintenance">${esc(t(locale, "Maintenance"))}</a>
-      <a class="reports-link" href="/reports">${esc(t(locale, "Reports"))}</a>
-      <a class="admin-link" href="/admin">${esc(t(locale, "Admin"))}</a>
-    </div>
+    }${appBarActions(locale)}
   </header>
   <main>
     ${backCrumb(opts.back ?? null, locale)}
@@ -2021,60 +2014,88 @@ export function inventoryPage(
     <p><a href="/export/inventory.csv">${esc(t(locale, "CSV export of this sheet"))}</a></p>`;
 }
 
-export function adminHomePage(locale: Locale = "en"): string {
-  const buttons = [
-    { href: "/admin/queues", kind: "Admin", title: "Data Queues" },
-    // Owner ruling 2026-08-31: [Pending Data Uploads] right after Data Queues.
-    { href: "/admin/uploads", kind: "Admin", title: "Pending Data Uploads" },
-    // Owner ruling 2026-09-02: [Import Data], the multipurpose upload queue.
-    { href: "/admin/imports", kind: "Admin", title: "Import Data" },
-    // THE TESTING OVERRIDE (canon 0.30.341). Owner, 2026-10-02: "Admin new button: [Testing Override]".
-    { href: "/admin/testing-override", kind: "Admin", title: "Testing Override" },
-    // THE RECONCILE LEDGER LOCATION (canon 0.30.135). Owner, 2026-09-20: "add a
-    // new button to Admin: [Reconcile Ledger Location]".
-    { href: LEDGER_LOCATION_PATH, kind: "Admin", title: "Reconcile Ledger Location" },
-    { href: "/admin/lookups", kind: "Admin", title: "Lookups" },
-    { href: "/log", kind: "Admin", title: "Change log" },
-    // THE HARVEST CONSOLE (canon 0.30.73). Owner ruling 2026-09-15, verbatim:
-    // "Let's strike the dashboard.  Remove it from the report list.  In Admin,
-    // add a new button: [Harvest Console]". The sections page at /harvest.
-    { href: HARVEST_PATH, kind: "Harvest", title: "Harvest Console" },
-    // THE SHEET SYNC (canon 0.30.162). Owner, 2026-09-21: "can we setup a cron
-    // job or something to regularly check the sheet?" The last runs and Run now.
-    { href: ADMIN_SHEET_SYNC_PATH, kind: "Admin", title: "Sheet sync" },
-    { href: ENVIRONMENT_PATH, kind: "Admin", title: "Environment" },
-    // THE TESTING DESK (canon 0.30.164): the lab tech's station, behind the Admin PIN.
-    { href: TESTING_PATH, kind: "Admin", title: "Testing desk" },
-    // THE TESTING DESK (canon 0.30.164), part 3: keys, the last sweep, the month's calls.
-    { href: ADMIN_METRC_API_PATH, kind: "Admin", title: "Metrc API" },
-    // THE MODELS BUTTON (canon 0.30.86). Owner ruling 2026-09-15, verbatim:
-    // "New button in Admin: [Models] - pin gated: 17853". The tiles page at
-    // /models, behind its own PIN.
-    { href: MODELS_PATH, kind: "Models", title: "Models" },
-    // Owner ruling 2026-09-07 (canon 0.29.0): the remade Continuum 10 page,
-    // linked from Admin.
-    { href: "/vendors-equipment", kind: "Continuum", title: "Vendors & Equipment" },
-    // Owner ruling 2026-09-07: the ERP page backdoor ("it won't stay there").
-    { href: "/erp-software", kind: "Continuum", title: "ERP" },
-    // Owner ruling 2026-09-07 (canon 0.29.5): "Add it to the Admin screen."
-    { href: "/compliance-testing", kind: "Continuum", title: "Compliance Testing" },
-    // Owner ruling 2026-09-09 (canon 0.30.27): "I need this entire app hosted
-    // on a button in Admin": the Harvest Console Lite, framed in the C10 shell.
-    // Canon 0.30.73 (his pick "New page, old tile renamed"): the vendored
-    // planting app keeps its own name so the two tiles never share one.
-    { href: "/harvest-console", kind: "Continuum", title: "Harvest Console Lite" },
-    // Fork 6 (canon 0.30.1): buried here on purpose; Acquire stays the default.
-    { href: "/admin/manual-hbn", kind: "Fallback", title: "Manual HBN" },
-  ]
+/** ADMIN CLEANUP (canon 0.30.418): the bar, Models then Harvest Console, then the three that were already there. */
+export function appBarActions(locale: Locale = "en"): string {
+  const links = [
+    { href: MODELS_PATH, cls: "models-link", title: "Models" },
+    { href: HARVEST_PATH, cls: "harvest-link", title: "Harvest Console" },
+    { href: "/maintenance", cls: "maintenance-link", title: "Maintenance" },
+    { href: "/reports", cls: "reports-link", title: "Reports" },
+    { href: "/admin", cls: "admin-link", title: "Admin" },
+  ];
+  return `<div class="bar-actions">${links
+    .map((link) => `<a class="${link.cls}" href="${esc(link.href)}">${esc(t(locale, link.title))}</a>`)
+    .join("")}</div>`;
+}
+
+export type AdminGroupMember = { href: string; kind: string; title: string };
+
+export type AdminGroup = { key: string; href: string; title: string; members: AdminGroupMember[] };
+
+/** The three Admin buttons and the tiles each one opens. Member URLs stay as they are. */
+export const ADMIN_GROUPS: AdminGroup[] = [
+  {
+    key: "data-connections",
+    href: "/admin/data-connections",
+    title: "Data Connections",
+    members: [
+      { href: "/admin/queues", kind: "Admin", title: "Data Queues" },
+      { href: "/admin/uploads", kind: "Admin", title: "Pending Data Uploads" },
+      { href: "/admin/imports", kind: "Admin", title: "Import Data" },
+      { href: ADMIN_METRC_API_PATH, kind: "Admin", title: "Metrc API" },
+    ],
+  },
+  {
+    key: "settings",
+    href: "/admin/settings",
+    title: "Admin Settings",
+    members: [
+      { href: "/admin/lookups", kind: "Admin", title: "Lookups" },
+      { href: "/log", kind: "Admin", title: "Change log" },
+      { href: "/admin/manual-hbn", kind: "Fallback", title: "Manual HBN" },
+      { href: LEDGER_LOCATION_PATH, kind: "Admin", title: "Reconcile Ledger Location" },
+    ],
+  },
+  {
+    key: "continuum10",
+    href: "/admin/continuum10",
+    title: "Continuum10",
+    members: [
+      { href: "/vendors-equipment", kind: "Continuum", title: "Vendors & Equipment" },
+      { href: "/erp-software", kind: "Continuum", title: "ERP" },
+      { href: "/compliance-testing", kind: "Continuum", title: "Compliance Testing" },
+      { href: "/harvest-console", kind: "Continuum", title: "Harvest Console Lite" },
+    ],
+  },
+];
+
+function adminTiles(members: AdminGroupMember[], locale: Locale): string {
+  return members
     .map(
       (b) => `<a class="tile" href="${b.href}">
-        <span class="tile-kind">${b.kind}</span>
+        <span class="tile-kind">${esc(b.kind)}</span>
         <span class="tile-title">${esc(t(locale, b.title))}</span>
       </a>`
     )
     .join("");
+}
+
+export function adminHomePage(locale: Locale = "en"): string {
+  const buttons = ADMIN_GROUPS.map(
+    (group) => `<a class="tile" href="${group.href}" data-admin-group="${group.key}">
+        <span class="tile-kind">${esc(t(locale, "Admin"))}</span>
+        <span class="tile-title">${esc(t(locale, group.title))}</span>
+      </a>`
+  ).join("");
   return `<h1>Admin</h1>
     <div class="tiles">${buttons}</div>`;
+}
+
+export function adminGroupPage(key: string, locale: Locale = "en"): string {
+  const group = ADMIN_GROUPS.find((item) => item.key === key);
+  if (!group) return "";
+  return `<h1>${esc(t(locale, group.title))}</h1>
+    <div class="tiles">${adminTiles(group.members, locale)}</div>`;
 }
 
 /** THE MODELS BUTTON (canon 0.30.86): the Models page, a tile per model tool

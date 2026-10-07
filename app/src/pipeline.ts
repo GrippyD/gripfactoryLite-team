@@ -1088,6 +1088,7 @@ export const OPS_GROUPS: OpsGroup[] = [
       { key: "acquire_hbn", title: "Acquire HBN", href: "/station/acquire_hbn" },
       { key: "wet_weight", title: "Penn North Harvest", href: "/station/wet_weight" },
       { key: "field_harvest", title: "Penn South/Arlington Harvest", href: "/station/field_harvest" },
+      { key: "assign_plant_counts", title: "Assign Plant Counts", href: "/station/assign_plant_counts" },
     ],
   },
   {

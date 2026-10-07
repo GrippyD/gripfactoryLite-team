@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { HttpError, nowIso, textOrNull } from "./audit";
+import { fixtureNowFrom, HttpError, nowIso, textOrNull, withFixtureNow } from "./audit";
 import {
   CONFIG_KEYS,
   ITEM_KIND_FG,
@@ -149,6 +149,7 @@ import {
   changeFieldToteHbn,
 } from "./actions";
 import { fieldHarvestPage } from "./fieldharvest";
+import { assignPlantCount, listAssignedLots, listUncountedLots, plantCountPage as assignPlantCountsPage } from "./plantcounts";
 import {
   FINISHED_LOT_SCREENS,
   fieldLotsSoFar,
@@ -216,7 +217,7 @@ import { listingsWithMatch, marketplacePage, parseMarketplacePane, salesOrderPag
 import { listZohoMenuItems, listZohoMounts, mountZohoInventory } from "./zohoinv";
 import { buildLiveSalesHelperMenu, decorateSalesHelperPage } from "./saleshelper";
 import { parseSendBody, sendSalesOrderMail, SH_MAIL_TO_DEFAULT, SH_SEND_GATE_KEY, type ShSendBody } from "./sendmail";
-import { dryingTotals, ffzLive, loadSiloVisuals, siloLiveEntry, spaceShapeOf, SILO_LIVE_PATH } from "./silo";
+import { dryingTotals, loadSiloVisuals, siloLiveEntry, spaceShapeOf, SILO_LIVE_PATH } from "./silo";
 import { dryingRowFigures } from "./db";
 import {
   attachLoadChecks,
@@ -397,6 +398,7 @@ import {
 } from "./db";
 import { effectiveStatus, isIsoDate, mountSosPage, pickOrdersPage, pickSheetHtml } from "./fulfillment";
 import {
+  adminGroupPage,
   adminHomePage,
   dataQueuesPage,
   errorBody,
@@ -527,6 +529,13 @@ import {
 
 type AppEnv = { Bindings: Env; Variables: { actor: Identity } };
 const app = new Hono<AppEnv>();
+
+// Smoke only (GF_ALLOW_FIXTURE_NOW=1). A request may name its instant. Production leaves the var unset.
+app.use("*", async (c, next) => {
+  const fixed = fixtureNowFrom(c.env.GF_ALLOW_FIXTURE_NOW, c.req.header("x-gf-now"));
+  if (!fixed) return next();
+  return withFixtureNow(fixed, () => next());
+});
 
 const LOCALE_COOKIE = "gf_locale";
 // Owner ruling 2026-09-01: the chrome view cookie; absent means Cerberus.
@@ -777,6 +786,13 @@ function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
   if (ok === "removed") return { kind: "ok", text: t(locale, "Removed from the queue.") };
   if (ok === "removed_adjust") {
     return { kind: "ok", text: t(locale, "Removed from the queue. The adjustment CSV pends at the export home.") };
+  }
+  // THE DAY FOLLOWS THE TEAM LEAD (canon 0.30.419): the station names the shift and the day the packages counted to.
+  if ((ok === "trim" || ok === "plus") && url.searchParams.get("counted_day")) {
+    const day = url.searchParams.get("counted_day") ?? "";
+    const shift = url.searchParams.get("counted_shift");
+    const label = shift === "day" ? "Day shift" : shift === "second" ? "Second Shift" : "Unassigned";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return { kind: "ok", text: tFill(locale, "{shift}, {day}", { shift: t(locale, label), day }) };
   }
   if (ok === "parsed") {
     const parsed = url.searchParams.get("parsed") ?? "0";
@@ -1492,6 +1508,21 @@ app.get("/admin", async (c) => {
   return html(c, s, "Admin", adminHomePage(s.locale));
 });
 
+app.get("/admin/data-connections", async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Data Connections", adminGroupPage("data-connections", s.locale));
+});
+
+app.get("/admin/settings", async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Admin Settings", adminGroupPage("settings", s.locale));
+});
+
+app.get("/admin/continuum10", async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Continuum10", adminGroupPage("continuum10", s.locale));
+});
+
 // THE SHEET SYNC (canon 0.30.162). The fixture workbook exists only when the
 // default env is pointed at it. Production (MS_TENANT_ID set) never serves it.
 app.get("/__sheet-fixture", async (c) => {
@@ -1613,7 +1644,7 @@ app.get(HARVEST_PATH, async (c) => {
       nowIso: now,
       locale: s.locale,
       ok: c.req.query("ok") ?? undefined,
-      cureTiles: curePanes(cure, s.locale),
+      cureTiles: curePanes(cure, s.locale, "bar"),
       stripFigures,
       envFlags: await listEnvironmentFlags(c.env.DB, now, s.locale),
       // THE DRYING TOTALS (canon 0.30.183): loaded in the silos and the dry rooms with the estimate
@@ -2392,7 +2423,6 @@ app.get(SILO_LIVE_PATH, async (c) => {
   const { live, capacityGrams } = await loadSiloVisuals(c.env.DB);
   const flags = await listEnvironmentFlags(c.env.DB, now, s.locale);
   const checked = await attachLoadChecks(c.env.DB, live, now);
-  const figures = await dryingRowFigures(c.env.DB);
   return c.json(
     {
       capacityGrams,
@@ -2400,7 +2430,6 @@ app.get(SILO_LIVE_PATH, async (c) => {
       silos: checked.map((l) =>
         siloLiveEntry(l.silo.id, l.silo.name, l.visual, s.locale, spaceShapeOf(l.silo), flags[l.silo.name] ?? [], l.emptySince, liveChecksOf(l.loadChecks))
       ),
-      ffz: ffzLive(figures.ffzGrams, s.locale),
     },
     200,
     { "cache-control": "no-store" }
@@ -2805,6 +2834,52 @@ app.post("/station/field_harvest/weights/:id/hbn", async (c) => {
   const form = actorForm(c, await c.req.formData());
   const result = await changeFieldToteHbn(c.env.DB, c.req.param("id"), form);
   return c.redirect(result.redirect, 303);
+});
+
+// ASSIGN PLANT COUNTS (canon 0.30.416). A literal route ahead of /station/:key.
+app.get("/station/assign_plant_counts", async (c) => {
+  const s = await shell(c);
+  const year = Number((await farmToday(c.env.DB, nowIso())).slice(0, 4));
+  const [uncounted, assigned] = await Promise.all([listUncountedLots(c.env.DB, year), listAssignedLots(c.env.DB)]);
+  return html(
+    c,
+    s,
+    "Assign Plant Counts",
+    assignPlantCountsPage({
+      locale: s.locale,
+      uncounted,
+      assigned,
+      editId: c.req.query("entry") ?? "",
+      typed: null,
+    })
+  );
+});
+
+app.post("/station/assign_plant_counts", async (c) => {
+  const s = await shell(c);
+  const form = actorForm(c, await c.req.formData());
+  const year = Number((await farmToday(c.env.DB, nowIso())).slice(0, 4));
+  try {
+    const result = await assignPlantCount(c.env.DB, form, year);
+    return c.redirect(result.redirect, 303);
+  } catch (err) {
+    if (!(err instanceof HttpError)) throw err;
+    const [uncounted, assigned] = await Promise.all([listUncountedLots(c.env.DB, year), listAssignedLots(c.env.DB)]);
+    s.flash = { kind: "err", text: refusalText(s.locale, err) };
+    return html(
+      c,
+      s,
+      "Assign Plant Counts",
+      assignPlantCountsPage({
+        locale: s.locale,
+        uncounted,
+        assigned,
+        editId: textOrNull(form.get("entry_id")) ?? "",
+        typed: String(form.get("plant_count") ?? ""),
+      }),
+      err.status
+    );
+  }
 });
 
 // THE LAB STATION (canon 0.30.362): the package's link lands on the Internal

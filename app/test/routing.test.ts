@@ -565,22 +565,16 @@ describe("inbound trucks on receiving (owner bug report 2026-09-04, canon 0.22.0
     expect(html).not.toContain("#f6f4ef");
   });
 
-  it("Admin carries the four Continuum tiles (canon 0.29.0 + 0.29.5 + 0.30.27) and the Harvest Console button (canon 0.30.73)", async () => {
-    const { adminHomePage } = await import("../src/html");
-    const html = adminHomePage("en");
+  it("Continuum10 carries the four tiles at their own URLs (canon 0.29.0 + 0.29.5 + 0.30.27)", async () => {
+    const { adminGroupPage, adminHomePage } = await import("../src/html");
+    const html = adminGroupPage("continuum10", "en");
     expect(html).toContain('href="/vendors-equipment"');
     expect(html).toContain('href="/erp-software"');
     expect(html).toContain('href="/compliance-testing"');
-    // Canon 0.30.27: "I need this entire app hosted on a button in Admin".
-    // Canon 0.30.73 (his pick "New page, old tile renamed"): the vendored
-    // planting app keeps its own name, Harvest Console Lite.
     expect(html).toContain('href="/harvest-console"');
     expect(html).toContain('<span class="tile-kind">Continuum</span>\n        <span class="tile-title">Harvest Console Lite</span>');
-    // Canon 0.30.73: "In Admin, add a new button: [Harvest Console]".
-    expect(html).toContain('<a class="tile" href="/harvest">');
-    expect(html).toContain('<span class="tile-kind">Harvest</span>\n        <span class="tile-title">Harvest Console</span>');
-    expect(html.indexOf('href="/harvest"')).toBeLessThan(html.indexOf('href="/vendors-equipment"'));
-    expect(adminHomePage("es")).toContain("Harvest Console Lite");
+    expect(adminHomePage("en")).not.toContain('href="/harvest-console"');
+    expect(adminGroupPage("continuum10", "es")).toContain("Harvest Console Lite");
   });
 
   it("the Harvest Console node is the app alone, wearing the inverted Continuum (canon 0.30.30)", async () => {

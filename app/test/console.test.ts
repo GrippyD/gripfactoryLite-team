@@ -26,7 +26,6 @@ import {
   trimmingSection,
   weightedBtrToDate,
   liveTrimLine,
-  trimDuty,
   btrBar,
   emptyTrimInput,
   BUD_ROWS,
@@ -703,7 +702,11 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(drying).toContain('data-silo="s6" data-silo-state="filling" data-silo-shape-kind="box"');
     expect(drying).toContain('<div class="inv-gauge-name">Arlington Dry Room</div>');
     expect(drying).toContain('class="silo-shape silo-shape-box"');
-    expect(drying).not.toContain("data-ffz=");
+    expect(drying).not.toContain("data-ffz");
+    expect(drying).not.toContain("data-dry-head");
+    expect(drying).not.toContain("data-dry-row");
+    expect(drying).not.toContain("data-dry-total");
+    expect(drying).not.toContain("FFZ Inventory");
     expect(drying).toContain('fetch("/silos/live.json"');
     expect(drying).not.toContain("paintFfz");
   });
@@ -715,17 +718,13 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     const html = harvestConsolePage({ input, live, nowIso: "2026-09-15T12:00:00.000Z", cureTiles });
     const drying = html.slice(html.indexOf('data-hc-section="drying"'), html.indexOf('data-hc-section="trimming"'));
     const row = drying.slice(drying.indexOf('data-silo-strip'), drying.indexOf("</section>"));
-    expect(row).toContain('data-dry-row="silo"');
-    expect(row).toContain('data-dry-row="cure"');
-    expect(row).toContain('data-dry-row="dry_room"');
-    expect(row).not.toContain('data-dry-row="freezer"');
-    expect(row.indexOf('data-dry-row="silo"')).toBeLessThan(row.indexOf('data-dry-row="cure"'));
-    expect(row.indexOf('data-dry-row="cure"')).toBeLessThan(row.indexOf('data-dry-row="dry_room"'));
+    expect(row).not.toContain("data-dry-row");
+    expect(row).not.toContain("data-dry-head");
     expect(row).toContain('data-cure-pane="CSA"');
     expect(row).toContain('data-cure-pane="CSB"');
-    expect(row.indexOf('data-silo="s1"')).toBeLessThan(row.indexOf('data-cure-pane="CSA"'));
+    expect(row.indexOf('data-silo="s1"')).toBeLessThan(row.indexOf('data-silo="s6"'));
+    expect(row.indexOf('data-silo="s6"')).toBeLessThan(row.indexOf('data-cure-pane="CSA"'));
     expect(row.indexOf('data-cure-pane="CSA"')).toBeLessThan(row.indexOf('data-cure-pane="CSB"'));
-    expect(row.indexOf('data-cure-pane="CSB"')).toBeLessThan(row.indexOf('data-silo="s6"'));
     // Nothing of the panes stands outside the strip.
     expect(drying.slice(drying.indexOf("</section>"))).not.toContain("data-cure-pane");
     // Without the tiles the strip renders as before.
@@ -1065,13 +1064,12 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(nobody.unassignedRunning).toBe(true);
   });
 
-  it("THE LINE RUNS ON THE CLOCK (canon 0.30.163): his 6-6 and 6-6; the shift on duty runs while a lot stands in the Unloaded Queue for trim", () => {
+  it("the shift windows still parse for pasteurization; trim does not read them (canon 0.30.419)", () => {
     expect(TRIM_SHIFT_HOURS_DEFAULT).toEqual({ day: "06:00-18:00", second: "18:00-06:00" });
     const day = parseShiftWindow(null, TRIM_SHIFT_HOURS_DEFAULT.day);
     const second = parseShiftWindow(null, TRIM_SHIFT_HOURS_DEFAULT.second);
     expect(day).toEqual({ startMinutes: 360, endMinutes: 1080 });
     expect(second).toEqual({ startMinutes: 1080, endMinutes: 360 });
-    // The start is inside, the end is not; the Second shift wraps midnight.
     expect(shiftWindowHolds(day, 360)).toBe(true);
     expect(shiftWindowHolds(day, 1079)).toBe(true);
     expect(shiftWindowHolds(day, 1080)).toBe(false);
@@ -1079,27 +1077,52 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(shiftWindowHolds(second, 0)).toBe(true);
     expect(shiftWindowHolds(second, 359)).toBe(true);
     expect(shiftWindowHolds(second, 360)).toBe(false);
-    expect(shiftWindowHolds(parseShiftWindow("07:00-07:00", "06:00-18:00"), 200)).toBe(true);
-    expect(parseShiftWindow("garbage", "06:00-18:00")).toEqual(day);
-    expect(parseShiftWindow(" 8:00 - 16:30 ", "06:00-18:00")).toEqual({ startMinutes: 480, endMinutes: 990 });
-    // The Eastern clock: 14:30Z in September is 10:30 AM Eastern (630 minutes); 03:15Z is 11:15 PM the evening before (1395).
     expect(etClockMinutes("2026-09-21T14:30:00.000Z")).toBe(630);
     expect(etClockMinutes("2026-09-22T03:15:00.000Z")).toBe(1395);
-    // 10:30 AM Eastern with a lot in the queue: the Day card runs, the Second does not.
-    const morning = trimFigures({ ...trim, queueLots: 2, nowIso: "2026-09-21T14:30:00.000Z" });
-    expect(morning.shifts.map((s) => [s.onDuty, s.running])).toEqual([[true, true], [false, false]]);
-    expect(morning.shifts[0].hours_window).toBe("06:00-18:00");
-    // 11:15 PM Eastern: the Second card runs.
+  });
+
+  it("NO CLOCK ON THE TRIM SHIFTS (canon 0.30.419): no on duty flag, no clock rule; Running follows the lead's own last entry", () => {
+    const queued = trimFigures({ ...trim, queueLots: 4, nowIso: "2026-09-21T14:30:00.000Z" });
+    expect(queued.shifts.map((s) => [s.onDuty, s.running, s.hours_window])).toEqual([
+      [false, false, ""],
+      [false, false, ""],
+    ]);
     const night = trimFigures({ ...trim, queueLots: 1, nowIso: "2026-09-22T03:15:00.000Z" });
-    expect(night.shifts.map((s) => [s.onDuty, s.running])).toEqual([[false, false], [true, true]]);
-    // An empty queue: on duty, not running; a package in the last 30 minutes still lights its shift.
-    const empty = trimFigures({ ...trim, queueLots: 0, nowIso: "2026-09-21T14:30:00.000Z", recent: [{ trim_operator: "Victor" }] });
-    expect(empty.shifts.map((s) => [s.onDuty, s.running])).toEqual([[true, false], [false, true]]);
-    // Hours from data override the defaults; a blank value falls back.
-    const custom = trimFigures({ ...trim, queueLots: 1, nowIso: "2026-09-21T14:30:00.000Z", shiftHours: { day: "12:00-20:00", second: "" } });
-    expect(custom.shifts.map((s) => [s.hours_window, s.onDuty])).toEqual([["12:00-20:00", false], ["18:00-06:00", false]]);
-    // Without an instant nothing is on duty (the pure figures of a fixture).
-    expect(trimFigures({ ...trim, queueLots: 5 }).shifts.map((s) => s.onDuty)).toEqual([false, false]);
+    expect(night.shifts.map((s) => s.running)).toEqual([false, false]);
+    const recent = trimFigures({
+      ...trim,
+      queueLots: 3,
+      nowIso: "2026-09-21T14:20:00.000Z",
+      recent: [{ trim_operator: "Victor" }],
+      leadLast: [
+        { trim_operator: "Victor", created_at: "2026-09-21T14:00:00.000Z" },
+        { trim_operator: "Olga", created_at: "2026-09-21T12:00:00.000Z" },
+      ],
+    });
+    expect(recent.shifts.map((s) => s.running)).toEqual([false, true]);
+    expect(recent.shifts[0].lastEntryAt).toBe("2026-09-21T12:00:00.000Z");
+    expect(recent.shifts[1].lastEntryAt).toBe("2026-09-21T14:00:00.000Z");
+    const html = trimmingSection({
+      ...withTrim,
+      today: "2026-09-21",
+      trim: {
+        ...trim,
+        queueLots: 4,
+        nowIso: "2026-09-21T14:20:00.000Z",
+        leadLast: [{ trim_operator: "Olga", created_at: "2026-09-21T12:00:00.000Z" }],
+      },
+      trimLive: { ...trim, nowIso: "2026-09-21T14:20:00.000Z", queueLots: 4 },
+    });
+    expect(html).not.toContain("data-hc-trim-duty");
+    expect(html).not.toContain("no shift on duty");
+    const day = html.slice(html.indexOf('data-hc-shift="day"'), html.indexOf('data-hc-shift="second"'));
+    expect(day).toContain('data-hc-shift-running="0"');
+    expect(day).toContain("data-hc-trim-down");
+    expect(day).toContain(`data-started="${Date.parse("2026-09-21T12:00:00.000Z")}"`);
+    expect(day).not.toContain("data-hc-running>");
+    const secondCard = html.slice(html.indexOf('data-hc-shift="second"'), html.indexOf("data-hc-trim-totals"));
+    expect(secondCard).toContain("data-hc-trim-down");
+    expect(secondCard).not.toContain("data-clock");
   });
 
   it("the picture: his seven machines, six flow bars of his width, the greens moving only while the line runs, the endpoints carrying the grams (the TRIM circle fed by T-0, his correction), the lines converging on the shift total", () => {
@@ -1224,8 +1247,8 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(line.grams).toBe(310);
     expect(line.budGrams).toBe(200);
     expect(line.running).toBe(true);
-    expect(trimDuty(live)).toBe("day");
-    // THE TRIMMING TIDIES (canon 0.30.313): the pane's DOWN follows the scale alone; a queued lot lights the cards, not the pane.
+    expect(line.onDuty).toBe(false);
+    // A queued lot lights neither the pane nor the cards (canon 0.30.419).
     const queued = liveTrimLine({ ...live, recent: [], queueLots: 1 });
     expect(queued.running).toBe(false);
     const queuedDown = trimmingSection({

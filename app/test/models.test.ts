@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CONFIG_KEYS, MODELS_PATH, MODELS_PIN_PATH, MODEL_TOOLS, modelToolPath } from "../src/config";
-import { adminHomePage, modelsPage, pinPage } from "../src/html";
+import { adminHomePage, appBarActions, modelsPage, pinPage } from "../src/html";
 import { safeNextPath } from "../src/identity";
 
 /** THE MODELS BUTTON (canon 0.30.86). Owner ruling 2026-09-15, verbatim: "New
@@ -30,13 +30,13 @@ describe("THE MODELS BUTTON (canon 0.30.86)", () => {
     expect(MODEL_TOOLS[0]).toEqual({ slug: "harvest-menu-2026", title: "Harvest Menu Tool 2026", files: ["data.json"] });
   });
 
-  it("Admin carries the [Models] tile after the Harvest Console and before the Continuum tiles", () => {
-    const html = adminHomePage("en");
-    expect(html).toContain('<a class="tile" href="/models">');
-    expect(html).toContain('<span class="tile-kind">Models</span>\n        <span class="tile-title">Models</span>');
-    expect(html.indexOf('href="/harvest"')).toBeLessThan(html.indexOf('href="/models"'));
-    expect(html.indexOf('href="/models"')).toBeLessThan(html.indexOf('href="/vendors-equipment"'));
-    expect(adminHomePage("es")).toContain('<span class="tile-title">Modelos</span>');
+  it("the bar carries Models, then Harvest Console, and Admin no longer tiles them", () => {
+    const bar = appBarActions("en");
+    expect(bar.indexOf('href="/models"')).toBeLessThan(bar.indexOf('href="/harvest"'));
+    expect(bar.indexOf('href="/harvest"')).toBeLessThan(bar.indexOf('href="/maintenance"'));
+    expect(adminHomePage("en")).not.toContain('href="/models"');
+    expect(adminHomePage("en")).not.toContain('href="/harvest"');
+    expect(appBarActions("es")).toContain(">Modelos</a>");
   });
 
   it("the Models page is a tile per tool, each opening its slashed folder", () => {

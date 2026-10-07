@@ -12,7 +12,9 @@ import {
   farmInstant,
   etDate,
   etHour,
+  etInstant,
   parseFarmDayStartHour,
+  trimCountedDate,
 } from "../src/farmday";
 import { defaultTodayScript, layout } from "../src/html";
 
@@ -174,6 +176,27 @@ const baseInput: HarvestConsoleInput = {
   plantCounts: { PNN: null, ARL: null, PNS: null },
 };
 
+describe("THE DAY FOLLOWS THE TEAM LEAD (canon 0.30.419)", () => {
+  const lists = { day: ["Ada Day"], second: ["Nia Night"] };
+  const at = (date: string, hhmm: string) => etInstant(date, hhmm);
+
+  it("a second shift operator before noon lands on the evening's date; noon and after stay on that day", () => {
+    expect(trimCountedDate(at("2026-10-06", "23:10"), "Nia Night", lists)).toEqual({ date: "2026-10-06", shift: "second" });
+    expect(trimCountedDate(at("2026-10-07", "03:00"), "Nia Night", lists).date).toBe("2026-10-06");
+    expect(trimCountedDate(at("2026-10-07", "05:59"), "Nia Night", lists).date).toBe("2026-10-06");
+    expect(trimCountedDate(at("2026-10-07", "06:30"), "Nia Night", lists).date).toBe("2026-10-06");
+    expect(trimCountedDate(at("2026-10-07", "12:30"), "Nia Night", lists)).toEqual({ date: "2026-10-07", shift: "second" });
+  });
+
+  it("a day shift operator takes the Eastern calendar date; neither list takes the farm day; case and spaces are ignored", () => {
+    expect(trimCountedDate(at("2026-10-07", "19:00"), "Ada Day", lists)).toEqual({ date: "2026-10-07", shift: "day" });
+    expect(trimCountedDate(at("2026-10-07", "05:30"), "Les", lists, 6)).toEqual({ date: "2026-10-06", shift: null });
+    expect(trimCountedDate(at("2026-10-07", "10:00"), "Les", lists, 6)).toEqual({ date: "2026-10-07", shift: null });
+    expect(trimCountedDate(at("2026-10-07", "06:30"), "  NIA   night ", lists).shift).toBe("second");
+    expect(trimCountedDate(at("2026-10-07", "19:00"), "ada   day", lists).shift).toBe("day");
+  });
+});
+
 describe("THE CONSOLE DAY (canon 0.30.152; owner: \"on the dashboard, can we do a universal date override?  It defaults to \\\"yesterday\\\" and I can change it to any other day?\")", () => {
   it("the day under view: today by default; any real day before today when picked; a blank, bad, future or today pick reads today", () => {
     expect(consoleDayOf(null, "2026-09-21")).toEqual({ day: "2026-09-21", dayPicked: false });
@@ -207,11 +230,12 @@ describe("THE CONSOLE DAY (canon 0.30.152; owner: \"on the dashboard, can we do 
     expect(db.seen.find((q) => q.sql.includes("l.new_value = 'trimmed'"))?.args).toEqual(["2026-09-20T10:00:00.000Z", "2026-09-21T10:00:00.000Z"]);
     expect(db.seen.find((q) => q.sql.includes("p.created_at >= ?") && !q.sql.includes("trim_date") && !q.sql.includes("source = 'cryo'"))?.args).toEqual(["2026-09-21T05:00:00.000Z"]);
     expect(input.trim?.prepackCodes).toEqual(["SMALLS"]);
-    // THE LINE RUNS ON THE CLOCK (canon 0.30.163): the queue count, the instant and the hours ride the input.
+    // The queue count still rides the input for the drying totals. Trim does not read the shift hour windows (canon 0.30.419).
     expect(db.seen.find((q) => q.sql.includes("w.status = 'unloaded'") && q.sql.includes("COUNT(*) AS n"))).toBeTruthy();
     expect(input.trim?.nowIso).toBe(SMALL_HOURS);
     expect(input.trim?.queueLots).toBe(0);
-    expect(db.seen.find((q) => q.sql.includes("FROM app_config") && q.args[0] === "trim_shift_day_hours")).toBeTruthy();
+    expect(db.seen.find((q) => q.sql.includes("FROM app_config") && q.args[0] === "trim_shift_day_hours")).toBeUndefined();
+    expect(db.seen.find((q) => q.sql.includes("GROUP BY p.trim_operator"))).toBeTruthy();
     // A picked day drives every window and box.
     const picked = fakeDb({ farm_day_start_hour: "6" });
     const pickedInput = await loadHarvestConsole(picked as unknown as D1Database, MORNING, "2026-09-15");

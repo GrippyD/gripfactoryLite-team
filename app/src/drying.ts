@@ -35,7 +35,7 @@ import { esc, lockOnSubmitScript, time24MaskScript } from "./html";
 import { t, tFill, type Locale } from "./i18n";
 import { checkCountdownScript, loadCheckLines, tileCheckSummary } from "./labsample";
 import { formatLbs } from "./compliance";
-import { lotStrainLine, ffzInventoryTile, PROJECTED_DRY_YIELD_PCT_DEFAULT, siloLiveScript, siloTile, siloWaitingLines, spaceShapeOf, spaceTypeOf, type SiloLive } from "./silo";
+import { lotStrainLine, PROJECTED_DRY_YIELD_PCT_DEFAULT, siloLiveScript, siloTile, siloWaitingLines, spaceShapeOf, spaceTypeOf, type SiloLive } from "./silo";
 
 export type ClockState = "not_started" | "running" | "paused";
 
@@ -134,9 +134,8 @@ export function clockMarkup(load: SiloLoadRow, nowIso: string, locale: Locale): 
   )}" data-paused-seconds="${esc(String(load.paused_seconds ?? 0))}">${esc(seconds == null ? "0d 00:00:00" : formatClock(seconds))}</span> <span class="muted silo-clock-state">${esc(label)}</span>`;
 }
 
-/** THE ROWS (canon 0.30.383): figures the strip's panels read. ffzGrams null omits the cube. */
+/** THE ROWS (canon 0.30.383): figures the strip's panels read. */
 export type DryingStripFigures = {
-  ffzGrams?: number | null;
   hangGrams?: number;
   hangLots?: number;
   cureGrams?: number;
@@ -158,7 +157,6 @@ export function dryingRowTotals(live: readonly SiloLive[], figures: DryingStripF
   hangLots: number;
   hangTotalGrams: number;
   hangTotalLots: number;
-  ffzGrams: number | null;
   cureGrams: number;
   cureLots: number;
 } {
@@ -194,7 +192,6 @@ export function dryingRowTotals(live: readonly SiloLive[], figures: DryingStripF
     hangLots,
     hangTotalGrams: roomGrams + hangGrams,
     hangTotalLots: roomLots + hangLots,
-    ffzGrams: figures.ffzGrams == null ? null : Number(figures.ffzGrams),
     cureGrams: Number(figures.cureGrams ?? 0),
     cureLots: Number(figures.cureLots ?? 0),
   };
@@ -237,12 +234,12 @@ export function siloStrip(
   locale: Locale = "en",
   extraTiles = "",
   flags: Readonly<Record<string, string[]>> = {},
-  figures: DryingStripFigures = {}
+  figures: DryingStripFigures = {},
+  layout: "rows" | "open" = "rows"
 ): string {
-  const drawn = live.map(({ silo, visual, loads, waiting, emptySince, loadChecks }) => {
+  const tileOf = (row: SiloLive, open: boolean) => {
+    const { silo, visual, loads, waiting, emptySince, loadChecks } = row;
     const checks = loadChecks ?? [];
-    // THE LOADING SILO (canon 0.30.81): the lots waiting in the barn for this silo ride under its word.
-    // THE MAINTENANCE NODE (canon 0.30.293): each load's next aW and MC check under its clock.
     const body =
       tileCheckSummary(checks, nowIso, locale) +
       loads
@@ -257,24 +254,40 @@ export function siloStrip(
           </div>`
         )
         .join("") + siloWaitingLines(waiting ?? [], locale);
-    const type = spaceTypeOf(silo);
+    return siloTile({
+      id: silo.id,
+      name: silo.name,
+      visual,
+      body,
+      locale,
+      shape: spaceShapeOf(silo),
+      flags: flags[silo.name] ?? [],
+      emptySince: emptySince ?? null,
+      nowIso,
+      open,
+    });
+  };
+  if (layout === "open") {
+    const tiles = live.map((row) => tileOf(row, true)).join("");
+    return `<section class="silo-strip" data-silo-strip>
+    <div class="inv-gauges">${tiles}${extraTiles}</div>
+  </section>${clockScript()}${checkCountdownScript()}${siloLiveScript()}`;
+  }
+  const drawn = live.map((entry) => {
+    const type = spaceTypeOf(entry.silo);
     const row: DryingRowKey = type === "freezer" ? "freezer" : type === "dry_room" ? "dry_room" : "silo";
-    return {
-      row,
-      html: siloTile({ id: silo.id, name: silo.name, visual, body, locale, shape: spaceShapeOf(silo), flags: flags[silo.name] ?? [], emptySince: emptySince ?? null, nowIso }),
-    };
+    return { row, html: tileOf(entry, false) };
   });
   const of = (key: DryingRowKey) => drawn.filter((tile) => tile.row === key).map((tile) => tile.html);
   const totals = dryingRowTotals(live, figures);
   const estimate = t(locale, "est. dry {lb} lb at {pct}%").replace("{lb}", formatLbs(totals.estimateGrams)).replace("{pct}", formatGrams(totals.dryYieldPct));
   const siloTiles = of("silo");
   const freezerTiles = of("freezer");
-  if (totals.ffzGrams != null) freezerTiles.push(ffzInventoryTile(totals.ffzGrams, locale));
   const cureCount = (extraTiles.match(/data-cure-pane=/g) || []).length;
   const roomTiles = of("dry_room");
   const rows = [
     rowMarkup("silo", siloTiles.join(""), siloTiles.length, rowTotalPanel("silo", totals.siloGrams, totals.siloLots, estimate, locale, null), locale),
-    rowMarkup("freezer", freezerTiles.join(""), freezerTiles.length, rowTotalPanel("freezer", totals.ffzGrams ?? 0, null, "", locale, null), locale),
+    rowMarkup("freezer", freezerTiles.join(""), freezerTiles.length, "", locale),
     rowMarkup("cure", extraTiles, cureCount, rowTotalPanel("cure", totals.cureGrams, totals.cureLots, "", locale, null), locale),
     rowMarkup(
       "dry_room",

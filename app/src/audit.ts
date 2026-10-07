@@ -1,4 +1,14 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { roundGrams } from "./config";
+
+declare global {
+  interface Env {
+    /** Smoke only. "1" lets a request header name the instant nowIso returns. Production never sets it. */
+    GF_ALLOW_FIXTURE_NOW?: string;
+  }
+}
+
+const fixtureNow = new AsyncLocalStorage<string>();
 
 export class HttpError extends Error {
   readonly status: number;
@@ -28,7 +38,22 @@ export function requireReason(raw: string | null | undefined): string {
 }
 
 export function nowIso(): string {
-  return new Date().toISOString();
+  return fixtureNow.getStore() ?? new Date().toISOString();
+}
+
+/** Smoke only. While `fn` runs, nowIso returns this instant. Other requests do not see it. */
+export function withFixtureNow<T>(iso: string, fn: () => T): T {
+  return fixtureNow.run(iso, fn);
+}
+
+/** The header instant when the smoke var is on. Anything else is the real clock. */
+export function fixtureNowFrom(allow: string | undefined, header: string | null | undefined): string | null {
+  if (allow !== "1") return null;
+  const text = String(header ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text)) return null;
+  const ms = Date.parse(text);
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
 }
 
 export function textOrNull(raw: unknown): string | null {

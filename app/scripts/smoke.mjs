@@ -183,7 +183,7 @@ function firstSelectValue(html, name) {
 }
 
 function loadPageStripHasSpaces(page) {
-  return page.res.status === 200 && page.body.includes("data-silo-strip") && page.body.includes("data-ffz") && page.body.includes('data-dry-row="cure"');
+  return page.res.status === 200 && page.body.includes("data-silo-strip") && !page.body.includes("data-ffz") && page.body.includes('data-dry-row="cure"');
 }
 
 function drySpaceIdByName(html, name) {
@@ -447,7 +447,7 @@ function startWrangler() {
       const child = spawn(
         // THE SHEET SYNC (canon 0.30.162): the cron is walked through /__scheduled, and the
         // default env reads the smoke's own fixture workbook, never the owner's file.
-        `npx wrangler dev --persist-to .smoke-persist --port ${port} --ip 127.0.0.1 --test-scheduled --var SHEET_FIXTURE_URL:http://127.0.0.1:${port}/__sheet-fixture --var SENSORPUSH_API_BASE:http://127.0.0.1:${port}/__sensorpush --var SENSORPUSH_EMAIL:smoke@local --var SENSORPUSH_PASSWORD:smoke`,
+        `npx wrangler dev --persist-to .smoke-persist --port ${port} --ip 127.0.0.1 --test-scheduled --var SHEET_FIXTURE_URL:http://127.0.0.1:${port}/__sheet-fixture --var SENSORPUSH_API_BASE:http://127.0.0.1:${port}/__sensorpush --var SENSORPUSH_EMAIL:smoke@local --var SENSORPUSH_PASSWORD:smoke --var GF_ALLOW_FIXTURE_NOW:1`,
         { cwd: appRoot, shell: true, env: { ...process.env, BROWSER: "none", CI: "1" } }
       );
       let buf = "";
@@ -910,11 +910,13 @@ async function run() {
       ["/reports", "/", "Home"],
       ["/reports/inventory_by_location", "/reports", "Reports"],
       ["/admin", "/", "Home"],
-      ["/admin/queues", "/admin", "Admin"],
-      ["/admin/lookups", "/admin", "Admin"],
+      ["/admin/data-connections", "/admin", "Admin"],
+      ["/admin/queues", "/admin/data-connections", "Data Connections"],
+      ["/admin/lookups", "/admin/settings", "Admin Settings"],
       ["/admin/lookups/dry_spaces", "/admin/lookups", "Data Lookups"],
-      ["/admin/uploads", "/admin", "Admin"],
-      ["/log", "/", "Home"],
+      ["/admin/uploads", "/admin/data-connections", "Data Connections"],
+      ["/log", "/admin/settings", "Admin Settings"],
+      ["/harvest", "/", "Home"],
     ];
     for (const [path, href, label] of crumbCases) {
       const page = await text(path);
@@ -1313,11 +1315,10 @@ async function run() {
 
     const adminLanding = await text("/admin");
     if (adminLanding.res.status !== 200) fail("GET /admin", `status ${adminLanding.res.status}`);
-    const dq = adminLanding.body.indexOf("Data Queues");
-    const lk = adminLanding.body.indexOf("Lookups");
-    assert(dq !== -1 && lk !== -1 && dq < lk, "Admin landing must list Data Queues first");
-    assert(adminLanding.body.includes('href="/admin/imports"'), "Admin landing missing Import Data");
-    assert(adminLanding.body.includes("Import Data"), "Admin landing missing the Import Data title");
+    assert(adminLanding.body.indexOf("Data Connections") < adminLanding.body.indexOf("Admin Settings") && adminLanding.body.indexOf("Admin Settings") < adminLanding.body.indexOf("Continuum10"), "Admin must list the three buttons in order");
+    assert(!adminLanding.body.includes('href="/admin/imports"') && !adminLanding.body.includes("Testing Override"), "the old tiles leave the Admin landing");
+    const dataConnections = await text("/admin/data-connections");
+    assert(dataConnections.res.status === 200 && dataConnections.body.includes('href="/admin/imports"') && dataConnections.body.includes("Import Data"), "Data Connections must carry Import Data");
     // One admin page renders under Cerberus with its chrome intact (owner ruling 2026-09-01).
     assert(adminLanding.body.includes("--gold:#f1c232"), "the Admin landing must render under Cerberus");
 
@@ -2160,10 +2161,18 @@ async function run() {
       const stripEnd = page.indexOf("</section>", stripAt);
       const row = page.slice(stripAt, stripEnd);
       assert(stripAt >= 0 && row.includes('data-cure-pane="CSA"') && row.includes('data-cure-pane="CSB"'), `${label}: CSA and CSB must ride the strip's row`);
-      assert(row.includes('data-dry-row="silo"') && row.includes('data-dry-row="freezer"') && row.includes('data-dry-row="cure"') && row.includes('data-dry-row="dry_room"'), `${label}: the four drying rows`);
-      assert(row.indexOf('data-dry-row="silo"') < row.indexOf('data-dry-row="freezer"') && row.indexOf('data-dry-row="freezer"') < row.indexOf('data-dry-row="cure"') && row.indexOf('data-dry-row="cure"') < row.indexOf('data-dry-row="dry_room"'), `${label}: rows run Silo, Freezer, Cure Space, Dry Room`);
-      assert(row.includes("data-ffz") && row.indexOf('data-cure-pane="CSA"') < row.indexOf('data-cure-pane="CSB"'), `${label}: the FFZ cube rides the freezer row and CSA precedes CSB`);
-      assert(row.includes("Drying in Silos") && row.includes("Fresh Frozen") && row.includes("Curing") && row.includes("Hang Drying"), `${label}: each row names its total`);
+      assert(row.indexOf('data-cure-pane="CSA"') < row.indexOf('data-cure-pane="CSB"'), `${label}: CSA precedes CSB`);
+      assert(!row.includes("data-ffz") && !row.includes("FFZ Inventory"), `${label}: the FFZ cube is gone`);
+      if (label === "console") {
+        assert(!row.includes("data-dry-row") && !row.includes("data-dry-head") && !row.includes("data-dry-total"), "the dashboard strip is one open row");
+        assert(row.indexOf('data-silo-shape-kind="box"') < row.indexOf('data-silo-shape-kind="cube"'), "the dashboard keeps the live order, dry room then freezer");
+        assert(row.lastIndexOf("data-silo=") < row.indexOf('data-cure-pane="CSA"'), "CSA and CSB follow the space tiles");
+      } else {
+        assert(row.includes('data-dry-row="silo"') && row.includes('data-dry-row="freezer"') && row.includes('data-dry-row="cure"') && row.includes('data-dry-row="dry_room"'), `${label}: the four drying rows`);
+        assert(row.indexOf('data-dry-row="silo"') < row.indexOf('data-dry-row="freezer"') && row.indexOf('data-dry-row="freezer"') < row.indexOf('data-dry-row="cure"') && row.indexOf('data-dry-row="cure"') < row.indexOf('data-dry-row="dry_room"'), `${label}: rows run Silo, Freezer, Cure Space, Dry Room`);
+        assert(row.includes("Drying in Silos") && row.includes("Curing") && row.includes("Hang Drying") && !row.includes("Fresh Frozen"), `${label}: the freezer row keeps its tiles and loses its total`);
+        assert(row.includes("data-dry-head"), `${label}: the rows stay collapsed`);
+      }
       assert(!page.slice(stripEnd).includes("data-cure-pane"), `${label}: no pane may stand outside the strip`);
       assert(!page.includes("cure-panes"), `${label}: the old wrapper must be gone`);
     }
@@ -3925,7 +3934,7 @@ async function run() {
     const roomLiveJson = await roomLive.json();
     const roomEntry = (roomLiveJson.silos || []).find((x) => x.id === silo2Id);
     assert(roomEntry && roomEntry.shape === "cylinder" && roomEntry.state === "drying", "live.json must carry Silo 2 drying");
-    assert(roomLiveJson.ffz && typeof roomLiveJson.ffz.grams === "number" && Array.isArray(roomLiveJson.silos), "live.json keeps its silos and adds the FFZ figure");
+    assert(roomLiveJson.ffz == null && Array.isArray(roomLiveJson.silos), "live.json keeps its silos and drops the FFZ figure");
     const invRoomCsv = await text("/reports/inventory_by_location?format=csv");
     // Canon 0.30.23: the CSV reads Site,Location,Origin farm,Product type,Total,UOM;
     // the origin farm stays the HBN's (ARL) while the material sits at PNN.
@@ -4701,7 +4710,9 @@ async function run() {
     assert(testingLabs.body.includes('data-lab-row="viridis"') && testingLabs.body.includes('data-active="0"'), "Viridis must stay on the list and inactive");
     assert(!testingLabs.body.includes('name="driver_name"'), "the labs page must not carry a driver field");
     const adminTestingTile = await text("/admin");
-    assert(adminTestingTile.body.includes('href="/testing"') && adminTestingTile.body.includes("Testing desk"), "Admin must carry the Testing desk tile");
+    assert(!adminTestingTile.body.includes('href="/testing"') && !adminTestingTile.body.includes("Testing desk"), "Testing desk leaves the Admin buttons");
+    const testingStill = await text("/testing");
+    assert(testingStill.res.status === 200, `the Testing desk route must still answer, got ${testingStill.res.status}`);
 
     const orderPage = await text("/marketplace?pane=orders");
     const listPick = optionValue(orderPage.body, "Gelato");
@@ -5235,11 +5246,11 @@ async function run() {
     assert((dryingMenu.body.match(/class="inv-gauge silo-gauge ffz-gauge freezer-gauge dry-tile"/g) || []).length === 1, "the strip must show the Blast Freezer(s) in the freezer chrome");
     assert(dryingMenu.body.includes('<div class="inv-gauge-name">Blast Freezer(s)</div>'), "the Drying Operations strip must name the Blast Freezer(s)");
     assert(!dryingMenu.body.includes('<div class="inv-gauge-name">Blast Freezer</div>'), "the old tile word must be gone");
-    assert(dryingMenu.body.includes("data-ffz") && dryingMenu.body.includes("FFZ Inventory"), "the freezer row carries the FFZ inventory cube");
+    assert(!dryingMenu.body.includes("data-ffz") && !dryingMenu.body.includes("FFZ Inventory") && !dryingMenu.body.includes("Fresh Frozen"), "the freezer row keeps its space tile and loses the cube and its total");
     assert(dryingMenu.body.includes('aria-expanded="false"'), "tiles start collapsed");
     assert(dryingMenu.body.lastIndexOf('data-silo-shape-kind="cylinder"') < dryingMenu.body.indexOf('data-silo-shape-kind="box"') || dryingMenu.body.indexOf('data-dry-row="silo"') < dryingMenu.body.indexOf('data-dry-row="dry_room"'), "the silo row precedes the dry room row");
     assert(dryingMenu.body.indexOf('data-silo-shape-kind="cube"') < dryingMenu.body.indexOf('data-silo-shape-kind="box"'), "the freezer cube precedes the dry room");
-    assert(loadPageStripHasSpaces(await text("/station/load_silo")), "the Load Silo strip keeps the rows and the FFZ cube");
+    assert(loadPageStripHasSpaces(await text("/station/load_silo")), "the Load Silo strip keeps the rows without the FFZ cube");
     const lot1132Batch = await passEntry(lot1132);
     const loadPage = await text("/station/load_silo");
     assert(loadPage.res.status === 200, `load silo page expected 200 got ${loadPage.res.status}`);
@@ -5306,8 +5317,7 @@ async function run() {
     // shaded boxes, the hours numbox that saves and divides, and the strip with
     // the wire box and the FFZ cube.
     const adminConsoleTiles = await text("/admin");
-    assert(adminConsoleTiles.body.includes('<a class="tile" href="/admin/testing-override">'), "Admin must carry the [Testing Override] button");
-    assert(adminConsoleTiles.body.indexOf('href="/admin/imports"') < adminConsoleTiles.body.indexOf('href="/admin/testing-override"'), "Testing Override must stand beside Import Data");
+    assert(!adminConsoleTiles.body.includes('href="/admin/testing-override"'), "Testing Override leaves the Admin buttons");
     const overridePage = await text("/admin/testing-override");
     assert(overridePage.res.status === 200, `GET the Testing Override pane expected 200 got ${overridePage.res.status}`);
     assert(overridePage.body.includes("Last run: never"), "the Testing Override pane must say never before any drop");
@@ -5320,10 +5330,12 @@ async function run() {
     const badOverride = await req("/admin/testing-override", { method: "POST", body: csvOverride });
     assert(badOverride.status === 400, `a non-xlsb drop expected 400 got ${badOverride.status}`);
     assert((await badOverride.text()).includes("Drop the In Testing workbook, an .xlsb file."), "a non-xlsb drop must refuse in words");
-    assert(adminConsoleTiles.body.includes('<a class="tile" href="/harvest">'), "Admin must carry the [Harvest Console] button");
-    assert(adminConsoleTiles.body.includes('<span class="tile-title">Harvest Console</span>'), "the button must read Harvest Console");
-    assert(adminConsoleTiles.body.includes('<span class="tile-title">Harvest Console Lite</span>'), "the vendored planting app's tile must read Harvest Console Lite");
-    assert(adminConsoleTiles.body.indexOf('href="/harvest"') < adminConsoleTiles.body.indexOf('href="/vendors-equipment"'), "the console button must stand before the Continuum tiles");
+    const barForConsole = await text("/");
+    const barSlice = barForConsole.body.slice(barForConsole.body.indexOf('class="bar-actions"'), barForConsole.body.indexOf("</header>"));
+    assert(barSlice.includes('href="/harvest"') && barSlice.includes(">Harvest Console</a>"), "the bar must carry Harvest Console");
+    const continuumForLite = await text("/admin/continuum10");
+    assert(continuumForLite.body.includes('<span class="tile-title">Harvest Console Lite</span>'), "Continuum10 must carry Harvest Console Lite");
+    assert(barSlice.indexOf('href="/models"') < barSlice.indexOf('href="/harvest"') && barSlice.indexOf('href="/harvest"') < barSlice.indexOf('href="/maintenance"'), "Models and Harvest Console sit left of Maintenance");
 
     // THE MODELS BUTTON (canon 0.30.86; owner ruling 2026-09-15, verbatim: "New
     // button in Admin: [Models] - pin gated: 17853" and "1. [Harvest Menu Tool
@@ -5331,8 +5343,7 @@ async function run() {
     // does not open it; the Admin PIN typed there is refused; an off-site next
     // falls back to /models); the tiles page; the vendored tool streamed at its
     // slashed path (the slash-less one redirects) with its data.json beside it.
-    assert(adminConsoleTiles.body.includes('<a class="tile" href="/models">'), "Admin must carry the [Models] button");
-    assert(adminConsoleTiles.body.includes('<span class="tile-title">Models</span>'), "the button must read Models");
+    assert(barSlice.includes('href="/models"') && barSlice.includes(">Models</a>"), "the bar must carry Models");
     const modelsGate = await text("/models");
     assert(modelsGate.res.status === 401, `Models behind the Admin PIN alone expected 401 got ${modelsGate.res.status}`);
     assert(modelsGate.body.includes('action="/pin/models"'), "the Models PIN page must post to /pin/models");
@@ -5570,9 +5581,6 @@ async function run() {
     assert(clearHours.status === 303, `clear hours expected 303 got ${clearHours.status}`);
     const consoleCleared = await text("/harvest");
     assert(/value=""[^>]*aria-label="Harvest Hours"/.test(consoleCleared.body), "a blank save must clear the day's harvest hours");
-    // THE LINE RUNS ON THE CLOCK (canon 0.30.163): read the Unloaded Queue's state at the same moment as this console.
-    const trimQueueBefore = await text("/station/trim_packages");
-    const queueEmptyBefore = trimQueueBefore.body.includes("No rows waiting.");
     // THE TRIMMING SECTION (canon 0.30.88; owner ruling 2026-09-16, verbatim in
     // the canon row; his picks "Olga = Days, Victor = Afternoons" and "WPR
     // means SMALLS"). Before any package dated yesterday: two shift cards, both
@@ -5608,19 +5616,10 @@ async function run() {
     assert((trimBefore.match(/class="hc-bud-cell hc-bud-empty"/g) || []).length === 200, "with nothing dated yesterday every cell of both buds is an outline");
     assert((trimBefore.match(/viewBox="0 0 130 190" role="img"/g) || []).length === 2, "both buds must ride the 13 by 19 lattice");
     assert(!trimBefore.includes("data-hc-bud-stem"), "the progression bud has no permanent stem");
-    // THE LINE RUNS ON THE CLOCK (canon 0.30.163): with the Unloaded Queue empty of scheduled lots and no shift
-    // operator weighing lately, both cards stand still; once a lot is scheduled for trim, the shift on duty
-    // (Day 6:00 AM to 6:00 PM Eastern, Second the other twelve hours) runs by the clock alone.
-    const onDutyKey = (() => { const h = etHourSmoke(new Date().toISOString()); return h >= 6 && h < 18 ? "day" : "second"; })();
-    const offDutyKey = onDutyKey === "day" ? "second" : "day";
-    if (queueEmptyBefore) {
-      assert(trimBefore.includes('data-hc-shift="day" data-hc-shift-grams="0" data-hc-shift-running="0"'), "an empty queue: the Day card stands still");
-      assert(trimBefore.includes('data-hc-shift="second" data-hc-shift-grams="0" data-hc-shift-running="0"'), "an empty queue: the Second card stands still");
-      assert(!shiftCardsBefore.includes("data-hc-running>"), "no RUNNING word on an idle card");
-    } else {
-      assert(trimBefore.includes(`data-hc-shift="${onDutyKey}" data-hc-shift-grams="0" data-hc-shift-running="1"`), "a lot in the queue lights the shift on duty by the clock");
-      assert(trimBefore.includes(`data-hc-shift="${offDutyKey}" data-hc-shift-grams="0" data-hc-shift-running="0"`), "the shift off duty stands still");
-    }
+    // NO CLOCK ON THE TRIM SHIFTS (canon 0.30.419): a lot in the queue does not light a card.
+    assert(trimBefore.includes('data-hc-shift="day" data-hc-shift-grams="0" data-hc-shift-running="0"'), "the Day card stands still until its lead enters");
+    assert(trimBefore.includes('data-hc-shift="second" data-hc-shift-grams="0" data-hc-shift-running="0"'), "the Second card stands still until its lead enters");
+    assert(!shiftCardsBefore.includes("data-hc-running>"), "no RUNNING word on an idle card");
     assert(rightNowBefore.includes("<animate "), "RUNNING stripes move on the live picture");
     assert(trimBefore.includes('data-hc-trim-running-unassigned><span class="hc-running">RUNNING</span> a package was weighed in the last 30 minutes by an operator on neither shift.</p>'), "Les weighed within 30 minutes on neither shift: the section must say RUNNING there");
     for (const node of ["trim", "t0", "sorter", "marvel", "bio", "bud", "retrim"]) {
@@ -5687,12 +5686,11 @@ async function run() {
     assert(dayCard.includes('hc-bud-bud" data-hc-bud-order="100" data-hc-bud-n="1"'), "at 60% the heart, cell 1, is still bud");
     assert(dayCard.includes('hc-bud-consumed" data-hc-bud-order="1" data-hc-bud-n="100"'), "at 60% the foot, cell 100, is the first consumed");
     assert(dayCard.includes('data-hc-shift-running="1"') && dayCard.includes('<span class="hc-running" data-hc-running>RUNNING</span>'), "Olga weighed within 30 minutes: the Day card flashes RUNNING");
-    // THE LINE RUNS ON THE CLOCK: the extra lot now stands in the Unloaded Queue for trim, so the shift on duty runs by the clock too.
     const trimQueueNow = await text("/station/trim_packages");
     assert(!trimQueueNow.body.includes("No rows waiting."), "the scheduled extra lot must stand in the Unloaded Queue for trim");
-    assert(trimSection.slice(trimSection.indexOf(`data-hc-shift="${onDutyKey}"`)).includes('data-hc-shift-running="1"'), "the shift on duty must run with a lot in the queue");
     assert(dayCard.includes('data-hc="trim_lbs_per_dlh">type hours</span>'), "Lbs/DLH must ask for hours until typed");
     const secondCard = trimSection.slice(trimSection.indexOf('data-hc-shift="second"'));
+    assert(secondCard.includes('data-hc-shift-running="1"'), "Victor weighed within 30 minutes: the Second card flashes RUNNING from his entry, not the clock");
     assert(secondCard.includes('data-hc="trim_lbs">0.06 lb</span><span class="hc-sub muted">29 g · 2 packages</span>'), "Second Shift must weigh victor's 29 g (the operator matched case-blind)");
     assert(secondCard.includes('data-hc="trim_btr">31.0%</span>'), "Second Shift BTR must read 31.0% (9 SMALLS, his WPR, of 29)");
     assert(secondCard.includes('data-hc="trim_prepack">0.02 lb</span><span class="hc-sub muted">9 g · WPR</span>'), "Second Shift Prepack Bud must be the SMALLS 9 g (his WPR)");
@@ -5822,18 +5820,18 @@ async function run() {
     // THE BLAST FREEZER (canon 0.30.98): a second wire box beside the Arlington Dry Room.
     assert((consoleDrying.match(/data-silo-shape-kind="box"/g) || []).length === 1, "the Arlington Dry Room as the wire box on the console");
     assert((consoleDrying.match(/data-silo-shape-kind="cube"/g) || []).length === 1, "the Blast Freezer(s) as the freezer cube on the console");
-    assert(consoleDrying.includes("data-ffz"), "the freezer row carries the FFZ inventory cube");
+    assert(!consoleDrying.includes("data-ffz") && !consoleDrying.includes("data-dry-head") && !consoleDrying.includes("FFZ Inventory"), "the dashboard strip is open and has no FFZ cube");
     assert(consoleDrying.includes('<svg class="silo-shape silo-shape-cube"'), "the Blast Freezer(s) must draw as the cube");
-    assert(consoleDrying.indexOf('data-silo-shape-kind="cube"') < consoleDrying.indexOf('data-silo-shape-kind="box"'), "the freezer row precedes the dry room");
-    const ffzLive = await (await req("/silos/live.json")).json();
-    assert(ffzLive.ffz && typeof ffzLive.ffz.grams === "number" && Array.isArray(ffzLive.silos), "live.json keeps its silos and adds the FFZ figure");
+    assert(consoleDrying.indexOf('data-silo-shape-kind="box"') < consoleDrying.indexOf('data-silo-shape-kind="cube"'), "the dashboard keeps the live order, dry room then freezer");
+    const siloLive = await (await req("/silos/live.json")).json();
+    assert(siloLive.ffz == null && Array.isArray(siloLive.silos) && siloLive.silos.length > 0, "live.json keeps its silos and drops the FFZ figure");
     assert(consolePage.body.includes('fetch("/silos/live.json"'), "the console must repaint from live.json");
     // Spanish console, then back to English for the walk that follows.
     const toEsConsole = await req("/locale", { method: "POST", body: form({ locale: "es" }) });
     await toEsConsole.text();
     const consoleEs = await text("/harvest");
     assert(consoleEs.body.includes('<summary>Plantas <span class="muted hc-year">Año de cosecha') && consoleEs.body.includes("<summary>Secado</summary>"), "the console must speak Spanish");
-    assert(consoleEs.body.includes("Inventario FFZ") && consoleEs.body.includes("Secando en silos") && consoleEs.body.includes("Curando"), "the Spanish console names the rows and the FFZ cube");
+    assert(!consoleEs.body.includes("Inventario FFZ") && !consoleEs.body.includes("Secando en silos"), "the Spanish dashboard has no row totals and no FFZ cube");
     const toEnConsole = await req("/locale", { method: "POST", body: form({ locale: "en" }) });
     await toEnConsole.text();
     const loadLoc = doLoad.headers.get("location") || "";
@@ -6164,8 +6162,8 @@ async function run() {
     assert(manualDupe.status === 409, `a taken manual serial expected 409 got ${manualDupe.status}`);
     const manualQueue = await text("/station/wet_weight");
     assert(manualQueue.body.includes("pick="), "the manual HBN must land in the queue like any other");
-    const adminTiles = await text("/admin");
-    assert(adminTiles.body.includes('href="/admin/manual-hbn"'), "Admin must carry the buried Manual HBN tile");
+    const adminTiles = await text("/admin/settings");
+    assert(adminTiles.body.includes('href="/admin/manual-hbn"'), "Admin Settings must carry Manual HBN");
 
     // Owner word 2026-09-06 (canon 0.27.5): weighing lots get their Data Queues
     // place, the last record class without a surfaced reasoned Void. The PNS
@@ -6260,9 +6258,9 @@ async function run() {
     const rtuPage = await text(`/equipment/${rtuId}`);
     assert(rtuPage.body.includes("RTU 1"), "the RTU page must be RTU 1");
     assert(rtuPage.body.includes('<option value="Kieth" selected>Kieth</option>'), "an RTU must start its signature on Kieth");
-    const adminHome = await text("/admin");
-    assert(adminHome.body.includes('href="/vendors-equipment"'), "Admin must link the Vendors and Equipment page");
-    assert(adminHome.body.includes('href="/erp-software"'), "Admin must carry the ERP backdoor link");
+    const adminHome = await text("/admin/continuum10");
+    assert(adminHome.body.includes('href="/vendors-equipment"'), "Continuum10 must link the Vendors and Equipment page");
+    assert(adminHome.body.includes('href="/erp-software"'), "Continuum10 must carry the ERP link");
     const erp = await text("/erp-software");
     assert(erp.res.status === 200, `erp page expected 200 got ${erp.res.status}`);
     assert(erp.body.includes("What is an ERP?"), "erp page missing its first heading");
@@ -6286,7 +6284,7 @@ async function run() {
     assert(ctPage.body.includes('class="shots"'), "ct page missing the screenshot slider");
     assert(ctPage.body.includes("/continuum/ct-1.png"), "ct page missing the first real screenshot");
     assert(ctPage.body.includes("Open the Compliance Console"), "ct page missing the console pill");
-    assert(adminHome.body.includes('href="/compliance-testing"'), "Admin must carry the Compliance Testing tile");
+    assert(adminHome.body.includes('href="/compliance-testing"'), "Continuum10 must carry the Compliance Testing tile");
     const ctShot = await req("/continuum/ct-1.png");
     assert(ctShot.status === 200, `ct screenshot expected 200 got ${ctShot.status}`);
 
@@ -6299,7 +6297,7 @@ async function run() {
     // the vendored Harvest Console Lite, whole, with the inverted Continuum skin
     // spliced in before its closing head tag at serve time; the file on disk is
     // untouched; the old /app path redirects; the Admin tile opens it.
-    assert(adminHome.body.includes('href="/harvest-console"'), "Admin must carry the Harvest Console tile");
+    assert(adminHome.body.includes('href="/harvest-console"'), "Continuum10 must carry the Harvest Console Lite tile");
     const hcApp = await text("/harvest-console");
     assert(hcApp.res.status === 200, `harvest console expected 200 got ${hcApp.res.status}`);
     assert((hcApp.res.headers.get("content-type") || "").startsWith("text/html"), "the harvest console must serve as text/html");
@@ -7225,8 +7223,8 @@ async function run() {
     // a move to Silo 6 lands; the purge of Silo 6 refuses without the PIN and
     // without a reason, then voids the package under the reason; an empty
     // location refuses to purge; the notes acknowledge one at a time.
-    const adminForReconcile = await text("/admin");
-    assert(adminForReconcile.body.includes('<a class="tile" href="/admin/reconcile-location">'), "Admin must carry the [Reconcile Ledger Location] button");
+    const adminForReconcile = await text("/admin/settings");
+    assert(adminForReconcile.body.includes('<a class="tile" href="/admin/reconcile-location">'), "Admin Settings must carry the [Reconcile Ledger Location] button");
     assert(adminForReconcile.body.includes('<span class="tile-title">Reconcile Ledger Location</span>'), "the button must read Reconcile Ledger Location");
     const reconcileHome = await text("/admin/reconcile-location");
     assert(reconcileHome.res.status === 200, `reconcile page expected 200 got ${reconcileHome.res.status}`);
@@ -7343,8 +7341,9 @@ async function run() {
     // the second run skips an unchanged sheet; Run now flashes in words. The console
     // no longer prints the read line.
     const adminSyncTiles = await text("/admin");
-    assert(adminSyncTiles.body.includes('href="/admin/sheet-sync"'), "Admin must carry the [Sheet sync] tile");
-    assert(adminSyncTiles.body.includes('href="/admin/metrc-api"') && adminSyncTiles.body.includes("Metrc API"), "Admin must carry the [Metrc API] tile");
+    assert(!adminSyncTiles.body.includes('href="/admin/sheet-sync"'), "Sheet sync leaves the Admin buttons");
+    const dataForMetrc = await text("/admin/data-connections");
+    assert(dataForMetrc.body.includes('href="/admin/metrc-api"') && dataForMetrc.body.includes("Metrc API"), "Data Connections must carry the [Metrc API] tile");
     const syncPageEmpty = await text("/admin/sheet-sync");
     if (syncPageEmpty.res.status !== 200) fail("GET /admin/sheet-sync", `status ${syncPageEmpty.res.status}`);
     assert(syncPageEmpty.body.includes("<h1>Sheet sync</h1>") && syncPageEmpty.body.includes("No runs yet.") && syncPageEmpty.body.includes("data-sheet-sync-run>Run now</button>"), "the empty Sheet sync page must offer Run now");
@@ -9735,6 +9734,140 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     assert(l5Print.status === 200, `the anchor print expected 200 got ${l5Print.status} ${l5Body.slice(0, 300)}`);
     assert((l5Body.match(/data-label-page="/g) || []).length === 1, "the anchor print is one page");
     assert(l5Body.includes("left:1in;top:1.5in;width:1in;height:1in") && l5Body.includes('points="-50,-50 100,100 0,100"'), "the print page draws the saved geometry");
+
+    // ASSIGN PLANT COUNTS (canon 0.30.416). The road lot was finished with the
+    // plant prompt skipped, so it is on the left. >> 412 moves it right and the
+    // dashboard counts those plants. << then >> 415 logs 412 to 415. "abc" is
+    // refused in place and writes nothing.
+    const plantOps = await text("/ops/harvest_ops");
+    assert(plantOps.body.includes('data-pipeline-key="assign_plant_counts"'), "Harvest Operations must offer Assign Plant Counts");
+    assert(
+      plantOps.body.indexOf('data-pipeline-key="field_harvest"') < plantOps.body.indexOf('data-pipeline-key="assign_plant_counts"'),
+      "Assign Plant Counts follows Penn South/Arlington Harvest"
+    );
+    assert(plantOps.body.includes("Assign Plant Counts"), "the button must read Assign Plant Counts");
+    const harvestedOf = (body) => {
+      const totalBox = body.slice(body.indexOf('data-hc-farm="Total"'), body.indexOf('data-hc-section="drying"'));
+      const hit = totalBox.match(/data-hc="harvested">([^<]+)</);
+      return hit ? Number(hit[1].replace(/,/g, "")) : NaN;
+    };
+    const beforeHarvest = harvestedOf((await text("/harvest")).body);
+    const plantLeft = await text("/station/assign_plant_counts");
+    assert(plantLeft.res.status === 200, `assign plant counts expected 200 got ${plantLeft.res.status}`);
+    assert(plantLeft.body.includes(`data-plant-entry="${roadLot}"`), "the skipped lot must be on the left pane");
+    assert(!plantLeft.body.includes(`data-plant-assigned="${roadLot}"`), "a lot with no count stays off the right pane");
+    const plantSave = await req("/station/assign_plant_counts", {
+      method: "POST",
+      body: form({ entry_id: roadLot, plant_count: "412" }),
+    });
+    assert(plantSave.status === 303, `>> 412 expected 303 got ${plantSave.status} ${await plantSave.text()}`);
+    const plantRight = await text("/station/assign_plant_counts");
+    assert(!plantRight.body.includes(`data-plant-entry="${roadLot}"`), ">> must take the lot off the left pane");
+    assert(plantRight.body.includes(`data-plant-assigned="${roadLot}"`) && plantRight.body.includes("412"), ">> must put 412 on the right pane");
+    const afterHarvest = harvestedOf((await text("/harvest")).body);
+    assert(afterHarvest === beforeHarvest + 412, `the dashboard must count the 412 plants, ${beforeHarvest} then ${afterHarvest}`);
+    const plantBack = await text(`/station/assign_plant_counts?entry=${roadLot}`);
+    assert(plantBack.body.includes(`data-plant-entry="${roadLot}"`) && plantBack.body.includes('value="412"'), "<< must fill 412 on the left");
+    assert(!plantBack.body.includes(`data-plant-assigned="${roadLot}"`), "<< must take the lot off the right pane");
+    const plantEdit = await text(`/record/wet_weight_entries/${roadLot}/edit`);
+    assert(plantEdit.body.includes('name="plant_count" value="412"'), "<< must leave the stored count at 412");
+    const plantResave = await req("/station/assign_plant_counts", {
+      method: "POST",
+      body: form({ entry_id: roadLot, plant_count: "415" }),
+    });
+    assert(plantResave.status === 303, `>> 415 expected 303 got ${plantResave.status} ${await plantResave.text()}`);
+    const plantLog = await text("/log");
+    assert(plantLog.body.includes("assign plant counts"), "the log must name assign plant counts");
+    assert(/<td>412<\/td>\s*<td>415<\/td>/.test(plantLog.body), "the resave must log 412 to 415");
+    const plantBad = await req("/station/assign_plant_counts", {
+      method: "POST",
+      body: form({ entry_id: roadLot, plant_count: "abc" }),
+    });
+    const plantBadBody = await plantBad.text();
+    assert(
+      plantBad.status === 400 && plantBadBody.includes("Plant count must be a whole number of plants, one or more."),
+      `abc must be refused in place, got ${plantBad.status} ${plantBadBody.slice(0, 300)}`
+    );
+    assert(plantBadBody.includes('value="abc"') && plantBadBody.includes('data-plant-pane="none"'), "the refusal must stay on the station with abc in the field");
+    const plantKept = await text(`/record/wet_weight_entries/${roadLot}/edit`);
+    assert(plantKept.body.includes('name="plant_count" value="415"'), "abc must leave the stored count at 415");
+
+    // ADMIN CLEANUP (canon 0.30.418). Three buttons, the four old tiles gone
+    // from Admin, their routes still answering, Continuum URLs unchanged, and
+    // the bar carrying Models and Harvest Console before Maintenance.
+    const adminClean = await text("/admin");
+    assert(adminClean.body.includes("Data Connections") && adminClean.body.includes("Admin Settings") && adminClean.body.includes("Continuum10"), "Admin holds the three buttons");
+    for (const gone of ["Testing Override", "Environment", "Sheet sync", "Testing desk"]) {
+      assert(!adminClean.body.includes(gone), `${gone} must leave Admin`);
+    }
+    const settingsClean = await text("/admin/settings");
+    assert(settingsClean.res.status === 200 && settingsClean.body.includes('href="/admin/lookups"') && settingsClean.body.includes('href="/log"') && settingsClean.body.includes('href="/admin/manual-hbn"') && settingsClean.body.includes('href="/admin/reconcile-location"'), "Admin Settings lists its four members");
+    const continuumClean = await text("/admin/continuum10");
+    assert(continuumClean.res.status === 200 && continuumClean.body.includes('href="/vendors-equipment"') && continuumClean.body.includes('href="/erp-software"') && continuumClean.body.includes('href="/compliance-testing"') && continuumClean.body.includes('href="/harvest-console"'), "Continuum10 keeps the four URLs");
+    for (const path of ["/admin/testing-override", "/admin/environment", "/admin/sheet-sync", "/testing"]) {
+      const still = await text(path);
+      assert(still.res.status === 200, `${path} must still answer 200, got ${still.res.status}`);
+    }
+    // THE DAY FOLLOWS THE TEAM LEAD (canon 0.30.419). Last, so the change log's
+    // latest 200 rows stay the earlier checks'. A second shift post at 06:30
+    // Eastern on the morning after the farm's today lands on the farm's today.
+    // A day shift post at 19:00 on the farm's today stays on that day. Neither
+    // sends an Effective Date.
+    const leadMorning = dayAfterSmoke(farmToday);
+    const at0630 = etInstantSmoke(leadMorning, "06:30");
+    const at1900 = etInstantSmoke(farmToday, "19:00");
+    const nightPost = await req("/station/trim_packages", {
+      method: "POST",
+      headers: { "x-gf-now": at0630 },
+      body: form({
+        wet_weight_entry_id: extraLotId,
+        package_code: ["NIGHT-0630"],
+        package_type_code: ["BUD"],
+        trim_operator: "Victor",
+        weight_grams: ["140"],
+      }),
+    });
+    assert(nightPost.status === 303, `second shift at 06:30 expected 303 got ${nightPost.status}`);
+    const nightLoc = nightPost.headers.get("location") || "";
+    assert(nightLoc.includes("counted_shift=second") && nightLoc.includes(`counted_day=${farmToday}`), `06:30 Eastern on ${leadMorning} must count to ${farmToday}, got ${nightLoc}`);
+    const nightFlash = await text(nightLoc.startsWith("http") ? new URL(nightLoc).pathname + new URL(nightLoc).search : nightLoc);
+    assert(nightFlash.body.includes(`<div class="banner ok">Second Shift, ${farmToday}</div>`), "the station must name Second Shift and the day the package counted to");
+    const nightRow = localD1All("SELECT trim_date FROM wip_packages WHERE package_code = 'NIGHT-0630' AND deleted_at IS NULL");
+    assert(nightRow[0] && nightRow[0].trim_date === farmToday, `stored trim_date expected ${farmToday} got ${nightRow[0] && nightRow[0].trim_date}`);
+    assert(nightRow[0].trim_date === dayBeforeSmoke(etDateSmoke(at0630)), "the stored day is the calendar day before the 06:30 entry");
+    const dayPost = await req("/station/trim_packages", {
+      method: "POST",
+      headers: { "x-gf-now": at1900 },
+      body: form({
+        wet_weight_entry_id: extraLotId,
+        package_code: ["DAY-1900"],
+        package_type_code: ["BUD"],
+        trim_operator: "Olga",
+        weight_grams: ["80"],
+      }),
+    });
+    assert(dayPost.status === 303, `day shift at 19:00 expected 303 got ${dayPost.status}`);
+    const dayLoc = dayPost.headers.get("location") || "";
+    assert(dayLoc.includes("counted_shift=day") && dayLoc.includes(`counted_day=${farmToday}`), `a late day post must stay on ${farmToday}, got ${dayLoc}`);
+    const dayFlash = await text(dayLoc.startsWith("http") ? new URL(dayLoc).pathname + new URL(dayLoc).search : dayLoc);
+    assert(dayFlash.body.includes(`<div class="banner ok">Day shift, ${farmToday}</div>`), "the station must name Day shift and the day the package counted to");
+    const dayRow = localD1All("SELECT trim_date FROM wip_packages WHERE package_code = 'DAY-1900' AND deleted_at IS NULL");
+    assert(dayRow[0] && dayRow[0].trim_date === etDateSmoke(at1900), `a late day post must store its Eastern calendar date, got ${dayRow[0] && dayRow[0].trim_date}`);
+    const smokeLbs = (grams) => (Math.round((Number(grams) / 448) * 100) / 100).toFixed(2);
+    const secondSum = localD1All(`SELECT COALESCE(SUM(weight_grams), 0) AS grams, COUNT(*) AS n FROM wip_packages WHERE deleted_at IS NULL AND COALESCE(source, 'trim') NOT IN ('cryo', 'metrc') AND trim_date = '${farmToday}' AND lower(trim(trim_operator)) = 'victor'`);
+    const daySum = localD1All(`SELECT COALESCE(SUM(weight_grams), 0) AS grams, COUNT(*) AS n FROM wip_packages WHERE deleted_at IS NULL AND COALESCE(source, 'trim') NOT IN ('cryo', 'metrc') AND trim_date = '${farmToday}' AND lower(trim(trim_operator)) = 'olga'`);
+    const leadDash = await text("/harvest");
+    const leadTrim = leadDash.body.slice(leadDash.body.indexOf('data-hc-section="trimming"'), leadDash.body.indexOf('data-hc-section="pasteurization"'));
+    const leadDay = leadTrim.slice(leadTrim.indexOf('data-hc-shift="day"'), leadTrim.indexOf('data-hc-shift="second"'));
+    const leadSecond = leadTrim.slice(leadTrim.indexOf('data-hc-shift="second"'), leadTrim.indexOf("data-hc-trim-totals"));
+    const secondGrams = Math.round(Number(secondSum[0].grams));
+    const dayGrams = Math.round(Number(daySum[0].grams));
+    assert(leadSecond.includes(`data-hc="trim_lbs">${smokeLbs(secondGrams)} lb</span><span class="hc-sub muted">${secondGrams} g · ${secondSum[0].n} packages</span>`), `Second Shift of ${farmToday} must count the 06:30 package`);
+    assert(leadDay.includes(`data-hc="trim_lbs">${smokeLbs(dayGrams)} lb</span><span class="hc-sub muted">${dayGrams} g · ${daySum[0].n} packages</span>`), `Day shift of ${farmToday} must count the late post`);
+    assert(!leadTrim.includes("data-hc-trim-duty") && !leadTrim.includes("no shift on duty"), "the trim section has no on duty flag");
+    const barHome = await text("/");
+    const bar = barHome.body.slice(barHome.body.indexOf('class="bar-actions"'), barHome.body.indexOf("</header>"));
+    assert(bar.indexOf('href="/models"') < bar.indexOf('href="/harvest"') && bar.indexOf('href="/harvest"') < bar.indexOf('href="/maintenance"'), "the bar reads Models, Harvest Console, Maintenance");
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

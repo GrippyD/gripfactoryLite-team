@@ -115,8 +115,8 @@ import { recallPrefillFromBatch, recallRedirectPath, type RecallableBatch } from
 import { hbnWithSeq, wetWeightsFilename } from "./csv";
 import { backRedirect, HttpError, nowIso, parseGrams, parsePlantCount, refusal, requireReason, requireText, textOrNull } from "./audit";
 import { EFFECTIVE_DATE_FIELD, EFFECTIVE_DATE_REASON, effectiveOverrideLog, farmDayStartHour, farmToday, resolveEffectiveDate } from "./effective";
-import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmInstant, farmInstantFromInput, wallClock24From12 } from "./farmday";
-import { capacityUomOf, drySpaceTypeOf, spaceHoldsOneLot, trimBogeyOf, maxToteLbsOf, parseMaxToteLbs, lotCapOf, phpPriceOf, GRAMS_PER_LB, DRY_SPACE_TYPES, CAPACITY_UOMS } from "./config";
+import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmInstant, farmInstantFromInput, trimCountedDate, wallClock24From12 } from "./farmday";
+import { capacityUomOf, drySpaceTypeOf, spaceHoldsOneLot, trimBogeyOf, maxToteLbsOf, parseMaxToteLbs, parseNameList, lotCapOf, phpPriceOf, GRAMS_PER_LB, DRY_SPACE_TYPES, CAPACITY_UOMS } from "./config";
 import { assertHbnAvailable, formatLotToken, harvestYearFromEntryDate, hbnFromMetrcName, HbnCollisionError, mintHbn, nextLotSerial } from "./mint";
 import { RAD_RUN_STATUS } from "./config";
 import { newestRadGrey } from "./db";
@@ -2013,11 +2013,21 @@ export async function createTrimPackages(db: D1Database, form: FormData): Promis
   // 0.30.94): that date is the station's Effective Date, today by default, the
   // Admin PIN for any other day; it writes to each package's trim_date.
   const effective = await resolveEffectiveDate(db, form, ts);
-  const trimDate = effective.date;
   // Canon 0.30.21 (owner: "The operator dropdowns don't need to have the
   // maintenance crew on every single one, that was just for the PM portion"):
   // the operator is hand entry again, as 0.30.9 R7 asked.
   const trimOperator = requireText(form.get("trim_operator"), "Operator");
+  // THE DAY FOLLOWS THE TEAM LEAD (canon 0.30.419). A PIN Effective Date wins.
+  // Otherwise the date follows the operator's shift list, not the farm day.
+  const [dayOps, secondOps, startHour] = await Promise.all([
+    getConfigValue(db, CONFIG_KEYS.trim_shift_day_operators),
+    getConfigValue(db, CONFIG_KEYS.trim_shift_second_operators),
+    farmDayStartHour(db),
+  ]);
+  const counted = trimCountedDate(ts, trimOperator, { day: parseNameList(dayOps), second: parseNameList(secondOps) }, startHour);
+  const trimDate = effective.overridden ? effective.date : counted.date;
+  const countedShift = counted.shift ?? "unassigned";
+  const countedQuery = `counted_shift=${encodeURIComponent(countedShift)}&counted_day=${encodeURIComponent(trimDate)}`;
   const cryoTypes = await getCryoTypeCategories(db);
   const cut: Array<{ id: string; package_code: string; grams: number }> = [];
   for (let i = 0; i < codes.length; i++) {
@@ -2082,15 +2092,16 @@ export async function createTrimPackages(db: D1Database, form: FormData): Promis
   await db.batch(stmts);
   // The plus lane lands back on the picked lot so the list grows in place and
   // the entry boxes come back blank.
-  if (plusOne) return { redirect: `/station/trim_packages?pick=${encodeURIComponent(lotId)}&ok=plus` };
+  const pick = encodeURIComponent(lotId);
+  if (plusOne) return { redirect: `/station/trim_packages?pick=${pick}&ok=plus&${countedQuery}` };
   const recorded = await sumLotPackageGrams(db, lotId);
   const remaining = sumGrams([Number(lot.dry_weight_grams ?? 0), -recorded]);
   // Canon 0.30.9: at or past zero the picked page itself prompts REMAINING 0
   // with [Remove from queue]; short of the parent the under gate still asks.
   if (remaining > 0) {
-    return { redirect: `/station/trim_packages?pick=${encodeURIComponent(lotId)}&gate=1` };
+    return { redirect: `/station/trim_packages?pick=${pick}&gate=1&ok=trim&${countedQuery}` };
   }
-  return { redirect: `/station/trim_packages?pick=${encodeURIComponent(lotId)}&ok=trim` };
+  return { redirect: `/station/trim_packages?pick=${pick}&ok=trim&${countedQuery}` };
 }
 
 /** Owner ruling 2026-09-08 (canon 0.30.9): [Remove from queue] at Remaining 0.

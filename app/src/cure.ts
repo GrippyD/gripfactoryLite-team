@@ -396,7 +396,16 @@ export function cureShadeFill(n: number, cap: number): string {
   return (Math.min(pct, 1) * 100).toFixed(1);
 }
 
-function paneCard(name: CurePaneName, lots: CureLot[], cap: number, reading: CureReading | null, nowIso: string, locale: Locale, flags: string[]): string {
+function paneCard(
+  name: CurePaneName,
+  lots: CureLot[],
+  cap: number,
+  reading: CureReading | null,
+  nowIso: string,
+  locale: Locale,
+  flags: string[],
+  layout: "row" | "bar"
+): string {
   const cond = conditionsLine(reading, nowIso, locale);
   const alert = flags.length > 0;
   const text = alert ? `${cond.text} · ${flags.join(" ")}` : cond.text;
@@ -414,6 +423,18 @@ function paneCard(name: CurePaneName, lots: CureLot[], cap: number, reading: Cur
     ? lots.map((lot) => lotRow(lot, nowIso, locale)).join("")
     : `<p class="muted" data-cure-empty>${esc(t(locale, "No lots."))}</p>`;
   const hover = reading ? ` title="${esc(readingTitle(reading))}"` : "";
+  if (layout === "bar") {
+    return `<div class="inv-gauge cure-pane" data-cure-pane="${name}"${hover}>
+      <div class="inv-gauge-name">${name}</div>
+      <p class="cure-conditions${cond.stale || alert ? " cure-stale" : ""}" data-cure-conditions>${esc(text)}</p>
+      <div class="cure-shade" style="height:${fill}%" data-cure-shade data-cure-fill="${fill}">
+      <details class="cure-lots" data-cure-lots>
+        <summary class="cure-count${over ? " cure-over" : ""}" data-cure-count="${n}" data-cure-cap="${cap}" data-cure-pct="${pctShown}" title="${esc(capLine)}">${esc(count)}</summary>
+        ${body}
+      </details>
+      </div>
+    </div>`;
+  }
   const dry = lots.reduce((sum, lot) => sum + Number(lot.dryGrams ?? 0), 0);
   const bodyId = `dry-body-${name}`;
   const weight = `${esc(t(locale, "Dry"))} <strong>${esc(formatLbs(dry))}</strong> lb · <strong>${esc(formatGrams(Math.round(dry)))}</strong> g`;
@@ -499,20 +520,19 @@ export function cureClockScript(): string {
 </script>`;
 }
 
-/** The two cards and the ticking script. THE PANES RIDE THE STRIP (owner,
- * 2026-09-22: "CSA and CSB should be in line with drying spaces, in the void
- * after FFZ Inventory set the same size"): no wrapper of their own; the caller
- * hands this string to siloStrip as extra tiles, so the two cards stand in the
- * drying row after the FFZ cube, the width of the tiles beside them. */
-export function curePanes(data: CurePanesData, locale: Locale = "en"): string {
+/** The two cards and the ticking script. THE PANES RIDE THE STRIP: no wrapper of
+ * their own; the caller hands this string to siloStrip as extra tiles, so the
+ * two cards stand with the space tiles, the width of the tiles beside them. */
+export function curePanes(data: CurePanesData, locale: Locale = "en", layout: "row" | "bar" = "row"): string {
   const flags = data.flags ?? {};
-  return `${paneCard("CSA", data.csa, data.caps.CSA, data.readings.CSA, data.nowIso, locale, flags.CSA ?? [])}${paneCard(
+  return `${paneCard("CSA", data.csa, data.caps.CSA, data.readings.CSA, data.nowIso, locale, flags.CSA ?? [], layout)}${paneCard(
     "CSB",
     data.csb,
     data.caps.CSB,
     data.readings.CSB,
     data.nowIso,
     locale,
-    flags.CSB ?? []
+    flags.CSB ?? [],
+    layout
   )}${cureClockScript()}`;
 }

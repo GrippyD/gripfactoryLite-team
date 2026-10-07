@@ -4554,24 +4554,8 @@ export type SiloRow = {
   location_name?: string | null;
 };
 
-/** THE ROWS (canon 0.30.383). Fresh Frozen is the Blast Freezer ledger grams plus
- * every cryo package that is not already in that ledger sum. Hang Drying adds
- * the wet grams of lots drying in a kind hang space (those spaces are not on the strip). */
-export async function dryingRowFigures(db: D1Database): Promise<{ ffzGrams: number; hangGrams: number; hangLots: number }> {
-  const ffz = await db
-    .prepare(
-      `SELECT
-         COALESCE((SELECT SUM(qty) FROM local_inventory_items WHERE deleted_at IS NULL AND location = 'Blast Freezer'), 0)
-         + COALESCE((
-             SELECT SUM(p.weight_grams) FROM wip_packages p
-             WHERE p.deleted_at IS NULL AND p.source = 'cryo'
-               AND NOT EXISTS (
-                 SELECT 1 FROM local_inventory_items i
-                 WHERE i.deleted_at IS NULL AND i.wip_package_id = p.id AND i.location = 'Blast Freezer'
-               )
-           ), 0) AS grams`
-    )
-    .first<{ grams: number }>();
+/** THE ROWS (canon 0.30.383). Hang Drying adds the wet grams of lots drying in a kind hang space (those spaces are not on the strip). */
+export async function dryingRowFigures(db: D1Database): Promise<{ hangGrams: number; hangLots: number }> {
   const hang = await db
     .prepare(
       `SELECT COALESCE(SUM(w.weight_grams), 0) AS grams, COUNT(*) AS lots
@@ -4581,7 +4565,6 @@ export async function dryingRowFigures(db: D1Database): Promise<{ ffzGrams: numb
     )
     .first<{ grams: number; lots: number }>();
   return {
-    ffzGrams: Number(ffz?.grams ?? 0),
     hangGrams: Number(hang?.grams ?? 0),
     hangLots: Number(hang?.lots ?? 0),
   };
