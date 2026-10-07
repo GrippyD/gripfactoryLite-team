@@ -416,6 +416,8 @@ export function siloTile(input: {
   /** THE EMPTY CLOCK (canon 0.30.270): the origin ISO, or null. */
   emptySince?: string | null;
   nowIso?: string;
+  /** THE DASHBOARD STRIP (canon 0.30.417): open, as the tile stood before the rows. */
+  open?: boolean;
 }): string {
   const locale = input.locale ?? "en";
   const v = input.visual;
@@ -423,6 +425,33 @@ export function siloTile(input: {
   const flagLine = `<div class="silo-flags" data-silo-flags>${esc((input.flags ?? []).join(" "))}</div>`;
   const quiet = v.state === "empty" || v.state === "filling" || v.state === "loading";
   const emptyLine = v.freezer ? "" : emptyClockLine(quiet ? (input.emptySince ?? null) : null, input.nowIso ?? new Date().toISOString(), locale);
+  if (input.open) {
+    if (v.freezer) {
+      return `<div class="inv-gauge silo-gauge ffz-gauge freezer-gauge${input.extraClass ? ` ${esc(input.extraClass)}` : ""}" data-silo="${esc(
+        input.id
+      )}" data-silo-state="${esc(v.state)}" data-silo-shape-kind="${shape}" data-space-type="freezer">
+          <div class="inv-gauge-name">${esc(input.name)}</div>
+          ${flagLine}
+          ${siloSvg(v, input.id, locale, shape)}
+          <div class="silo-state ffz-state freezer-state"><span data-silo-label>${esc(t(locale, v.label))}</span> · <span data-silo-pct>${esc(
+        siloPctLabel(v, locale)
+      )}</span></div>
+          ${siloUnloadLine(v, locale)}
+          <div class="muted ffz-source freezer-lines">${input.body}</div>
+          ${siloWetLine(v.wetGrams, locale)}
+        </div>`;
+    }
+    return `<div class="inv-gauge silo-gauge${input.extraClass ? ` ${esc(input.extraClass)}` : ""}" data-silo="${esc(input.id)}" data-silo-state="${esc(v.state)}" data-silo-shape-kind="${shape}">
+          <div class="inv-gauge-name">${esc(input.name)}</div>
+          ${flagLine}
+          ${siloSvg(v, input.id, locale, shape)}
+          <div class="silo-state silo-state-${esc(v.state)}" data-silo-label>${esc(t(locale, v.label))}</div>
+          ${emptyLine}
+          ${siloUnloadLine(v, locale)}
+          ${input.body}
+          ${siloWetLine(v.wetGrams, locale)}
+        </div>`;
+  }
   const bodyId = `dry-body-${input.id}`;
   const status = v.freezer ? `${t(locale, v.label)} · ${siloPctLabel(v, locale)}` : t(locale, v.label);
   const weight = `${esc(t(locale, "Wet"))} <strong data-silo-wet-lb>${esc(formatLbs(v.wetGrams))}</strong> lb · <strong data-silo-wet-g>${esc(formatGrams(v.wetGrams))}</strong> g`;
@@ -462,54 +491,7 @@ export function siloTile(input: {
         </div>`;
 }
 
-/** THE FFZ INVENTORY CUBE (canon 0.30.73, back on the freezer row, canon 0.30.383). Capacity 4,800 lb. */
-export const FFZ_CAPACITY_LBS = 4800;
-
-export function ffzLive(grams: number, locale: Locale = "en"): { grams: number; lb: string; g: string; level: number; pctLabel: string; fillClass: string } {
-  const cap = FFZ_CAPACITY_LBS * LB_GRAMS;
-  const level = cap > 0 ? Math.min(1, Math.max(0, grams / cap)) : 0;
-  const visual = { fill: grams > 0 ? ("blue" as const) : null, throb: grams > 0 ? ("blue" as const) : null, freezer: true };
-  return {
-    grams,
-    lb: formatLbs(grams),
-    g: formatGrams(grams),
-    level,
-    pctLabel: `${Math.round(level * 100)}% ${t(locale, "full")}`,
-    fillClass: siloFillClass(visual),
-  };
-}
-
-export function ffzInventoryTile(grams: number, locale: Locale = "en"): string {
-  const cap = FFZ_CAPACITY_LBS * LB_GRAMS;
-  const level = cap > 0 ? Math.min(1, Math.max(0, grams / cap)) : 0;
-  const visual: SiloVisual = {
-    state: "loaded",
-    label: "full",
-    freezer: true,
-    wetGrams: grams,
-    level,
-    throb: grams > 0 ? "blue" : null,
-    fill: grams > 0 ? "blue" : null,
-    unloadedDryGrams: 0,
-    unloadedShare: 0,
-    expectedDryGrams: 0,
-  };
-  const pct = `${Math.round(level * 100)}% ${t(locale, "full")}`;
-  const bodyId = "dry-body-ffz";
-  const weight = `<strong data-ffz-lb>${esc(formatLbs(grams))}</strong> lb · <strong data-ffz-g>${esc(formatGrams(grams))}</strong> g`;
-  const head = `<button type="button" class="dry-tile-head" data-dry-head aria-expanded="false" aria-controls="${bodyId}">${tileIcon(siloFillClass(visual), level, "cube", true)}<span class="dry-tile-name">${esc(t(locale, "FFZ Inventory"))}</span><span class="dry-tile-status" data-ffz-status>${esc(pct)}</span><span class="dry-tile-weight" data-dry-weight>${weight}</span></button>`;
-  return `<div class="inv-gauge silo-gauge ffz-gauge dry-tile" data-ffz data-dry-tile data-ffz-grams="${esc(String(Math.round(grams)))}">
-          ${head}
-          <div class="dry-tile-body" id="${bodyId}" hidden>
-          <div class="inv-gauge-name">${esc(t(locale, "FFZ Inventory"))}</div>
-          ${siloSvg(visual, "ffz", locale, "cube")}
-          <div class="silo-state ffz-state freezer-state" data-ffz-status-open>${esc(pct)}</div>
-          <div class="silo-wet" data-ffz-wet>${weight}</div>
-          </div>
-        </div>`;
-}
-
-/** "94% full", the FFZ-style fullness of a freezer's fill against its own capacity. */
+/** "94% full", the fullness of a freezer's fill against its own capacity. */
 export function siloPctLabel(v: Pick<SiloVisual, "level">, locale: Locale = "en"): string {
   return `${Math.round(clamp01(v.level) * 100)}% ${t(locale, "full")}`;
 }
@@ -677,14 +659,6 @@ export function siloLiveScript(): string {
       .then(function (data) {
         if (!data) return;
         if (Array.isArray(data.silos)) data.silos.forEach(paint);
-        if (data.ffz && data.ffz.lb != null) {
-          document.querySelectorAll("[data-ffz]").forEach(function (tile) {
-            tile.querySelectorAll("[data-ffz-lb]").forEach(function (el) { el.textContent = data.ffz.lb; });
-            tile.querySelectorAll("[data-ffz-g]").forEach(function (el) { el.textContent = data.ffz.g; });
-            if (data.ffz.pctLabel) tile.querySelectorAll("[data-ffz-status], [data-ffz-status-open]").forEach(function (el) { el.textContent = data.ffz.pctLabel; });
-            if (data.ffz.level != null && data.ffz.fillClass) paintFill(tile, data.ffz.level, data.ffz.fillClass);
-          });
-        }
       })
       .catch(function () {});
   }

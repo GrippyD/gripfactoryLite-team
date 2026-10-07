@@ -169,7 +169,6 @@ import {
   SYSTEM_REASON,
   TEST_CONSOLE_SCHEDULED,
   TEST_OPEN_STATUSES,
-  TRIM_SHIFT_HOURS_DEFAULT,
 } from "./config";
 import { HttpError, nowIso, textOrNull } from "./audit";
 import { getConfigValue, insertLog, TRIM_SCHEDULED_SQL } from "./db";
@@ -328,11 +327,14 @@ export type TrimFinishedLot = { lot_id: string; dry_grams: number | null; record
 /** A package weighed at the trim weight entry node lately: the operator who typed it (the shift it lights). */
 export type TrimRecentRow = { trim_operator: string | null };
 
-/** RUNNING (his pick, 2026-09-21): a package weighed in the last 30 minutes;
- * THE LINE RUNS ON THE CLOCK (canon 0.30.163; owner, 2026-09-21: "Switch trimming
- * to "running" if it's currently the correct time and any lot is present in the
- * queue."): the shift whose hours hold the Eastern clock also runs while a lot
- * stands in the Unloaded Queue for trim. */
+/** One operator's latest trim package, any day. Down on that shift counts from it. */
+export type TrimLeadLast = { trim_operator: string | null; created_at: string | null };
+
+/** RUNNING: a package that shift's own team lead weighed in the last 30 minutes.
+ * THE LINE RUNS ON THE CLOCK (canon 0.30.163) is retired for trim (canon 0.30.419):
+ * the section does not read the shift hour windows, and a lot in the queue does
+ * not light a shift. Otherwise the shift reads Down, with the time since its
+ * lead's last entry. */
 export const TRIM_RUNNING_MINUTES = 30;
 
 // THE PROGRESSION BUD (canon 0.30.273). Owner, 2026-09-27, verbatim: "change trim
@@ -372,14 +374,14 @@ export type TrimInput = {
   finishedLots?: TrimFinishedLot[];
   /** Packages weighed in the last TRIM_RUNNING_MINUTES, any day: the shifts they light. */
   recent?: TrimRecentRow[];
-  /** THE LINE RUNS ON THE CLOCK (canon 0.30.163): lots standing in the Unloaded Queue for trim now. */
+  /** Each operator's latest package, any day. */
+  leadLast?: TrimLeadLast[];
+  /** Lots standing in the Unloaded Queue for trim. The drying totals read this. Trim running does not. */
   queueLots?: number;
   /** THE DRYING TOTALS (canon 0.30.183): the dry grams those queued lots carry. */
   queueGrams?: number;
-  /** The instant the figures are read at (the Eastern clock decides the shift on duty). */
+  /** The instant the figures are read at. Down counts back from it. */
   nowIso?: string;
-  /** Each shift's hours, HH:MM-HH:MM Eastern (app_config trim_shift_day_hours, trim_shift_second_hours; the code's 6-6 and 6-6 otherwise). */
-  shiftHours?: Partial<Record<TrimShiftKey, string | null>>;
   /** THE TRIM BOGEY (canon 0.30.249): the percent of the plume that is product (app_config trim_bogey_pct; 40 otherwise). */
   bogeyPct?: number;
 };
@@ -416,13 +418,14 @@ export type TrimShiftFigures = {
   finishedLots: number;
   /** The shift total the endpoints converge on: grams weighed plus the WIP left. */
   totalGrams: number;
-  /** RUNNING: the clock is inside this shift's hours and a lot stands in the Unloaded Queue for trim,
-   * or one of this shift's operators weighed a package in the last 30 minutes. */
+  /** RUNNING: one of this shift's operators weighed a package in the last 30 minutes. */
   running: boolean;
-  /** The Eastern clock is inside this shift's hours. */
+  /** Retired for trim (canon 0.30.419). Always false. The section has no on duty flag. */
   onDuty: boolean;
-  /** This shift's hours as read (HH:MM-HH:MM). */
+  /** Retired for trim. Always empty. The section does not read a shift window. */
   hours_window: string;
+  /** This shift's lead's latest package instant, any day. Null when that lead has never entered one. */
+  lastEntryAt: string | null;
 };
 
 export type TrimFigures = {
@@ -453,7 +456,7 @@ export function prepackCodesOf(categories: Map<string, string>): string[] {
  * shift whose operator cut its last package; the shift total is the grams
  * weighed plus the WIP left; BTR is Total Bud over that total; Lbs/DLH divides
  * the grams weighed by the typed hours; RUNNING lights the shift whose operator
- * weighed a package lately. */
+ * weighed a package lately. The clock does not. */
 export function trimFigures(input: TrimInput): TrimFigures {
   const bud = new Set(input.budCodes.map((c) => c.trim().toUpperCase()));
   const prepack = new Set((input.prepackCodes ?? prepackCodesOf(parseCryoTypeCategories(null))).map((c) => c.trim().toUpperCase()));
@@ -462,6 +465,16 @@ export function trimFigures(input: TrimInput): TrimFigures {
     for (const name of input.operators[shift.key] ?? []) shiftOf.set(name.trim().toLowerCase(), shift.key);
   }
   const keyOf = (operator: string | null | undefined): TrimShiftKey | undefined => shiftOf.get(String(operator ?? "").trim().toLowerCase());
+  const lastEntryAt = (key: TrimShiftKey): string | null => {
+    let best: string | null = null;
+    for (const row of input.leadLast ?? []) {
+      if (keyOf(row.trim_operator) !== key) continue;
+      const at = String(row.created_at ?? "").trim();
+      if (!at) continue;
+      if (best == null || at > best) best = at;
+    }
+    return best;
+  };
   type Acc = { packages: number; grams: number; bulk: number; prepack: number; bio: number; trim: number; rest: number; wip: number; finished: number; running: boolean };
   const fresh = (): Acc => ({ packages: 0, grams: 0, bulk: 0, prepack: 0, bio: 0, trim: 0, rest: 0, wip: 0, finished: 0, running: false });
   const acc: Record<TrimShiftKey, Acc> = { day: fresh(), second: fresh() };
@@ -500,17 +513,6 @@ export function trimFigures(input: TrimInput): TrimFigures {
     if (key) acc[key].running = true;
     else unassignedRunning = true;
   }
-  // THE LINE RUNS ON THE CLOCK: the shift on duty runs while the queue holds a lot.
-  const clock = input.nowIso ? etClockMinutes(input.nowIso) : null;
-  const queueLots = Number(input.queueLots ?? 0);
-  const windows: Record<TrimShiftKey, string> = {
-    day: String(input.shiftHours?.day ?? "").trim() || TRIM_SHIFT_HOURS_DEFAULT.day,
-    second: String(input.shiftHours?.second ?? "").trim() || TRIM_SHIFT_HOURS_DEFAULT.second,
-  };
-  const onDuty: Record<TrimShiftKey, boolean> = {
-    day: clock != null && shiftWindowHolds(parseShiftWindow(windows.day, TRIM_SHIFT_HOURS_DEFAULT.day), clock),
-    second: clock != null && shiftWindowHolds(parseShiftWindow(windows.second, TRIM_SHIFT_HOURS_DEFAULT.second), clock),
-  };
   const shifts = TRIM_SHIFTS.map((shift) => {
     const a = acc[shift.key];
     const grams = roundGrams(a.grams);
@@ -538,9 +540,10 @@ export function trimFigures(input: TrimInput): TrimFigures {
       wipLeftGrams,
       finishedLots: a.finished,
       totalGrams: roundGrams(total),
-      running: a.running || (onDuty[shift.key] && queueLots > 0),
-      onDuty: onDuty[shift.key],
-      hours_window: windows[shift.key],
+      running: a.running,
+      onDuty: false,
+      hours_window: "",
+      lastEntryAt: lastEntryAt(shift.key),
     };
   });
   return { shifts, unassignedGrams: roundGrams(unassignedGrams), unassignedOperators: [...unassigned].sort(), unassignedRunning };
@@ -548,8 +551,8 @@ export function trimFigures(input: TrimInput): TrimFigures {
 
 /** THE RIGHT NOW PANE (canon 0.30.310): today's packages and finished lots, every
  * operator in one line. RUNNING is a package weighed in the last 30 minutes and
- * nothing else (canon 0.30.313; the doc: no weight for thirty minutes says DOWN);
- * the queue clause of canon 0.30.163 stays on the shift cards. */
+ * nothing else (canon 0.30.313; the doc: no weight for thirty minutes says DOWN).
+ * A lot in the queue does not light the line or a shift (canon 0.30.419). */
 export function liveTrimLine(input: TrimInput): TrimShiftFigures {
   const bud = new Set(input.budCodes.map((c) => c.trim().toUpperCase()));
   const prepack = new Set((input.prepackCodes ?? prepackCodesOf(parseCryoTypeCategories(null))).map((c) => c.trim().toUpperCase()));
@@ -579,19 +582,11 @@ export function liveTrimLine(input: TrimInput): TrimShiftFigures {
     const left = Number(lot.dry_grams ?? 0) - Number(lot.recorded_grams ?? 0);
     if (left > 0) wip += left;
   }
-  const clock = input.nowIso ? etClockMinutes(input.nowIso) : null;
-  const windows: Record<TrimShiftKey, string> = {
-    day: String(input.shiftHours?.day ?? "").trim() || TRIM_SHIFT_HOURS_DEFAULT.day,
-    second: String(input.shiftHours?.second ?? "").trim() || TRIM_SHIFT_HOURS_DEFAULT.second,
-  };
-  const dutyDay = clock != null && shiftWindowHolds(parseShiftWindow(windows.day, TRIM_SHIFT_HOURS_DEFAULT.day), clock);
-  const dutySecond = clock != null && shiftWindowHolds(parseShiftWindow(windows.second, TRIM_SHIFT_HOURS_DEFAULT.second), clock);
   const running = (input.recent ?? []).length > 0;
   const total = grams + wip;
-  const duty: TrimShiftKey | null = dutyDay ? "day" : dutySecond ? "second" : null;
   return {
-    key: duty ?? "day",
-    label: duty === "second" ? "Second Shift" : duty === "day" ? "Day shift" : "",
+    key: "day",
+    label: "",
     operators: [],
     packages,
     grams: roundGrams(grams),
@@ -609,20 +604,10 @@ export function liveTrimLine(input: TrimInput): TrimShiftFigures {
     finishedLots: finished,
     totalGrams: roundGrams(total),
     running,
-    onDuty: duty != null,
-    hours_window: duty ? windows[duty] : "",
+    onDuty: false,
+    hours_window: "",
+    lastEntryAt: null,
   };
-}
-
-/** Which shift the clock is inside, or null in a gap. Day wins when both windows hold. */
-export function trimDuty(input: TrimInput): TrimShiftKey | null {
-  const clock = input.nowIso ? etClockMinutes(input.nowIso) : null;
-  if (clock == null) return null;
-  const dayWindow = String(input.shiftHours?.day ?? "").trim() || TRIM_SHIFT_HOURS_DEFAULT.day;
-  const secondWindow = String(input.shiftHours?.second ?? "").trim() || TRIM_SHIFT_HOURS_DEFAULT.second;
-  if (shiftWindowHolds(parseShiftWindow(dayWindow, TRIM_SHIFT_HOURS_DEFAULT.day), clock)) return "day";
-  if (shiftWindowHolds(parseShiftWindow(secondWindow, TRIM_SHIFT_HOURS_DEFAULT.second), clock)) return "second";
-  return null;
 }
 
 /** THE TRIM LINE PICTURE (canon 0.30.154): his machine picture as the shift's
@@ -1102,8 +1087,7 @@ export type HarvestConsolePageInput = {
   nowIso: string;
   locale?: Locale;
   ok?: string;
-  /** THE CURE PANES (canon 0.30.164): CSA and CSB as tiles in the drying row after the FFZ cube
-   * (owner, 2026-09-22: "in line with drying spaces, in the void after FFZ Inventory set the same size"). */
+  /** THE CURE PANES (canon 0.30.164): CSA and CSB as tiles in the drying strip, the silo tiles' size. */
   cureTiles?: string;
   envFlags?: Record<string, string[]>;
   /** THE DRYING TOTALS (canon 0.30.183): in dry spaces (loaded only, with the dry estimate), in cure spaces, dry queued; omitted draws no line. */
@@ -1213,6 +1197,15 @@ function trimHoursBox(shift: TrimShiftFigures, input: HarvestConsoleInput, local
             </form>`;
 }
 
+/** DOWN, with the time since the last entry when there is one. The same mark the line uses. */
+function trimDownMark(lastAt: string | null | undefined, nowIso: string | undefined, locale: Locale): string {
+  const weighedMs = lastAt ? Date.parse(lastAt) : NaN;
+  if (!Number.isFinite(weighedMs)) return `<span class="hc-trim-down" data-hc-trim-down>${esc(t(locale, "DOWN"))}</span>`;
+  const nowMs = Date.parse(nowIso ?? "");
+  const seconds = Number.isFinite(nowMs) ? Math.max(0, Math.floor((nowMs - weighedMs) / 1000)) : 0;
+  return `<span class="hc-trim-down" data-hc-trim-down>${esc(t(locale, "DOWN"))}</span> <span class="silo-clock" data-clock data-state="running" data-started="${weighedMs}" data-paused-at="" data-paused-seconds="0">${esc(formatClock(seconds))}</span>`;
+}
+
 /** One shift's card: the bud waffle, then his lines (Other, Bulk Bud, Prepack Bud,
  * Total Bud, BTR, the weight ran, the DLH box, Lbs/DLH). */
 function trimShiftCard(shift: TrimShiftFigures, input: HarvestConsoleInput, locale: Locale): string {
@@ -1252,7 +1245,9 @@ function trimShiftCard(shift: TrimShiftFigures, input: HarvestConsoleInput, loca
     })
     .join("");
   const operators = shift.operators.length ? shift.operators.join(", ") : t(locale, "no operators named");
-  const running = shift.running ? `<span class="hc-running" data-hc-running>${esc(t(locale, "RUNNING"))}</span>` : "";
+  const running = shift.running
+    ? `<span class="hc-running" data-hc-running>${esc(t(locale, "RUNNING"))}</span>`
+    : trimDownMark(shift.lastEntryAt, input.trim?.nowIso ?? input.trimLive?.nowIso, locale);
   const btrRead =
     shift.btr == null
       ? esc(t(locale, "no packages on the day"))
@@ -1339,25 +1334,14 @@ function trimTotalsLine(figures: TrimFigures, locale: Locale, toDate: TrimToDate
 function trimRightNow(input: HarvestConsoleInput, locale: Locale): string {
   const liveInput = input.trimLive ?? emptyTrimInput();
   const line = liveTrimLine(liveInput);
-  const duty = trimDuty(liveInput);
-  const dutyText = duty == null ? t(locale, "no shift on duty") : t(locale, duty === "day" ? "Day shift" : "Second Shift");
   const bogey = liveInput.bogeyPct ?? input.trim?.bogeyPct ?? BUD_PRODUCT_CELLS;
-  const nowMs = Date.parse(liveInput.nowIso ?? input.trim?.nowIso ?? "");
-  const weighedMs = input.lastWeighedAt ? Date.parse(input.lastWeighedAt) : NaN;
-  let status: string;
-  if (line.running) {
-    status = `<span class="hc-running" data-hc-running>${esc(t(locale, "RUNNING"))}</span>`;
-  } else if (Number.isFinite(weighedMs)) {
-    const seconds = Number.isFinite(nowMs) ? Math.max(0, Math.floor((nowMs - weighedMs) / 1000)) : 0;
-    status = `<span class="hc-trim-down" data-hc-trim-down>${esc(t(locale, "DOWN"))}</span> <span class="silo-clock" data-clock data-state="running" data-started="${weighedMs}" data-paused-at="" data-paused-seconds="0">${esc(formatClock(seconds))}</span>`;
-  } else {
-    status = `<span class="hc-trim-down" data-hc-trim-down>${esc(t(locale, "DOWN"))}</span>`;
-  }
+  const status = line.running
+    ? `<span class="hc-running" data-hc-running>${esc(t(locale, "RUNNING"))}</span>`
+    : trimDownMark(input.lastWeighedAt, liveInput.nowIso ?? input.trim?.nowIso, locale);
   return `<div class="hc-trim-rightnow" data-hc-trim-rightnow>
       <div class="hc-shift-head">
         <span class="hc-shift-name">${esc(t(locale, "Right now"))}</span>
         <span class="hc-date muted">${esc(input.today)}</span>
-        <span class="muted" data-hc-trim-duty>${esc(dutyText)}</span>
         ${status}
       </div>
       ${trimLinePicture(line, locale, { totalLabel: "Line total", flowId: "now" })}
@@ -2637,7 +2621,7 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
     </details>
     <details class="hc-section" data-hc-section="drying">
       <summary>${esc(t(locale, "Drying"))}</summary>
-      ${siloStrip(page.live, page.nowIso, locale, page.cureTiles ?? "", page.envFlags ?? {}, page.stripFigures ?? {})}
+      ${siloStrip(page.live, page.nowIso, locale, page.cureTiles ?? "", page.envFlags ?? {}, page.stripFigures ?? {}, "open")}
       ${page.dryingTotals ? dryingTotalsMarkup(page.dryingTotals, locale) : ""}
     </details>
     ${trimmingSection(page.input, locale)}
@@ -2796,10 +2780,9 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
     secondOpsRaw,
     finishedRows,
     recentRows,
+    leadLastRows,
     typeCatsRaw,
     queueRow,
-    dayHoursRaw,
-    secondHoursRaw,
     bogeyRaw,
     plantCountRows,
     livePackages,
@@ -2927,16 +2910,21 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
       )
       .bind(recentSince)
       .all<TrimRecentRow>(),
+    db
+      .prepare(
+        `SELECT p.trim_operator, MAX(p.created_at) AS created_at
+         FROM wip_packages p
+         WHERE p.deleted_at IS NULL AND ${NON_TRIM_SOURCE_SQL}
+         GROUP BY p.trim_operator`
+      )
+      .all<TrimLeadLast>(),
     getConfigValue(db, CONFIG_KEYS.cryo_type_categories),
-    // THE LINE RUNS ON THE CLOCK (canon 0.30.163): the lots standing in the Unloaded
-    // Queue for trim right now (the pane Trim Packages Entry picks from).
+    // The Unloaded Queue for trim: the drying totals read the count. Trim running does not.
     db
       .prepare(
         `SELECT COUNT(*) AS n, COALESCE(SUM(w.dry_weight_grams), 0) AS grams FROM wet_weight_entries w WHERE w.deleted_at IS NULL AND w.status = 'unloaded' ${TRIM_SCHEDULED_SQL}`
       )
       .first<{ n: number | null; grams: number | null }>(),
-    getConfigValue(db, CONFIG_KEYS.trim_shift_day_hours),
-    getConfigValue(db, CONFIG_KEYS.trim_shift_second_hours),
     // THE TRIM BOGEY (canon 0.30.249): the plume's product line, Admin, Lookups.
     getConfigValue(db, CONFIG_KEYS.trim_bogey_pct),
     db
@@ -3021,10 +3009,10 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
       last_operator: r.last_operator,
     })),
     recent: (recentRows.results ?? []).map((r) => ({ trim_operator: r.trim_operator })),
+    leadLast: (leadLastRows.results ?? []).map((r) => ({ trim_operator: r.trim_operator, created_at: r.created_at })),
     queueLots: Number(queueRow?.n ?? 0),
     queueGrams: Number(queueRow?.grams ?? 0),
     nowIso: atIso,
-    shiftHours: { day: dayHoursRaw, second: secondHoursRaw },
     bogeyPct: parseTrimBogey(bogeyRaw),
   };
   const trimLive: TrimInput = {
@@ -3044,10 +3032,10 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
       last_operator: r.last_operator,
     })),
     recent: trim.recent,
+    leadLast: trim.leadLast,
     queueLots: trim.queueLots,
     queueGrams: trim.queueGrams,
     nowIso: atIso,
-    shiftHours: trim.shiftHours,
     bogeyPct: trim.bogeyPct,
   };
   const hours = {} as Record<ConsoleFarm, number | null>;

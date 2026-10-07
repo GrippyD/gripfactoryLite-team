@@ -506,7 +506,10 @@ describe("trim Save reconcile gate (canon 0.22.1)", () => {
       // THE EFFECTIVE DATE PER STATION (canon 0.30.94): the Admin PIN the
       // backdate check reads.
       if (q.includes("from app_config")) {
-        return args[0] === "admin_pin" ? { value: "21319" } : null;
+        if (args[0] === "admin_pin") return { value: "21319" };
+        if (args[0] === "trim_shift_day_operators") return { value: "Ada Day" };
+        if (args[0] === "trim_shift_second_operators") return { value: "Nia Night" };
+        return null;
       }
       if (q.includes("from wip_packages") && q.includes("sum(weight_grams)")) {
         const total = tables.wip_packages
@@ -598,7 +601,7 @@ describe("trim Save reconcile gate (canon 0.22.1)", () => {
       })
     );
     // Canon 0.30.9 (R6): at zero the picked page prompts REMAINING 0 itself.
-    expect(exact.redirect).toBe("/station/trim_packages?pick=lot1&ok=trim");
+    expect(exact.redirect).toBe("/station/trim_packages?pick=lot1&ok=trim&counted_shift=unassigned&counted_day=2026-09-08");
     expect(exact.redirect).not.toContain("gate=");
     const overDb = makeTrimDb();
     const over = await createTrimPackages(
@@ -611,7 +614,65 @@ describe("trim Save reconcile gate (canon 0.22.1)", () => {
         ...entry,
       })
     );
-    expect(over.redirect).toBe("/station/trim_packages?pick=lot1&ok=trim");
+    expect(over.redirect).toBe("/station/trim_packages?pick=lot1&ok=trim&counted_shift=unassigned&counted_day=2026-09-08");
+  });
+
+  it("THE DAY FOLLOWS THE TEAM LEAD (canon 0.30.419): the default date follows the operator; a PIN Effective Date wins", async () => {
+    const { createTrimPackages } = await import("../src/actions");
+    const { withFixtureNow } = await import("../src/audit");
+    const { etInstant } = await import("../src/farmday");
+    const at0630 = etInstant("2026-10-07", "06:30");
+    const at1900 = etInstant("2026-10-07", "19:00");
+    const nightDb = makeTrimDb();
+    const night = await withFixtureNow(at0630, () =>
+      createTrimPackages(
+        nightDb as unknown as D1Database,
+        trimFd({
+          wet_weight_entry_id: "lot1",
+          package_code: ["NIGHT-1"],
+          package_type_code: ["BUD"],
+          weight_grams: ["40"],
+          trim_operator: "NIA   night",
+        })
+      )
+    );
+    expect(nightDb.tables.wip_packages[0]).toMatchObject({ trim_date: "2026-10-06", trim_operator: "NIA   night" });
+    expect(night.redirect).toContain("counted_shift=second");
+    expect(night.redirect).toContain("counted_day=2026-10-06");
+    const dayDb = makeTrimDb();
+    const day = await withFixtureNow(at1900, () =>
+      createTrimPackages(
+        dayDb as unknown as D1Database,
+        trimFd({
+          wet_weight_entry_id: "lot1",
+          package_code: ["DAY-1"],
+          package_type_code: ["BUD"],
+          weight_grams: ["40"],
+          trim_operator: "ada day",
+        })
+      )
+    );
+    expect(dayDb.tables.wip_packages[0]).toMatchObject({ trim_date: "2026-10-07" });
+    expect(day.redirect).toContain("counted_shift=day");
+    expect(day.redirect).toContain("counted_day=2026-10-07");
+    const pinDb = makeTrimDb();
+    const pinned = await withFixtureNow(at0630, () =>
+      createTrimPackages(
+        pinDb as unknown as D1Database,
+        trimFd({
+          wet_weight_entry_id: "lot1",
+          package_code: ["PIN-1"],
+          package_type_code: ["BUD"],
+          weight_grams: ["40"],
+          effective_date: "2026-10-01",
+          effective_pin: "21319",
+          trim_operator: "Nia Night",
+        })
+      )
+    );
+    expect(pinDb.tables.wip_packages[0]).toMatchObject({ trim_date: "2026-10-01" });
+    expect(pinned.redirect).toContain("counted_shift=second");
+    expect(pinned.redirect).toContain("counted_day=2026-10-01");
   });
 
   it("refuses a package entry without the operator; any typed name saves (canon 0.30.9, 0.30.21)", async () => {

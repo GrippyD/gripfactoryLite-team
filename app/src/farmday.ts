@@ -53,6 +53,47 @@ export function farmDay(iso: string, startHour: number = FARM_DAY_START_HOUR_DEF
   return startHour > 0 && etHour(iso) < startHour ? dayBefore(date) : date;
 }
 
+export type TrimLeadShift = "day" | "second";
+
+export type TrimLeadLists = { day: readonly string[]; second: readonly string[] };
+
+/** Case and every space ignored, so " Nia   Night " and "nianight" are one operator. */
+export function trimOperatorKey(name: string | null | undefined): string {
+  return String(name ?? "").toLowerCase().replace(/\s+/g, "");
+}
+
+/** The shift list that names this operator. Second wins when both lists do. Null on neither. */
+export function trimLeadShift(operator: string | null | undefined, lists: TrimLeadLists): TrimLeadShift | null {
+  const key = trimOperatorKey(operator);
+  if (!key) return null;
+  const listed = (names: readonly string[]) => names.some((name) => trimOperatorKey(name) === key);
+  if (listed(lists.second)) return "second";
+  if (listed(lists.day)) return "day";
+  return null;
+}
+
+/** THE DAY FOLLOWS THE TEAM LEAD (canon 0.30.419). The date a trim package
+ * counts to when the Effective Date was not overridden. A second shift
+ * operator takes the Eastern calendar date of the entry less 12 hours (an
+ * entry before noon belongs to the night before; noon itself stays on that
+ * day). A day shift operator takes the Eastern calendar date of the entry.
+ * An operator on neither list takes the farm day. */
+export function trimCountedDate(
+  iso: string,
+  operator: string | null | undefined,
+  lists: TrimLeadLists,
+  startHour: number = FARM_DAY_START_HOUR_DEFAULT
+): { date: string; shift: TrimLeadShift | null } {
+  const shift = trimLeadShift(operator, lists);
+  if (shift === "second") {
+    const ms = Date.parse(iso);
+    const back = Number.isFinite(ms) ? new Date(ms - 12 * 60 * 60 * 1000).toISOString() : iso;
+    return { date: etDate(back), shift };
+  }
+  if (shift === "day") return { date: etDate(iso), shift };
+  return { date: farmDay(iso, startHour), shift: null };
+}
+
 /** The UTC instants that bound a farm day: [the start hour on that date, the
  * start hour on the next date), Eastern. */
 export function farmDayBounds(date: string, startHour: number = FARM_DAY_START_HOUR_DEFAULT): { startIso: string; endIso: string } {

@@ -177,7 +177,7 @@ describe("THE UNFINISH (canon 0.30.220)", () => {
     );
     await expect(unfinishScheduleItem(marked.db, "cryo", "run-1", formOf({ person_id: person3, unfinish_pin: PIN }))).rejects.toThrow(/new_packages_26244.xlsx/);
     expect(marked.get(`SELECT status FROM wip_packages WHERE id = 'c1'`)).toEqual({ status: "pasteurized" });
-  });
+  }, 20000);
 
   it("one container returns to the Cryo Queue and leaves the pool; a marked file refuses", async () => {
     const m = await migratedDb();

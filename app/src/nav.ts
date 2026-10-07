@@ -49,10 +49,16 @@ const PREFIX_PARENTS: ReadonlyArray<[prefix: string, parent: BackLink]> = [
 const EXACT_PARENTS: Readonly<Record<string, BackLink>> = {
   "/admin": HOME_LINK,
   "/reports": HOME_LINK,
-  "/log": HOME_LINK,
-  [HARVEST_PATH]: ADMIN_LINK,
-  [MODELS_PATH]: ADMIN_LINK,
-  "/admin/manual-hbn": ADMIN_LINK,
+  "/log": { href: "/admin/settings", label: "Admin Settings" },
+  [HARVEST_PATH]: HOME_LINK,
+  [MODELS_PATH]: HOME_LINK,
+  "/admin/queues": { href: "/admin/data-connections", label: "Data Connections" },
+  "/admin/uploads": { href: "/admin/data-connections", label: "Data Connections" },
+  "/admin/imports": { href: "/admin/data-connections", label: "Data Connections" },
+  "/admin/metrc-api": { href: "/admin/data-connections", label: "Data Connections" },
+  "/admin/lookups": { href: "/admin/settings", label: "Admin Settings" },
+  "/admin/manual-hbn": { href: "/admin/settings", label: "Admin Settings" },
+  "/admin/reconcile-location": { href: "/admin/settings", label: "Admin Settings" },
 };
 
 function normalizePath(path: string): string {

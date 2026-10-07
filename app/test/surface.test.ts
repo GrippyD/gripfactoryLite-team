@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  adminGroupPage,
   adminHomePage,
   fulfillmentMenuPage,
   homePage,
@@ -52,14 +53,13 @@ describe("surfaces (owner ruling 2026-08-27)", () => {
     expect(homeEntries()).toHaveLength(6);
   });
 
-  it("the Admin landing lists Data Queues first", () => {
+  it("the Admin landing lists the three group buttons", () => {
     const html = adminHomePage();
-    const dq = html.indexOf("Data Queues");
-    const lk = html.indexOf("Lookups");
-    expect(dq).toBeGreaterThan(-1);
-    expect(lk).toBeGreaterThan(-1);
-    expect(dq).toBeLessThan(lk);
-    expect(html).toContain('href="/admin/queues"');
+    expect(html.indexOf("Data Connections")).toBeLessThan(html.indexOf("Admin Settings"));
+    expect(html.indexOf("Admin Settings")).toBeLessThan(html.indexOf("Continuum10"));
+    expect(html).toContain('href="/admin/data-connections"');
+    expect(html).not.toContain('href="/admin/queues"');
+    expect(html).not.toContain("Testing Override");
   });
 });
 
@@ -140,26 +140,22 @@ describe("pending data uploads surface (owner ruling 2026-08-31)", () => {
   };
 
   it("the Admin landing carries [Pending Data Uploads] right after Data Queues", () => {
-    const html = adminHomePage();
+    const html = adminGroupPage("data-connections");
     const dq = html.indexOf("Data Queues");
     const up = html.indexOf("Pending Data Uploads");
-    const lk = html.indexOf("Lookups");
     expect(dq).toBeGreaterThan(-1);
     expect(up).toBeGreaterThan(dq);
-    expect(up).toBeLessThan(lk);
     expect(html).toContain('href="/admin/uploads"');
-    expect(adminHomePage("es")).toContain("Cargas de datos pendientes");
+    expect(adminGroupPage("data-connections", "es")).toContain("Cargas de datos pendientes");
   });
 
   it("the Admin landing carries [Import Data] after Pending Data Uploads", () => {
-    const html = adminHomePage();
+    const html = adminGroupPage("data-connections");
     const up = html.indexOf("Pending Data Uploads");
     const im = html.indexOf("Import Data");
-    const lk = html.indexOf("Lookups");
     expect(im).toBeGreaterThan(up);
-    expect(im).toBeLessThan(lk);
     expect(html).toContain('href="/admin/imports"');
-    expect(adminHomePage("es")).toContain("Importar datos");
+    expect(adminGroupPage("data-connections", "es")).toContain("Importar datos");
   });
 
   it("lists a pending file with its type, <hbn>.csv, lot serial, counts, total, and controls", () => {

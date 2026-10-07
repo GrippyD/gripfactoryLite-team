@@ -227,7 +227,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the wire box and the FFZ cube", (
     expect(script).toContain('[data-silo-fill-top]');
     expect(script).toContain('getAttribute("data-box")');
     expect(script).not.toContain("paintFfz");
-    expect(script).toContain("data.ffz");
+    expect(script).not.toContain("data.ffz");
   });
 });
 

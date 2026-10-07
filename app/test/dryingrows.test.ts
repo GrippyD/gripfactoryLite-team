@@ -70,12 +70,16 @@ describe("THE ROWS (canon 0.30.383)", () => {
       space("bf", "Blast Freezer(s)", "freezer", 800),
       space("room", "Arlington Dry Room", "dry_room", 2240),
     ];
-    const figures: DryingStripFigures = { ffzGrams: 8960, hangGrams: 448, hangLots: 1, cureGrams: 1344, cureLots: 3, dryYieldPct: 22 };
+    const figures: DryingStripFigures = { hangGrams: 448, hangLots: 1, cureGrams: 1344, cureLots: 3, dryYieldPct: 22 };
     const html = siloStrip(mixed, "2026-10-03T12:00:00.000Z", "en", cure, {}, figures);
     const order = ["silo", "freezer", "cure", "dry_room"].map((key) => html.indexOf(`data-dry-row="${key}"`));
     expect(order.every((n) => n >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
-    expect(html.indexOf("data-ffz")).toBeGreaterThan(html.indexOf('data-silo="bf"'));
+    expect(html).not.toContain("data-ffz");
+    expect(html).not.toContain("FFZ Inventory");
+    expect(html).not.toContain("Fresh Frozen");
+    expect(html).toContain('data-silo="bf"');
+    expect(html).not.toContain('data-dry-total="freezer"');
     expect(html.indexOf('data-cure-pane="CSA"')).toBeLessThan(html.indexOf('data-cure-pane="CSB"'));
     expect(html.indexOf('data-dry-row="cure"')).toBeLessThan(html.indexOf('data-silo="room"'));
 
@@ -86,8 +90,6 @@ describe("THE ROWS (canon 0.30.383)", () => {
     expect(html).toContain('data-dry-total="silo"');
     expect(html).toContain("Drying in Silos");
     expect(html).toContain("est. dry");
-    expect(html).toContain('data-dry-total="freezer" data-dry-total-grams="8960"');
-    expect(html).toContain("Fresh Frozen");
     expect(html).toContain('data-dry-total="cure" data-dry-total-grams="1344" data-dry-total-lots="3"');
     expect(html).toContain("Curing");
     expect(html).toContain('data-dry-total="dry_room"');
@@ -96,9 +98,33 @@ describe("THE ROWS (canon 0.30.383)", () => {
     expect(totals.hangTotalLots).toBe(2);
     expect(html).toContain("Hang Drying");
     expect(siloStrip(mixed, "2026-10-03T12:00:00.000Z", "es", cure, {}, figures)).toContain("Secando en silos");
-    expect(siloStrip(mixed, "2026-10-03T12:00:00.000Z", "es", cure, {}, figures)).toContain("Fresco congelado");
+    expect(siloStrip(mixed, "2026-10-03T12:00:00.000Z", "es", cure, {}, figures)).not.toContain("Fresco congelado");
     expect(siloStrip(mixed, "2026-10-03T12:00:00.000Z", "es", cure, {}, figures)).toContain("Curando");
     expect(siloStrip(mixed, "2026-10-03T12:00:00.000Z", "es", cure, {}, figures)).toContain("Secado colgado");
+  });
+
+  it("the dashboard strip is one open row, and no strip carries the cube", () => {
+    const mixed = [
+      space("s1", "Silo 1", "silo", 4480),
+      space("bf", "Blast Freezer(s)", "freezer", 800),
+      space("room", "Arlington Dry Room", "dry_room", 2240),
+    ];
+    const open = siloStrip(mixed, "2026-10-03T12:00:00.000Z", "en", cure, {}, {}, "open");
+    expect(open).not.toContain("data-dry-head");
+    expect(open).not.toContain("data-dry-row");
+    expect(open).not.toContain("data-dry-total");
+    expect(open).not.toContain("data-ffz");
+    expect(open).not.toContain("FFZ Inventory");
+    expect(open).not.toContain("Fresh Frozen");
+    expect(open.indexOf('data-silo="s1"')).toBeLessThan(open.indexOf('data-silo="bf"'));
+    expect(open.indexOf('data-silo="bf"')).toBeLessThan(open.indexOf('data-silo="room"'));
+    expect(open.indexOf('data-silo="room"')).toBeLessThan(open.indexOf('data-cure-pane="CSA"'));
+    expect(open).toContain('class="inv-gauge-name">Silo 1</div>');
+    expect(open).toContain('data-silo="bf"');
+    const rows = siloStrip(mixed, "2026-10-03T12:00:00.000Z", "en", cure);
+    expect(rows).toContain("data-dry-row");
+    expect(rows).toContain("data-dry-head");
+    expect(rows).not.toContain("data-ffz");
   });
 
   it("keeps cure membership as it stands", () => {

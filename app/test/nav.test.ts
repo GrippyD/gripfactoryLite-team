@@ -49,23 +49,28 @@ describe("THE BACK LINK (canon 0.30.109): the menu above every page", () => {
     expect(backLinkFor("/purchasing/suppliers")).toEqual({ href: "/purchasing", label: "Purchasing" });
     expect(backLinkFor("/reports")).toEqual({ href: "/", label: "Home" });
     expect(backLinkFor("/reports/inventory_by_location?format=csv")).toEqual({ href: "/reports", label: "Reports" });
-    expect(backLinkFor("/log")).toEqual({ href: "/", label: "Home" });
+    expect(backLinkFor("/log")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
     expect(backLinkFor("/interco/arrivals/pnn")).toEqual({ href: "/ops/interco_logistics", label: "Logistics Operations" });
     expect(backLinkFor("/logistics/internal")).toEqual({ href: "/ops/interco_logistics", label: "Logistics Operations" });
   });
 
   it("Admin and its pages: Admin goes Home; its pages go to Admin; lookups, uploads and queues go to their landings", () => {
     expect(backLinkFor("/admin")).toEqual({ href: "/", label: "Home" });
-    expect(backLinkFor("/admin/queues")).toEqual({ href: "/admin", label: "Admin" });
-    expect(backLinkFor("/admin/uploads")).toEqual({ href: "/admin", label: "Admin" });
-    expect(backLinkFor("/admin/imports")).toEqual({ href: "/admin", label: "Admin" });
-    expect(backLinkFor("/admin/lookups")).toEqual({ href: "/admin", label: "Admin" });
-    expect(backLinkFor("/admin/manual-hbn")).toEqual({ href: "/admin", label: "Admin" });
+    expect(backLinkFor("/admin/data-connections")).toEqual({ href: "/admin", label: "Admin" });
+    expect(backLinkFor("/admin/settings")).toEqual({ href: "/admin", label: "Admin" });
+    expect(backLinkFor("/admin/continuum10")).toEqual({ href: "/admin", label: "Admin" });
+    expect(backLinkFor("/admin/queues")).toEqual({ href: "/admin/data-connections", label: "Data Connections" });
+    expect(backLinkFor("/admin/uploads")).toEqual({ href: "/admin/data-connections", label: "Data Connections" });
+    expect(backLinkFor("/admin/imports")).toEqual({ href: "/admin/data-connections", label: "Data Connections" });
+    expect(backLinkFor("/admin/metrc-api")).toEqual({ href: "/admin/data-connections", label: "Data Connections" });
+    expect(backLinkFor("/admin/lookups")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
+    expect(backLinkFor("/admin/manual-hbn")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
+    expect(backLinkFor("/admin/reconcile-location")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
     expect(backLinkFor("/admin/lookups/dry_spaces")).toEqual({ href: "/admin/lookups", label: "Data Lookups" });
     expect(backLinkFor("/admin/uploads/wet_weights/abc.csv")).toEqual({ href: "/admin/uploads", label: "Pending Data Uploads" });
     expect(backLinkFor("/queue/dry_space_queue")).toEqual({ href: "/admin/queues", label: "Data Queues" });
-    expect(backLinkFor(HARVEST_PATH)).toEqual({ href: "/admin", label: "Admin" });
-    expect(backLinkFor(MODELS_PATH)).toEqual({ href: "/admin", label: "Admin" });
+    expect(backLinkFor(HARVEST_PATH)).toEqual({ href: "/", label: "Home" });
+    expect(backLinkFor(MODELS_PATH)).toEqual({ href: "/", label: "Home" });
     expect(backLinkFor(`${MODELS_PATH}/harvest-menu-tool-2026/`)).toEqual({ href: MODELS_PATH, label: "Models" });
   });
 

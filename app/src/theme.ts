@@ -115,6 +115,20 @@ body.device-phone .station-triple { flex-direction: column; }
 main:has(.station-triple) { max-width: none; }
 .shuttle-btn { min-width: 2.4rem; min-height: 2.4rem; padding: 0.15rem 0.45rem; font-weight: 700; letter-spacing: 0.04em; }
 body.device-phone .shuttle-btn { width: auto; min-width: 2.8rem; }
+/* ASSIGN PLANT COUNTS (canon 0.30.416): two panes, left over right on a phone, the buttons full width. */
+.plant-panes { display: flex; flex-wrap: wrap; gap: 1.2rem; align-items: flex-start; }
+.plant-panes > * { flex: 1 1 0; min-width: 0; }
+.plant-panes > .queue-pane { max-width: none; }
+.plant-panes .queue-pane a.queue-pane-item { overflow-wrap: normal; word-break: normal; }
+body.device-phone .plant-panes { flex-direction: column; }
+@media (max-width: 480px) { .plant-panes { flex-direction: column; } }
+main:has(.plant-panes) { max-width: none; }
+.plant-count-form { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: end; margin-top: 0.8rem; }
+body.device-phone .plant-panes .plant-count-btn { width: 100%; display: block; box-sizing: border-box; }
+/* ADMIN CLEANUP (canon 0.30.418): the bar's buttons wrap onto a second line inside a phone, and the page stays the screen's width. */
+body.device-phone header.app-bar { max-width: 100%; }
+body.device-phone .bar-actions { flex: 1 1 100%; flex-wrap: wrap; margin-left: 0; max-width: 100%; }
+@media (max-width: 480px) { .plant-panes .plant-count-btn { width: 100%; display: block; box-sizing: border-box; } }
 .schedule-status { font-weight: 600; }
 .schedule-hbn-summary { display: flex; align-items: center; justify-content: space-between; gap: 0.45rem; }
 .queue-fold { margin: 0 0 0.8rem; }
@@ -334,8 +348,7 @@ details.reconcile-purge > summary, details.reconcile-edit > summary { cursor: po
 /* Canon 0.30.19: the silo select's occupied rows and the all-full banner. */
 .banner.warn { border-color: var(--alert, var(--danger, #b23c2b)); }
 select option[data-occupied] { color: var(--text-dim, #888); }
-/* THE CURE PANES (canon 0.30.164): CSA and CSB ride the drying row after the FFZ cube
-   (owner, 2026-09-22: "in line with drying spaces, in the void after FFZ Inventory set the same size").
+/* THE CURE PANES (canon 0.30.164): CSA and CSB ride the drying strip.
    A pane is an inv-gauge tile the silo tiles' width (13.6rem, canon 0.30.355), its children the tile's full width. */
 .cure-pane { flex: 0 0 auto; width: 13.6rem; min-width: 0; font-size: 0.8rem; position: relative; overflow: hidden; }
 .inv-gauge.cure-pane { padding-bottom: 0; }
@@ -1106,7 +1119,7 @@ body.device-phone .ops-map-phone .ops-node { width: 100%; max-width: 18rem; }
    the bottom right is reversed: the two ride at the end of the app bar, Reports
    left of Admin, and main keeps no clearance for them. */
 .bar-actions { display: flex; align-items: center; gap: 0.55rem; margin-left: auto; }
-.maintenance-link, .admin-link, .reports-link {
+.models-link, .harvest-link, .maintenance-link, .admin-link, .reports-link {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 2.5rem; padding: 0.35rem 1rem;
   background: var(--accent); color: var(--accent-text);
@@ -1898,7 +1911,7 @@ body.device-phone .ops-map-phone .ops-node { width: 100%; max-width: 18rem; }
    the bottom right is reversed; the two ride at the end of the app bar in her
    header-cta idiom, amber pill, shadow, lift on hover. */
 .bar-actions { display: flex; align-items: center; gap: 0.55rem; margin-left: auto; }
-.maintenance-link, .admin-link, .reports-link {
+.models-link, .harvest-link, .maintenance-link, .admin-link, .reports-link {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 2.5rem; padding: 0.35rem 1.1rem;
   background: var(--primary); color: #fff;
@@ -2773,7 +2786,7 @@ ${walkSliceChrome("cerberus")}
    the bottom right is reversed; the two ride at the end of the app bar.
    Cerberus discipline: steel plate, gold ink, all caps letterspaced. */
 .bar-actions { display: flex; align-items: center; gap: 0.55rem; margin-left: auto; }
-.maintenance-link, .admin-link, .reports-link {
+.models-link, .harvest-link, .maintenance-link, .admin-link, .reports-link {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 2.5rem; padding: 0.35rem 1rem;
   background: var(--panel); color: var(--gold);
