@@ -314,15 +314,12 @@ export async function createHarvestBatch(db: D1Database, form: FormData): Promis
   let lotSerial = 0;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    // Next serial is 1 + MAX for this harvest_year, including voided rows (no reuse),
-    // never below the year's floor. Insert and log rows share one db.batch().
+    // Next serial is 1 + MAX for this harvest_year over rows that are not tests,
+    // voided rows included (no reuse), never below the year's floor, and never
+    // past 999. Insert and log rows share one db.batch().
     // UNIQUE(harvest_year, lot_serial) plus retry stops two stations from keeping
     // the same serial.
-    const maxRow = await db
-      .prepare(`SELECT MAX(lot_serial) AS m FROM harvest_batches WHERE harvest_year = ?`)
-      .bind(harvestYear)
-      .first<{ m: number | null }>();
-    lotSerial = nextLotSerial(maxRow?.m ?? null, serialFloor);
+    lotSerial = await nextOpenSerial(db, harvestYear, serialFloor);
     hbn = mintHbn({
       entryDate,
       farmCode,
@@ -359,6 +356,7 @@ export async function createHarvestBatch(db: D1Database, form: FormData): Promis
       harvest_year: harvestYear,
       status: HARVEST_STATUS.open,
       license_value: licenseValue,
+      is_test: 0,
       created_at: ts,
       created_by: actor.id,
       updated_at: ts,
@@ -369,9 +367,9 @@ export async function createHarvestBatch(db: D1Database, form: FormData): Promis
         .prepare(
           `INSERT INTO harvest_batches (
           id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, planned_dryspc, material_form,
-          start_time, zone, rows_text, metrc_harvest_tag, hbn, lot_serial, harvest_year, status, license_value,
+          start_time, zone, rows_text, metrc_harvest_tag, hbn, lot_serial, harvest_year, status, license_value, is_test,
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
         )
         .bind(
           id,
@@ -392,6 +390,7 @@ export async function createHarvestBatch(db: D1Database, form: FormData): Promis
           harvestYear,
           HARVEST_STATUS.open,
           licenseValue,
+          0,
           ts,
           actor.id,
           ts,
@@ -528,9 +527,10 @@ export async function createWetWeight(db: D1Database, form: FormData): Promise<A
 /** Fork 6 (canon 0.30.1, owner verbatim: "a way to manually plug the HBN in
  * when the system fails--I'm not opposed, but bury it in Admin somewhere for
  * now.  I don't want that to be the default."): the Admin-buried fallback.
- * Takes a hand-typed HBN verbatim; the trailing YY### must parse so the serial
- * ledger stays whole; the farm-assigned license law holds exactly as at
- * Acquire; a reason is required and everything change-logs. */
+ * Takes a hand-typed HBN verbatim when it ends in -YY### and that text is new.
+ * Its lot_serial is the next place in line, not the typed tail. A test holds
+ * no place in line. The farm-assigned license law holds exactly as at Acquire;
+ * a reason is required and everything change-logs. */
 export async function manualHbn(db: D1Database, form: FormData): Promise<ActionOk> {
   const actor = await requireActor(db, personIdFrom(form));
   const reason = requireReason(textOrNull(form.get("reason")));
@@ -571,77 +571,113 @@ export async function manualHbn(db: D1Database, form: FormData): Promise<ActionO
   if (!strain) throw new HttpError(400, "Unknown strain.");
   // Canon 0.30.9: the manual mint inherits the strain name as its market strain too.
   const marketStrain = inheritMarketStrain(null, strain.name);
-  const tail = hbn.match(/-(\d{2})(\d{3})$/);
-  if (!tail) {
+  // THE MANUAL MINT (canon 0.30.420): the text must end in -YY### and must be new,
+  // live or voided. The YY need not match the entry date, and the ### need not be free.
+  // The stored lot_serial is the next place in line (a phantom slot), or, for a test, the next
+  // number from 90001. The typed tail is only the HBN's own last five.
+  if (!/-\d{2}\d{3}$/.test(hbn)) {
     throw new HttpError(400, "The HBN must end in the YY### serial token so the serial ledger stays whole.");
   }
+  try {
+    assertHbnAvailable(await getHarvestByHbn(db, hbn), hbn);
+  } catch (err) {
+    if (err instanceof HbnCollisionError) throw new HttpError(409, err.message);
+    throw err;
+  }
+  const isTest = checkbox01(form, "is_test") === 1 ? 1 : 0;
   const harvestYear = harvestYearFromEntryDate(entryDate);
-  if (String(harvestYear).slice(-2) !== tail[1]) {
-    throw new HttpError(400, "The HBN's year token does not match the entry date's year.");
-  }
-  const lotSerial = Number(tail[2]);
-  assertHbnAvailable(await getHarvestByHbn(db, hbn), hbn);
-  const serialTaken = await db
-    .prepare(`SELECT id FROM harvest_batches WHERE harvest_year = ? AND lot_serial = ?`)
-    .bind(harvestYear, lotSerial)
-    .first<{ id: string }>();
-  if (serialTaken) {
-    throw new HttpError(409, `Serial ${tail[2]} is already minted for year ${tail[1]}.`);
-  }
+  const serialFloor = lotSerialFloor(await getConfigValue(db, CONFIG_KEYS.first_lot_token), harvestYear);
   const id = crypto.randomUUID();
   const ts = nowIso();
-  const record = {
-    id,
-    entry_date: entryDate,
-    farm_code: farmCode,
-    grow_method_code: growMethodCode,
-    strain_id: strainId,
-    market_strain: marketStrain,
-    planned_dryspc: siloNumber,
-    material_form: materialForm,
-    metrc_harvest_tag: metrc,
-    hbn,
-    lot_serial: lotSerial,
-    harvest_year: harvestYear,
-    status: HARVEST_STATUS.open,
-    license_value: licenseValue,
-    created_at: ts,
-    created_by: actor.id,
-    updated_at: ts,
-    updated_by: actor.id,
-  };
-  await db.batch([
-    db
-      .prepare(
-        `INSERT INTO harvest_batches (
+  const maxAttempts = 8;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const lotSerial = isTest ? await nextTestSerial(db, harvestYear) : await nextOpenSerial(db, harvestYear, serialFloor);
+    const record = {
+      id,
+      entry_date: entryDate,
+      farm_code: farmCode,
+      grow_method_code: growMethodCode,
+      strain_id: strainId,
+      market_strain: marketStrain,
+      planned_dryspc: siloNumber,
+      material_form: materialForm,
+      metrc_harvest_tag: metrc,
+      hbn,
+      lot_serial: lotSerial,
+      harvest_year: harvestYear,
+      status: HARVEST_STATUS.open,
+      license_value: licenseValue,
+      is_test: isTest,
+      created_at: ts,
+      created_by: actor.id,
+      updated_at: ts,
+      updated_by: actor.id,
+    };
+    try {
+      await db.batch([
+        db
+          .prepare(
+            `INSERT INTO harvest_batches (
           id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, planned_dryspc, material_form,
-          start_time, zone, rows_text, metrc_harvest_tag, hbn, lot_serial, harvest_year, status, license_value,
+          start_time, zone, rows_text, metrc_harvest_tag, hbn, lot_serial, harvest_year, status, license_value, is_test,
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-        ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
-      )
-      .bind(
-        id,
-        entryDate,
-        farmCode,
-        growMethodCode,
-        strainId,
-        marketStrain,
-        siloNumber,
-        materialForm,
-        metrc,
-        hbn,
-        lotSerial,
-        harvestYear,
-        HARVEST_STATUS.open,
-        licenseValue,
-        ts,
-        actor.id,
-        ts,
-        actor.id
-      ),
-    ...logsForInsert(db, "harvest_batches", id, record, actor.id, reason, ts),
-  ]);
-  return { redirect: `/admin/manual-hbn?ok=${encodeURIComponent(hbn)}` };
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+          )
+          .bind(
+            id,
+            entryDate,
+            farmCode,
+            growMethodCode,
+            strainId,
+            marketStrain,
+            siloNumber,
+            materialForm,
+            metrc,
+            hbn,
+            lotSerial,
+            harvestYear,
+            HARVEST_STATUS.open,
+            licenseValue,
+            isTest,
+            ts,
+            actor.id,
+            ts,
+            actor.id
+          ),
+        ...logsForInsert(db, "harvest_batches", id, record, actor.id, reason, ts),
+      ]);
+      return { redirect: `/admin/manual-hbn?ok=${encodeURIComponent(hbn)}` };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.toLowerCase().includes("unique") && attempt < maxAttempts - 1) continue;
+      if (message.toLowerCase().includes("unique")) {
+        throw new HttpError(409, `HBN already exists: ${hbn}. The mint was not changed. Adjust the batch fields and try again.`);
+      }
+      throw err;
+    }
+  }
+  throw new HttpError(409, `Could not allocate a lot serial for ${harvestYear}.`);
+}
+
+/** The next place in line: 1 + MAX(lot_serial) of this harvest year over rows that are not tests,
+ * voided rows included, never below the year's floor, and never past 999. */
+async function nextOpenSerial(db: D1Database, harvestYear: number, floor: number | null): Promise<number> {
+  const maxRow = await db
+    .prepare(`SELECT MAX(lot_serial) AS m FROM harvest_batches WHERE harvest_year = ? AND is_test = 0`)
+    .bind(harvestYear)
+    .first<{ m: number | null }>();
+  const next = nextLotSerial(maxRow?.m ?? null, floor);
+  if (next > 999) throw new HttpError(400, "The year's lot numbers have reached 999.");
+  return next;
+}
+
+/** A test's serial, from 90001 up, one past the year's highest test serial. It never moves the line. */
+async function nextTestSerial(db: D1Database, harvestYear: number): Promise<number> {
+  const maxRow = await db
+    .prepare(`SELECT MAX(lot_serial) AS m FROM harvest_batches WHERE harvest_year = ? AND is_test = 1`)
+    .bind(harvestYear)
+    .first<{ m: number | null }>();
+  return Math.max(90001, nextLotSerial(maxRow?.m ?? null, null));
 }
 
 /** THE HBN ENTRY (canon 0.30.341): the Silo field of an HBN mint, a sequence number 1 to 7. */

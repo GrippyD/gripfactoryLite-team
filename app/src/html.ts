@@ -3816,8 +3816,9 @@ export function queueSection(
           const cells = queue.columns
             .map((c) => {
               const raw = displayValue(c.field, row.values);
-              const shown = c.field === "lab_status_metrc" ? t(locale, raw || "not in METRC") : raw;
-              return `<td${c.field === "lab_status_metrc" ? ' data-lab-status-metrc' : ""}>${esc(shown)}</td>`;
+              const testMark = c.field === "hbn" && row.values.is_test === "1";
+              const shown = c.field === "lab_status_metrc" ? t(locale, raw || "not in METRC") : testMark ? `${raw} ${t(locale, "Test")}` : raw;
+              return `<td${c.field === "lab_status_metrc" ? ' data-lab-status-metrc' : ""}${testMark ? ' data-hbn-test="1"' : ""}>${esc(shown)}</td>`;
             })
             .join("");
           const controls = [

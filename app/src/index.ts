@@ -2406,7 +2406,7 @@ app.post(SENSOR_PATH, async (c) => {
   }
   try {
     const stored = await storeSensorReadings(c.env.DB, body, nowIso());
-    return c.json({ ok: true, stored }, 200, { "cache-control": "no-store" });
+    return c.json({ ok: true, stored: stored.stored, skipped: stored.skipped }, 200, { "cache-control": "no-store" });
   } catch (err) {
     if (err instanceof HttpError) return c.json({ error: err.message }, err.status as ContentfulStatusCode, { "cache-control": "no-store" });
     throw err;

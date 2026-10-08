@@ -440,8 +440,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 94 migration(s)")) {
-      throw new Error(`from-zero apply must say 94 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 95 migration(s)")) {
+      throw new Error(`from-zero apply must say 95 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return new Promise((resolve, reject) => {
       const child = spawn(
@@ -2197,6 +2197,47 @@ async function run() {
     assert(csbSensor.status === 200, `a CSB silo-ops reading expected 200 got ${csbSensor.status} ${await csbSensor.text()}`);
     const withCsb = await text("/ops/drying_ops");
     assert(cureOf(withCsb.body, "CSB").includes("70.5 F") && cureOf(withCsb.body, "CSB").includes(" · Silo Ops"), "a silo-ops post for CSB must show on CSB's line with Silo Ops");
+    const unitAt = new Date(Date.now() + 20 * 60 * 1000).toISOString();
+    const csaUnits = [70, 71, 72, 73].map((temperature_f, i) => ({
+      room: "CSA",
+      temperature_f,
+      humidity_pct: 50,
+      read_at: unitAt,
+      source: "silo-ops",
+      sensor_id: `csa-unit-${i + 1}`,
+    }));
+    const csaFirst = await req("/sensors/readings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(csaUnits),
+    });
+    const csaFirstText = await csaFirst.text();
+    const csaFirstBody = JSON.parse(csaFirstText);
+    assert(csaFirst.status === 200 && csaFirstBody.stored === 4 && csaFirstBody.skipped === 0, `four CSA units expected stored 4 skipped 0 got ${csaFirst.status} ${csaFirstText}`);
+    const csaSecond = await req("/sensors/readings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(csaUnits),
+    });
+    const csaSecondText = await csaSecond.text();
+    const csaSecondBody = JSON.parse(csaSecondText);
+    assert(csaSecond.status === 200 && csaSecondBody.stored === 0 && csaSecondBody.skipped === 4, `a CSA resend expected stored 0 skipped 4 got ${csaSecond.status} ${csaSecondText}`);
+    const withUnits = await text("/ops/drying_ops");
+    const csaPane = cureOf(withUnits.body, "CSA");
+    assert(csaPane.includes("71.5 F") && csaPane.includes("4 units"), "the CSA pane must show the mean of four units");
+    const csbUnit = await req("/sensors/readings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ room: "CSB", temperature_f: 64, humidity_pct: 33, read_at: unitAt, source: "silo-ops", sensor_id: "csb-unit-1" }),
+    });
+    const csbUnitText = await csbUnit.text();
+    const csbUnitBody = JSON.parse(csbUnitText);
+    assert(csbUnit.status === 200 && csbUnitBody.stored === 1 && csbUnitBody.skipped === 0, `one CSB unit expected stored 1 got ${csbUnit.status} ${csbUnitText}`);
+    const withCsbUnit = await text("/ops/drying_ops");
+    const csbPane = cureOf(withCsbUnit.body, "CSB");
+    const csbCondAt = csbPane.indexOf("data-cure-conditions");
+    const csbCond = csbPane.slice(csbCondAt, csbPane.indexOf("</p>", csbCondAt));
+    assert(csbCond.includes("64 F") && !csbCond.includes("units") && !csbCond.includes("70.5"), "CSB must show its one unit alone");
     const sensorBad = await req("/sensors/readings", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -5579,14 +5620,15 @@ async function run() {
     assert(hoursLog.body.includes("labor hours typed"), "the hours changes must land in the change log");
     const clearHours = await req("/harvest/hours", { method: "POST", body: form({ farm: "ALL", work_date: consoleToday, hours: "" }) });
     assert(clearHours.status === 303, `clear hours expected 303 got ${clearHours.status}`);
+    localD1("UPDATE app_config SET value = 'Ada' WHERE key = 'trim_shift_day_operators' AND deleted_at IS NULL");
+    localD1("UPDATE app_config SET value = 'Nia' WHERE key = 'trim_shift_second_operators' AND deleted_at IS NULL");
     const consoleCleared = await text("/harvest");
     assert(/value=""[^>]*aria-label="Harvest Hours"/.test(consoleCleared.body), "a blank save must clear the day's harvest hours");
-    // THE TRIMMING SECTION (canon 0.30.88; owner ruling 2026-09-16, verbatim in
-    // the canon row; his picks "Olga = Days, Victor = Afternoons" and "WPR
-    // means SMALLS"). Before any package dated yesterday: two shift cards, both
-    // waffles empty, the seeded operators named. Then trim room packages dated
+    // THE TRIMMING SECTION (canon 0.30.88). The smoke's own app_config seed names
+    // the shifts Ada and Nia. Before any package dated yesterday: two shift cards, both
+    // waffles empty, those operators named. Then trim room packages dated
     // yesterday against the unloaded ARL lot (80 g dry, untouched so far):
-    // Olga's SHAKE 30 and TRIM 20 (BTR 60%), victor's SMALLS 9 and WASTE 20
+    // Ada's SHAKE 30 and TRIM 20 (BTR 60%), nia's SMALLS 9 and WASTE 20
     // (case-blind; BTR 31.0%), Les's WASTE 1 on neither shift. The DLH numbox
     // per shift; Lbs/DLH divides; the change log carries the hours.
     // Canon 0.30.97: schedule the extra HBN first so Trim Packages Entry sees it.
@@ -5631,35 +5673,35 @@ async function run() {
     assert(!trimBefore.includes('data-hc-node-value="retrim"'), "RETRIM carries no figure yet (his word)");
     assert(!trimBefore.includes('data-hc-metric="trim_sheet_hours"') && !trimBefore.includes("Cutting and bucking hours from the sheet"), "the sheet hours line has left the shift cards");
     assert(!trimBefore.includes("data-hc-trim-input") && !trimBefore.includes('data-hc-node-value="t0-input"'), "the input lbs box and the picture's input line are gone");
-    assert(trimBefore.includes("data-hc-shift-operators>Olga</span>") && trimBefore.includes("data-hc-shift-operators>Victor</span>"), "the seeded operators name their shifts (migration 0052)");
+    assert(trimBefore.includes("data-hc-shift-operators>Ada</span>") && trimBefore.includes("data-hc-shift-operators>Nia</span>"), "the smoke's app_config seed names the shifts");
     for (const label of ["Other", "Bulk Bud", "Prepack Bud", "Total Bud", "BTR", "Lbs Produced", "DLH", "Lbs/DLH"]) {
       assert((trimBefore.match(new RegExp(`<dt>${label.replace(/[/]/g, "\\/")}</dt>`, "g")) || []).length === 2, `each shift card must carry the ${label} line`);
     }
     assert(!trimBefore.includes("data-hc-trim-unassigned"), "no unassigned line with nothing dated yesterday");
-    const olgaTrim = await req("/station/trim_packages", {
+    const adaTrim = await req("/station/trim_packages", {
       method: "POST",
       body: form({
         wet_weight_entry_id: extraLotId,
-        package_code: ["SHK-OLGA-1", "TRM-OLGA-1"],
+        package_code: ["SHK-ADA-1", "TRM-ADA-1"],
         package_type_code: ["SHAKE", "TRIM"],
         effective_date: trimCardDay, effective_pin: ADMIN_PIN,
-        trim_operator: "Olga",
+        trim_operator: "Ada",
         weight_grams: ["30.00", "20.00"],
       }),
     });
-    assert(olgaTrim.status === 303, `Olga's trim packages expected 303 got ${olgaTrim.status}`);
-    const victorTrim = await req("/station/trim_packages", {
+    assert(adaTrim.status === 303, `Ada's trim packages expected 303 got ${adaTrim.status}`);
+    const niaTrim = await req("/station/trim_packages", {
       method: "POST",
       body: form({
         wet_weight_entry_id: extraLotId,
         package_code: ["SML-VIC-1", "WST-VIC-1"],
         package_type_code: ["SMALLS", "WASTE"],
         effective_date: trimCardDay, effective_pin: ADMIN_PIN,
-        trim_operator: "victor",
+        trim_operator: "nia",
         weight_grams: ["9.00", "20.00"],
       }),
     });
-    assert(victorTrim.status === 303, `Victor's trim packages expected 303 got ${victorTrim.status}`);
+    assert(niaTrim.status === 303, `Nia's trim packages expected 303 got ${niaTrim.status}`);
     const lesTrim = await req("/station/trim_packages", {
       method: "POST",
       body: form({
@@ -5676,7 +5718,7 @@ async function run() {
     assert(consoleTrim.body.includes("data-hc-day-reset"), "the trim cards are read on the day before today, with Back to today");
     const trimSection = consoleTrim.body.slice(consoleTrim.body.indexOf('data-hc-section="trimming"'), consoleTrim.body.indexOf('data-hc-section="pasteurization"'));
     const dayCard = trimSection.slice(trimSection.indexOf('data-hc-shift="day"'), trimSection.indexOf('data-hc-shift="second"'));
-    assert(dayCard.includes('data-hc="trim_lbs">0.11 lb</span><span class="hc-sub muted">50 g · 2 packages</span>'), "Day shift must weigh Olga's 50 g");
+    assert(dayCard.includes('data-hc="trim_lbs">0.11 lb</span><span class="hc-sub muted">50 g · 2 packages</span>'), "Day shift must weigh Ada's 50 g");
     assert(dayCard.includes('data-hc="trim_btr">60.0%</span>'), "Day shift BTR must read 60.0% (30 SHAKE of 50)");
     assert(dayCard.includes('data-hc="trim_bud">0.07 lb</span><span class="hc-sub muted">30 g · Bulk + Prepack</span>'), "Day shift Total Bud must be the SHAKE 30 g");
     assert(dayCard.includes('data-hc="trim_bulk">0.07 lb</span><span class="hc-sub muted">30 g · SHAKE + BUD</span>'), "Day shift Bulk Bud must be the SHAKE 30 g");
@@ -5685,13 +5727,13 @@ async function run() {
     assert(dayCard.includes('data-hc-bud-consumed="40"'), "Day BTR 60.0% must grey 40 cells of the bud");
     assert(dayCard.includes('hc-bud-bud" data-hc-bud-order="100" data-hc-bud-n="1"'), "at 60% the heart, cell 1, is still bud");
     assert(dayCard.includes('hc-bud-consumed" data-hc-bud-order="1" data-hc-bud-n="100"'), "at 60% the foot, cell 100, is the first consumed");
-    assert(dayCard.includes('data-hc-shift-running="1"') && dayCard.includes('<span class="hc-running" data-hc-running>RUNNING</span>'), "Olga weighed within 30 minutes: the Day card flashes RUNNING");
+    assert(dayCard.includes('data-hc-shift-running="1"') && dayCard.includes('<span class="hc-running" data-hc-running>RUNNING</span>'), "Ada weighed within 30 minutes: the Day card flashes RUNNING");
     const trimQueueNow = await text("/station/trim_packages");
     assert(!trimQueueNow.body.includes("No rows waiting."), "the scheduled extra lot must stand in the Unloaded Queue for trim");
     assert(dayCard.includes('data-hc="trim_lbs_per_dlh">type hours</span>'), "Lbs/DLH must ask for hours until typed");
     const secondCard = trimSection.slice(trimSection.indexOf('data-hc-shift="second"'));
-    assert(secondCard.includes('data-hc-shift-running="1"'), "Victor weighed within 30 minutes: the Second card flashes RUNNING from his entry, not the clock");
-    assert(secondCard.includes('data-hc="trim_lbs">0.06 lb</span><span class="hc-sub muted">29 g · 2 packages</span>'), "Second Shift must weigh victor's 29 g (the operator matched case-blind)");
+    assert(secondCard.includes('data-hc-shift-running="1"'), "Nia weighed within 30 minutes: the Second card flashes RUNNING from that lead's entry, not the clock");
+    assert(secondCard.includes('data-hc="trim_lbs">0.06 lb</span><span class="hc-sub muted">29 g · 2 packages</span>'), "Second Shift must weigh nia's 29 g (the operator matched case-blind)");
     assert(secondCard.includes('data-hc="trim_btr">31.0%</span>'), "Second Shift BTR must read 31.0% (9 SMALLS, his WPR, of 29)");
     assert(secondCard.includes('data-hc="trim_prepack">0.02 lb</span><span class="hc-sub muted">9 g · WPR</span>'), "Second Shift Prepack Bud must be the SMALLS 9 g (his WPR)");
     assert(secondCard.includes('data-hc="trim_bulk">0.00 lb</span><span class="hc-sub muted">0 g · SHAKE + BUD</span>'), "Second Shift Bulk Bud must read zero");
@@ -6159,7 +6201,24 @@ async function run() {
         reason: "smoke: dupe serial",
       }),
     });
-    assert(manualDupe.status === 409, `a taken manual serial expected 409 got ${manualDupe.status}`);
+    const manualDupeText = manualDupe.status === 303 ? "" : await manualDupe.text();
+    assert(manualDupe.status === 303, `a manual HBN with a used tail and new text expected 303 got ${manualDupe.status} ${manualDupeText.slice(0, 200)}`);
+    const manualSame = await req("/admin/manual-hbn", {
+      method: "POST",
+      body: form({
+        hbn: "26250-ARL-GH-027-0-NA-26900",
+        entry_date: "2026-09-07",
+        farm_code: "ARL",
+        license_value: "AU-G-C-001509",
+        grow_method_code: "GH",
+        strain_id: manualStrain,
+        planned_dryspc: "1",
+        material_form: "bucked",
+        reason: "smoke: same text",
+      }),
+    });
+    const manualSameText = manualSame.status === 409 ? "" : await manualSame.text();
+    assert(manualSame.status === 409, `the same HBN text expected 409 got ${manualSame.status} ${manualSameText.slice(0, 200)}`);
     const manualQueue = await text("/station/wet_weight");
     assert(manualQueue.body.includes("pick="), "the manual HBN must land in the queue like any other");
     const adminTiles = await text("/admin/settings");
@@ -7397,9 +7456,9 @@ async function run() {
     const agreeLine = sheetExport.find((line) => line.includes(agreeHbn)) || "";
     // The sync renames the app batch to the sheet's text (THE HBN FOLLOWS METRC), so its 01 segment reads NA here; its silo column is untouched.
     const knownLine = sheetExport.find((line) => line.includes("26244-ARL-GH-027-0-NA-26010")) || "";
-    assert(aliasLine.endsWith(",sheet,,,bucked") && !sheetExport.some((line) => line.includes(aliasSheet)), `serial 80 must be minted under METRC's text, got ${aliasLine}`);
-    assert(agreeLine.endsWith(",sheet,,,bucked"), `the agreeing lot must keep the sheet's text, got ${agreeLine}`);
-    assert(knownLine.includes("Smoke Cream") && knownLine.endsWith(",app,,,bucked"), `the app batch must take the sheet's market strain and stay app-born, got ${knownLine}`);
+    assert(aliasLine.endsWith(",sheet,,,bucked,0") && !sheetExport.some((line) => line.includes(aliasSheet)), `serial 80 must be minted under METRC's text, got ${aliasLine}`);
+    assert(agreeLine.endsWith(",sheet,,,bucked,0"), `the agreeing lot must keep the sheet's text, got ${agreeLine}`);
+    assert(knownLine.includes("Smoke Cream") && knownLine.endsWith(",app,,,bucked,0"), `the app batch must take the sheet's market strain and stay app-born, got ${knownLine}`);
     const sheetLog = await text("/log");
     assert(sheetLog.body.includes("<td>harvest details (sync)</td>") && sheetLog.body.includes("<td>Smoke Cream</td>"), "the market strain change must be logged under harvest details (sync)");
     const sheetId = aliasLine.split(",")[0];
@@ -7790,11 +7849,11 @@ async function run() {
     // born_from is followed by the in-transit close columns (0083), empty until YES.
     const batchesCsv = (await text("/export/harvest_batches.csv")).body.split(/\r?\n/);
     const newLine = batchesCsv.find((line) => line.includes(NEW_HBN)) || "";
-    assert(batchesCsv[0].endsWith(",born_from,field_closed_at,field_closed_by,material_form") && newLine.endsWith(",metrc,,,bucked"), `the minted batch must be born from METRC, got ${newLine}`);
+    assert(batchesCsv[0].endsWith(",born_from,field_closed_at,field_closed_by,material_form,is_test") && newLine.endsWith(",metrc,,,bucked,0"), `the minted batch must be born from METRC, got ${newLine}`);
     assert(newLine.includes(",2026,open,") || newLine.includes(",7,2026,"), `the minted batch must carry 2026 serial 7, got ${newLine}`);
     const newBatchId = newLine.split(",")[0];
     const appLines = batchesCsv.filter((line) => line.includes(pickedHbn));
-    assert(appLines.length === 1 && appLines[0].endsWith(",app,,,bucked"), "the app's own batch must stay born from the app");
+    assert(appLines.length === 1 && appLines[0].endsWith(",app,,,bucked,0"), "the app's own batch must stay born from the app");
     const queuesNew = await text("/admin/queues");
     assert(!queuesNew.body.includes(NEW_HBN), "the HBN Queue must leave the METRC-born batch out");
     const wetNew = await text("/station/wet_weight");
@@ -7836,7 +7895,7 @@ async function run() {
     assert(histWork.includes(`data-schedule-tag="${HIST}" data-schedule-hbn="${aliasMetrc}">`) && histWork.includes("Sheet Apple - 33 g"), "the adopted package must read the sheet's market strain");
     const batchesAfterHist = (await text("/export/harvest_batches.csv")).body;
     assert(batchesAfterHist.split(aliasMetrc).length === batchesBeforeHist.split(aliasMetrc).length, ">> on a known lot must mint nothing");
-    assert((batchesAfterHist.split(/\r?\n/).find((line) => line.includes(aliasMetrc)) || "").endsWith(",sheet,,,bucked"), "the historical lot stays sheet-born");
+    assert((batchesAfterHist.split(/\r?\n/).find((line) => line.includes(aliasMetrc)) || "").endsWith(",sheet,,,bucked,0"), "the historical lot stays sheet-born");
 
     const queuesFold = await text("/admin/queues");
     assert(queuesFold.body.includes('data-fold="hbn_queue" open') && queuesFold.body.includes('data-fold="logistics_moves" open'), "Data Queues folds must render open");
@@ -9823,7 +9882,7 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
         wet_weight_entry_id: extraLotId,
         package_code: ["NIGHT-0630"],
         package_type_code: ["BUD"],
-        trim_operator: "Victor",
+        trim_operator: "Nia",
         weight_grams: ["140"],
       }),
     });
@@ -9842,7 +9901,7 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
         wet_weight_entry_id: extraLotId,
         package_code: ["DAY-1900"],
         package_type_code: ["BUD"],
-        trim_operator: "Olga",
+        trim_operator: "Ada",
         weight_grams: ["80"],
       }),
     });
@@ -9854,8 +9913,8 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     const dayRow = localD1All("SELECT trim_date FROM wip_packages WHERE package_code = 'DAY-1900' AND deleted_at IS NULL");
     assert(dayRow[0] && dayRow[0].trim_date === etDateSmoke(at1900), `a late day post must store its Eastern calendar date, got ${dayRow[0] && dayRow[0].trim_date}`);
     const smokeLbs = (grams) => (Math.round((Number(grams) / 448) * 100) / 100).toFixed(2);
-    const secondSum = localD1All(`SELECT COALESCE(SUM(weight_grams), 0) AS grams, COUNT(*) AS n FROM wip_packages WHERE deleted_at IS NULL AND COALESCE(source, 'trim') NOT IN ('cryo', 'metrc') AND trim_date = '${farmToday}' AND lower(trim(trim_operator)) = 'victor'`);
-    const daySum = localD1All(`SELECT COALESCE(SUM(weight_grams), 0) AS grams, COUNT(*) AS n FROM wip_packages WHERE deleted_at IS NULL AND COALESCE(source, 'trim') NOT IN ('cryo', 'metrc') AND trim_date = '${farmToday}' AND lower(trim(trim_operator)) = 'olga'`);
+    const secondSum = localD1All(`SELECT COALESCE(SUM(weight_grams), 0) AS grams, COUNT(*) AS n FROM wip_packages WHERE deleted_at IS NULL AND COALESCE(source, 'trim') NOT IN ('cryo', 'metrc') AND trim_date = '${farmToday}' AND lower(trim(trim_operator)) = 'nia'`);
+    const daySum = localD1All(`SELECT COALESCE(SUM(weight_grams), 0) AS grams, COUNT(*) AS n FROM wip_packages WHERE deleted_at IS NULL AND COALESCE(source, 'trim') NOT IN ('cryo', 'metrc') AND trim_date = '${farmToday}' AND lower(trim(trim_operator)) = 'ada'`);
     const leadDash = await text("/harvest");
     const leadTrim = leadDash.body.slice(leadDash.body.indexOf('data-hc-section="trimming"'), leadDash.body.indexOf('data-hc-section="pasteurization"'));
     const leadDay = leadTrim.slice(leadTrim.indexOf('data-hc-shift="day"'), leadTrim.indexOf('data-hc-shift="second"'));
@@ -9868,6 +9927,83 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     const barHome = await text("/");
     const bar = barHome.body.slice(barHome.body.indexOf('class="bar-actions"'), barHome.body.indexOf("</header>"));
     assert(bar.indexOf('href="/models"') < bar.indexOf('href="/harvest"') && bar.indexOf('href="/harvest"') < bar.indexOf('href="/maintenance"'), "the bar reads Models, Harvest Console, Maintenance");
+
+    // MANUAL HBNS IN PHANTOM ORDER (canon 0.30.420). Auto N, a manual holds N+1,
+    // the next auto is N+2, a test holds 90001 and leaves the next auto at N+3.
+    // The queue says Test beside the test HBN. The Plants harvested figure leaves it out.
+    const manualForm = await text("/admin/manual-hbn");
+    assert(manualForm.body.includes("Test HBN (holds no place in line)"), "the manual form must offer the test box");
+    const plantsBefore = harvestedOf((await text("/harvest")).body);
+    const serialNow = localD1All("SELECT COALESCE(MAX(lot_serial), 0) AS m FROM harvest_batches WHERE harvest_year = 2026 AND is_test = 0");
+    const mintAuto = async () => {
+      const res = await req("/station/acquire_hbn", {
+        method: "POST",
+        body: form({
+          entry_date: "2026-10-07",
+          farm_code: "PNN",
+          grow_method_code: "GH",
+          strain_id: strainId,
+          planned_dryspc: "1",
+          material_form: "bucked",
+        }),
+      });
+      const detail = res.status === 303 ? "" : await res.text();
+      assert(res.status === 303, `phantom auto mint expected 303 got ${res.status} ${detail.slice(0, 300)}`);
+      const minted = new URL(res.headers.get("location") || "", base).searchParams.get("minted");
+      assert(minted, "phantom auto mint must name the HBN");
+      const row = localD1All(`SELECT lot_serial, is_test FROM harvest_batches WHERE hbn = '${minted}'`);
+      return { hbn: minted, serial: Number(row[0].lot_serial), test: Number(row[0].is_test) };
+    };
+    const mintManual = async (hbn, test) => {
+      const fields = {
+        hbn,
+        entry_date: "2026-10-07",
+        farm_code: "PNN",
+        license_value: "AU-G-C-000832",
+        grow_method_code: "GH",
+        strain_id: strainId,
+        planned_dryspc: "1",
+        material_form: "bucked",
+        reason: "smoke phantom slot",
+      };
+      if (test) fields.is_test = "1";
+      const res = await req("/admin/manual-hbn", { method: "POST", body: form(fields) });
+      const detail = res.status === 303 ? "" : await res.text();
+      assert(res.status === 303, `manual ${hbn} expected 303 got ${res.status} ${detail.slice(0, 300)}`);
+      const row = localD1All(`SELECT id, lot_serial, is_test FROM harvest_batches WHERE hbn = '${hbn}'`);
+      return { id: row[0].id, serial: Number(row[0].lot_serial), test: Number(row[0].is_test) };
+    };
+    const phAuto = await mintAuto();
+    const N = Number(serialNow[0].m) + 1;
+    assert(phAuto.serial === N && phAuto.test === 0, `auto mint expected serial ${N}, got ${phAuto.serial} test ${phAuto.test}`);
+    const phHeld = await mintManual("26280-PNN-GH-027-0-01-26998", false);
+    assert(phHeld.serial === N + 1 && phHeld.test === 0, `manual mint must hold ${N + 1}, got ${phHeld.serial}`);
+    const phNext = await mintAuto();
+    assert(phNext.serial === N + 2 && phNext.test === 0, `the next auto must be ${N + 2}, got ${phNext.serial}`);
+    const testBag = await mintManual("SmokeTest-25901", true);
+    assert(testBag.serial === 90001 && testBag.test === 1, `a test must hold 90001, got ${testBag.serial} test ${testBag.test}`);
+    const phAfter = await mintAuto();
+    assert(phAfter.serial === N + 3, `a test must leave the next auto at ${N + 3}, got ${phAfter.serial}`);
+    const queuePage = await text("/admin/queues");
+    assert(queuePage.body.includes("SmokeTest-25901 Test") && queuePage.body.includes('data-hbn-test="1"'), "the HBN Queue must say Test beside the test HBN");
+    assert(!queuePage.body.includes("26280-PNN-GH-027-0-01-26998 Test"), "a manual HBN that holds a slot must not say Test");
+    const startTest = await req("/station/wet_weight", {
+      method: "POST",
+      body: form({ team_lead: "Smoke Lead", harvest_batch_id: testBag.id }),
+    });
+    const startDetail = startTest.status === 303 ? "" : await startTest.text();
+    assert(startTest.status === 303, `starting a lot on the test HBN expected 303 got ${startTest.status} ${startDetail.slice(0, 300)}`);
+    const testLot = new URL(startTest.headers.get("location") || "", base).searchParams.get("lot");
+    assert(testLot, "the test lot must redirect with its id");
+    const plantPane = await text("/station/assign_plant_counts");
+    assert(!plantPane.body.includes(`data-plant-entry="${testLot}"`), "a test lot must stay off the plant counts left pane");
+    const testWeight = await req(`/station/wet_weight/lot/${testLot}/weights`, { method: "POST", body: form({ weight_grams: "448" }) });
+    assert(testWeight.status === 303, `the test lot's weight expected 303 got ${testWeight.status}`);
+    const testFinish = await req(`/station/wet_weight/lot/${testLot}/finish`, { method: "POST", body: form({ plant_count: "77" }) });
+    const finishDetail = testFinish.status === 303 ? "" : await testFinish.text();
+    assert(testFinish.status === 303, `finishing the test lot expected 303 got ${testFinish.status} ${finishDetail.slice(0, 300)}`);
+    const plantsAfter = harvestedOf((await text("/harvest")).body);
+    assert(plantsAfter === plantsBefore, `the dashboard Plants figure must leave the test's 77 out, ${plantsBefore} then ${plantsAfter}`);
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

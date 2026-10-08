@@ -173,7 +173,7 @@ describe("THE SERVICE ACTOR (canon 0.30.140; Corey's agent: \"read only. A GET r
       env
     );
     expect(ok.status).toBe(200);
-    expect(await ok.json()).toEqual({ ok: true, stored: 1 });
+    expect(await ok.json()).toEqual({ ok: true, stored: 1, skipped: 0 });
     const refused = await app.request("/sensors/readings", { method: "GET" }, env);
     expect(refused.status).toBe(403);
   });

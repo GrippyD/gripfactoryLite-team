@@ -470,8 +470,7 @@ export const CONFIG_KEYS = {
   // farm's day begins, a value in data (canon L-4), seeded 6 by migration 0064;
   // an instant before it belongs to the day before.
   farm_day_start_hour: "farm_day_start_hour",
-  // His pick "Olga = Days, Victor = Afternoons": the trim operators of each
-  // shift, comma lists in data (canon L-4), seeded by migration 0052.
+  // The trim operators of each shift, comma lists in data (canon L-4), seeded by migration 0052.
   trim_shift_day_operators: "trim_shift_day_operators",
   trim_shift_second_operators: "trim_shift_second_operators",
   // THE LINE RUNS ON THE CLOCK (canon 0.30.163). Owner, 2026-09-21: "Switch

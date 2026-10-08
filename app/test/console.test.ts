@@ -924,22 +924,22 @@ describe("THE BUD WAFFLE (canon 0.30.157), drawn as THE PROGRESSION BUD (canon 0
  * (BTR=(BUD+WPR+SHA)/All weight ran that shift) shown as a percentage / BUD =
  * [BUD+WPR+SHA] / OTHER = All other / Second Shift / Same / Display them in a
  * visual way (graphed or something, a pictograph of some kind maybe)". His
- * picks: "Olga = Days, Victor = Afternoons"; "WPR means SMALLS". */
+ * picks: the day list and the afternoon list; "WPR means SMALLS". */
 describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
   const trim: TrimInput = {
     packages: [
-      { type_code: "BUD", weight_grams: 300, trim_operator: "Olga" },
-      { type_code: "SMALLS", weight_grams: 100, trim_operator: "olga " },
-      { type_code: "shake", weight_grams: 50, trim_operator: "Olga" },
-      { type_code: "TRIM", weight_grams: 200, trim_operator: "Olga" },
-      { type_code: "WASTE", weight_grams: 100, trim_operator: "Olga" },
-      { type_code: "BUD", weight_grams: 90, trim_operator: "Victor" },
-      { type_code: "TRIM", weight_grams: 210, trim_operator: "VICTOR" },
+      { type_code: "BUD", weight_grams: 300, trim_operator: "Ada" },
+      { type_code: "SMALLS", weight_grams: 100, trim_operator: "ada " },
+      { type_code: "shake", weight_grams: 50, trim_operator: "Ada" },
+      { type_code: "TRIM", weight_grams: 200, trim_operator: "Ada" },
+      { type_code: "WASTE", weight_grams: 100, trim_operator: "Ada" },
+      { type_code: "BUD", weight_grams: 90, trim_operator: "Nia" },
+      { type_code: "TRIM", weight_grams: 210, trim_operator: "NIA" },
       { type_code: "BIO", weight_grams: 7, trim_operator: "Les" },
       { type_code: "BUD", weight_grams: 3, trim_operator: null },
     ],
     budCodes: ["BUD", "SMALLS", "SHAKE"],
-    operators: { day: ["Olga"], second: ["Victor"] },
+    operators: { day: ["Ada"], second: ["Nia"] },
     hours: { day: 5, second: null },
   };
   const withTrim: HarvestConsoleInput = { ...input, trim };
@@ -958,7 +958,7 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(parseBtrTypeCodes(null)).toEqual(["BUD", "SMALLS", "SHAKE"]);
     expect(parseBtrTypeCodes(" bud, Smalls ,shake,bud,")).toEqual(["BUD", "SMALLS", "SHAKE"]);
     expect(parseBtrTypeCodes("BUD")).toEqual(["BUD"]);
-    expect(parseNameList(" Olga , victor,OLGA,")).toEqual(["Olga", "victor"]);
+    expect(parseNameList(" Ada , nia,ADA,")).toEqual(["Ada", "nia"]);
     expect(parseNameList("")).toEqual([]);
   });
 
@@ -1012,16 +1012,16 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
       ...trim,
       packages: [
         ...trim.packages,
-        { type_code: "BIO", weight_grams: 40, trim_operator: "Olga" },
-        { type_code: "KIEF", weight_grams: 10, trim_operator: "Victor" },
+        { type_code: "BIO", weight_grams: 40, trim_operator: "Ada" },
+        { type_code: "KIEF", weight_grams: 10, trim_operator: "Nia" },
       ],
-      // Olga finished a 1,000 g lot with 800 g recorded (200 g WIP left); Victor finished one over (no WIP left);
+      // Ada finished a 1,000 g lot with 800 g recorded (200 g WIP left); Nia finished one over (no WIP left);
       // Les finished one on neither shift (named nowhere); a lot without a dry weight leaves nothing.
       finishedLots: [
-        { lot_id: "a", dry_grams: 1000, recorded_grams: 800, last_operator: "olga" },
-        { lot_id: "b", dry_grams: 500, recorded_grams: 520, last_operator: "Victor" },
+        { lot_id: "a", dry_grams: 1000, recorded_grams: 800, last_operator: "ada" },
+        { lot_id: "b", dry_grams: 500, recorded_grams: 520, last_operator: "Nia" },
         { lot_id: "c", dry_grams: 300, recorded_grams: 100, last_operator: "Les" },
-        { lot_id: "d", dry_grams: null, recorded_grams: 50, last_operator: "Victor" },
+        { lot_id: "d", dry_grams: null, recorded_grams: 50, last_operator: "Nia" },
       ],
     });
     const day = f.shifts[0];
@@ -1056,7 +1056,7 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     const idle = trimFigures(trim);
     expect(idle.shifts.map((s) => s.running)).toEqual([false, false]);
     expect(idle.unassignedRunning).toBe(false);
-    const running = trimFigures({ ...trim, recent: [{ trim_operator: " OLGA " }, { trim_operator: "Les" }] });
+    const running = trimFigures({ ...trim, recent: [{ trim_operator: " ADA " }, { trim_operator: "Les" }] });
     expect(running.shifts.map((s) => s.running)).toEqual([true, false]);
     expect(running.unassignedRunning).toBe(true);
     const nobody = trimFigures({ ...trim, recent: [{ trim_operator: null }] });
@@ -1093,10 +1093,10 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
       ...trim,
       queueLots: 3,
       nowIso: "2026-09-21T14:20:00.000Z",
-      recent: [{ trim_operator: "Victor" }],
+      recent: [{ trim_operator: "Nia" }],
       leadLast: [
-        { trim_operator: "Victor", created_at: "2026-09-21T14:00:00.000Z" },
-        { trim_operator: "Olga", created_at: "2026-09-21T12:00:00.000Z" },
+        { trim_operator: "Nia", created_at: "2026-09-21T14:00:00.000Z" },
+        { trim_operator: "Ada", created_at: "2026-09-21T12:00:00.000Z" },
       ],
     });
     expect(recent.shifts.map((s) => s.running)).toEqual([false, true]);
@@ -1109,7 +1109,7 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
         ...trim,
         queueLots: 4,
         nowIso: "2026-09-21T14:20:00.000Z",
-        leadLast: [{ trim_operator: "Olga", created_at: "2026-09-21T12:00:00.000Z" }],
+        leadLast: [{ trim_operator: "Ada", created_at: "2026-09-21T12:00:00.000Z" }],
       },
       trimLive: { ...trim, nowIso: "2026-09-21T14:20:00.000Z", queueLots: 4 },
     });
@@ -1126,7 +1126,7 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
   });
 
   it("the picture: his seven machines, six flow bars of his width, the greens moving only while the line runs, the endpoints carrying the grams (the TRIM circle fed by T-0, his correction), the lines converging on the shift total", () => {
-    const f = trimFigures({ ...trim, finishedLots: [{ lot_id: "a", dry_grams: 1000, recorded_grams: 800, last_operator: "Olga" }] });
+    const f = trimFigures({ ...trim, finishedLots: [{ lot_id: "a", dry_grams: 1000, recorded_grams: 800, last_operator: "Ada" }] });
     const day = trimLinePicture(f.shifts[0]);
     expect(day).toContain('<svg class="hc-trimline" viewBox="0 0 1000 704" role="img" aria-label="Shift total 2.12 lb · 950 g" data-hc-trimline data-hc-trimline-running="0" data-hc-trimline-total="950">');
     for (const node of ["trim", "t0", "sorter", "marvel", "bio", "bud", "retrim"]) expect(day).toContain(`data-hc-node="${node}"`);
@@ -1171,13 +1171,13 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
   });
 
   it("the section: two cards in his order, the picture on top, his lines under it, the DLH box, the unassigned line", () => {
-    const html = trimmingSection({ ...withTrim, trim: { ...trim, recent: [{ trim_operator: "Olga" }, { trim_operator: "Les" }] } });
+    const html = trimmingSection({ ...withTrim, trim: { ...trim, recent: [{ trim_operator: "Ada" }, { trim_operator: "Les" }] } });
     expect(html).toContain('<details class="hc-section" data-hc-section="trimming" open>');
     expect(html).toContain("<summary>Trimming</summary>");
     expect(html.indexOf('data-hc-shift="day"')).toBeLessThan(html.indexOf('data-hc-shift="second"'));
     const day = html.slice(html.indexOf('data-hc-shift="day"'), html.indexOf('data-hc-shift="second"'));
     expect(day).toContain('<span class="hc-shift-name">Day shift</span>');
-    expect(day).toContain("data-hc-shift-operators>Olga</span>");
+    expect(day).toContain("data-hc-shift-operators>Ada</span>");
     expect(day).toContain('<span class="hc-date muted">2026-09-14</span>');
     expect(day).toContain('data-hc-shift-running="1"');
     expect(day).toContain('<span class="hc-running" data-hc-running>RUNNING</span>');
@@ -1234,12 +1234,12 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     const live = {
       ...trim,
       packages: [
-        { type_code: "BUD", weight_grams: 200, trim_operator: "Olga" },
-        { type_code: "TRIM", weight_grams: 100, trim_operator: "Victor" },
+        { type_code: "BUD", weight_grams: 200, trim_operator: "Ada" },
+        { type_code: "TRIM", weight_grams: 100, trim_operator: "Nia" },
         { type_code: "WASTE", weight_grams: 10, trim_operator: "Les" },
       ],
       nowIso: "2026-09-21T14:30:00.000Z",
-      recent: [{ trim_operator: "Olga" }],
+      recent: [{ trim_operator: "Ada" }],
       queueLots: 0,
       bogeyPct: 40,
     };

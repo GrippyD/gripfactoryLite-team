@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { environmentFlagLines, environmentPage, loadEnvironmentPage, saveEnvironmentRange, saveSensorBinding } from "../src/environment";
-import { curePanes, listCurePanes } from "../src/cure";
+import { curePanes, listCurePanes, storeSensorReadings } from "../src/cure";
 import { pullSensorPush, refreshSensorCatalog } from "../src/sensorpush";
 import { siloLiveEntry, type SiloVisual } from "../src/silo";
 import { formOf, migratedDb, seedPerson } from "./migrated";
@@ -169,5 +169,47 @@ describe("THE ENVIRONMENT FLAGS (canon 0.30.246)", () => {
     expect(es.flags?.CSA).toEqual(["Sala 104.2 F, sobre 100 F"]);
     expect(curePanes(es, "es")).toContain("Sala 104.2 F, sobre 100 F");
     expect(curePanes(es, "es")).toContain("cure-stale");
+  });
+
+  it("shows door units under their room without a binding, and flags the room mean", async () => {
+    const m = await migratedDb();
+    const db = m.db;
+    const person = seedPerson(m, "person-door");
+    const newest = "2026-09-22T03:00:00.000Z";
+    m.run(
+      `INSERT INTO sensor_catalog (sensor_id, name, battery_voltage, seen_at) VALUES ('sp-pull', 'Pull unit', 3, ?)`,
+      newest
+    );
+    m.run(
+      `INSERT INTO sensor_readings (id, room, temperature_f, humidity_pct, source, read_at, received_at, sensor_id, role)
+       VALUES ('pull-1', 'CSA', 200, 10, 'sensorpush', ?, ?, 'sp-pull', 'room')`,
+      newest,
+      newest
+    );
+    await storeSensorReadings(
+      db,
+      [70, 71, 72, 73].map((temperature_f, i) => ({
+        room: "CSA",
+        temperature_f,
+        humidity_pct: 50,
+        read_at: newest,
+        source: "silo-ops",
+        sensor_id: `door-unit-${i + 1}`,
+      })),
+      newest
+    );
+    const page = await loadEnvironmentPage(db);
+    const html = environmentPage(page, "en");
+    expect(html).toContain('data-env-sensor="sp-pull"');
+    expect(html).toContain("200 F");
+    const roomAt = html.indexOf('data-env-room="CSA"');
+    const room = html.slice(roomAt, html.indexOf("</p>", roomAt));
+    expect(room).toContain("CSA: 71.5 F");
+    expect(room).toContain("4 units");
+    expect(room).not.toContain("200");
+    await saveEnvironmentRange(db, formOf({ person_id: person, space_name: "CSA", role: "room", temp_high: "71", reason: "the mean" }));
+    const panes = await listCurePanes(db, "2026-09-22T03:10:00.000Z", "en");
+    expect(panes.flags?.CSA).toEqual(["Room 71.5 F, above 71 F"]);
+    expect(curePanes(panes, "en")).toContain("71.5 F · 50 % · 4 units");
   });
 });

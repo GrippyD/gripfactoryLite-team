@@ -12,14 +12,13 @@
 import { HttpError } from "./audit";
 import { CONFIG_KEYS, CSA_LOT_CAP_DEFAULT, CSB_LOT_CAP_DEFAULT, formatGrams, parseLotCap, SCHEDULE_STATUS, shortLotId } from "./config";
 import { formatLbs } from "./compliance";
-import { etWallClock } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
-import { listEnvironmentFlags } from "./environment";
+import { listEnvironmentFlags, readDoorAverage, sensorConditionsText, sensorReadingTitle } from "./environment";
+export { isTestSensorSource } from "./environment";
 import { esc } from "./ui";
 
 export const CURE_ROOMS_DEFAULT = ["CSA", "CSB"] as const;
 export const SENSOR_PATH = "/sensors/readings";
-const HOUR_MS = 3_600_000;
 const TEMP_MIN = -40;
 const TEMP_MAX = 200;
 
@@ -46,6 +45,7 @@ export type CureReading = {
   humidityPct: number | null;
   readAt: string;
   source?: string;
+  units?: number;
 };
 
 export type CurePanesData = {
@@ -130,40 +130,14 @@ export function parseCureRooms(raw: string | null | undefined): string[] {
   return rooms.length > 0 ? [...new Set(rooms)] : [...CURE_ROOMS_DEFAULT];
 }
 
-function numWord(n: number): string {
-  const rounded = Math.round(n * 10) / 10;
-  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
-}
-
 export function conditionsLine(reading: CureReading | null, nowIso: string, locale: Locale): { text: string; stale: boolean } {
   if (!reading) return { text: t(locale, "no sensor yet"), stale: false };
-  const age = Date.parse(nowIso) - Date.parse(reading.readAt);
-  const stale = !Number.isFinite(age) || age > HOUR_MS;
-  const min = Number.isFinite(age) ? Math.max(0, Math.round(age / 60_000)) : 0;
-  const ago =
-    min < 60
-      ? t(locale, "{n} min ago").replace("{n}", String(min))
-      : min < 120
-        ? t(locale, "1 hour ago")
-        : t(locale, "{n} hours ago").replace("{n}", String(Math.floor(min / 60)));
-  const humid = reading.humidityPct == null ? "" : ` · ${numWord(reading.humidityPct)} %`;
-  const source = (reading.source ?? "").trim();
-  const tagged = source.toLowerCase() === "silo-ops" ? ` · ${t(locale, "Silo Ops")}` : "";
-  return { text: `${numWord(reading.temperatureF)} F${humid} · ${ago}${tagged}`, stale };
+  return sensorConditionsText(reading, nowIso, locale);
 }
 
 /** Hover words: the reading's Eastern wall clock and its stored source. */
 export function readingTitle(reading: CureReading): string {
-  const when = etWallClock(reading.readAt);
-  const source = (reading.source ?? "").trim();
-  if (when && source) return `${when} ET · ${source}`;
-  if (when) return `${when} ET`;
-  return source;
-}
-
-/** A stored test row never shows on the panes (case-blind, trimmed). */
-export function isTestSensorSource(source: string | null | undefined): boolean {
-  return String(source ?? "").trim().toLowerCase() === "test";
+  return sensorReadingTitle(reading);
 }
 
 export function formatCureClock(ms: number): string {
@@ -266,20 +240,14 @@ function matchesLot(row: TestSql, hbn: string | null, tag: string | null): boole
 }
 
 export async function latestReading(db: D1Database, room: string): Promise<CureReading | null> {
-  const row = await db
-    .prepare(
-      `SELECT temperature_f, humidity_pct, read_at, source FROM sensor_readings
-       WHERE room = ? AND lower(trim(coalesce(source, ''))) <> 'test'
-       ORDER BY read_at DESC LIMIT 1`
-    )
-    .bind(room)
-    .first<{ temperature_f: number; humidity_pct: number | null; read_at: string; source: string | null }>();
-  if (!row) return null;
+  const avg = await readDoorAverage(db, room);
+  if (!avg) return null;
   return {
-    temperatureF: Number(row.temperature_f),
-    humidityPct: row.humidity_pct == null ? null : Number(row.humidity_pct),
-    readAt: row.read_at,
-    source: String(row.source ?? "").trim(),
+    temperatureF: avg.temperatureF,
+    humidityPct: avg.humidityPct,
+    readAt: avg.readAt,
+    source: avg.source,
+    units: avg.units,
   };
 }
 
@@ -296,7 +264,15 @@ async function roomList(db: D1Database): Promise<string[]> {
   return names;
 }
 
-type SensorIn = { room: string; temperature_f: number; humidity_pct: number | null; read_at: string; source: string; raw: string };
+type SensorIn = {
+  room: string;
+  temperature_f: number;
+  humidity_pct: number | null;
+  read_at: string;
+  source: string;
+  raw: string;
+  sensor_id: string | null;
+};
 
 function oneReading(value: unknown, rooms: readonly string[], index: string): SensorIn {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
@@ -324,6 +300,13 @@ function oneReading(value: unknown, rooms: readonly string[], index: string): Se
   if (!Number.isFinite(readAt)) throw new HttpError(400, `Reading ${index} needs a readable read_at.`);
   const source = String(rec.source ?? "").trim();
   if (source.length > 80) throw new HttpError(400, `Reading ${index} source is too long.`);
+  let sensorId: string | null = null;
+  if (rec.sensor_id != null && !(typeof rec.sensor_id === "string" && rec.sensor_id.trim() === "")) {
+    if (typeof rec.sensor_id !== "string") throw new HttpError(400, `Reading ${index} sensor_id must be text.`);
+    const trimmed = rec.sensor_id.trim();
+    if (trimmed.length > 80) throw new HttpError(400, `Reading ${index} sensor_id is too long.`);
+    sensorId = trimmed;
+  }
   return {
     room,
     temperature_f: temperature,
@@ -331,30 +314,100 @@ function oneReading(value: unknown, rooms: readonly string[], index: string): Se
     read_at: new Date(readAt).toISOString(),
     source: source || "manual",
     raw: JSON.stringify(rec),
+    sensor_id: sensorId,
   };
 }
 
-/** Store one reading or an array of up to 100. Refuses the whole post in words when any row is bad.
- * Silo Ops posts its Storage readings for CSA and CSB here with source "silo-ops", at most once a
- * minute per room, read_at the unit's own sample time in UTC. */
-export async function storeSensorReadings(db: D1Database, body: unknown, nowIso: string): Promise<number> {
+function pairKey(parts: readonly string[]): string {
+  return parts.join("\n");
+}
+
+/** D1 binds at most 100 parameters to one statement, so the held-key look-up runs in chunks. */
+const D1_MAX_BINDS = 100;
+
+async function heldKeys(db: D1Database, sql: string, columns: readonly string[], pairs: readonly (readonly string[])[]): Promise<Set<string>> {
+  const held = new Set<string>();
+  if (pairs.length === 0) return held;
+  const per = Math.max(1, Math.floor(D1_MAX_BINDS / columns.length));
+  for (let start = 0; start < pairs.length; start += per) {
+    const part = pairs.slice(start, start + per);
+    const marks = part.map(() => `(${columns.map(() => "?").join(", ")})`).join(", ");
+    const found = await db
+      .prepare(sql.replace("/*pairs*/", marks))
+      .bind(...part.flat())
+      .all<Record<string, unknown>>();
+    for (const row of found.results ?? []) held.add(pairKey(columns.map((column) => String(row[column] ?? ""))));
+  }
+  return held;
+}
+
+/** Store one reading or an array of up to 100. Refuses the whole post in words when any row is bad,
+ * and writes nothing until every row has been checked. A sensor_id is kept. A row already held
+ * (same sensor id and read_at, or, with no sensor id, the same room, read_at and source) is skipped.
+ * Silo Ops posts its Storage readings for CSA and CSB here with source "silo-ops", read_at the unit's own sample time in UTC. */
+export async function storeSensorReadings(db: D1Database, body: unknown, nowIso: string): Promise<{ stored: number; skipped: number }> {
   if (body == null || (typeof body !== "object")) throw new HttpError(400, "The body must be a reading or a list of readings.");
   const list = Array.isArray(body) ? body : [body];
   if (list.length === 0) throw new HttpError(400, "No readings to store.");
   if (list.length > 100) throw new HttpError(400, "At most 100 readings at a time.");
   const rooms = await roomList(db);
   const rows = list.map((row, i) => oneReading(row, rooms, String(i + 1)));
-  const stmts = rows.map((row) =>
+  const sensorPairs: string[][] = [];
+  const doorPairs: string[][] = [];
+  const seenPair = new Set<string>();
+  for (const row of rows) {
+    if (row.sensor_id) {
+      const key = pairKey([row.sensor_id, row.read_at]);
+      if (seenPair.has(`s:${key}`)) continue;
+      seenPair.add(`s:${key}`);
+      sensorPairs.push([row.sensor_id, row.read_at]);
+    } else {
+      const key = pairKey([row.room, row.read_at, row.source]);
+      if (seenPair.has(`d:${key}`)) continue;
+      seenPair.add(`d:${key}`);
+      doorPairs.push([row.room, row.read_at, row.source]);
+    }
+  }
+  const [heldSensors, heldDoors] = await Promise.all([
+    heldKeys(db, `SELECT sensor_id, read_at FROM sensor_readings WHERE (sensor_id, read_at) IN (/*pairs*/)`, ["sensor_id", "read_at"], sensorPairs),
+    heldKeys(
+      db,
+      `SELECT room, read_at, source FROM sensor_readings WHERE sensor_id IS NULL AND (room, read_at, source) IN (/*pairs*/)`,
+      ["room", "read_at", "source"],
+      doorPairs
+    ),
+  ]);
+  const fresh: SensorIn[] = [];
+  let skipped = 0;
+  for (const row of rows) {
+    if (row.sensor_id) {
+      const key = pairKey([row.sensor_id, row.read_at]);
+      if (heldSensors.has(key)) {
+        skipped += 1;
+        continue;
+      }
+      heldSensors.add(key);
+    } else {
+      const key = pairKey([row.room, row.read_at, row.source]);
+      if (heldDoors.has(key)) {
+        skipped += 1;
+        continue;
+      }
+      heldDoors.add(key);
+    }
+    fresh.push(row);
+  }
+  const stmts = fresh.map((row) =>
     db
       .prepare(
         `INSERT INTO sensor_readings (id, room, temperature_f, humidity_pct, source, read_at, received_at, raw, sensor_id, role)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
       )
-      .bind(crypto.randomUUID(), row.room, row.temperature_f, row.humidity_pct, row.source, row.read_at, nowIso, row.raw)
+      .bind(crypto.randomUUID(), row.room, row.temperature_f, row.humidity_pct, row.source, row.read_at, nowIso, row.raw, row.sensor_id)
   );
   if (stmts.length === 1) await stmts[0].run();
-  else await db.batch(stmts);
-  return rows.length;
+  else if (stmts.length > 1) await db.batch(stmts);
+  return { stored: fresh.length, skipped };
 }
 
 function moistureCell(m: CureMoisture | null, locale: Locale): string {
