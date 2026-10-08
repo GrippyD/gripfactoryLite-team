@@ -35,6 +35,7 @@ export const REPORT_KEYS = [
   "line_packages",
   "post_harvest_puzzles",
   "floor_vs_metrc",
+  "dry_weight_by_strain",
 ] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
@@ -354,6 +355,11 @@ export const REPORT_CARDS: Array<{ key: ReportKey; title: string; blurb: string 
     key: "floor_vs_metrc",
     title: "Floor vs METRC",
     blurb: "The floor's packages beside the METRC mirror, by tag and by lot.",
+  },
+  {
+    key: "dry_weight_by_strain",
+    title: "Dry Weight by Strain",
+    blurb: "Lots unloaded in a date range, one row per strain: wet, dry, dry per plant; by grow method and farm.",
   },
 ];
 

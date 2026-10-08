@@ -767,7 +767,10 @@ export function reportPage(
   const pageView =
     view.key === "line_packages"
       ? { ...view, rows: view.rows.filter((row) => row._total !== 1 && row._total !== "1") }
-      : view;
+      : view.key === "dry_weight_by_strain"
+        ? // DRY WEIGHT BY STRAIN (canon 0.30.427): the lot numbers fold under the row; the exports keep the column.
+          { ...view, columns: view.columns.filter((c) => c.key !== "lot_ids") }
+        : view;
   const visibleCols = bodyColumns(pageView);
   const head = visibleCols.map((c) => `<th>${esc(t(locale, c.label))}</th>`).join("");
   const body =
@@ -780,7 +783,11 @@ export function reportPage(
             return `<td>${esc(reportCellText(c, raw as string | number | null | undefined))}</td>`;
           },
           (row, colspan) =>
-            row._detail ? `<tr class="report-detail"><td colspan="${colspan}">${esc(String(row._detail))}</td></tr>` : ""
+            row._fold && row.lot_ids
+              ? `<tr class="report-detail"><td colspan="${colspan}"><details class="report-fold"><summary>${esc(String(row._fold))}</summary><span class="report-fold-body">${esc(String(row.lot_ids))}</span></details></td></tr>`
+              : row._detail
+                ? `<tr class="report-detail"><td colspan="${colspan}">${esc(String(row._detail))}</td></tr>`
+                : ""
         );
   const footnote = view.footnote ? `<p class="muted">${esc(view.footnote)}</p>` : "";
   const filterBlock = view.reserved

@@ -808,6 +808,7 @@ async function run() {
     assert(reportsOpen.body.includes("/reports/rf"), "reports landing missing RF report");
     assert(reportsOpen.body.includes("/reports/internal_testing"), "reports landing missing Internal testing");
     assert(reportsOpen.body.includes("/reports/line_packages") && reportsOpen.body.includes("Line packages"), "reports landing missing Line packages");
+    assert(reportsOpen.body.includes("/reports/dry_weight_by_strain") && reportsOpen.body.includes("Dry Weight by Strain"), "reports landing missing Dry Weight by Strain");
     assert(reportsOpen.body.includes("/reports/floor_vs_metrc") && reportsOpen.body.includes("Floor vs METRC"), "reports landing missing Floor vs METRC");
     assert(!reportsOpen.body.includes("Enter PIN"), "reports must not sit behind the PIN");
     const gatedCompliance = await text("/compliance");
@@ -2111,6 +2112,30 @@ async function run() {
     // raw, the stored 751 with no formatting and no grouping anywhere.
     assert(unloadedCsv.body.includes(",752,"), "unloaded queue csv must carry the raw dry total 752");
     assert(!unloadedCsv.body.includes("751.00"), "unloaded queue csv must not carry a formatted dry total");
+    // DRY WEIGHT BY STRAIN (canon 0.30.427): the lot unloaded under the Effective Date 2026-09-08 counts on that day.
+    {
+      const dryStrain = await text("/reports/dry_weight_by_strain?from=2026-09-08&to=2026-09-08");
+      assert(dryStrain.res.status === 200, `dry weight by strain expected 200 got ${dryStrain.res.status}`);
+      assert(dryStrain.body.includes("<td>Fruity Pebbles</td>"), "dry weight by strain must list the unloaded lot's strain");
+      assert(dryStrain.body.includes("<td>1</td><td>2.76</td><td>1.68</td><td>60.9</td>"), "dry weight by strain must read 1 lot, 2.76 lb wet, 1.68 lb dry, 60.9 percent");
+      assert(dryStrain.body.includes('<tr class="report-total">'), "dry weight by strain must carry a Total row");
+      assert(dryStrain.body.includes('<details class="report-fold"><summary>1 lot, 752 g dry</summary><span class="report-fold-body">' + shortId + "</span></details>"), "the lot number must fold under the row");
+      assert(dryStrain.body.includes('<option value="Fruity Pebbles" selected>') === false && dryStrain.body.includes('<option value="Fruity Pebbles">'), "the strain pick list must offer the lot's strain");
+      const dryStrainArl = await text("/reports/dry_weight_by_strain?from=2026-09-08&to=2026-09-08&farm=ARL");
+      assert(dryStrainArl.body.includes("No lot was unloaded in that range."), "a farm the lot is not on must give the words");
+      const dryStrainDay = await text("/reports/dry_weight_by_strain?from=2026-09-07&to=2026-09-07");
+      assert(dryStrainDay.body.includes("No lot was unloaded in that range."), "the day before the Effective Date must give the words");
+      const dryStrainBack = await text("/reports/dry_weight_by_strain?from=2026-09-09&to=2026-09-08");
+      assert(dryStrainBack.body.includes("To is before From."), "To before From must be refused in words");
+      const dryStrainCsv = await text("/reports/dry_weight_by_strain?from=2026-09-08&to=2026-09-08&format=csv");
+      assert(dryStrainCsv.res.status === 200, "dry weight by strain csv");
+      assert(dryStrainCsv.body.includes("Fruity Pebbles,,1,2.76,1.68,60.9,"), "dry weight by strain csv must carry the row");
+      assert(dryStrainCsv.body.includes("," + shortId), "dry weight by strain csv must carry the lot number");
+      const dryStrainXlsx = await req("/reports/dry_weight_by_strain?from=2026-09-08&to=2026-09-08&format=xlsx");
+      assert(dryStrainXlsx.status === 200, "dry weight by strain xlsx");
+      const dryStrainPdf = await text("/reports/dry_weight_by_strain?from=2026-09-08&to=2026-09-08&format=pdf");
+      assert(dryStrainPdf.res.status === 200 && dryStrainPdf.body.includes('data-report-print="1"'), "dry weight by strain pdf");
+    }
     // THE CURE PANES: an unloaded lot with no trim schedule sits in CSA.
     const cureOf = (html, name) => {
       const at = html.indexOf(`data-cure-pane="${name}"`);

@@ -94,7 +94,8 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(REPORT_KEYS).toContain("line_packages");
     expect(REPORT_KEYS).toContain("post_harvest_puzzles");
     expect(REPORT_KEYS).toContain("floor_vs_metrc");
-    expect(REPORT_KEYS).toHaveLength(13);
+    expect(REPORT_KEYS).toContain("dry_weight_by_strain");
+    expect(REPORT_KEYS).toHaveLength(14);
   });
 
   it("names the page and the hours post, and knows the three farms", () => {
