@@ -474,6 +474,7 @@ import {
   type TatMetricKey,
 } from "./reports";
 import { floorVsMetrcCsv, floorVsMetrcPage, loadFloorVsMetrc, shownFloorVsMetrc } from "./floormetrc";
+import { DRY_STRAIN_FARMS, DRY_STRAIN_GROW_METHODS, dryStrainNames, dryStrainRefused, dryStrainView, listDryStrainLots, resolveDryStrainRange } from "./drystrain";
 import {
   PIPELINE,
   TABLE_EXPORTS,
@@ -986,9 +987,41 @@ app.get("/reports/:key", async (c) => {
       })
     );
   }
-  const view = await buildReportView(c.env.DB, key, url.searchParams, s.locale);
+  // DRY WEIGHT BY STRAIN (canon 0.30.427): the filters need the strain names, so the form is built here.
+  let filterHtml = reportFilterForm(key, url.searchParams, s.locale);
+  let view: ReportView;
+  if (key === "dry_weight_by_strain") {
+    const today = await farmToday(c.env.DB, nowIso());
+    const range = resolveDryStrainRange(url.searchParams.get("from"), url.searchParams.get("to"), today);
+    const lots = await listDryStrainLots(c.env.DB);
+    const filter = {
+      from: range.ok ? range.from : (url.searchParams.get("from") ?? ""),
+      to: range.ok ? range.to : (url.searchParams.get("to") ?? ""),
+      strain: url.searchParams.get("strain") ?? "",
+      growMethod: url.searchParams.get("grow_method") ?? "",
+      farm: url.searchParams.get("farm") ?? "",
+    };
+    if (range.ok) {
+      url.searchParams.set("from", range.from);
+      url.searchParams.set("to", range.to);
+    }
+    view = range.ok ? dryStrainView(lots, filter, s.locale) : dryStrainRefused(range.message, s.locale);
+    const opt = (value: string, label: string, picked: string) =>
+      `<option value="${escQuery(value)}"${picked === value ? " selected" : ""}>${escQuery(label)}</option>`;
+    const strainOpts = [opt("", t(s.locale, "All"), filter.strain), ...dryStrainNames(lots).map((name) => opt(name, name, filter.strain))].join("");
+    const methodOpts = [opt("", t(s.locale, "All"), filter.growMethod), ...DRY_STRAIN_GROW_METHODS.map((m) => opt(m.code, t(s.locale, m.label), filter.growMethod))].join("");
+    const farmOpts = [opt("", t(s.locale, "All"), filter.farm), ...DRY_STRAIN_FARMS.map((f) => opt(f, f, filter.farm))].join("");
+    filterHtml = `<label class="field">${t(s.locale, "From")} <input type="date" name="from" value="${escQuery(filter.from)}"></label>
+      <label class="field">${t(s.locale, "To")} <input type="date" name="to" value="${escQuery(filter.to)}"></label>
+      <label class="field">${t(s.locale, "Strain")} <select name="strain">${strainOpts}</select></label>
+      <label class="field">${t(s.locale, "Grow Method")} <select name="grow_method">${methodOpts}</select></label>
+      <label class="field">${t(s.locale, "Farm")} <select name="farm">${farmOpts}</select></label>
+      <p class="muted">${t(s.locale, "A lot counts on the day it was unloaded: the Effective Date typed at the unload, else the Eastern date of its finish.")}</p>`;
+  } else {
+    view = await buildReportView(c.env.DB, key, url.searchParams, s.locale);
+  }
   if (view.reserved) {
-    return html(c, s, view.title, reportPage(view, reportFilterForm(key, url.searchParams, s.locale), reportQuery(url.searchParams), s.locale));
+    return html(c, s, view.title, reportPage(view, filterHtml, reportQuery(url.searchParams), s.locale));
   }
   if (format === "csv") {
     return new Response(reportCsv(view), {
@@ -1013,7 +1046,7 @@ app.get("/reports/:key", async (c) => {
       { headers: { "cache-control": "no-store" } }
     );
   }
-  return html(c, s, view.title, reportPage(view, reportFilterForm(key, url.searchParams, s.locale), reportQuery(url.searchParams), s.locale));
+  return html(c, s, view.title, reportPage(view, filterHtml, reportQuery(url.searchParams), s.locale));
 });
 
 // Owner ruling 2026-09-02: group subpages. No PIN on /ops itself; a tile that

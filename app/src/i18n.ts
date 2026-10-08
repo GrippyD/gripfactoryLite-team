@@ -3694,6 +3694,37 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "A white code on a dark fill scans on fewer scanners. Test the label with the scanner it will meet.",
     es: "Un codigo blanco sobre un relleno oscuro se lee en menos escaneres. Pruebe la etiqueta con el escaner que va a usar.",
   },
+  // DRY WEIGHT BY STRAIN (canon 0.30.427).
+  "Dry Weight by Strain": { en: "Dry Weight by Strain", es: "Peso seco por cepa" },
+  "Lots unloaded in a date range, one row per strain: wet, dry, dry per plant; by grow method and farm.": {
+    en: "Lots unloaded in a date range, one row per strain: wet, dry, dry per plant; by grow method and farm.",
+    es: "Lotes descargados en un rango de fechas, una fila por cepa: humedo, seco, seco por planta; por metodo de cultivo y granja.",
+  },
+  "Indoor": { en: "Indoor", es: "Interior" },
+  "Outdoor": { en: "Outdoor", es: "Exterior" },
+  "Greenhouse": { en: "Greenhouse", es: "Invernadero" },
+  "Market strain": { en: "Market strain", es: "Cepa de mercado" },
+  "Lots": { en: "Lots", es: "Lotes" },
+  "Wet lb": { en: "Wet lb", es: "lb humedo" },
+  "Dry lb": { en: "Dry lb", es: "lb seco" },
+  "Dry/Wet %": { en: "Dry/Wet %", es: "Seco/Humedo %" },
+  "Dry lb/plant": { en: "Dry lb/plant", es: "lb seco/planta" },
+  "Lot numbers": { en: "Lot numbers", es: "Numeros de lote" },
+  "{n} lots, {g} g dry": { en: "{n} lots, {g} g dry", es: "{n} lotes, {g} g seco" },
+  "{n} lot, {g} g dry": { en: "{n} lot, {g} g dry", es: "{n} lote, {g} g seco" },
+  "Unloaded {from} to {to}": { en: "Unloaded {from} to {to}", es: "Descargado del {from} al {to}" },
+  "strain {name}": { en: "strain {name}", es: "cepa {name}" },
+  "No lot was unloaded in that range.": { en: "No lot was unloaded in that range.", es: "Ningun lote fue descargado en ese rango." },
+  "To is before From.": { en: "To is before From.", es: "Hasta es antes que De." },
+  "Pick 366 days or fewer.": { en: "Pick 366 days or fewer.", es: "Elija 366 dias o menos." },
+  "Pounds at 448 g. Dry lb/plant counts only the lots with a plant count. A lot never unloaded is not here.": {
+    en: "Pounds at 448 g. Dry lb/plant counts only the lots with a plant count. A lot never unloaded is not here.",
+    es: "Libras a 448 g. lb seco/planta cuenta solo los lotes con conteo de plantas. Un lote nunca descargado no esta aqui.",
+  },
+  "A lot counts on the day it was unloaded: the Effective Date typed at the unload, else the Eastern date of its finish.": {
+    en: "A lot counts on the day it was unloaded: the Effective Date typed at the unload, else the Eastern date of its finish.",
+    es: "Un lote cuenta el dia en que fue descargado: la fecha efectiva escrita en la descarga, o la fecha del Este de su fin.",
+  },
   // FLOOR VS METRC (canon 0.30.415).
   "Floor vs METRC": { en: "Floor vs METRC", es: "Piso vs METRC" },
   "The floor's packages beside the METRC mirror, by tag and by lot.": {

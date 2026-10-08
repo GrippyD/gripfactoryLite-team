@@ -339,6 +339,10 @@ body.device-phone table.phone-table td[data-th]::before { content: attr(data-th)
 /* Canon 0.30.23: a grouped report heads each run of rows with its site. */
 table.data tr.report-group th { text-align: left; font-size: 0.82rem; letter-spacing: 0.12em; text-transform: uppercase; padding-top: 0.9rem; background: color-mix(in srgb, ${accent} 10%, transparent); }
 table.data tr.report-total td { font-weight: 700; border-top: 2px solid var(--line, var(--border, #888)); }
+/* DRY WEIGHT BY STRAIN (canon 0.30.427): the lot numbers fold under their row. */
+table.data tr.report-detail td { padding-top: 0; border-top: 0; }
+.report-fold summary { cursor: pointer; font-size: 0.85rem; opacity: 0.8; }
+.report-fold-body { display: block; font-size: 0.85rem; padding: 0.25rem 0 0.4rem 1rem; word-break: break-word; }
 /* THE RECONCILE LEDGER LOCATION (canon 0.30.135): the editable ledger table. */
 .reconcile-table input[type="text"], .reconcile-table select { width: 100%; min-width: 6em; box-sizing: border-box; }
 .reconcile-table input.grams { min-width: 7em; text-align: right; }
@@ -1126,7 +1130,7 @@ body.device-phone .ops-map-phone .ops-node { width: 100%; max-width: 18rem; }
   border: 2px solid var(--accent); border-radius: var(--radius);
   font-weight: 700; text-decoration: none;
 }
-.admin-link:focus, .admin-link:hover, .reports-link:focus, .reports-link:hover { outline: 3px solid var(--focus); outline-offset: 1px; }
+.models-link:focus, .models-link:hover, .harvest-link:focus, .harvest-link:hover, .maintenance-link:focus, .maintenance-link:hover, .admin-link:focus, .admin-link:hover, .reports-link:focus, .reports-link:hover { outline: 3px solid var(--focus); outline-offset: 1px; }
 ${walkSliceChrome("lite")}
 /* =====================================================================
    LITE IDENTITY LAW (canon 0.20.1, owner verbatim: "Lite Should contain
@@ -1136,13 +1140,13 @@ ${walkSliceChrome("lite")}
 *, *::before, *::after { transition: none !important; animation: none !important; }
 html, body { background-image: none !important; }
 body::before, body::after { display: none !important; }
-.ops-node, .ops-node-stub, button, .btn, .maintenance-link, .admin-link, .reports-link,
+.ops-node, .ops-node-stub, button, .btn, .models-link, .harvest-link, .maintenance-link, .admin-link, .reports-link,
 .locale-pill, .locale-pill button, .view-pill, .view-pill button, .device-opt {
   box-shadow: none !important; background-image: none !important;
   text-shadow: none !important; border-radius: 6px;
 }
 .ops-node { min-height: 0; padding: 0.9rem 1rem; }
-.ops-node:active, button:active, .admin-link:active, .reports-link:active { transform: none !important; }
+.ops-node:active, button:active, .models-link:active, .harvest-link:active, .maintenance-link:active, .admin-link:active, .reports-link:active { transform: none !important; }
 .locale-pill { border-radius: 999px; }
 .locale-pill button { border-radius: 0; }`;
 }
@@ -1920,11 +1924,11 @@ body.device-phone .ops-map-phone .ops-node { width: 100%; max-width: 18rem; }
   box-shadow: var(--shadow);
   transition: transform 0.15s, background 0.15s;
 }
-.admin-link:hover, .reports-link:hover { background: var(--primary-strong); transform: translateY(-1px); color: #fff; }
-.admin-link:focus-visible, .reports-link:focus-visible { outline: 3px solid var(--primary-strong); outline-offset: 2px; }
+.models-link:hover, .harvest-link:hover, .maintenance-link:hover, .admin-link:hover, .reports-link:hover { background: var(--primary-strong); transform: translateY(-1px); color: #fff; }
+.models-link:focus-visible, .harvest-link:focus-visible, .maintenance-link:focus-visible, .admin-link:focus-visible, .reports-link:focus-visible { outline: 3px solid var(--primary-strong); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
-  .tile, button, .btn, .queue-pane a.queue-pane-item, .maintenance-link, .admin-link, .reports-link, .ops-node { transition: none; }
-  .tile:focus, .tile:hover, button:hover, .btn:hover, .admin-link:hover, .reports-link:hover, .ops-node:hover { transform: none; }
+  .tile, button, .btn, .queue-pane a.queue-pane-item, .models-link, .harvest-link, .maintenance-link, .admin-link, .reports-link, .ops-node { transition: none; }
+  .tile:focus, .tile:hover, button:hover, .btn:hover, .models-link:hover, .harvest-link:hover, .maintenance-link:hover, .admin-link:hover, .reports-link:hover, .ops-node:hover { transform: none; }
 }
 ${walkSliceChrome("co")}
 .php-best { background: var(--ok-soft); color: var(--ok); }
@@ -2794,8 +2798,8 @@ ${walkSliceChrome("cerberus")}
   font-weight: 700; font-size: 0.82rem; letter-spacing: 0.16em; text-transform: uppercase;
   text-decoration: none;
 }
-.admin-link:hover, .reports-link:hover { background: var(--gold); color: #1a1500; }
-.admin-link:focus-visible, .reports-link:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+.models-link:hover, .harvest-link:hover, .maintenance-link:hover, .admin-link:hover, .reports-link:hover { background: var(--gold); color: #1a1500; }
+.models-link:focus-visible, .harvest-link:focus-visible, .maintenance-link:focus-visible, .admin-link:focus-visible, .reports-link:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 `;
 }
 
