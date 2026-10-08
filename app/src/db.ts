@@ -315,7 +315,7 @@ async function listHarvestQueueRows(
     : "";
   const result = await db
     .prepare(
-      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, s.name AS strain_name, b.created_at${sinceSql}
+      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, s.name AS strain_name, b.created_at, b.is_test${sinceSql}
        FROM harvest_batches b
        LEFT JOIN strains s ON s.id = b.strain_id
        WHERE b.deleted_at IS NULL AND b.status = ? AND ${farmHarvestSql("b")} ${filterSql}${farmSql}

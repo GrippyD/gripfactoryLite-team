@@ -1,0 +1,25 @@
+# BRIEF SD1: THE SENSOR DOOR KEEPS EACH UNIT, SKIPS A RESEND, AND THE PANE AVERAGES THE ROOM (canon 0.30.422)
+
+For the build session (Claude Code or Cursor) opened in the worktree `C:\Users\DennisWallace\Documents\Claude\Projects\gripfactory Practical\branches\GFLiteOpsDashboard` (its `app\` is the app). NOT the main folder `gripfactory Practical\app`: if your working folder is not under `branches\GFLiteOpsDashboard`, stop and say so. Under THE DISPATCH RULE (canon 0.30.155). Built SECOND in the session, after BRIEF H1 (`BRIEFS/2026-10-07_manual_hbn_phantom_order.md`), on the tree H1 leaves; H1 starts from the LIVE tree after PC1, V29, A1 and S1 (`9c7639ac10df35ec`, 302 files, migrations 0001-0094), and both are gated and pushed together. The tree hash is canon's command, run in `app/` with `wrangler.toml` read as LF: `(find src test scripts migrations -type f; echo wrangler.toml; echo tsconfig.json; echo package.json) | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-16`. One build agent in this worktree at a time. No migration of its own (H1 brings 0095).
+
+## The source
+
+Corey's agent (Silo Ops), relayed by the owner 2026-10-08: POST /sensors/readings live with source "silo-ops", about 25 readings per 5 minutes (CSA four SensorPush units, CSB one, each about once a minute), a backfill of about 131,000 readings since 2026-09-20 held until the door skips resends; "sensor_id is on every reading as of tonight (the SensorPush unit id, 29 characters). Nothing else about the payload changed." The owner agreed the Scribe's answer: a sensor id per unit, the door skipping a reading it already holds, the pane averaging the room.
+
+What the code holds (the live tree): `storeSensorReadings` in `src/cure.ts` takes one reading or up to 100, checks room, temperature, humidity, read_at and source, and inserts with `sensor_id` NULL. Migration 0077 already holds a unique index `sensor_readings_sensor_observed (sensor_id, read_at) WHERE sensor_id IS NOT NULL`, so a resent reading WITH its sensor id would fail the whole batch today. `latestReading` shows the room's single newest row, so CSA's pane shows whichever of four units wrote last. `src/environment.ts` reads door rows (sensor_id NULL) by room and SensorPush pull rows by sensor binding.
+
+## The law
+
+1. THE DOOR KEEPS THE UNIT. A reading may carry `sensor_id` (a string, 1 to 80 characters, trimmed; longer refused with the reading's number). It is stored in `sensor_readings.sensor_id`. A reading without one is stored as today.
+2. A RESEND IS SKIPPED, NOT AN ERROR. A reading whose `sensor_id` and `read_at` already stand (the 0077 index), or, without a sensor id, whose room, read_at and source already stand with a NULL sensor id, is not stored again and does not fail the batch. The answer stays 200 `{"ok":true,"stored":n}` where n counts the new rows, plus `"skipped":m` for the ones already held. Readings are checked first, then written; a bad reading still answers 400 and writes nothing.
+3. THE PANE AVERAGES THE ROOM. A cure pane's conditions line (and its flags) reads, for the room, each unit's newest reading within 15 minutes of the room's newest reading, and shows the mean temperature and mean humidity of those units, rounded as today, with "{n} units" beside it when n is more than 1 (EN; ES "{n} unidades"). The hover names the newest read time and the source. Door readings without a sensor id count as one unit by room, as today. A "test" source stays ignored.
+4. THE ENVIRONMENT PAGE. Door readings that now carry a sensor id show under their room the same way the averaged pane does; they need no sensor binding. The SensorPush pull and its bindings stay as they are.
+5. NOTHING ELSE MOVES. The token, the path, the body's other fields, the 100 a batch limit, the room list and the panes' caps stay.
+
+On the owner's next snapshot before dispatch the Scribe will add the check figures: CSA and CSB readings by sensor_id since the switch.
+
+## The tests and the smoke
+
+- Unit: a sensor id stored; the same sensor id and read_at sent twice stores once and answers skipped 1, in one batch and across two; a reading without a sensor id deduped by room, read_at and source; a mixed batch with one bad reading answers 400 and writes nothing; four units at 70, 71, 72, 73 F show 71.5 F and "4 units"; a unit older than 15 minutes behind the room's newest is left out; a "test" source ignored.
+- Smoke: POST four CSA units twice: the first answers stored 4, the second stored 0 skipped 4; the CSA pane shows their mean and "4 units"; POST CSB one unit: CSB shows it alone.
+- Gates with H1's: typecheck 0; vitest under `TZ=UTC` and `TZ=America/New_York`; `node --check scripts/smoke.mjs`; the from-zero smoke (`About to apply 95 migration(s)`, H1's 0095), SMOKE PASS, no ` 500 `. Dash and CR audits by character; no personnel name in a tracked file. No git; nothing committed, pushed or deployed. One report per brief to the worktree's `SESSION_REPORTS/`, each with canon's tree hash and every file touched.

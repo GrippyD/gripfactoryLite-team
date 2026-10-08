@@ -38,6 +38,21 @@ function dbOf(input: {
         async all() {
           if (sql.includes("FROM wet_weight_entries")) return { results: input.lots ?? [] };
           if (sql.includes("internal_test_results")) return { results: input.tests ?? [] };
+          if (sql.includes("sensor_readings") && sql.includes("read_at >=") && input.reading) {
+            const room = (self as { args: unknown[] }).args[0];
+            if (room !== "CSA") return { results: [] };
+            return {
+              results: [
+                {
+                  sensor_id: null,
+                  temperature_f: input.reading.temperature_f,
+                  humidity_pct: input.reading.humidity_pct,
+                  read_at: input.reading.read_at,
+                  source: null,
+                },
+              ],
+            };
+          }
           return { results: [] };
         },
         async first() {
@@ -203,7 +218,8 @@ describe("THE CURE PANES (canon 0.30.164)", () => {
       { room: "csa", temperature_f: 68.2, humidity_pct: 58, read_at: "2026-09-21T15:00:00Z", source: "silo-ops" },
       NOW
     );
-    expect(stored).toBe(1);
+    expect(stored).toEqual({ stored: 1, skipped: 0 });
+    expect(inserts[0]?.[8]).toBeNull();
     expect(inserts[0]?.[1]).toBe("CSA");
     expect(inserts[0]?.[4]).toBe("silo-ops");
     await expect(storeSensorReadings(db as unknown as D1Database, { room: "NOPE", temperature_f: 70, humidity_pct: 40, read_at: NOW }, NOW)).rejects.toThrow(
@@ -299,5 +315,128 @@ describe("THE CURE PANES (canon 0.30.164)", () => {
     const html = curePanes(shown, "en");
     expect(html).toContain("72.4 F · 55 % · 10 min ago · Silo Ops");
     expect(html).toContain('title="2026-09-21 23:00 ET · SILO-OPS"');
+  });
+
+  it("a full batch of 100 units binds at most 100 parameters per statement (D1's limit)", async () => {
+    const m = await migratedDb();
+    const real = m.db as unknown as D1Database;
+    let most = 0;
+    const guarded = new Proxy(real, {
+      get(target, prop, receiver) {
+        if (prop !== "prepare") return Reflect.get(target, prop, receiver);
+        return (sql: string) => {
+          const stmt = target.prepare(sql);
+          return new Proxy(stmt, {
+            get(s, key, r) {
+              if (key !== "bind") return Reflect.get(s, key, r);
+              return (...args: unknown[]) => {
+                most = Math.max(most, args.length);
+                if (args.length > 100) throw new Error("too many SQL variables");
+                return s.bind(...args);
+              };
+            },
+          });
+        };
+      },
+    }) as D1Database;
+    const at = "2026-09-22T03:00:00.000Z";
+    const units = Array.from({ length: 100 }, (_, i) => ({ room: "CSA", temperature_f: 70, humidity_pct: 40, read_at: at, source: "silo-ops", sensor_id: `unit-${i}` }));
+    expect(await storeSensorReadings(guarded, units, at)).toEqual({ stored: 100, skipped: 0 });
+    expect(await storeSensorReadings(guarded, units, at)).toEqual({ stored: 0, skipped: 100 });
+    const doors = Array.from({ length: 100 }, (_, i) => ({ room: "CSB", temperature_f: 70, humidity_pct: 40, read_at: new Date(Date.parse(at) + i * 60000).toISOString(), source: "manual" }));
+    expect(await storeSensorReadings(guarded, doors, at)).toEqual({ stored: 100, skipped: 0 });
+    expect(await storeSensorReadings(guarded, doors, at)).toEqual({ stored: 0, skipped: 100 });
+    expect(most).toBeLessThanOrEqual(100);
+  });
+
+  it("keeps a sensor id, skips a resend, and writes nothing when one reading in the batch is bad", async () => {
+    const m = await migratedDb();
+    const db = m.db as unknown as D1Database;
+    const at = "2026-09-22T03:00:00.000Z";
+    const unit = { room: "CSA", temperature_f: 70, humidity_pct: 40, read_at: at, source: "silo-ops", sensor_id: "  unit-a  " };
+    const first = await storeSensorReadings(db, unit, at);
+    expect(first).toEqual({ stored: 1, skipped: 0 });
+    expect(m.get(`SELECT sensor_id, room, source FROM sensor_readings`)?.sensor_id).toBe("unit-a");
+    const again = await storeSensorReadings(db, unit, at);
+    expect(again).toEqual({ stored: 0, skipped: 1 });
+    const batch = await storeSensorReadings(db, [unit, { ...unit, temperature_f: 71 }], at);
+    expect(batch).toEqual({ stored: 0, skipped: 2 });
+    const freshPair = await storeSensorReadings(
+      db,
+      [
+        { room: "CSA", temperature_f: 66, humidity_pct: 40, read_at: at, source: "silo-ops", sensor_id: "unit-pair" },
+        { room: "CSA", temperature_f: 67, humidity_pct: 41, read_at: at, source: "silo-ops", sensor_id: "unit-pair" },
+      ],
+      at
+    );
+    expect(freshPair).toEqual({ stored: 1, skipped: 1 });
+    expect(m.get(`SELECT temperature_f FROM sensor_readings WHERE sensor_id = 'unit-pair'`)?.temperature_f).toBe(66);
+    const doorFresh = await storeSensorReadings(
+      db,
+      [
+        { room: "CSA", temperature_f: 61, humidity_pct: 31, read_at: "2026-09-22T04:00:00.000Z", source: "manual" },
+        { room: "CSA", temperature_f: 62, humidity_pct: 32, read_at: "2026-09-22T04:00:00.000Z", source: "manual" },
+      ],
+      at
+    );
+    expect(doorFresh).toEqual({ stored: 1, skipped: 1 });
+    const door = { room: "CSB", temperature_f: 60, humidity_pct: 30, read_at: at, source: "manual" };
+    expect(await storeSensorReadings(db, door, at)).toEqual({ stored: 1, skipped: 0 });
+    expect(await storeSensorReadings(db, [door, door], at)).toEqual({ stored: 0, skipped: 2 });
+    expect(await storeSensorReadings(db, { ...door, source: "other" }, at)).toEqual({ stored: 1, skipped: 0 });
+    const beforeBad = m.get(`SELECT COUNT(*) AS n FROM sensor_readings`)?.n;
+    await expect(
+      storeSensorReadings(
+        db,
+        [
+          { room: "CSA", temperature_f: 70, humidity_pct: 40, read_at: at, source: "silo-ops", sensor_id: "unit-b" },
+          { room: "NOPE", temperature_f: 70, humidity_pct: 40, read_at: at, source: "silo-ops", sensor_id: "unit-c" },
+        ],
+        at
+      )
+    ).rejects.toThrow(/Reading 2/);
+    const longId = "x".repeat(81);
+    await expect(
+      storeSensorReadings(db, { room: "CSA", temperature_f: 70, humidity_pct: 40, read_at: at, source: "silo-ops", sensor_id: longId }, at)
+    ).rejects.toThrow(/Reading 1 sensor_id is too long/);
+    expect(m.get(`SELECT COUNT(*) AS n FROM sensor_readings`)?.n).toBe(beforeBad);
+    expect(m.get(`SELECT sensor_id FROM sensor_readings WHERE sensor_id = 'unit-b'`)).toBeUndefined();
+  });
+
+  it("averages the room's units inside 15 minutes, leaves an older unit out, and ignores a test source", async () => {
+    const m = await migratedDb();
+    const db = m.db as unknown as D1Database;
+    const newest = "2026-09-22T03:00:00.000Z";
+    const temps = [70, 71, 72, 73];
+    const humids = [40, 50, 60, 70];
+    await storeSensorReadings(
+      db,
+      [
+        { room: "CSA", temperature_f: 10, humidity_pct: 10, read_at: "2026-09-22T02:44:00.000Z", source: "silo-ops", sensor_id: "unit-old" },
+        ...temps.map((temperature_f, i) => ({
+          room: "CSA",
+          temperature_f,
+          humidity_pct: humids[i],
+          read_at: newest,
+          source: "silo-ops",
+          sensor_id: `unit-${i + 1}`,
+        })),
+        { room: "CSA", temperature_f: 99, humidity_pct: 99, read_at: "2026-09-22T03:30:00.000Z", source: "test", sensor_id: "unit-test" },
+      ],
+      newest
+    );
+    const reading = await latestReading(db, "CSA");
+    expect(reading?.temperatureF).toBe(71.5);
+    expect(reading?.humidityPct).toBe(55);
+    expect(reading?.units).toBe(4);
+    expect(reading?.readAt).toBe(newest);
+    const shown = await listCurePanes(db, "2026-09-22T03:10:00.000Z");
+    const html = curePanes(shown, "en");
+    expect(html).toContain("71.5 F");
+    expect(html).toContain("55 %");
+    expect(html).toContain("4 units");
+    expect(html).not.toContain("10 F");
+    expect(curePanes(shown, "es")).toContain("4 unidades");
+    expect(html).toContain('title="2026-09-21 23:00 ET · silo-ops"');
   });
 });

@@ -191,8 +191,10 @@ describe("ACQUIRE HBN and the Manual HBN (canon 0.30.341)", () => {
     await expect(manualHbn(m.db, formOf(base))).rejects.toMatchObject({ message: "Pick a silo." });
     await expect(manualHbn(m.db, formOf({ ...base, planned_dryspc: "2" }))).rejects.toMatchObject({ message: "Pick Spear or Bucked." });
     await manualHbn(m.db, formOf({ ...base, planned_dryspc: "2", material_form: "spear" }));
-    expect(m.get(`SELECT hbn, planned_dryspc, material_form FROM harvest_batches WHERE lot_serial = 900`)).toEqual({
+    expect(m.get(`SELECT hbn, lot_serial, is_test, planned_dryspc, material_form FROM harvest_batches WHERE hbn = '26275-PNN-GH-027-0-NA-26900'`)).toEqual({
       hbn: "26275-PNN-GH-027-0-NA-26900",
+      lot_serial: 10,
+      is_test: 0,
       planned_dryspc: "2",
       material_form: "spear",
     });

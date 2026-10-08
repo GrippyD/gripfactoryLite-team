@@ -8,10 +8,14 @@
 import { HttpError, nowIso, requireReason, textOrNull } from "./audit";
 import { CONFIG_KEYS, ENVIRONMENT_PATH, ENV_ROLES, type EnvRole } from "./config";
 import { getConfigValue, insertLog, requireActor } from "./db";
-import { t, type Locale } from "./i18n";
+import { etWallClock } from "./farmday";
+import { t, tFill, type Locale } from "./i18n";
 import { esc } from "./ui";
 
 const MINUTE_MS = 60_000;
+const HOUR_MS = 3_600_000;
+/** Each unit's newest reading within this long of the room's newest reading joins the mean. */
+export const DOOR_UNIT_WINDOW_MS = 15 * MINUTE_MS;
 
 export type EnvRange = {
   tempLow: number | null;
@@ -38,6 +42,132 @@ export function roleWord(role: string): string {
 export function readingNumber(n: number): string {
   const rounded = Math.round(n * 10) / 10;
   return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+}
+
+/** A stored test row never shows on the panes (case-blind, trimmed). */
+export function isTestSensorSource(source: string | null | undefined): boolean {
+  return String(source ?? "").trim().toLowerCase() === "test";
+}
+
+export type DoorSample = {
+  sensor_id: string | null;
+  temperature_f: number;
+  humidity_pct: number | null;
+  read_at: string;
+  source: string | null;
+};
+
+export type DoorAverage = {
+  room: string;
+  temperatureF: number;
+  humidityPct: number | null;
+  readAt: string;
+  source: string;
+  units: number;
+};
+
+/** One unit per sensor id. Rows with no sensor id are one unit for the room.
+ * The mean is the newest row of each unit that still sits within 15 minutes of the newest. */
+export function averageDoorRows(rows: readonly DoorSample[]): Omit<DoorAverage, "room"> | null {
+  const live = rows.filter((row) => row.read_at && !isTestSensorSource(row.source));
+  if (live.length === 0) return null;
+  let newestAt = live[0].read_at;
+  for (const row of live) if (row.read_at > newestAt) newestAt = row.read_at;
+  const newestMs = Date.parse(newestAt);
+  const windowed = live.filter((row) => {
+    const at = Date.parse(row.read_at);
+    return Number.isFinite(newestMs) && Number.isFinite(at) && newestMs - at <= DOOR_UNIT_WINDOW_MS;
+  });
+  const byUnit = new Map<string, DoorSample>();
+  for (const row of windowed) {
+    const id = String(row.sensor_id ?? "").trim();
+    const key = id ? `id:${id}` : "door";
+    const held = byUnit.get(key);
+    if (!held || row.read_at > held.read_at) byUnit.set(key, row);
+  }
+  const units = [...byUnit.values()];
+  if (units.length === 0) return null;
+  let newest = units[0];
+  for (const row of units) if (row.read_at > newest.read_at) newest = row;
+  const temperatureF = units.reduce((sum, row) => sum + Number(row.temperature_f), 0) / units.length;
+  const humids = units
+    .map((row) => (row.humidity_pct == null ? null : Number(row.humidity_pct)))
+    .filter((n): n is number => n != null && Number.isFinite(n));
+  const humidityPct = humids.length === 0 ? null : humids.reduce((sum, n) => sum + n, 0) / humids.length;
+  return {
+    temperatureF,
+    humidityPct,
+    readAt: newest.read_at,
+    source: String(newest.source ?? "").trim(),
+    units: units.length,
+  };
+}
+
+const DOOR_MAX_SQL = `SELECT MAX(read_at) AS read_at FROM sensor_readings
+  WHERE room = ? AND role IS NULL AND lower(trim(coalesce(source, ''))) <> 'test'`;
+const DOOR_WINDOW_SQL = `SELECT sensor_id, temperature_f, humidity_pct, read_at, source
+  FROM sensor_readings
+  WHERE room = ? AND role IS NULL AND lower(trim(coalesce(source, ''))) <> 'test' AND read_at >= ?`;
+
+/** The room's door readings (role empty: the push door, not a SensorPush pull row), averaged. */
+export async function readDoorAverage(db: D1Database, room: string): Promise<DoorAverage | null> {
+  const max = await db.prepare(DOOR_MAX_SQL).bind(room).first<{ read_at: string | null }>();
+  if (!max?.read_at) return null;
+  const newestMs = Date.parse(max.read_at);
+  if (!Number.isFinite(newestMs)) return null;
+  const cutoff = new Date(newestMs - DOOR_UNIT_WINDOW_MS).toISOString();
+  const got = await db.prepare(DOOR_WINDOW_SQL).bind(room, cutoff).all<DoorSample>();
+  const avg = averageDoorRows(got.results ?? []);
+  if (!avg) return null;
+  return { room, ...avg };
+}
+
+export async function listDoorAverages(db: D1Database): Promise<DoorAverage[]> {
+  const maxes = await db
+    .prepare(
+      `SELECT room, MAX(read_at) AS read_at FROM sensor_readings
+       WHERE role IS NULL AND lower(trim(coalesce(source, ''))) <> 'test'
+       GROUP BY room`
+    )
+    .all<{ room: string; read_at: string }>();
+  const out: DoorAverage[] = [];
+  for (const max of maxes.results ?? []) {
+    if (!max.room) continue;
+    const one = await readDoorAverage(db, max.room);
+    if (one) out.push(one);
+  }
+  return out;
+}
+
+/** Hover words: the reading's Eastern wall clock and its stored source. */
+export function sensorReadingTitle(reading: { readAt: string; source?: string }): string {
+  const when = etWallClock(reading.readAt);
+  const source = (reading.source ?? "").trim();
+  if (when && source) return `${when} ET · ${source}`;
+  if (when) return `${when} ET`;
+  return source;
+}
+
+/** The pane line: mean temperature, mean humidity, "{n} units" when more than one, then age and source. */
+export function sensorConditionsText(
+  reading: { temperatureF: number; humidityPct: number | null; readAt: string; source?: string; units?: number },
+  nowIso: string,
+  locale: Locale
+): { text: string; stale: boolean } {
+  const age = Date.parse(nowIso) - Date.parse(reading.readAt);
+  const stale = !Number.isFinite(age) || age > HOUR_MS;
+  const min = Number.isFinite(age) ? Math.max(0, Math.round(age / MINUTE_MS)) : 0;
+  const ago =
+    min < 60
+      ? t(locale, "{n} min ago").replace("{n}", String(min))
+      : min < 120
+        ? t(locale, "1 hour ago")
+        : t(locale, "{n} hours ago").replace("{n}", String(Math.floor(min / 60)));
+  const humid = reading.humidityPct == null ? "" : ` · ${readingNumber(reading.humidityPct)} %`;
+  const count = reading.units != null && reading.units > 1 ? ` · ${tFill(locale, "{n} units", { n: String(reading.units) })}` : "";
+  const source = (reading.source ?? "").trim();
+  const tagged = source.toLowerCase() === "silo-ops" ? ` · ${t(locale, "Silo Ops")}` : "";
+  return { text: `${readingNumber(reading.temperatureF)} F${humid}${count} · ${ago}${tagged}`, stale };
 }
 
 export function ageWords(ms: number): string {
@@ -130,7 +260,7 @@ export async function staleMinutes(db: D1Database): Promise<number> {
 }
 
 export async function listEnvironmentFlags(db: D1Database, now: string, locale: Locale = "en"): Promise<Record<string, string[]>> {
-  const [bindings, ranges, sensorReads, doorReads, minutes] = await Promise.all([
+  const [bindings, ranges, sensorReads, doorAverages, minutes] = await Promise.all([
     db
       .prepare(
         `SELECT sensor_id, space_name, role, bound_at FROM sensor_bindings
@@ -151,21 +281,12 @@ export async function listEnvironmentFlags(db: D1Database, now: string, locale: 
            AND r.read_at = (SELECT MAX(r2.read_at) FROM sensor_readings r2 WHERE r2.sensor_id = r.sensor_id)`
       )
       .all<ReadRow>(),
-    db
-      .prepare(
-        `SELECT r.sensor_id, r.room, r.role, r.temperature_f, r.humidity_pct, r.read_at
-         FROM sensor_readings r
-         WHERE r.sensor_id IS NULL
-           AND r.read_at = (
-             SELECT MAX(r2.read_at) FROM sensor_readings r2 WHERE r2.sensor_id IS NULL AND r2.room = r.room
-           )`
-      )
-      .all<ReadRow>(),
+    listDoorAverages(db),
     staleMinutes(db),
   ]);
   const rangeOf = new Map((ranges.results ?? []).map((row) => [`${row.space_name}\n${row.role}`, row]));
   const bySensor = new Map((sensorReads.results ?? []).map((row) => [String(row.sensor_id), row]));
-  const doorOf = new Map((doorReads.results ?? []).map((row) => [row.room.trim().toUpperCase(), row]));
+  const doorOf = new Map(doorAverages.map((row) => [row.room.trim().toUpperCase(), row]));
   const out = new Map<string, string[]>();
   const push = (space: string, lines: string[]) => {
     if (lines.length === 0) return;
@@ -203,7 +324,7 @@ export async function listEnvironmentFlags(db: D1Database, now: string, locale: 
       const bound = (bindings.results ?? []).find((row) => row.space_name.trim().toUpperCase() === spaceKey && row.role.trim().toLowerCase() === "room");
       if (bound) {
         const sensor = bySensor.get(bound.sensor_id);
-        if (sensor && sensor.read_at >= read.read_at) continue;
+        if (sensor && sensor.read_at >= read.readAt) continue;
       }
     }
     const space = read.room;
@@ -214,7 +335,7 @@ export async function listEnvironmentFlags(db: D1Database, now: string, locale: 
       space,
       environmentFlagLines(
         "room",
-        { temperatureF: Number(read.temperature_f), humidityPct: read.humidity_pct == null ? null : Number(read.humidity_pct), readAt: read.read_at },
+        { temperatureF: read.temperatureF, humidityPct: read.humidityPct, readAt: read.readAt },
         { tempLow: numOrNull(range.temp_low), tempHigh: numOrNull(range.temp_high), humidityLow: numOrNull(range.humidity_low), humidityHigh: numOrNull(range.humidity_high) },
         now,
         minutes,
@@ -241,10 +362,12 @@ export type EnvironmentPage = {
   ranges: RangeRow[];
   staleMinutes: number;
   pull: { pulled_at: string; sample_count: number; error: string | null } | null;
+  asOf: string;
+  doorRooms: DoorAverage[];
 };
 
 export async function loadEnvironmentPage(db: D1Database): Promise<EnvironmentPage> {
-  const [catalog, bindings, ranges, spaces, rooms, pull, minutes] = await Promise.all([
+  const [catalog, bindings, ranges, spaces, rooms, pull, minutes, doorRooms] = await Promise.all([
     db.prepare(`SELECT sensor_id, name, battery_voltage FROM sensor_catalog ORDER BY name, sensor_id`).all<{ sensor_id: string; name: string | null; battery_voltage: number | null }>(),
     db.prepare(`SELECT sensor_id, space_name, role FROM sensor_bindings WHERE deleted_at IS NULL`).all<{ sensor_id: string; space_name: string | null; role: string | null }>(),
     db.prepare(`SELECT space_name, role, temp_low, temp_high, humidity_low, humidity_high FROM environment_ranges WHERE deleted_at IS NULL ORDER BY space_name, role`).all<RangeRow>(),
@@ -252,6 +375,7 @@ export async function loadEnvironmentPage(db: D1Database): Promise<EnvironmentPa
     db.prepare(`SELECT value FROM app_config WHERE key = ? AND deleted_at IS NULL`).bind(CONFIG_KEYS.cure_rooms).first<{ value: string }>(),
     db.prepare(`SELECT pulled_at, sample_count, error FROM environment_pulls ORDER BY pulled_at DESC LIMIT 1`).first<{ pulled_at: string; sample_count: number; error: string | null }>(),
     staleMinutes(db),
+    listDoorAverages(db),
   ]);
   const bound = new Map((bindings.results ?? []).map((row) => [row.sensor_id, row]));
   const reads = await db
@@ -291,6 +415,8 @@ export async function loadEnvironmentPage(db: D1Database): Promise<EnvironmentPa
     ranges: ranges.results ?? [],
     staleMinutes: minutes,
     pull: pull ? { pulled_at: pull.pulled_at, sample_count: Number(pull.sample_count), error: pull.error } : null,
+    asOf: nowIso(),
+    doorRooms,
   };
 }
 
@@ -343,9 +469,16 @@ export function environmentPage(page: EnvironmentPage, locale: Locale = "en", ok
     .join("");
   const spaceOptions = page.spaces.map((name) => option(name, name, "")).join("");
   const roleOptions = ENV_ROLES.map((role) => option(role, t(locale, roleWord(role)), "room")).join("");
+  const doorRooms = (page.doorRooms ?? [])
+    .map((row) => {
+      const cond = sensorConditionsText(row, page.asOf, locale);
+      return `<p data-env-room="${esc(row.room)}" title="${esc(sensorReadingTitle(row))}">${esc(row.room)}: ${esc(cond.text)}</p>`;
+    })
+    .join("");
   return `<h1>${esc(t(locale, "Environment"))}</h1>
     ${flash}
     <p class="muted" data-env-silo-ops>${esc(t(locale, "Silo Ops posts its Storage readings for CSA and CSB here with source \"silo-ops\", at most once a minute per room, read_at the unit's own sample time in UTC."))}</p>
+    ${doorRooms}
     ${pull}
     <form method="post" action="${ENVIRONMENT_PATH}/stale" class="stack">
       <label class="field">${esc(t(locale, "Stale after minutes"))}

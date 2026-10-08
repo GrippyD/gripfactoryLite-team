@@ -1198,6 +1198,14 @@ export const DICT: Record<string, { en: string; es: string }> = {
     es: "El respaldo para cuando el sistema falla. Acquire es el camino normal; esto toma el HBN completo tal como se escribe, verifica el libro de seriales y exige una razon.",
   },
   "Mint manual HBN": { en: "Mint manual HBN", es: "Acunar HBN manual" },
+  "Test HBN (holds no place in line)": {
+    en: "Test HBN (holds no place in line)",
+    es: "HBN de prueba (no ocupa lugar en la fila)",
+  },
+  "The year's lot numbers have reached 999.": {
+    en: "The year's lot numbers have reached 999.",
+    es: "Los numeros de lote del ano han llegado a 999.",
+  },
   "why the system failed": { en: "why the system failed", es: "por que fallo el sistema" },
   "Spear or Bucked": { en: "Spear or Bucked", es: "Lanza o desgranado" },
   "Spear": { en: "Spear", es: "Lanza" },
@@ -2501,6 +2509,7 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "no reading": { en: "no reading", es: "sin lectura" },
   "no sensor yet": { en: "no sensor yet", es: "aun no hay sensor" },
   "Silo Ops": { en: "Silo Ops", es: "Silo Ops" },
+  "{n} units": { en: "{n} units", es: "{n} unidades" },
   "Cure Space": { en: "Cure Space", es: "Espacio de curado" },
   "Drying in Silos": { en: "Drying in Silos", es: "Secando en silos" },
   "Fresh Frozen": { en: "Fresh Frozen", es: "Fresco congelado" },

@@ -500,6 +500,7 @@ export function manualHbnPage(
     ${flash}
     <form class="stack" method="post" action="/admin/manual-hbn">
       <label class="field">${esc(t(locale, "HBN"))} <input type="text" name="hbn" required placeholder="26244-ARL-GH-027-0-05-26001"></label>
+      <label class="field"><span><input type="checkbox" name="is_test" value="1"> ${esc(t(locale, "Test HBN (holds no place in line)"))}</span></label>
       <label class="field">${esc(t(locale, "METRC Harvest Tag"))} <input type="text" name="metrc_harvest_tag"></label>
       <label class="field">${esc(t(locale, "Date"))} <input type="date" name="entry_date" required></label>
       <label class="field">${esc(t(locale, "Farm"))} <select name="farm_code" required>${opts(lookups.farms)}</select></label>
