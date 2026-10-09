@@ -1,0 +1,40 @@
+{
+  "Data": [
+    {
+      "Id": 1,
+      "ManifestNumber": null,
+      "DeliveryNumber": 0,
+      "RecipientFacilityLicenseNumber": "123-ABC",
+      "RecipientFacilityName": "Lofty Med-Cultivation A",
+      "ShipmentTypeName": "Transfer",
+      "ShipmentTransactionType": "Standard",
+      "InvoiceNumber": null,
+      "PaymentTermDays": null,
+      "PaymentDueDate": null,
+      "EstimatedDepartureDateTime": "2016-10-11T14:48:30.000",
+      "ActualDepartureDateTime": null,
+      "EstimatedArrivalDateTime": "2016-10-11T16:50:00.000",
+      "ActualArrivalDateTime": null,
+      "GrossWeight": null,
+      "GrossUnitOfWeightId": null,
+      "GrossUnitOfWeightName": null,
+      "PlannedRoute": "I will use this route.",
+      "DeliveryPackageCount": 7,
+      "DeliveryReceivedPackageCount": 0,
+      "ReceivedDateTime": "2016-10-11T16:42:19-05:00",
+      "EstimatedReturnDepartureDateTime": null,
+      "ActualReturnDepartureDateTime": null,
+      "EstimatedReturnArrivalDateTime": null,
+      "ActualReturnArrivalDateTime": null,
+      "RejectedPackagesReturned": false,
+      "PDFDocumentFileSystemId": null
+    }
+  ],
+  "Total": 1,
+  "TotalRecords": 1,
+  "PageSize": 1,
+  "RecordsOnPage": 1,
+  "Page": 1,
+  "CurrentPage": 1,
+  "TotalPages": 1
+}

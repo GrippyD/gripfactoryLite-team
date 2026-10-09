@@ -1,0 +1,16 @@
+[
+  {
+    "Id": 1,
+    "Name": "Marijuana Package",
+    "SkuNumber": "MA-PKG",
+    "MaxGroupSize": 1,
+    "TagInventoryType": "Package"
+  },
+  {
+    "Id": 2,
+    "Name": "Marijuana Plant",
+    "SkuNumber": "MA-PLT",
+    "MaxGroupSize": 100,
+    "TagInventoryType": "Plant"
+  }
+]

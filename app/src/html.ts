@@ -6,6 +6,7 @@ import {
   formatGramsWhole,
   GRAM_FIELDS,
   ADMIN_METRC_API_PATH,
+  ADMIN_METRC_EVAL_PATH,
   HARVEST_PATH,
   MODELS_PATH,
   MODEL_TOOLS,
@@ -2050,6 +2051,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
       { href: "/admin/uploads", kind: "Admin", title: "Pending Data Uploads" },
       { href: "/admin/imports", kind: "Admin", title: "Import Data" },
       { href: ADMIN_METRC_API_PATH, kind: "Admin", title: "Metrc API" },
+      { href: ADMIN_METRC_EVAL_PATH, kind: "Admin", title: "Metrc evaluation" },
     ],
   },
   {

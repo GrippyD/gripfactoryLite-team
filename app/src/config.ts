@@ -311,6 +311,11 @@ export const SYSTEM_REASON = {
   // METRC MIRROR (an export mounted; internal field values set by hand).
   metrc_tag_captured: "metrc tag captured",
   metrc_mount: "metrc export mounted",
+  // MA1 Law 1 (A15): the API door's mount rows and count logs, actor null.
+  metrc_sweep: "metrc api sweep",
+  // MA1 Law 9 (Phase D): the Admin page's Confirm gone (A29) and Reset cursor, logged with the actor.
+  metrc_gone_confirmed: "metrc gone confirmed",
+  metrc_cursor_reset: "metrc cursor reset",
   // THE MIRROR CLOSES THE LEDGER (canon 0.30.128): the reason on a ledger item
   // or a queue package closed because METRC marks its tag gone; the mount id
   // rides behind it.
@@ -545,6 +550,54 @@ export const CONFIG_KEYS = {
   // FULFILLMENT (canon 0.30.306): grams in one each for the rows METRC counts
   // as eaches. Seeded by migration 0081; editable in Admin, Lookups, app_config.
   fulfillment_unit_grams: "fulfillment_unit_grams",
+  // MA1 Law 5 seed for Law 7 (DRY RUN BEFORE WRITE): the METRC sweep mode,
+  // off, dry_run or write. Write runs only on a production host and the code
+  // never promotes itself; blank or unknown reads off. Seeded off by migration 0096.
+  metrc_sweep_mode: "metrc_sweep_mode",
+  // MA1 Law 5 (THE CADENCE AND CURSOR LAW): rows per METRC page, clamped to
+  // 1..50 (the docs' maximum) and always sent. Seeded 50 by migration 0096.
+  metrc_page_size: "metrc_page_size",
+  // MA1 Law 5: METRC calls one mirror tick may spend, all licenses. Seeded 60.
+  metrc_tick_calls: "metrc_tick_calls",
+  // MA1 Law 5: METRC calls one license may spend in a tick, inside the tick's
+  // calls (rate limits are per facility and unpublished). Seeded 20.
+  metrc_tick_license_calls: "metrc_tick_license_calls",
+  // MA1 Law 5: wall milliseconds one tick may run. Seeded 240000 (4 minutes).
+  metrc_tick_wall_ms: "metrc_tick_wall_ms",
+  // MA1 Law 5: rows one tick may read, a CPU proxy. Seeded 3000.
+  metrc_tick_rows: "metrc_tick_rows",
+  // MA1 Law 5 (A17): METRC calls a UTC month, a pace and not a stop: a tick
+  // spends at most what is left over the ticks left. Seeded 45000.
+  metrc_month_calls: "metrc_month_calls",
+  // MA1 Law 5: minutes a lastModified window reaches back before the last
+  // high-water mark (page_getting-started.txt:133, the 5 minute buffer). Seeded 5.
+  metrc_window_overlap_minutes: "metrc_window_overlap_minutes",
+  // MA1 Law 5: the longest lastModified window a catch-up reads at once. Seeded 1440.
+  metrc_window_max_minutes: "metrc_window_max_minutes",
+  // MA1 Law 5: hours between full passes (the only pass that marks gone):
+  // packages 24, harvests 24, plants 168 (fork F-D). Seeded by migration 0096.
+  metrc_full_packages_hours: "metrc_full_packages_hours",
+  metrc_full_harvests_hours: "metrc_full_harvests_hours",
+  metrc_full_plants_hours: "metrc_full_plants_hours",
+  // MA1 Law 5 and Law 6: days a finished harvest stays in the harvests read. Seeded 30.
+  metrc_harvest_finished_days: "metrc_harvest_finished_days",
+  // MA1 Law 5 seed for Law 7: sample differences one dry-run sweep row keeps. Seeded 25.
+  metrc_sample_cap: "metrc_sample_cap",
+  // MA1 Law 5 (A29): a complete pass marks nothing gone when its would-gone
+  // exceeds this share of the scope's live rows. Seeded 0.5.
+  metrc_gone_hold_share: "metrc_gone_hold_share",
+  // MA1 Law 5 (A30): days the METRC call, sweep and run logs are kept. Seeded 90.
+  metrc_log_keep_days: "metrc_log_keep_days",
+  // MA1 Law 5 seed for Law 9 (A20): METRC calls one Sweep now may spend inline. Seeded 10.
+  metrc_sweep_now_calls: "metrc_sweep_now_calls",
+  // MA1 Law 8 (THE EVALUATION RUNNER, Phase E1): METRC calls one evaluation run
+  // may make, P0 and the probes included; the steps past it read "cannot run:
+  // budget". Seeded 150 by migration 0098; editable at Admin\Data Lookups\People and System\App config.
+  metrc_eval_max_calls: "metrc_eval_max_calls",
+  // MA1 Law 8: days the evaluation's lastModified window reaches back on the
+  // transfer and template searches (T1, T2, X2, TT2); a 400 retries once with
+  // 1 day. Seeded 30 by migration 0098; editable at Admin\Data Lookups\People and System\App config.
+  metrc_eval_window_days: "metrc_eval_window_days",
 } as const;
 
 /** Owner ruling 2026-09-14 (canon 0.30.55): the serial floor for one harvest
@@ -576,6 +629,122 @@ export function projectedDryYieldPct(value: string | null): number {
   if (value == null || value.trim() === "") return 22;
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : 22;
+}
+
+/** MA1 Law 5: Metrc's page maximum. Every paged endpoint reads "You can enable
+ * pagination on this query by specifying a value that does not exceed 50"
+ * (GET_packages_v2_active.txt:20). */
+export const METRC_MAX_PAGE_SIZE = 50;
+
+/** MA1 Law 5 and Law 7: the METRC sweep's tuning, as parsed from app_config. */
+export type MetrcSweepConfig = {
+  sweepMode: string;
+  pageSize: number;
+  tickCalls: number;
+  tickLicenseCalls: number;
+  tickWallMs: number;
+  tickRows: number;
+  monthCalls: number;
+  windowOverlapMinutes: number;
+  windowMaxMinutes: number;
+  fullPackagesHours: number;
+  fullHarvestsHours: number;
+  fullPlantsHours: number;
+  harvestFinishedDays: number;
+  sampleCap: number;
+  goneHoldShare: number;
+  logKeepDays: number;
+  sweepNowCalls: number;
+};
+
+/** The seeds of migration 0096, read when a row is missing or malformed. */
+export const METRC_SWEEP_DEFAULTS: MetrcSweepConfig = {
+  sweepMode: "off",
+  pageSize: METRC_MAX_PAGE_SIZE,
+  tickCalls: 60,
+  tickLicenseCalls: 20,
+  tickWallMs: 240000,
+  tickRows: 3000,
+  monthCalls: 45000,
+  windowOverlapMinutes: 5,
+  windowMaxMinutes: 1440,
+  fullPackagesHours: 24,
+  fullHarvestsHours: 24,
+  fullPlantsHours: 168,
+  harvestFinishedDays: 30,
+  sampleCap: 25,
+  goneHoldShare: 0.5,
+  logKeepDays: 90,
+  sweepNowCalls: 10,
+};
+
+/** Every app_config key the METRC sweep reads, for one IN query. */
+export const METRC_SWEEP_CONFIG_KEYS: string[] = [
+  CONFIG_KEYS.metrc_sweep_mode,
+  CONFIG_KEYS.metrc_page_size,
+  CONFIG_KEYS.metrc_tick_calls,
+  CONFIG_KEYS.metrc_tick_license_calls,
+  CONFIG_KEYS.metrc_tick_wall_ms,
+  CONFIG_KEYS.metrc_tick_rows,
+  CONFIG_KEYS.metrc_month_calls,
+  CONFIG_KEYS.metrc_window_overlap_minutes,
+  CONFIG_KEYS.metrc_window_max_minutes,
+  CONFIG_KEYS.metrc_full_packages_hours,
+  CONFIG_KEYS.metrc_full_harvests_hours,
+  CONFIG_KEYS.metrc_full_plants_hours,
+  CONFIG_KEYS.metrc_harvest_finished_days,
+  CONFIG_KEYS.metrc_sample_cap,
+  CONFIG_KEYS.metrc_gone_hold_share,
+  CONFIG_KEYS.metrc_log_keep_days,
+  CONFIG_KEYS.metrc_sweep_now_calls,
+];
+
+/** MA1 Law 5: a whole number at or above min; a missing, blank, malformed,
+ * fractional or smaller value falls back. */
+export function metrcWholeOf(value: string | null, fallback: number, min = 1): number {
+  if (value == null || value.trim() === "") return fallback;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= min ? n : fallback;
+}
+
+/** MA1 Law 5: rows per page, clamped to 1..50; blank or malformed reads 50. */
+export function metrcPageSizeOf(value: string | null): number {
+  if (value == null || value.trim() === "") return METRC_MAX_PAGE_SIZE;
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n)) return METRC_MAX_PAGE_SIZE;
+  return Math.min(METRC_MAX_PAGE_SIZE, Math.max(1, n));
+}
+
+/** MA1 A29: a share from 0 to 1; anything else falls back. */
+export function metrcShareOf(value: string | null, fallback: number): number {
+  if (value == null || value.trim() === "") return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : fallback;
+}
+
+/** MA1 Law 5: the sweep's tuning from a key reader (null when a key is
+ * absent). Each value falls back to its 0096 seed. */
+export function metrcSweepConfigOf(read: (key: string) => string | null): MetrcSweepConfig {
+  const d = METRC_SWEEP_DEFAULTS;
+  return {
+    sweepMode: String(read(CONFIG_KEYS.metrc_sweep_mode) ?? "").trim() || d.sweepMode,
+    pageSize: metrcPageSizeOf(read(CONFIG_KEYS.metrc_page_size)),
+    tickCalls: metrcWholeOf(read(CONFIG_KEYS.metrc_tick_calls), d.tickCalls),
+    tickLicenseCalls: metrcWholeOf(read(CONFIG_KEYS.metrc_tick_license_calls), d.tickLicenseCalls),
+    tickWallMs: metrcWholeOf(read(CONFIG_KEYS.metrc_tick_wall_ms), d.tickWallMs),
+    tickRows: metrcWholeOf(read(CONFIG_KEYS.metrc_tick_rows), d.tickRows),
+    monthCalls: metrcWholeOf(read(CONFIG_KEYS.metrc_month_calls), d.monthCalls),
+    windowOverlapMinutes: metrcWholeOf(read(CONFIG_KEYS.metrc_window_overlap_minutes), d.windowOverlapMinutes, 0),
+    windowMaxMinutes: metrcWholeOf(read(CONFIG_KEYS.metrc_window_max_minutes), d.windowMaxMinutes),
+    fullPackagesHours: metrcWholeOf(read(CONFIG_KEYS.metrc_full_packages_hours), d.fullPackagesHours),
+    fullHarvestsHours: metrcWholeOf(read(CONFIG_KEYS.metrc_full_harvests_hours), d.fullHarvestsHours),
+    fullPlantsHours: metrcWholeOf(read(CONFIG_KEYS.metrc_full_plants_hours), d.fullPlantsHours),
+    harvestFinishedDays: metrcWholeOf(read(CONFIG_KEYS.metrc_harvest_finished_days), d.harvestFinishedDays),
+    sampleCap: metrcWholeOf(read(CONFIG_KEYS.metrc_sample_cap), d.sampleCap, 0),
+    goneHoldShare: metrcShareOf(read(CONFIG_KEYS.metrc_gone_hold_share), d.goneHoldShare),
+    logKeepDays: metrcWholeOf(read(CONFIG_KEYS.metrc_log_keep_days), d.logKeepDays),
+    sweepNowCalls: metrcWholeOf(read(CONFIG_KEYS.metrc_sweep_now_calls), d.sweepNowCalls),
+  };
 }
 
 /** Owner ruling 2026-09-01: "Trim and BIO only." The extraction-bound package
@@ -1245,6 +1414,8 @@ export const ENV_ROLES = ["room", "bed", "plenum", "exhaust"] as const;
 export type EnvRole = (typeof ENV_ROLES)[number];
 /** THE TESTING DESK (canon 0.30.164), part 3: the Admin page of the Metrc mirror. */
 export const ADMIN_METRC_API_PATH = "/admin/metrc-api";
+/** MA1 Law 8 (THE EVALUATION RUNNER): the sandbox-only Admin page of Phase E1. */
+export const ADMIN_METRC_EVAL_PATH = "/admin/metrc-eval";
 
 /** THE TESTING DESK (canon 0.30.164): the lab tech's station, behind the Admin PIN. */
 export const TESTING_PATH = "/testing";

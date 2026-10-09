@@ -48,6 +48,7 @@ import {
   ADMIN_SHEET_SYNC_PATH,
   ENVIRONMENT_PATH,
   ADMIN_METRC_API_PATH,
+  ADMIN_METRC_EVAL_PATH,
   MODELS_PATH,
   MODELS_PIN_PATH,
   MODEL_TOOLS,
@@ -492,7 +493,10 @@ import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTesting
 import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { terpRecipesPage } from "./terps";
 import { easternStamp, fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
-import { loadMetrcAdmin, metrcApiPage, runMetrcSweep, testMetrcConnection } from "./metrcapi";
+import { metrcApiPage, runMetrcSweep, testMetrcConnection } from "./metrcapi";
+import { confirmGoneAction, loadMetrcAdminPage, resetCursorAction, sweepNowAction } from "./metrcadmin";
+import { isMirrorCron, runMirrorSweep } from "./metrcsweep";
+import { evalCsvFile, evalJsonFile, evalPageActive, loadEvalRun, loadMetrcEvalAdmin, metrcEvalPage, packOf, runEval } from "./metrceval";
 import { inTestingFixtureWorkbook, runInTestingSync } from "./intesting";
 import { listMetrcAdoptions } from "./metrc";
 import {
@@ -1636,15 +1640,70 @@ app.post(`${ADMIN_SHEET_SYNC_PATH}/run`, async (c) => {
 
 // THE TESTING DESK (canon 0.30.164), part 3. Keys are present or absent. The
 // values never reach the page. Test connection calls GET /facilities/v2.
+// MA1 Law 9 (Phase D): the page loads the mode, the pace, every scope's cursor
+// and last run, and the parity pane (metrcadmin.ts); Sweep now runs one scope
+// inline within metrc_sweep_now_calls (A20); Confirm gone sets the cursor's
+// gone_override (A29); Reset cursor soft-deletes the cursor with a logged
+// reason. All three sit behind the Admin PIN like the page; no key reaches any.
 app.get(ADMIN_METRC_API_PATH, async (c) => {
   const s = await shell(c);
-  const data = await loadMetrcAdmin(c.env);
+  const data = await loadMetrcAdminPage(c.env);
   return html(c, s, "Metrc API", metrcApiPage(data, s.locale, c.req.query("ok") ?? null, Number(c.req.query("n") ?? "0")));
 });
 app.post(`${ADMIN_METRC_API_PATH}/test`, async (c) => {
   const result = await testMetrcConnection(c.env);
   const n = result.code === "connected" ? `&n=${result.n}` : "";
   return c.redirect(`${ADMIN_METRC_API_PATH}?ok=${result.code}${n}`, 303);
+});
+app.post(`${ADMIN_METRC_API_PATH}/sweep-now`, async (c) => {
+  const result = await sweepNowAction(c.env, actorForm(c, await c.req.formData()));
+  return c.redirect(`${ADMIN_METRC_API_PATH}?ok=${result.code}&n=${result.calls}`, 303);
+});
+app.post(`${ADMIN_METRC_API_PATH}/confirm-gone`, async (c) => {
+  const code = await confirmGoneAction(c.env, actorForm(c, await c.req.formData()));
+  return c.redirect(`${ADMIN_METRC_API_PATH}?ok=${code}`, 303);
+});
+app.post(`${ADMIN_METRC_API_PATH}/reset-cursor`, async (c) => {
+  const code = await resetCursorAction(c.env, actorForm(c, await c.req.formData()));
+  return c.redirect(`${ADMIN_METRC_API_PATH}?ok=${code}`, 303);
+});
+
+// MA1 Law 8 (THE EVALUATION RUNNER, Phase E1): sandbox only, GET steps only.
+// The page shows key presence, the host, the facilities P0 found and the runs;
+// Run E1 now runs inline and answers 303 with its code; the pack files are
+// built on demand from the stored row. No key reaches any of them.
+app.get(ADMIN_METRC_EVAL_PATH, async (c) => {
+  const s = await shell(c);
+  const data = await loadMetrcEvalAdmin(c.env);
+  return html(c, s, "Metrc evaluation", metrcEvalPage(data, s.locale, c.req.query("ok") ?? null));
+});
+app.post(`${ADMIN_METRC_EVAL_PATH}/run`, async (c) => {
+  if (!evalPageActive(c.env)) return c.redirect(`${ADMIN_METRC_EVAL_PATH}?ok=host`, 303);
+  const result = await runEval(c.env);
+  return c.redirect(`${ADMIN_METRC_EVAL_PATH}?ok=${result.code}`, 303);
+});
+app.get(`${ADMIN_METRC_EVAL_PATH}/runs/:id/json`, async (c) => {
+  const run = await loadEvalRun(c.env.DB, c.req.param("id"));
+  if (!run) return c.body("Not found", 404);
+  const file = evalJsonFile(packOf(run));
+  return new Response(file.body, {
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "content-disposition": `attachment; filename="${file.name}"`,
+    },
+  });
+});
+app.get(`${ADMIN_METRC_EVAL_PATH}/runs/:id/csv/:file`, async (c) => {
+  const run = await loadEvalRun(c.env.DB, c.req.param("id"));
+  if (!run) return c.body("Not found", 404);
+  const file = evalCsvFile(packOf(run), c.req.param("file"));
+  if (!file) return c.body("Not found", 404);
+  return new Response(file.body, {
+    headers: {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="${file.name}"`,
+    },
+  });
 });
 
 // THE HARVEST CONSOLE (canon 0.30.73). Owner ruling 2026-09-15, verbatim: "In
@@ -4400,6 +4459,13 @@ app.post("/marketplace/orders/:id/status", async (c) => {
 // and awaits it, so a dev trigger's response means the run has finished.
 function scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
   const cron = String(event.cron ?? "");
+  // MA1 Phase C (A28): the mirror sweep by API runs on its own cron string, 45
+  // past the hour, in its own waitUntil; the 15-past block below is untouched.
+  if (isMirrorCron(cron)) {
+    const mirror = runMirrorSweep(env, "cron").then(() => undefined);
+    ctx.waitUntil(mirror);
+    return mirror;
+  }
   const run = cron.startsWith("*/5")
     ? pullSensorPush(env).then(() => undefined)
     : (async () => {

@@ -1,0 +1,31 @@
+{
+  "Data": [
+    {
+      "Id": 1,
+      "Name": "Harvest Location",
+      "LocationTypeId": 1,
+      "LocationTypeName": "Default",
+      "ForPlantBatches": true,
+      "ForPlants": true,
+      "ForHarvests": true,
+      "ForPackages": true
+    },
+    {
+      "Id": 2,
+      "Name": "Plants Location",
+      "LocationTypeId": 2,
+      "LocationTypeName": "Planting Station",
+      "ForPlantBatches": false,
+      "ForPlants": true,
+      "ForHarvests": false,
+      "ForPackages": false
+    }
+  ],
+  "Total": 2,
+  "TotalRecords": 2,
+  "PageSize": 2,
+  "RecordsOnPage": 2,
+  "Page": 1,
+  "CurrentPage": 1,
+  "TotalPages": 1
+}

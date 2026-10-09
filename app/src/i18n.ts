@@ -2711,6 +2711,415 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Connected. {n} facilities.": { en: "Connected. {n} facilities.", es: "Conectado. {n} instalaciones." },
   "Metrc refused the keys.": { en: "Metrc refused the keys.", es: "Metrc rechazo las claves." },
   "Metrc did not answer.": { en: "Metrc did not answer.", es: "Metrc no respondio." },
+  // MA1 Phase B: Test connection per license (A22, A33), the host guard and the sweep words.
+  "Connected. {n} facilities. {r} of {k} licenses reached.": {
+    en: "Connected. {n} facilities. {r} of {k} licenses reached.",
+    es: "Conectado. {n} instalaciones. {r} de {k} licencias alcanzadas.",
+  },
+  "License reach": { en: "License reach", es: "Alcance por licencia" },
+  "Reached by this key": { en: "Reached by this key", es: "Alcanzada por esta clave" },
+  "Not reached by this key": { en: "Not reached by this key", es: "No alcanzada por esta clave" },
+  "Not checked yet": { en: "Not checked yet", es: "Aun no verificada" },
+  "Other facilities this key reaches: {n}": { en: "Other facilities this key reaches: {n}", es: "Otras instalaciones que alcanza esta clave: {n}" },
+  "Whether the user key reaches this license in Metrc, from the last Test connection. A license the key does not reach cannot be swept. Admin\\Data Lookups\\Logistics\\Licenses": {
+    en: "Whether the user key reaches this license in Metrc, from the last Test connection. A license the key does not reach cannot be swept. Admin\\Data Lookups\\Logistics\\Licenses",
+    es: "Si la clave del usuario alcanza esta licencia en Metrc, segun la ultima prueba de conexion. Una licencia que la clave no alcanza no se puede barrer. Admin\\Data Lookups\\Logistics\\Licenses",
+  },
+  "Facilities the user key reaches that are not in the license lookup, such as a sandbox's generic facilities. They are counted, never swept. Admin\\Data Lookups\\Logistics\\Licenses": {
+    en: "Facilities the user key reaches that are not in the license lookup, such as a sandbox's generic facilities. They are counted, never swept. Admin\\Data Lookups\\Logistics\\Licenses",
+    es: "Instalaciones que alcanza la clave del usuario y que no estan en la lista de licencias, como las instalaciones genericas de un sandbox. Se cuentan, nunca se barren. Admin\\Data Lookups\\Logistics\\Licenses",
+  },
+  "The METRC host is not a Metrc host.": { en: "The METRC host is not a Metrc host.", es: "El host de METRC no es un host de Metrc." },
+  "Sandbox host: nothing was written to the desk.": {
+    en: "Sandbox host: nothing was written to the desk.",
+    es: "Host de sandbox: no se escribio nada en el escritorio.",
+  },
+  // MA1 Phase B fix: a key the Basic header cannot carry (a failed sweep's words).
+  "A METRC key holds a character a Basic header cannot carry.": {
+    en: "A METRC key holds a character a Basic header cannot carry.",
+    es: "Una clave de METRC tiene un caracter que un encabezado Basic no puede llevar.",
+  },
+  "The sweep mode is not off, dry_run or write, so the sweep is off.": {
+    en: "The sweep mode is not off, dry_run or write, so the sweep is off.",
+    es: "El modo de barrido no es off, dry_run ni write, asi que el barrido esta apagado.",
+  },
+  "Write mode is refused on a sandbox host: sandbox data never enters the live mirror. The sweep runs as a dry run.": {
+    en: "Write mode is refused on a sandbox host: sandbox data never enters the live mirror. The sweep runs as a dry run.",
+    es: "El modo write se rechaza en un host de sandbox: los datos del sandbox nunca entran al espejo en vivo. El barrido corre como prueba en seco.",
+  },
+  "Write mode is refused: the METRC host is not a Metrc host. The sweep is off.": {
+    en: "Write mode is refused: the METRC host is not a Metrc host. The sweep is off.",
+    es: "El modo write se rechaza: el host de METRC no es un host de Metrc. El barrido esta apagado.",
+  },
+  "The METRC host is not a Metrc host. The sweep is off.": {
+    en: "The METRC host is not a Metrc host. The sweep is off.",
+    es: "El host de METRC no es un host de Metrc. El barrido esta apagado.",
+  },
+  "A production host never receives a write from this app.": {
+    en: "A production host never receives a write from this app.",
+    es: "Un host de produccion nunca recibe una escritura de esta app.",
+  },
+  "The evaluation switch is off, so nothing is sent to Metrc.": {
+    en: "The evaluation switch is off, so nothing is sent to Metrc.",
+    es: "El interruptor de evaluacion esta apagado, asi que nada se envia a Metrc.",
+  },
+  "Only POST, PUT and DELETE go through the write door.": {
+    en: "Only POST, PUT and DELETE go through the write door.",
+    es: "Solo POST, PUT y DELETE pasan por la puerta de escritura.",
+  },
+  // MA1 Phase D, Law 9 (THE ADMIN SURFACE): the /admin/metrc-api page's words and title help.
+  "Host and mode": { en: "Host and mode", es: "Host y modo" },
+  "sandbox": { en: "sandbox", es: "sandbox" },
+  "production": { en: "production", es: "produccion" },
+  "not a Metrc host": { en: "not a Metrc host", es: "no es un host de Metrc" },
+  "Configured mode: {c}; resolved mode: {r}.": { en: "Configured mode: {c}; resolved mode: {r}.", es: "Modo configurado: {c}; modo resuelto: {r}." },
+  "Keys": { en: "Keys", es: "Claves" },
+  "key present": { en: "key present", es: "clave presente" },
+  "key absent": { en: "key absent", es: "clave ausente" },
+  "flags not checked": { en: "flags not checked", es: "banderas sin verificar" },
+  "flags: CanGrowPlants {g}, CanRecordProcessingJobs {p}, CanTrackVegetativePlants {v}": {
+    en: "flags: CanGrowPlants {g}, CanRecordProcessingJobs {p}, CanTrackVegetativePlants {v}",
+    es: "banderas: CanGrowPlants {g}, CanRecordProcessingJobs {p}, CanTrackVegetativePlants {v}",
+  },
+  "Month ceiling: {m}; remaining: {r}; next tick: {t} calls ({k} ticks left); Sweep now: {s} calls.": {
+    en: "Month ceiling: {m}; remaining: {r}; next tick: {t} calls ({k} ticks left); Sweep now: {s} calls.",
+    es: "Tope del mes: {m}; restante: {r}; proximo tick: {t} llamadas ({k} ticks restantes); Barrer ahora: {s} llamadas.",
+  },
+  "Per endpoint": { en: "Per endpoint", es: "Por endpoint" },
+  "Endpoint": { en: "Endpoint", es: "Endpoint" },
+  "Last run": { en: "Last run", es: "Ultima corrida" },
+  "Run kind": { en: "Run kind", es: "Tipo de corrida" },
+  "Rows read": { en: "Rows read", es: "Filas leidas" },
+  "Calls": { en: "Calls", es: "Llamadas" },
+  "Failures": { en: "Failures", es: "Fallas" },
+  "High-water mark": { en: "High-water mark", es: "Marca de agua" },
+  "Full pass": { en: "Full pass", es: "Pase completo" },
+  "Gone held": { en: "Gone held", es: "Idos retenidos" },
+  "Actions": { en: "Actions", es: "Acciones" },
+  "No endpoint runs yet.": { en: "No endpoint runs yet.", es: "Aun no hay corridas por endpoint." },
+  "incremental run": { en: "incremental run", es: "corrida incremental" },
+  "full pass": { en: "full pass", es: "pase completo" },
+  "tick": { en: "tick", es: "tick" },
+  "lab sweep": { en: "lab sweep", es: "barrido de laboratorio" },
+  "ok": { en: "ok", es: "ok" },
+  "refused": { en: "refused", es: "rechazado" },
+  "failed": { en: "failed", es: "fallido" },
+  "budget": { en: "budget", es: "presupuesto agotado" },
+  "retry after": { en: "retry after", es: "esperando el reintento" },
+  "window too wide": { en: "window too wide", es: "ventana demasiado amplia" },
+  "gone held": { en: "gone held", es: "idos retenidos" },
+  "ceiling": { en: "ceiling", es: "tope de paginas" },
+  "mode refused": { en: "mode refused", es: "modo rechazado" },
+  "host refused": { en: "host refused", es: "host rechazado" },
+  "rate limited": { en: "rate limited", es: "limite de llamadas" },
+  "needs full pass": { en: "needs full pass", es: "necesita un pase completo" },
+  "no run yet": { en: "no run yet", es: "aun sin corrida" },
+  "no mark yet": { en: "no mark yet", es: "aun sin marca" },
+  "no cursor yet": { en: "no cursor yet", es: "aun sin cursor" },
+  "no pass yet": { en: "no pass yet", es: "aun sin pase" },
+  "page {p} of {t}": { en: "page {p} of {t}", es: "pagina {p} de {t}" },
+  "completed {at}": { en: "completed {at}", es: "completado {at}" },
+  "due {at}": { en: "due {at}", es: "vence {at}" },
+  "The next complete pass will mark {n} rows gone.": { en: "The next complete pass will mark {n} rows gone.", es: "El proximo pase completo marcara {n} filas como idas." },
+  "Confirmed: the next complete pass marks gone without the guard.": {
+    en: "Confirmed: the next complete pass marks gone without the guard.",
+    es: "Confirmado: el proximo pase completo marca idos sin la guarda.",
+  },
+  "Confirm gone": { en: "Confirm gone", es: "Confirmar idos" },
+  "Reset cursor": { en: "Reset cursor", es: "Reiniciar cursor" },
+  "Sweep now": { en: "Sweep now", es: "Barrer ahora" },
+  "Parity": { en: "Parity", es: "Paridad" },
+  "Parity reads clean.": { en: "Parity reads clean.", es: "La paridad lee limpia." },
+  "Parity differs: {a} would add, {u} would update, {g} would be gone ({h} held), {s} samples.": {
+    en: "Parity differs: {a} would add, {u} would update, {g} would be gone ({h} held), {s} samples.",
+    es: "La paridad difiere: {a} por agregar, {u} por actualizar, {g} por marcar idos ({h} retenidos), {s} muestras.",
+  },
+  "No production dry run yet for this license.": { en: "No production dry run yet for this license.", es: "Aun no hay prueba en seco de produccion para esta licencia." },
+  "No production dry run yet.": { en: "No production dry run yet.", es: "Aun no hay prueba en seco de produccion." },
+  "{a} would add, {u} would update, {g} would be gone, held {h}": {
+    en: "{a} would add, {u} would update, {g} would be gone, held {h}",
+    es: "{a} por agregar, {u} por actualizar, {g} por marcar idos, retenido {h}",
+  },
+  "Column": { en: "Column", es: "Columna" },
+  "Mirror value": { en: "Mirror value", es: "Valor del espejo" },
+  "API value": { en: "API value", es: "Valor de la API" },
+  "crew move": { en: "crew move", es: "movimiento de cuadrilla" },
+  "Latest CSV mount": { en: "Latest CSV mount", es: "Ultimo montaje CSV" },
+  "No CSV mount yet.": { en: "No CSV mount yet.", es: "Aun no hay montaje CSV." },
+  "{h} hours ago": { en: "{h} hours ago", es: "hace {h} horas" },
+  "{d} days ago": { en: "{d} days ago", es: "hace {d} dias" },
+  "Last lab sweep": { en: "Last lab sweep", es: "Ultimo barrido de laboratorio" },
+  "Sweep now ran: {n} calls.": { en: "Sweep now ran: {n} calls.", es: "Barrer ahora corrio: {n} llamadas." },
+  "Sweep now made no call: a key is absent.": { en: "Sweep now made no call: a key is absent.", es: "Barrer ahora no hizo ninguna llamada: falta una clave." },
+  "Sweep now refused: the sweep mode is off.": { en: "Sweep now refused: the sweep mode is off.", es: "Barrer ahora rechazado: el modo de barrido esta apagado." },
+  "Sweep now names a license or endpoint this sweep does not read.": {
+    en: "Sweep now names a license or endpoint this sweep does not read.",
+    es: "Barrer ahora nombra una licencia o un endpoint que este barrido no lee.",
+  },
+  "Sweep now failed; the run row says why.": { en: "Sweep now failed; the run row says why.", es: "Barrer ahora fallo; la fila de la corrida dice por que." },
+  "Gone confirmed: the next complete pass marks without the guard, once.": {
+    en: "Gone confirmed: the next complete pass marks without the guard, once.",
+    es: "Idos confirmados: el proximo pase completo marca sin la guarda, una vez.",
+  },
+  "That cursor was not found on this host.": { en: "That cursor was not found on this host.", es: "Ese cursor no se encontro en este host." },
+  "Cursor reset: the next tick starts a fresh full pass.": { en: "Cursor reset: the next tick starts a fresh full pass.", es: "Cursor reiniciado: el proximo tick empieza un pase completo nuevo." },
+  "MA1, the METRC API read integration: the keys' presence, the host and mode, the month's calls, every scope's cursor and last run, Sweep now, and the parity pane that decides when dry_run may become write. Reads only; nothing here writes to Metrc and no key reaches this page.": {
+    en: "MA1, the METRC API read integration: the keys' presence, the host and mode, the month's calls, every scope's cursor and last run, Sweep now, and the parity pane that decides when dry_run may become write. Reads only; nothing here writes to Metrc and no key reaches this page.",
+    es: "MA1, la integracion de lectura de la API de METRC: la presencia de las claves, el host y el modo, las llamadas del mes, el cursor y la ultima corrida de cada alcance, Barrer ahora y el panel de paridad que decide cuando dry_run puede pasar a write. Solo lecturas; nada aqui escribe en Metrc y ninguna clave llega a esta pagina.",
+  },
+  "The METRC host this app calls (METRC_API_BASE in wrangler.toml) and its kind, sandbox or production. Keys go only to a Metrc host; a sandbox host runs dry runs only and sandbox data never enters the live mirror.": {
+    en: "The METRC host this app calls (METRC_API_BASE in wrangler.toml) and its kind, sandbox or production. Keys go only to a Metrc host; a sandbox host runs dry runs only and sandbox data never enters the live mirror.",
+    es: "El host de METRC que esta app llama (METRC_API_BASE en wrangler.toml) y su tipo, sandbox o produccion. Las claves van solo a un host de Metrc; un host de sandbox corre solo pruebas en seco y los datos del sandbox nunca entran al espejo en vivo.",
+  },
+  "The sweep mode as configured (metrc_sweep_mode: off, dry_run or write) and as the host law resolves it; when the two differ the refusal says why. write runs only on a production host and the code never promotes itself. The mode is changed only in Admin Lookups, never on this page. Admin\\Data Lookups\\People and System\\App config": {
+    en: "The sweep mode as configured (metrc_sweep_mode: off, dry_run or write) and as the host law resolves it; when the two differ the refusal says why. write runs only on a production host and the code never promotes itself. The mode is changed only in Admin Lookups, never on this page. Admin\\Data Lookups\\People and System\\App config",
+    es: "El modo de barrido como esta configurado (metrc_sweep_mode: off, dry_run o write) y como lo resuelve la ley del host; cuando difieren, el rechazo dice por que. write corre solo en un host de produccion y el codigo nunca se promueve a si mismo. El modo se cambia solo en Admin Lookups, nunca en esta pagina. Admin\\Data Lookups\\People and System\\App config",
+  },
+  "Whether each wrangler secret is set, presence only; the value never reaches a page. The one user key covers every license (A4), so each license reads key present or key absent, with the reach of the last Test connection and the FacilityType flags Metrc reports. Admin\\Data Lookups\\Logistics\\Licenses": {
+    en: "Whether each wrangler secret is set, presence only; the value never reaches a page. The one user key covers every license (A4), so each license reads key present or key absent, with the reach of the last Test connection and the FacilityType flags Metrc reports. Admin\\Data Lookups\\Logistics\\Licenses",
+    es: "Si cada secreto de wrangler esta definido, solo presencia; el valor nunca llega a una pagina. La unica clave de usuario cubre todas las licencias (A4), asi que cada licencia lee clave presente o clave ausente, con el alcance de la ultima prueba de conexion y las banderas FacilityType que Metrc reporta. Admin\\Data Lookups\\Logistics\\Licenses",
+  },
+  "The FacilityType flags from the last Test connection (CanGrowPlants, CanRecordProcessingJobs, CanTrackVegetativePlants): a license that cannot grow plants is swept for packages only. Admin\\Data Lookups\\Logistics\\Licenses": {
+    en: "The FacilityType flags from the last Test connection (CanGrowPlants, CanRecordProcessingJobs, CanTrackVegetativePlants): a license that cannot grow plants is swept for packages only. Admin\\Data Lookups\\Logistics\\Licenses",
+    es: "Las banderas FacilityType de la ultima prueba de conexion (CanGrowPlants, CanRecordProcessingJobs, CanTrackVegetativePlants): una licencia que no puede cultivar plantas se barre solo para paquetes. Admin\\Data Lookups\\Logistics\\Licenses",
+  },
+  "One GET /facilities/v2 with the keys: Connected with the count, refused, failed or absent. It refreshes each license's reach and FacilityType flags for this host.": {
+    en: "One GET /facilities/v2 with the keys: Connected with the count, refused, failed or absent. It refreshes each license's reach and FacilityType flags for this host.",
+    es: "Un GET /facilities/v2 con las claves: Conectado con el conteo, rechazado, fallido o ausente. Refresca el alcance y las banderas FacilityType de cada licencia para este host.",
+  },
+  "METRC calls this UTC month on this host, the lab sweep's included, against the month ceiling (metrc_month_calls, a pace and never a stop), what the pace leaves the next tick (never above metrc_tick_calls) and the calls one Sweep now may spend (metrc_sweep_now_calls). Admin\\Data Lookups\\People and System\\App config": {
+    en: "METRC calls this UTC month on this host, the lab sweep's included, against the month ceiling (metrc_month_calls, a pace and never a stop), what the pace leaves the next tick (never above metrc_tick_calls) and the calls one Sweep now may spend (metrc_sweep_now_calls). Admin\\Data Lookups\\People and System\\App config",
+    es: "Llamadas a METRC este mes UTC en este host, las del barrido de laboratorio incluidas, frente al tope del mes (metrc_month_calls, un ritmo y nunca un freno), lo que el ritmo deja al proximo tick (nunca por encima de metrc_tick_calls) y las llamadas que un Barrer ahora puede gastar (metrc_sweep_now_calls). Admin\\Data Lookups\\People and System\\App config",
+  },
+  "One row per license and endpoint the mirror sweep reads, plus the lab sweep: the last run (Eastern), its kind, rows read, calls, failures, the status word, the cursor's high-water mark and full-pass progress, and the gone hold. Cadences and budgets are app_config keys. Admin\\Data Lookups\\People and System\\App config": {
+    en: "One row per license and endpoint the mirror sweep reads, plus the lab sweep: the last run (Eastern), its kind, rows read, calls, failures, the status word, the cursor's high-water mark and full-pass progress, and the gone hold. Cadences and budgets are app_config keys. Admin\\Data Lookups\\People and System\\App config",
+    es: "Una fila por licencia y endpoint que lee el barrido del espejo, mas el barrido de laboratorio: la ultima corrida (hora del Este), su tipo, filas leidas, llamadas, fallas, la palabra de estado, la marca de agua del cursor y el avance del pase completo, y la retencion de idos. Las cadencias y los presupuestos son claves de app_config. Admin\\Data Lookups\\People and System\\App config",
+  },
+  "The status of this scope's last run. ok: read whole. budget: the tick's budget ran out and the cursor was saved where it stands. refused: Metrc refused the license. retry_after: Metrc asked for a wait. window_too_wide: the window is being halved. gone_held: the gone marks wait for Confirm gone. short: a page came back with 0 rows before TotalPages, so the scope re-reads that page every tick until Metrc answers rows or a person resets the cursor. ceiling: the page ceiling was reached, the pass is dropped and is due again at its cadence. mode_refused: write was asked on a host that is not production. skipped: nothing was read.": {
+    en: "The status of this scope's last run. ok: read whole. budget: the tick's budget ran out and the cursor was saved where it stands. refused: Metrc refused the license. retry_after: Metrc asked for a wait. window_too_wide: the window is being halved. gone_held: the gone marks wait for Confirm gone. short: a page came back with 0 rows before TotalPages, so the scope re-reads that page every tick until Metrc answers rows or a person resets the cursor. ceiling: the page ceiling was reached, the pass is dropped and is due again at its cadence. mode_refused: write was asked on a host that is not production. skipped: nothing was read.",
+    es: "El estado de la ultima corrida de este alcance. ok: leido completo. budget: el presupuesto del tick se agoto y el cursor se guardo donde esta. refused: Metrc rechazo la licencia. retry_after: Metrc pidio una espera. window_too_wide: la ventana se esta partiendo a la mitad. gone_held: las marcas de idos esperan Confirmar idos. short: una pagina volvio con 0 filas antes de TotalPages, asi que el alcance vuelve a leer esa pagina en cada tick hasta que Metrc responda filas o una persona reinicie el cursor. ceiling: se alcanzo el tope de paginas, el pase se descarta y vence de nuevo en su cadencia. mode_refused: se pidio write en un host que no es de produccion. skipped: no se leyo nada.",
+  },
+  "The cursor of this scope in the resolved mode (each mode keeps its own, A26): the lastModified high-water mark the incrementals read from, and the full pass in progress (its page of its total pages), when the last pass completed and when the next is due by its cadence (metrc_full_packages_hours, metrc_full_harvests_hours, metrc_full_plants_hours). Admin\\Data Lookups\\People and System\\App config": {
+    en: "The cursor of this scope in the resolved mode (each mode keeps its own, A26): the lastModified high-water mark the incrementals read from, and the full pass in progress (its page of its total pages), when the last pass completed and when the next is due by its cadence (metrc_full_packages_hours, metrc_full_harvests_hours, metrc_full_plants_hours). Admin\\Data Lookups\\People and System\\App config",
+    es: "El cursor de este alcance en el modo resuelto (cada modo guarda el suyo, A26): la marca de agua lastModified desde la que leen los incrementales, y el pase completo en curso (su pagina de sus paginas totales), cuando termino el ultimo pase y cuando vence el proximo por su cadencia (metrc_full_packages_hours, metrc_full_harvests_hours, metrc_full_plants_hours). Admin\\Data Lookups\\People and System\\App config",
+  },
+  "The mass-gone guard (A29) held this scope's gone marks: the pass read too few rows against the live rows, or would mark more than metrc_gone_hold_share of them. Confirm gone lets the next complete pass mark them once. Admin\\Data Lookups\\People and System\\App config": {
+    en: "The mass-gone guard (A29) held this scope's gone marks: the pass read too few rows against the live rows, or would mark more than metrc_gone_hold_share of them. Confirm gone lets the next complete pass mark them once. Admin\\Data Lookups\\People and System\\App config",
+    es: "La guarda de idos masivos (A29) retuvo las marcas de idos de este alcance: el pase leyo muy pocas filas frente a las filas vivas, o marcaria mas de metrc_gone_hold_share de ellas. Confirmar idos deja que el proximo pase completo las marque una vez. Admin\\Data Lookups\\People and System\\App config",
+  },
+  "Sets gone_override on this cursor: the next complete full pass marks its would-gone rows gone without the mass-gone guard (A29), once, then the override resets. Nothing is marked until that pass completes; in dry_run nothing is marked at all.": {
+    en: "Sets gone_override on this cursor: the next complete full pass marks its would-gone rows gone without the mass-gone guard (A29), once, then the override resets. Nothing is marked until that pass completes; in dry_run nothing is marked at all.",
+    es: "Pone gone_override en este cursor: el proximo pase completo marca como idas sus filas por marcar sin la guarda de idos masivos (A29), una vez, y luego la anulacion se reinicia. Nada se marca hasta que ese pase termine; en dry_run no se marca nada.",
+  },
+  "Soft-deletes this cursor and its pass pages with a logged reason, so the next tick starts a fresh full pass for the scope: the remedy for a scope stuck on short or ceiling. The run log stays.": {
+    en: "Soft-deletes this cursor and its pass pages with a logged reason, so the next tick starts a fresh full pass for the scope: the remedy for a scope stuck on short or ceiling. The run log stays.",
+    es: "Borra en suave este cursor y sus paginas de pase con una razon registrada, para que el proximo tick empiece un pase completo nuevo para el alcance: el remedio para un alcance atascado en short o ceiling. El registro de corridas se queda.",
+  },
+  "Runs one license and endpoint of the mirror sweep now, inline, in the resolved mode, within metrc_sweep_now_calls (A20) and the month pace; refused in plain words, with no call, when a key is absent, the host is not a Metrc host, or the mode is off. Admin\\Data Lookups\\People and System\\App config": {
+    en: "Runs one license and endpoint of the mirror sweep now, inline, in the resolved mode, within metrc_sweep_now_calls (A20) and the month pace; refused in plain words, with no call, when a key is absent, the host is not a Metrc host, or the mode is off. Admin\\Data Lookups\\People and System\\App config",
+    es: "Corre ahora una licencia y un endpoint del barrido del espejo, en linea, en el modo resuelto, dentro de metrc_sweep_now_calls (A20) y del ritmo del mes; se rechaza en palabras claras, sin llamada, cuando falta una clave, el host no es un host de Metrc, o el modo esta apagado. Admin\\Data Lookups\\People and System\\App config",
+  },
+  "Per license, the latest dry-run runs on the production host only (sandbox runs are never parity evidence): would-add, would-update, would-gone and the gone hold, the sample differences (tag, column, mirror value, API value; a location difference is a crew move when the tag changed after its mount), next to the age of the latest CSV mount per kind. Parity reads clean only when every count is 0 and no sample differs. Moving dry_run to write is the owner's word after reading this pane.": {
+    en: "Per license, the latest dry-run runs on the production host only (sandbox runs are never parity evidence): would-add, would-update, would-gone and the gone hold, the sample differences (tag, column, mirror value, API value; a location difference is a crew move when the tag changed after its mount), next to the age of the latest CSV mount per kind. Parity reads clean only when every count is 0 and no sample differs. Moving dry_run to write is the owner's word after reading this pane.",
+    es: "Por licencia, las ultimas corridas en seco solo en el host de produccion (las corridas del sandbox nunca son evidencia de paridad): por agregar, por actualizar, por marcar idos y la retencion de idos, las muestras de diferencias (etiqueta, columna, valor del espejo, valor de la API; una diferencia de ubicacion es un movimiento de cuadrilla cuando la etiqueta cambio despues de su montaje), junto a la edad del ultimo montaje CSV por tipo. La paridad lee limpia solo cuando cada conteo es 0 y ninguna muestra difiere. Pasar de dry_run a write es palabra del dueno despues de leer este panel.",
+  },
+  "The newest file (CSV) mount of this license per kind and phase, and its age: parity compares the API against the mirror the drops last wrote.": {
+    en: "The newest file (CSV) mount of this license per kind and phase, and its age: parity compares the API against the mirror the drops last wrote.",
+    es: "El montaje de archivo (CSV) mas nuevo de esta licencia por tipo y fase, y su edad: la paridad compara la API contra el espejo que las cargas escribieron por ultima vez.",
+  },
+  "The hourly lab sweep (15 past the hour): lab samples and active packages of the last hour plus five minutes, filling only blank desk columns; preserved by Law 5. Its words are stored in English and shown in the page's language.": {
+    en: "The hourly lab sweep (15 past the hour): lab samples and active packages of the last hour plus five minutes, filling only blank desk columns; preserved by Law 5. Its words are stored in English and shown in the page's language.",
+    es: "El barrido de laboratorio de cada hora (a los 15): muestras de laboratorio y paquetes activos de la ultima hora mas cinco minutos, llenando solo columnas vacias del escritorio; preservado por la Ley 5. Sus palabras se guardan en ingles y se muestran en el idioma de la pagina.",
+  },
+  "The write switch of the testing POST (METRC_WRITE_ENABLED), off: nothing in this app POSTs to Metrc outside the evaluation runner's sandbox door.": {
+    en: "The write switch of the testing POST (METRC_WRITE_ENABLED), off: nothing in this app POSTs to Metrc outside the evaluation runner's sandbox door.",
+    es: "El interruptor de escritura del POST de pruebas (METRC_WRITE_ENABLED), apagado: nada en esta app hace POST a Metrc fuera de la puerta de sandbox del ejecutor de la evaluacion.",
+  },
+  "The outcome of the last button: Test connection, Sweep now, Confirm gone or Reset cursor.": {
+    en: "The outcome of the last button: Test connection, Sweep now, Confirm gone or Reset cursor.",
+    es: "El resultado del ultimo boton: Probar conexion, Barrer ahora, Confirmar idos o Reiniciar cursor.",
+  },
+  // MA1 Phase D: the pager's and the sweep's stored sentences, shown through storedWords.
+  "This scope needs a complete full pass before any incremental read.": {
+    en: "This scope needs a complete full pass before any incremental read.",
+    es: "Este alcance necesita un pase completo antes de cualquier lectura incremental.",
+  },
+  "The page ceiling was reached inside a window that cannot be halved further, so the high-water mark did not move.": {
+    en: "The page ceiling was reached inside a window that cannot be halved further, so the high-water mark did not move.",
+    es: "Se alcanzo el tope de paginas dentro de una ventana que ya no se puede partir, asi que la marca de agua no se movio.",
+  },
+  "The page ceiling was reached inside a full pass, so the pass is incomplete, marks nothing gone, and starts again at its cadence.": {
+    en: "The page ceiling was reached inside a full pass, so the pass is incomplete, marks nothing gone, and starts again at its cadence.",
+    es: "Se alcanzo el tope de paginas dentro de un pase completo, asi que el pase queda incompleto, no marca nada como ido y empieza de nuevo en su cadencia.",
+  },
+  "A page came back short while TotalPages named more pages, so the pass is incomplete, marks nothing gone, and starts again at its cadence.": {
+    en: "A page came back short while TotalPages named more pages, so the pass is incomplete, marks nothing gone, and starts again at its cadence.",
+    es: "Una pagina volvio corta mientras TotalPages nombraba mas paginas, asi que el pase queda incompleto, no marca nada como ido y empieza de nuevo en su cadencia.",
+  },
+  "A page came back with 0 rows while TotalPages named more pages, so the window is not read whole: the high-water mark stays and that page is read again next tick.": {
+    en: "A page came back with 0 rows while TotalPages named more pages, so the window is not read whole: the high-water mark stays and that page is read again next tick.",
+    es: "Una pagina volvio con 0 filas mientras TotalPages nombraba mas paginas, asi que la ventana no se leyo completa: la marca de agua se queda y esa pagina se lee de nuevo en el proximo tick.",
+  },
+  "The scope's host is not the METRC host.": { en: "The scope's host is not the METRC host.", es: "El host del alcance no es el host de METRC." },
+  "Write mode is refused on a host that is not a production host: sandbox data never enters the live mirror.": {
+    en: "Write mode is refused on a host that is not a production host: sandbox data never enters the live mirror.",
+    es: "El modo write se rechaza en un host que no es de produccion: los datos del sandbox nunca entran al espejo en vivo.",
+  },
+  "Metrc refused this license.": { en: "Metrc refused this license.", es: "Metrc rechazo esta licencia." },
+  "Metrc answered 429 twice, so this scope stops for the tick.": { en: "Metrc answered 429 twice, so this scope stops for the tick.", es: "Metrc respondio 429 dos veces, asi que este alcance se detiene por este tick." },
+  "Metrc asked for a wait above the cap, so this scope stops for the tick.": {
+    en: "Metrc asked for a wait above the cap, so this scope stops for the tick.",
+    es: "Metrc pidio una espera por encima del tope, asi que este alcance se detiene por este tick.",
+  },
+  "The tick's budget ran out (calls), so the cursor was saved where it stands.": {
+    en: "The tick's budget ran out (calls), so the cursor was saved where it stands.",
+    es: "El presupuesto del tick se agoto (llamadas), asi que el cursor se guardo donde esta.",
+  },
+  "The tick's budget ran out (license_calls), so the cursor was saved where it stands.": {
+    en: "The tick's budget ran out (license_calls), so the cursor was saved where it stands.",
+    es: "El presupuesto del tick se agoto (llamadas de la licencia), asi que el cursor se guardo donde esta.",
+  },
+  "The tick's budget ran out (rows), so the cursor was saved where it stands.": {
+    en: "The tick's budget ran out (rows), so the cursor was saved where it stands.",
+    es: "El presupuesto del tick se agoto (filas), asi que el cursor se guardo donde esta.",
+  },
+  "The tick's budget ran out (d1), so the cursor was saved where it stands.": {
+    en: "The tick's budget ran out (d1), so the cursor was saved where it stands.",
+    es: "El presupuesto del tick se agoto (consultas D1), asi que el cursor se guardo donde esta.",
+  },
+  "The tick's budget ran out (wall), so the cursor was saved where it stands.": {
+    en: "The tick's budget ran out (wall), so the cursor was saved where it stands.",
+    es: "El presupuesto del tick se agoto (tiempo), asi que el cursor se guardo donde esta.",
+  },
+  "The tick's budget ran out (calls) inside the onhold list.": { en: "The tick's budget ran out (calls) inside the onhold list.", es: "El presupuesto del tick se agoto (llamadas) dentro de la lista onhold." },
+  "The tick's budget ran out (license_calls) inside the onhold list.": {
+    en: "The tick's budget ran out (license_calls) inside the onhold list.",
+    es: "El presupuesto del tick se agoto (llamadas de la licencia) dentro de la lista onhold.",
+  },
+  "The tick's budget ran out (rows) inside the onhold list.": { en: "The tick's budget ran out (rows) inside the onhold list.", es: "El presupuesto del tick se agoto (filas) dentro de la lista onhold." },
+  "The tick's budget ran out (d1) inside the onhold list.": { en: "The tick's budget ran out (d1) inside the onhold list.", es: "El presupuesto del tick se agoto (consultas D1) dentro de la lista onhold." },
+  "The tick's budget ran out (wall) inside the onhold list.": { en: "The tick's budget ran out (wall) inside the onhold list.", es: "El presupuesto del tick se agoto (tiempo) dentro de la lista onhold." },
+  "Metrc answered without a page.": { en: "Metrc answered without a page.", es: "Metrc respondio sin una pagina." },
+  "The page reader failed.": { en: "The page reader failed.", es: "El lector de paginas fallo." },
+  "The METRC cursor could not be read.": { en: "The METRC cursor could not be read.", es: "El cursor de METRC no se pudo leer." },
+  "The sweep mode is off.": { en: "The sweep mode is off.", es: "El modo de barrido esta apagado." },
+  "Plants and harvests wait for Test connection: metrc_facilities has no row for this license on this host.": {
+    en: "Plants and harvests wait for Test connection: metrc_facilities has no row for this license on this host.",
+    es: "Plantas y cosechas esperan la prueba de conexion: metrc_facilities no tiene fila para esta licencia en este host.",
+  },
+  "The gone marks were held (A29): the pass read too few rows against the live rows.": {
+    en: "The gone marks were held (A29): the pass read too few rows against the live rows.",
+    es: "Las marcas de idos se retuvieron (A29): el pase leyo muy pocas filas frente a las filas vivas.",
+  },
+  "Confirm on the Admin page to mark them.": { en: "Confirm on the Admin page to mark them.", es: "Confirme en la pagina de Admin para marcarlas." },
+  "The onhold list could not be read whole, so the pass stays open and marks nothing gone.": {
+    en: "The onhold list could not be read whole, so the pass stays open and marks nothing gone.",
+    es: "La lista onhold no se pudo leer completa, asi que el pase sigue abierto y no marca nada como ido.",
+  },
+  "The onhold list reached the page ceiling.": { en: "The onhold list reached the page ceiling.", es: "La lista onhold alcanzo el tope de paginas." },
+  "The mirror sweep failed.": { en: "The mirror sweep failed.", es: "El barrido del espejo fallo." },
+  // MA1 Phase D fix pass: the page's own key help, the license choice's lookup path, the hold refusal, the counted sentences, the mount words.
+  "Whether this wrangler secret is set, presence only; the value never reaches a page. With a key absent, Test connection and Sweep now make no call.": {
+    en: "Whether this wrangler secret is set, presence only; the value never reaches a page. With a key absent, Test connection and Sweep now make no call.",
+    es: "Si este secreto de wrangler esta definido, solo presencia; el valor nunca llega a una pagina. Con una clave ausente, Probar conexion y Barrer ahora no hacen ninguna llamada.",
+  },
+  "The license to sweep now, from the license lookup; a license the key does not reach, or an endpoint the license is not swept for, is refused by the sweep. Admin\\Data Lookups\\Logistics\\Licenses": {
+    en: "The license to sweep now, from the license lookup; a license the key does not reach, or an endpoint the license is not swept for, is refused by the sweep. Admin\\Data Lookups\\Logistics\\Licenses",
+    es: "La licencia a barrer ahora, del catalogo de licencias; una licencia que la clave no alcanza, o un endpoint para el que la licencia no se barre, la rechaza el barrido. Admin\\Data Lookups\\Logistics\\Licenses",
+  },
+  "Nothing is held for that cursor now; read the page again.": { en: "Nothing is held for that cursor now; read the page again.", es: "Nada esta retenido para ese cursor ahora; vuelva a leer la pagina." },
+  "{n} rows named another GrowthPhase than the list's.": { en: "{n} rows named another GrowthPhase than the list's.", es: "{n} filas nombraron otra GrowthPhase que la de la lista." },
+  "{n} inactive harvests outside the {d}-day scope were not written.": {
+    en: "{n} inactive harvests outside the {d}-day scope were not written.",
+    es: "{n} cosechas inactivas fuera del alcance de {d} dias no se escribieron.",
+  },
+  "Metrc answered {s}.": { en: "Metrc answered {s}.", es: "Metrc respondio {s}." },
+  "harvests": { en: "harvests", es: "cosechas" },
+  "vegetative": { en: "vegetative", es: "vegetativo" },
+  "flowering": { en: "flowering", es: "floracion" },
+  // MA1 Phase D end.
+  // MA1 Phase E1, Law 8 (THE EVALUATION RUNNER): the sandbox-only Admin page and its title help.
+  "Metrc evaluation": { en: "Metrc evaluation", es: "Evaluacion de Metrc" },
+  "The evaluation runner works on a sandbox host only.": {
+    en: "The evaluation runner works on a sandbox host only.",
+    es: "El ejecutor de la evaluacion funciona solo en un host de sandbox.",
+  },
+  "Runner: active on this sandbox host.": { en: "Runner: active on this sandbox host.", es: "Ejecutor: activo en este host de sandbox." },
+  "Budget: {calls} calls per run; window: {days} days; page size: {size}.": {
+    en: "Budget: {calls} calls per run; window: {days} days; page size: {size}.",
+    es: "Presupuesto: {calls} llamadas por corrida; ventana: {days} dias; tamano de pagina: {size}.",
+  },
+  "Facilities from the last run": { en: "Facilities from the last run", es: "Instalaciones de la ultima corrida" },
+  "No run yet, so no facilities are known.": {
+    en: "No run yet, so no facilities are known.",
+    es: "Aun no hay corrida, asi que no se conocen instalaciones.",
+  },
+  "Run E1 now": { en: "Run E1 now", es: "Correr E1 ahora" },
+  "The keys are absent, so no call is made.": {
+    en: "The keys are absent, so no call is made.",
+    es: "Las claves estan ausentes, asi que no se hace ninguna llamada.",
+  },
+  "Runs": { en: "Runs", es: "Corridas" },
+  "{started}: {status}, {calls} calls, {bytes} bytes": {
+    en: "{started}: {status}, {calls} calls, {bytes} bytes",
+    es: "{started}: {status}, {calls} llamadas, {bytes} bytes",
+  },
+  "What E1 covers: 12 GET steps across the applicable tabs (Locations Step 3, Strains Step 3, Items Step 3, GET Transfers and Wholesale Steps 1 to 6, Transfer Templates Steps 2 and 3, Transfer External Incoming Step 2). A by-id step runs only when the sandbox already holds a record; the other steps read E2 not enabled.": {
+    en: "What E1 covers: 12 GET steps across the applicable tabs (Locations Step 3, Strains Step 3, Items Step 3, GET Transfers and Wholesale Steps 1 to 6, Transfer Templates Steps 2 and 3, Transfer External Incoming Step 2). A by-id step runs only when the sandbox already holds a record; the other steps read E2 not enabled.",
+    es: "Lo que cubre E1: 12 pasos GET en las pestanas aplicables (Locations paso 3, Strains paso 3, Items paso 3, GET Transfers and Wholesale pasos 1 a 6, Transfer Templates pasos 2 y 3, Transfer External Incoming paso 2). Un paso por id corre solo cuando el sandbox ya tiene un registro; los demas pasos leen E2 not enabled.",
+  },
+  "Whether the runner may call Metrc at all. It is active only when METRC_API_BASE in wrangler.toml names a sandbox host; on a production host nothing is sent and no form is shown.": {
+    en: "Whether the runner may call Metrc at all. It is active only when METRC_API_BASE in wrangler.toml names a sandbox host; on a production host nothing is sent and no form is shown.",
+    es: "Si el ejecutor puede llamar a Metrc. Esta activo solo cuando METRC_API_BASE en wrangler.toml nombra un host de sandbox; en un host de produccion no se envia nada y no se muestra el formulario.",
+  },
+  "Whether this wrangler secret is set, presence only; the value never reaches a page. With a key absent the run button makes no call.": {
+    en: "Whether this wrangler secret is set, presence only; the value never reaches a page. With a key absent the run button makes no call.",
+    es: "Si este secreto de wrangler esta definido, solo presencia; el valor nunca llega a una pagina. Con una clave ausente el boton de correr no hace ninguna llamada.",
+  },
+  "The run budget (metrc_eval_max_calls), the lastModified window in days for the transfer and template searches (metrc_eval_window_days) and the page size (metrc_page_size). Admin\\Data Lookups\\People and System\\App config": {
+    en: "The run budget (metrc_eval_max_calls), the lastModified window in days for the transfer and template searches (metrc_eval_window_days) and the page size (metrc_page_size). Admin\\Data Lookups\\People and System\\App config",
+    es: "El presupuesto de la corrida (metrc_eval_max_calls), la ventana lastModified en dias para las busquedas de transferencias y plantillas (metrc_eval_window_days) y el tamano de pagina (metrc_page_size). Admin\\Data Lookups\\People and System\\App config",
+  },
+  "The facilities GET /facilities/v2 returned on the last run, with the two flags that choose the tabs: CanGrowPlants runs the Grow tabs and CanRecordProcessingJobs the Processor tabs (Q15: confirm the list). A facility with neither is listed and not run.": {
+    en: "The facilities GET /facilities/v2 returned on the last run, with the two flags that choose the tabs: CanGrowPlants runs the Grow tabs and CanRecordProcessingJobs the Processor tabs (Q15: confirm the list). A facility with neither is listed and not run.",
+    es: "Las instalaciones que GET /facilities/v2 devolvio en la ultima corrida, con las dos banderas que eligen las pestanas: CanGrowPlants corre las pestanas de Grow y CanRecordProcessingJobs las de Processor (Q15: confirmar la lista). Una instalacion sin ninguna se lista y no se corre.",
+  },
+  "Runs Phase E1 now: GET /facilities/v2, the supporting reads, then the workbook's GET steps per facility, within the run budget. Nothing is written to Metrc.": {
+    en: "Runs Phase E1 now: GET /facilities/v2, the supporting reads, then the workbook's GET steps per facility, within the run budget. Nothing is written to Metrc.",
+    es: "Corre la Fase E1 ahora: GET /facilities/v2, las lecturas de apoyo y luego los pasos GET del libro por instalacion, dentro del presupuesto de la corrida. No se escribe nada en Metrc.",
+  },
+  "Each run with its pack: the JSON of everything, and one CSV per facility and tab shaped to paste one row at its workbook anchor.": {
+    en: "Each run with its pack: the JSON of everything, and one CSV per facility and tab shaped to paste one row at its workbook anchor.",
+    es: "Cada corrida con su paquete: el JSON de todo y un CSV por instalacion y pestana, listo para pegar una fila en su ancla del libro.",
+  },
+  "What Phase E1 covers, from the derived step list (eval_steps section 4). Write steps read E2 not enabled until the owner's word.": {
+    en: "What Phase E1 covers, from the derived step list (eval_steps section 4). Write steps read E2 not enabled until the owner's word.",
+    es: "Lo que cubre la Fase E1, segun la lista de pasos derivada (eval_steps seccion 4). Los pasos de escritura leen E2 not enabled hasta la palabra del dueno.",
+  },
+  "Grow": { en: "Grow", es: "Grow" },
+  "Processor": { en: "Processor", es: "Processor" },
+  "Grow and Processor": { en: "Grow and Processor", es: "Grow y Processor" },
+  "neither, not run": { en: "neither, not run", es: "ninguna, no se corre" },
+  "The run finished: every GET step answered.": {
+    en: "The run finished: every GET step answered.",
+    es: "La corrida termino: todos los pasos GET respondieron.",
+  },
+  "The run finished with steps that could not run; the pack says why.": {
+    en: "The run finished with steps that could not run; the pack says why.",
+    es: "La corrida termino con pasos que no pudieron correr; el paquete dice por que.",
+  },
+  "The outcome of the last Run E1 now: ok, partial (the pack says which steps could not run), refused (Metrc refused the keys at GET /facilities/v2), failed, absent (a key is not set) or host (not a sandbox host).": {
+    en: "The outcome of the last Run E1 now: ok, partial (the pack says which steps could not run), refused (Metrc refused the keys at GET /facilities/v2), failed, absent (a key is not set) or host (not a sandbox host).",
+    es: "El resultado del ultimo Correr E1 ahora: ok, partial (el paquete dice que pasos no pudieron correr), refused (Metrc rechazo las claves en GET /facilities/v2), failed, absent (una clave no esta definida) o host (no es un host de sandbox).",
+  },
+  "The JSON of this run: meta, the facility keep-list, P0, the probe summaries and every step row with its minified response, scrubbed of every key and Authorization text and capped at 1.5 MB.": {
+    en: "The JSON of this run: meta, the facility keep-list, P0, the probe summaries and every step row with its minified response, scrubbed of every key and Authorization text and capped at 1.5 MB.",
+    es: "El JSON de esta corrida: meta, la lista de instalaciones, P0, los resumenes de las lecturas de apoyo y cada fila de paso con su respuesta minificada, limpia de toda clave y de todo texto Authorization y limitada a 1.5 MB.",
+  },
+  "One CSV for this facility and tab: one row per workbook step, to paste one at a time at its Paste at cell; the Step, Paste at, Runner status and Runner note columns are the runner's and are not pasted.": {
+    en: "One CSV for this facility and tab: one row per workbook step, to paste one at a time at its Paste at cell; the Step, Paste at, Runner status and Runner note columns are the runner's and are not pasted.",
+    es: "Un CSV para esta instalacion y pestana: una fila por paso del libro, para pegar de una en una en su celda Paste at; las columnas Step, Paste at, Runner status y Runner note son del ejecutor y no se pegan.",
+  },
   "Testing Override": { en: "Testing Override", es: "Anulacion de pruebas" },
   "Drop the In Testing workbook (.xlsb) here, or pick it": {
     en: "Drop the In Testing workbook (.xlsb) here, or pick it",
@@ -3800,7 +4209,9 @@ for (const [kind, article] of FORMULA_SAVE_KINDS) {
 
 /** Look a display string up by its English key; unknown keys render as-is. */
 export function t(locale: Locale, key: string): string {
-  const entry = DICT[key];
+  // Own keys only: a stored word or a code from a query string that names a
+  // prototype property ("constructor") reads as itself, never the function.
+  const entry = Object.prototype.hasOwnProperty.call(DICT, key) ? DICT[key] : undefined;
   if (!entry) return key;
   return entry[locale] ?? entry.en;
 }

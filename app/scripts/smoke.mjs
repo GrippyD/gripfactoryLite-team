@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -404,6 +405,22 @@ function localD1(sql) {
   }
 }
 
+/** The first local D1 write after a wrangler dev was killed: Windows releases the
+    killed process's handles on the SQLite file and its WAL a moment later, and until
+    then node:sqlite answers a disk I/O error. Retry for a bounded while, then throw. */
+async function localD1WhenFree(sql, ms = 20000) {
+  const until = Date.now() + ms;
+  for (;;) {
+    try {
+      localD1(sql);
+      return;
+    } catch (err) {
+      if (Date.now() >= until || !(err && err.code === "ERR_SQLITE_ERROR")) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
+
 function localD1All(sql) {
   const db = smokeDb();
   try {
@@ -435,53 +452,133 @@ function runCmd(command) {
   });
 }
 
+/** MA1 brief section 6 and A32: a tiny Metrc stub in the smoke process, on a
+ * free port of its own. It answers the paths Test connection, the evaluation
+ * runner (P0, the probes, the GET steps) and one mirror sweep tick use from
+ * the docs example JSON under test/fixtures/metrc/ (a path's segments joined
+ * by underscores, a numeric segment read as "id"); an unknown path (the onhold
+ * lists) answers an empty page. The first GET /facilities/v2 answers 429 with
+ * Retry-After: 1, once. A request without the fake keys' Basic header answers
+ * 401, so the walk proves the keys reach the stub and only the stub. Nothing
+ * here reaches metrc.com. */
+function startMetrcStub() {
+  const fixtures = join(appRoot, "test", "fixtures", "metrc");
+  const token = Buffer.from("fake-vendor-key:fake-user-key").toString("base64");
+  const facilitiesBody = readFileSync(join(fixtures, "GET_facilities_v2.json"), "utf8");
+  const facilityList = JSON.parse(facilitiesBody);
+  const hits = [];
+  let rateLimited = false;
+  const fixtureFor = (pathname) => {
+    const parts = pathname
+      .split("/")
+      .filter(Boolean)
+      .map((part) => (/^[0-9]+$/.test(part) ? "id" : part));
+    const full = join(fixtures, `GET_${parts.join("_")}.json`);
+    return existsSync(full) ? readFileSync(full, "utf8") : null;
+  };
+  const server = createServer((request, response) => {
+    const url = new URL(request.url || "/", "http://127.0.0.1");
+    hits.push(url.pathname);
+    const send = (status, body, headers = {}) => {
+      response.writeHead(status, { "content-type": "application/json", ...headers });
+      response.end(body);
+    };
+    if (request.headers.authorization !== `Basic ${token}`) return send(401, JSON.stringify({ Message: "the stub saw no fake key" }));
+    if (url.pathname === "/facilities/v2" && !rateLimited) {
+      rateLimited = true;
+      return send(429, "{}", { "retry-after": "1" });
+    }
+    const body = fixtureFor(url.pathname);
+    if (body) return send(200, body);
+    return send(200, JSON.stringify({ Data: [], Page: Number(url.searchParams.get("pageNumber") || 1), TotalPages: 1, TotalRecords: 0 }));
+  });
+  return new Promise((resolve, reject) => {
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      resolve({
+        server,
+        port: server.address().port,
+        hits,
+        token,
+        facilities: facilityList.length,
+        distinctFacilities: new Set(facilityList.map((f) => String(f.License.Number).trim().toUpperCase())).size,
+      });
+    });
+  });
+}
+
+/** The smoke's port must be free before a second wrangler dev takes it. */
+async function waitForPortFree(ms = 20000) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    try {
+      await fetch(base + "/", { redirect: "manual" });
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("the smoke port did not free after wrangler stopped");
+}
+
 function startWrangler() {
   if (existsSync(persist)) rmSync(persist, { recursive: true, force: true });
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 95 migration(s)")) {
-      throw new Error(`from-zero apply must say 95 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 98 migration(s)")) {
+      throw new Error(`from-zero apply must say 98 migrations\n${String(applyOut).slice(-2000)}`);
     }
-    return new Promise((resolve, reject) => {
-      const child = spawn(
-        // THE SHEET SYNC (canon 0.30.162): the cron is walked through /__scheduled, and the
-        // default env reads the smoke's own fixture workbook, never the owner's file.
-        `npx wrangler dev --persist-to .smoke-persist --port ${port} --ip 127.0.0.1 --test-scheduled --var SHEET_FIXTURE_URL:http://127.0.0.1:${port}/__sheet-fixture --var SENSORPUSH_API_BASE:http://127.0.0.1:${port}/__sensorpush --var SENSORPUSH_EMAIL:smoke@local --var SENSORPUSH_PASSWORD:smoke --var GF_ALLOW_FIXTURE_NOW:1`,
-        { cwd: appRoot, shell: true, env: { ...process.env, BROWSER: "none", CI: "1" } }
-      );
-      let buf = "";
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        child.kill();
-        reject(new Error("wrangler did not become ready\n" + buf.slice(-2000)));
-      }, 90000);
-      const onExit = (code) => {
-        if (settled) return;
+    return spawnWrangler("");
+  });
+}
+
+/** One wrangler dev on the smoke's port over the smoke's persist dir. extraVars
+ * carries further --var flags (MA1 A32: the stub walk's fake keys and the stub
+ * pair, passed here and never written to wrangler.toml). */
+function spawnWrangler(extraVars) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      // THE SHEET SYNC (canon 0.30.162): the cron is walked through /__scheduled, and the
+      // default env reads the smoke's own fixture workbook, never the owner's file.
+      `npx wrangler dev --persist-to .smoke-persist --port ${port} --ip 127.0.0.1 --test-scheduled --var SHEET_FIXTURE_URL:http://127.0.0.1:${port}/__sheet-fixture --var SENSORPUSH_API_BASE:http://127.0.0.1:${port}/__sensorpush --var SENSORPUSH_EMAIL:smoke@local --var SENSORPUSH_PASSWORD:smoke --var GF_ALLOW_FIXTURE_NOW:1${extraVars}`,
+      // Off Windows the shell, npx, wrangler and workerd are one process group of
+      // their own (detached), so stopWrangler can end the whole tree: a SIGTERM to
+      // the shell alone leaves workerd holding the port, and the second wrangler
+      // dev of the stub walk cannot take it (the Scribe's gate on MA1, 2026-10-09).
+      { cwd: appRoot, shell: true, detached: process.platform !== "win32", env: { ...process.env, BROWSER: "none", CI: "1" } }
+    );
+    let buf = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error("wrangler did not become ready\n" + buf.slice(-2000)));
+    }, 90000);
+    const onExit = (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error("wrangler exited " + code + "\n" + buf.slice(-2000)));
+    };
+    const onData = (chunk) => {
+      const s = chunk.toString();
+      buf += s;
+      process.stdout.write(s);
+      if (
+        !settled &&
+        (/Ready on http:\/\/127\.0\.0\.1:/.test(buf) || /Ready on http:\/\/localhost:/.test(buf))
+      ) {
         settled = true;
         clearTimeout(timer);
-        reject(new Error("wrangler exited " + code + "\n" + buf.slice(-2000)));
-      };
-      const onData = (chunk) => {
-        const s = chunk.toString();
-        buf += s;
-        process.stdout.write(s);
-        if (
-          !settled &&
-          (/Ready on http:\/\/127\.0\.0\.1:/.test(buf) || /Ready on http:\/\/localhost:/.test(buf))
-        ) {
-          settled = true;
-          clearTimeout(timer);
-          child.off("exit", onExit);
-          resolve(child);
-        }
-      };
-      child.stdout.on("data", onData);
-      child.stderr.on("data", onData);
-      child.on("exit", onExit);
-    });
+        child.off("exit", onExit);
+        resolve(child);
+      }
+    };
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+    child.on("exit", onExit);
   });
 }
 
@@ -493,14 +590,28 @@ function stopWrangler(child) {
     if (process.platform === "win32") {
       spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]).on("exit", () => resolve());
     } else {
-      child.kill("SIGTERM");
+      // The whole process group (see spawnWrangler), then SIGKILL what lingers.
+      const signal = (sig) => {
+        try {
+          process.kill(-child.pid, sig);
+        } catch {
+          try {
+            child.kill(sig);
+          } catch {
+            // Already gone.
+          }
+        }
+      };
+      signal("SIGTERM");
+      setTimeout(() => signal("SIGKILL"), 2500);
     }
     setTimeout(resolve, 4000);
   });
 }
 
 async function run() {
-  const child = await startWrangler();
+  let child = await startWrangler();
+  let metrcStub = null;
   try {
     const home = await text("/");
     if (home.res.status !== 200) fail("GET /", `status ${home.res.status}`);
@@ -7452,6 +7563,15 @@ async function run() {
     const cronFirst = await req("/__scheduled?cron=15+*+*+*+*", { noIdentity: true });
     const cronFirstBody = await cronFirst.text();
     assert(cronFirst.status === 200, `the scheduled walk expected 200 got ${cronFirst.status}: ${cronFirstBody.slice(0, 200)}`);
+    // MA1 Phase C (Law 5, A28): the mirror sweep's own cron, 45 past the hour. With
+    // the keys absent and the mode off it records one skipped run row and makes no call.
+    const cronMirror = await req("/__scheduled?cron=45+*+*+*+*", { noIdentity: true });
+    const cronMirrorBody = await cronMirror.text();
+    assert(cronMirror.status === 200, `the mirror cron walk expected 200 got ${cronMirror.status}: ${cronMirrorBody.slice(0, 200)}`);
+    const mirrorRuns = localD1All("SELECT status, license_value, endpoint FROM metrc_sweep_runs");
+    assert(mirrorRuns.length === 1 && mirrorRuns[0].status === "skipped" && mirrorRuns[0].license_value === "*", `the mirror cron must record one skipped run row with the keys absent, got ${JSON.stringify(mirrorRuns)}`);
+    assert(Number(localD1All("SELECT COUNT(*) AS n FROM metrc_api_calls")[0].n) === 0, "the mirror cron must make no call with the keys absent");
+    assert(localD1All("SELECT COUNT(*) AS n FROM metrc_mounts WHERE source = 'api'")[0].n === 0, "the mirror cron must write no API mount with the mode off");
     // THE TESTING DESK part 3. The same cron records a skipped Metrc sweep when
     // the keys are absent, and makes no call. The page never shows a key.
     const metrcPage = await text("/admin/metrc-api");
@@ -7466,6 +7586,20 @@ async function run() {
     assert(metrcTest.res.status === 303 && (metrcTest.res.headers.get("location") || "").includes("ok=absent"), `test connection without keys expected absent, got ${metrcTest.res.status} ${metrcTest.res.headers.get("location")}`);
     const metrcAbsent = await text(metrcTest.res.headers.get("location") || "/admin/metrc-api?ok=absent");
     assert(metrcAbsent.body.includes("The integrator key is absent.") && metrcAbsent.body.includes('data-metrc-calls="0"'), "test connection must say the key is absent and still make no call");
+    // MA1 Law 8 (Phase E1). The evaluation page is active on the sandbox host,
+    // shows the keys absent, and Run E1 now with the keys absent makes no call.
+    assert(dataForMetrc.body.includes('href="/admin/metrc-eval"'), "Data Connections must carry the [Metrc evaluation] tile");
+    const evalPage = await text("/admin/metrc-eval");
+    assert(evalPage.res.status === 200, `GET /admin/metrc-eval expected 200 got ${evalPage.res.status}`);
+    assert(evalPage.body.includes('data-metrc-eval-integrator="absent"') && evalPage.body.includes('data-metrc-eval-user="absent"'), "both Metrc keys must read absent on the evaluation page");
+    assert(evalPage.body.includes('data-metrc-eval-active="yes"') && evalPage.body.includes('data-metrc-eval-host="sandbox-api-mi.metrc.com"'), "the evaluation runner must read active on the sandbox host");
+    assert(evalPage.body.includes("data-metrc-eval-run disabled"), "Run E1 now must be disabled while a key is absent");
+    const evalRun = await text("/admin/metrc-eval/run", { method: "POST", body: form({}) });
+    assert(evalRun.res.status === 303 && (evalRun.res.headers.get("location") || "").includes("ok=absent"), `Run E1 now without keys expected absent, got ${evalRun.res.status} ${evalRun.res.headers.get("location")}`);
+    const evalAbsent = await text(evalRun.res.headers.get("location") || "/admin/metrc-eval?ok=absent");
+    assert(evalAbsent.body.includes('data-metrc-eval-flash="absent"') && evalAbsent.body.includes("The integrator key is absent."), "the evaluation page must say the key is absent");
+    const metrcAfterEval = await text("/admin/metrc-api");
+    assert(metrcAfterEval.body.includes('data-metrc-calls="0"'), "Run E1 now with the keys absent must make no call");
     const syncRead = await text(`/harvest?day=${syncYesterday}`);
     assert(!syncRead.body.includes("data-hc-sheet-sync"), "the console no longer prints the sheet read line");
     assert(syncRead.body.includes(`<span class="hc-date muted">${syncYesterday}</span>`), "the picked day still names itself");
@@ -9236,9 +9370,13 @@ async function run() {
     const lineLate = await text(`/reports/line_packages?date=${lineDate}&start=23:00`);
     const lineNow = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", hour: "2-digit", minute: "2-digit" }).formatToParts(new Date());
     const lineHour = Number((lineNow.find((part) => part.type === "hour") || {}).value || "0");
-    const lineMinute = Number((lineNow.find((part) => part.type === "minute") || {}).value || "0");
-    if (lineHour * 60 + lineMinute < 23 * 60) assert(!lineLate.body.includes("BUD-SMOKE-1"), "a package entered before 23:00 Eastern must leave a day that starts at 23:00");
-    else assert(lineLate.body.includes("BUD-SMOKE-1"), "a package entered after 23:00 Eastern must stay on a day that starts at 23:00");
+    // The farm's today (lineDate) runs 06:00 to 06:00 Eastern, so the day that
+    // starts at 23:00 is lineDate 23:00 to the next day 23:00: a package entered
+    // now sits inside it after 23:00 or before 06:00, and outside it between
+    // (MA1 report M25; the old test read the wall clock alone and failed 00:00 to 06:00).
+    const lineInside = lineHour >= 23 || lineHour < 6;
+    if (!lineInside) assert(!lineLate.body.includes("BUD-SMOKE-1"), "a package entered between 06:00 and 23:00 Eastern must leave a day that starts at 23:00");
+    else assert(lineLate.body.includes("BUD-SMOKE-1"), "a package entered after 23:00 or before 06:00 Eastern must stay on a day that starts at 23:00");
     const lineCsv = await text(`/reports/line_packages?date=${lineDate}&format=csv`);
     assert(lineCsv.body.includes("Trim:"), "the CSV must carry the line total");
     assert(lineCsv.body.includes(lineWindow), "the CSV must carry the window line");
@@ -10030,9 +10168,99 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     const plantsAfter = harvestedOf((await text("/harvest")).body);
     assert(plantsAfter === plantsBefore, `the dashboard Plants figure must leave the test's 77 out, ${plantsBefore} then ${plantsAfter}`);
 
+    // MA1 brief section 6 (A32): the Admin pages with fake keys against a stubbed
+    // host, after every keys-absent walk above. The first wrangler dev stops; a stub
+    // answers the docs example JSON on a free port of its own; a second wrangler dev
+    // on the smoke's port reads it through METRC_STUB_BASE and METRC_STUB_ENABLED with
+    // the fake keys, all as --var here and never in wrangler.toml. The stub reads as a
+    // sandbox host to the page and the mode law, so nothing can write; the sweep mode
+    // is dry_run for this walk. No page, pack or log row may carry the fake key
+    // strings or their base64 token.
+    await stopWrangler(child);
+    child = null;
+    await waitForPortFree();
+    metrcStub = await startMetrcStub();
+    await localD1WhenFree("UPDATE app_config SET value = 'dry_run' WHERE key = 'metrc_sweep_mode'");
+    const callsBeforeStub = Number(localD1All("SELECT COUNT(*) AS n FROM metrc_api_calls")[0].n);
+    const packagesBeforeStub = Number(localD1All("SELECT COUNT(*) AS n FROM metrc_packages")[0].n);
+    const plantsBeforeStub = Number(localD1All("SELECT COUNT(*) AS n FROM metrc_plants")[0].n);
+    const runsBeforeStub = Number(localD1All("SELECT COUNT(*) AS n FROM metrc_sweep_runs")[0].n);
+    child = await spawnWrangler(
+      ` --var METRC_STUB_BASE:http://127.0.0.1:${metrcStub.port} --var METRC_STUB_ENABLED:1 --var METRC_INTEGRATOR_KEY:fake-vendor-key --var METRC_USER_KEY:fake-user-key`
+    );
+    const noKeyText = (label, body) => {
+      assert(!body.includes("fake-vendor-key") && !body.includes("fake-user-key") && !body.includes(metrcStub.token), `${label} must carry no key text or token`);
+    };
+    const stubPage = await text("/admin/metrc-api");
+    assert(stubPage.res.status === 200, `GET /admin/metrc-api on the stub expected 200 got ${stubPage.res.status}`);
+    assert(stubPage.body.includes('data-metrc-integrator="present"') && stubPage.body.includes('data-metrc-user="present"'), "both fake keys must read present on the stub");
+    assert(stubPage.body.includes(`data-metrc-base="127.0.0.1:${metrcStub.port}"`) && stubPage.body.includes('data-metrc-host-kind="sandbox"'), "the stub must read as a sandbox host");
+    assert(stubPage.body.includes('data-metrc-mode="dry_run" data-metrc-mode-configured="dry_run"'), "the mode must read dry_run on the stub");
+    assert(stubPage.body.includes('data-metrc-write="off"') && !stubPage.body.includes("https://api-mi.metrc.com"), "the write switch stays off and the page never points at production");
+    noKeyText("the Metrc API page", stubPage.body);
+    // Test connection: the stub's first answer is a 429 with Retry-After: 1, then the facilities.
+    const stubTest = await text("/admin/metrc-api/test", { method: "POST", body: form({}) });
+    assert(stubTest.res.status === 303 && (stubTest.res.headers.get("location") || "").includes("ok=connected"), `Test connection on the stub expected connected, got ${stubTest.res.status} ${stubTest.res.headers.get("location")}`);
+    const stubConnected = await text(stubTest.res.headers.get("location") || "/admin/metrc-api?ok=connected");
+    assert(stubConnected.body.includes('data-metrc-flash="connected"') && stubConnected.body.includes(`Connected. ${metrcStub.facilities} facilities.`), "the stub's facilities must read Connected with their count");
+    assert((stubConnected.body.match(/data-metrc-reach="not_reached"/g) || []).length === 7, "the docs' facilities reach none of the seven licenses");
+    assert(stubConnected.body.includes(`data-metrc-other-facilities="${metrcStub.distinctFacilities}"`), "the docs' facilities count as other facilities");
+    assert(metrcStub.hits.filter((p) => p === "/facilities/v2").length === 2, `the 429 and the retry must both reach the stub, got ${JSON.stringify(metrcStub.hits)}`);
+    assert(localD1All("SELECT status FROM metrc_api_calls WHERE path = '/facilities/v2' ORDER BY started_at, status DESC").map((r) => r.status).join(",") === "429,200", "the call log must hold the 429 and the 200");
+    noKeyText("the connected page", stubConnected.body);
+    // Law 8: Run E1 now against the stub: one run row and a JSON pack with no key text.
+    const stubEval = await text("/admin/metrc-eval");
+    assert(stubEval.res.status === 200 && stubEval.body.includes('data-metrc-eval-active="yes"') && stubEval.body.includes('<button type="submit" data-metrc-eval-run title='), "the evaluation runner must be active on the stub with the keys present");
+    const evalRunStub = await text("/admin/metrc-eval/run", { method: "POST", body: form({}) });
+    const evalLocation = evalRunStub.res.headers.get("location") || "";
+    assert(evalRunStub.res.status === 303 && /ok=(ok|partial)/.test(evalLocation), `Run E1 now on the stub expected ok or partial, got ${evalRunStub.res.status} ${evalLocation}`);
+    const evalListed = await text(evalLocation);
+    const evalRunId = (evalListed.body.match(/data-metrc-eval-run-id="([^"]+)"/) || [])[1];
+    assert(evalRunId, "the evaluation page must list the run");
+    assert(Number(localD1All("SELECT COUNT(*) AS n FROM metrc_eval_runs")[0].n) === 1, "one evaluation run row must be stored");
+    const evalJson = await text(`/admin/metrc-eval/runs/${evalRunId}/json`);
+    assert(evalJson.res.status === 200 && evalJson.body.includes('"facilities"'), `the JSON pack must download, got ${evalJson.res.status}`);
+    noKeyText("the evaluation JSON pack", evalJson.body);
+    noKeyText("the evaluation page", evalListed.body);
+    assert(Number(localD1All("SELECT COUNT(*) AS n FROM metrc_eval_runs WHERE steps_json LIKE '%fake-%'")[0].n) === 0, "no key text may reach the stored pack");
+    // Law 9: Sweep now for one license and endpoint in dry_run: a run row and the parity sentence.
+    const sweepNow = await text("/admin/metrc-api/sweep-now", { method: "POST", body: form({ license: "AU-P-000694", endpoint: "/packages/v2/active" }) });
+    const sweepLocation = sweepNow.res.headers.get("location") || "";
+    assert(sweepNow.res.status === 303 && sweepLocation.includes("ok=swept"), `Sweep now on the stub expected swept, got ${sweepNow.res.status} ${sweepLocation}`);
+    const swept = await text(sweepLocation);
+    assert(swept.body.includes('data-metrc-flash="swept"'), "the page must say Sweep now ran");
+    const sweepRows = localD1All("SELECT mode, run_kind, status, trigger FROM metrc_sweep_runs WHERE license_value = 'AU-P-000694' AND endpoint = '/packages/v2/active'");
+    assert(sweepRows.length === 1 && sweepRows[0].mode === "dry_run" && sweepRows[0].trigger === "admin" && sweepRows[0].run_kind === "full", `Sweep now must record one admin dry-run full pass, got ${JSON.stringify(sweepRows)}`);
+    assert(swept.body.includes('data-metrc-endpoint="/packages/v2/active" data-metrc-endpoint-license="AU-P-000694"'), "the per-endpoint table must show the swept scope");
+    assert(swept.body.includes('data-metrc-parity="none"') && swept.body.includes("No production dry run yet for this license."), "a stub (sandbox) dry run is never parity evidence");
+    noKeyText("the swept page", swept.body);
+    // The 45-past cron against the stub: a dry-run tick reads, records scope runs, writes no mirror row.
+    const cronStub = await req("/__scheduled?cron=45+*+*+*+*", { noIdentity: true });
+    const cronStubBody = await cronStub.text();
+    assert(cronStub.status === 200, `the mirror cron on the stub expected 200 got ${cronStub.status}: ${cronStubBody.slice(0, 200)}`);
+    const runsAfterStub = Number(localD1All("SELECT COUNT(*) AS n FROM metrc_sweep_runs")[0].n);
+    assert(runsAfterStub > runsBeforeStub + 1, `the mirror cron must record scope runs on the stub, ${runsBeforeStub} then ${runsAfterStub}`);
+    assert(Number(localD1All("SELECT COUNT(*) AS n FROM metrc_sweep_runs WHERE mode <> 'dry_run' AND license_value <> '*'")[0].n) === 0, "every scope run on the stub is a dry run");
+    const callsAfterStub = Number(localD1All("SELECT COUNT(*) AS n FROM metrc_api_calls")[0].n);
+    assert(callsAfterStub > callsBeforeStub + 3, `metrc_api_calls must grow on the stub, ${callsBeforeStub} then ${callsAfterStub}`);
+    assert(Number(localD1All("SELECT COUNT(*) AS n FROM metrc_api_calls WHERE path LIKE '%fake-%' OR path LIKE '%key%'")[0].n) === 0, "no key text may reach the call log");
+    assert(Number(localD1All("SELECT COUNT(*) AS n FROM metrc_sweep_runs WHERE message LIKE '%fake-%'")[0].n) === 0, "no key text may reach a run row");
+    assert(Number(localD1All("SELECT COUNT(*) AS n FROM metrc_mounts WHERE source = 'api'")[0].n) === 0, "a dry run on the stub writes no API mount");
+    assert(Number(localD1All("SELECT COUNT(*) AS n FROM metrc_packages")[0].n) === packagesBeforeStub && Number(localD1All("SELECT COUNT(*) AS n FROM metrc_plants")[0].n) === plantsBeforeStub, "a dry run on the stub writes no mirror row");
+    assert(metrcStub.hits.includes("/packages/v2/active") && metrcStub.hits.includes("/packages/v2/onhold"), `the sweep must read the active and onhold lists from the stub, got ${JSON.stringify(metrcStub.hits.slice(0, 40))}`);
+    const stubAfter = await text("/admin/metrc-api");
+    assert(stubAfter.body.includes('data-metrc-write="off"') && stubAfter.body.includes('data-metrc-sweep='), "the page still shows the write switch and the lab sweep line after the walk");
+    noKeyText("the Metrc API page after the walk", stubAfter.body);
+    // Every string EN and ES: the Spanish page carries the Law 9 words.
+    jar.set("gf_locale", "es");
+    const stubEs = await text("/admin/metrc-api");
+    jar.delete("gf_locale");
+    assert(stubEs.body.includes("Host y modo") && stubEs.body.includes("Por endpoint") && stubEs.body.includes("Barrer ahora") && stubEs.body.includes("Paridad"), "the Spanish Metrc API page must carry the Law 9 words");
+    noKeyText("the Spanish Metrc API page", stubEs.body);
     process.stdout.write("SMOKE PASS\n");
   } finally {
     await stopWrangler(child);
+    if (metrcStub) metrcStub.server.close();
   }
 }
 
