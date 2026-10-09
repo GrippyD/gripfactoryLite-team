@@ -56,6 +56,7 @@ const EXACT_PARENTS: Readonly<Record<string, BackLink>> = {
   "/admin/uploads": { href: "/admin/data-connections", label: "Data Connections" },
   "/admin/imports": { href: "/admin/data-connections", label: "Data Connections" },
   "/admin/metrc-api": { href: "/admin/data-connections", label: "Data Connections" },
+  "/admin/metrc-eval": { href: "/admin/data-connections", label: "Data Connections" },
   "/admin/lookups": { href: "/admin/settings", label: "Admin Settings" },
   "/admin/manual-hbn": { href: "/admin/settings", label: "Admin Settings" },
   "/admin/reconcile-location": { href: "/admin/settings", label: "Admin Settings" },

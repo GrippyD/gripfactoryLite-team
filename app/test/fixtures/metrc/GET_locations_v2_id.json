@@ -1,0 +1,10 @@
+{
+  "Id": 1,
+  "Name": "Harvest Location",
+  "LocationTypeId": 1,
+  "LocationTypeName": "Default",
+  "ForPlantBatches": true,
+  "ForPlants": true,
+  "ForHarvests": true,
+  "ForPackages": true
+}

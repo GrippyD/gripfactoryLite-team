@@ -42,6 +42,7 @@ export async function migratedDb(options: { until?: string } = {}): Promise<Migr
   const make = (sql: string, args: unknown[]) => {
     const bound = args as Array<string | number | null>;
     return {
+      sql,
       bind: (...next: unknown[]) => make(sql, next),
       async run() {
         const out = sqlite.prepare(sql).run(...bound);
@@ -59,11 +60,13 @@ export async function migratedDb(options: { until?: string } = {}): Promise<Migr
   };
   const db = {
     prepare: (sql: string) => make(sql, []),
-    async batch(stmts: Array<{ run: () => Promise<unknown> }>) {
+    async batch(stmts: Array<{ sql?: string; run: () => Promise<unknown>; all: () => Promise<unknown> }>) {
       sqlite.exec("BEGIN");
       try {
         const out = [];
-        for (const stmt of stmts) out.push(await stmt.run());
+        // D1 answers each statement of a batch with its own results; a SELECT
+        // in a batch (the mirror's keyed loader) reads rows here too.
+        for (const stmt of stmts) out.push(/^\s*select\b/i.test(String(stmt.sql ?? "")) ? await stmt.all() : await stmt.run());
         sqlite.exec("COMMIT");
         return out;
       } catch (err) {

@@ -1,0 +1,25 @@
+{
+  "Data": [
+    {
+      "Name": "Drying",
+      "RequiresNote": false,
+      "RequiresWasteWeight": false,
+      "RequiresImmatureWasteWeight": false,
+      "RequiresMatureWasteWeight": false
+    },
+    {
+      "Name": "Entry Error",
+      "RequiresNote": false,
+      "RequiresWasteWeight": false,
+      "RequiresImmatureWasteWeight": false,
+      "RequiresMatureWasteWeight": false
+    }
+  ],
+  "Total": 2,
+  "TotalRecords": 2,
+  "PageSize": 2,
+  "RecordsOnPage": 2,
+  "Page": 1,
+  "CurrentPage": 1,
+  "TotalPages": 1
+}

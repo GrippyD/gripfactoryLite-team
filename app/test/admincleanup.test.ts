@@ -15,11 +15,13 @@ describe("Admin cleanup (canon 0.30.418)", () => {
     expect(home).toContain('href="/admin/continuum10"');
     for (const title of REMOVED) expect(home).not.toContain(title);
     const connections = adminGroupPage("data-connections");
+    // MA1 Law 8 (Phase E1): the Metrc evaluation tile sits beside the Metrc API tile.
     expect([...connections.matchAll(/href="([^"]+)"/g)].map((hit) => hit[1])).toEqual([
       "/admin/queues",
       "/admin/uploads",
       "/admin/imports",
       "/admin/metrc-api",
+      "/admin/metrc-eval",
     ]);
     const settings = adminGroupPage("settings");
     expect([...settings.matchAll(/href="([^"]+)"/g)].map((hit) => hit[1])).toEqual([

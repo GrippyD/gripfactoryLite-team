@@ -617,6 +617,54 @@ const PACKAGE_COLS = [
   "lab_test_expiration",
 ] as const;
 
+/** MA1 Law 6 (THE HARVESTS LEG, migration 0097): the API door's harvest row,
+ * the columns of Mapping Table 3 (required rows only). unit_of_weight is the
+ * API's UnitOfWeightName verbatim (no gram conversion column, G-3); state is
+ * the list the row was last seen in (active, inactive or onhold). */
+export type MetrcHarvestRow = {
+  harvest_id: number;
+  name: string;
+  harvest_start_date: string | null;
+  finished_date: string | null;
+  archived_date: string | null;
+  total_wet_weight: number | null;
+  unit_of_weight: string | null;
+  location: string | null;
+  sublocation: string | null;
+  state: string;
+  plant_count: number | null;
+};
+
+/** The compared and written columns of metrc_harvests (0097), after the key. */
+const HARVEST_COLS = [
+  "name",
+  "harvest_start_date",
+  "finished_date",
+  "archived_date",
+  "total_wet_weight",
+  "unit_of_weight",
+  "location",
+  "sublocation",
+  "state",
+  "plant_count",
+] as const;
+
+/** MA1 Law 1 (A37): the one reconcile serves plants, packages and harvests. */
+export type MirrorKind = MetrcKind | "harvests";
+
+/** The mirror row as loaded for the reconcile: its key (tag, or the harvest id
+ * as text), its gone mark, and the columns the kind compares. */
+export type MirrorExisting = Record<string, unknown> & {
+  key: string;
+  gone_at: string | null;
+  phase?: string | null;
+  license_value?: string | null;
+};
+
+/** A live mirror row of the scope: the key and the stamps the passStartedAt
+ * guard reads (rows changed or first seen after a pass began are never gone). */
+export type LiveRow = { key: string; changed_at: string | null; first_seen_at: string | null };
+
 type ExistingRow = Record<string, unknown> & {
   tag: string;
   gone_at: string | null;
@@ -631,6 +679,163 @@ function same(a: unknown, b: unknown): boolean {
   return String(a) === String(b);
 }
 
+/** MA1 Law 1: one row's key, by kind (A37): the tag for plants and packages,
+ * the harvest id as text for harvests. */
+export function mirrorKeyOf(kind: MirrorKind, row: object): string {
+  if (kind === "harvests") return String((row as { harvest_id: unknown }).harvest_id);
+  return String((row as { tag: unknown }).tag);
+}
+
+export function mirrorColumnsOf(kind: MirrorKind): readonly string[] {
+  if (kind === "plants") return PLANT_COLS;
+  if (kind === "packages") return PACKAGE_COLS;
+  return HARVEST_COLS;
+}
+
+export type MirrorScope = { kind: MirrorKind; license: string | null; phase: string | null };
+
+/** MA1 Law 7: one difference the dry run keeps (tag or harvest id, the column,
+ * the mirror's value, the API's value). Row events use the columns "(added)"
+ * and "(gone)"; a move uses "license_value", "phase" or "gone_at". */
+export type MirrorSample = { key: string; column: string; mirrorValue: string | null; apiValue: string | null };
+
+export type MirrorPlan<T> = {
+  scope: MirrorScope;
+  add: T[];
+  update: T[];
+  unchanged: number;
+  /** The keys to mark gone (empty while the guard holds them). */
+  gone: string[];
+  /** The keys a complete pass would mark gone, held or not. */
+  wouldGone: number;
+  /** MA1 A29: the mass-gone guard held the gone marks. */
+  goneHeld: boolean;
+  /** The cursor's gone_override was set for this complete pass (it marked
+   * without the guard, whether or not the guard would have held); the caller
+   * resets the override. */
+  overrideUsed: boolean;
+  samples: MirrorSample[];
+  /** Packages: adds or updates whose lab_test_status moved (the release trigger). */
+  labStateChanged: number;
+};
+
+export type MirrorPassInput<T extends object> = {
+  scope: MirrorScope;
+  /** Export-shaped rows, keys upper-cased, deduped by the caller. */
+  incoming: readonly T[];
+  /** The mirror rows for the incoming keys, any license or phase (loadExistingByKeys). */
+  existing: readonly MirrorExisting[];
+  /** The scope's live rows (loadLiveKeys); read only when complete is given. */
+  live?: readonly LiveRow[];
+  /** A complete pass: every key it saw (the onhold list included, A10). Null for an incremental, which never marks gone. */
+  complete?: { seen: ReadonlySet<string>; rowsRead?: number } | null;
+  /** Rows changed or first seen after this instant are never gone. */
+  passStartedAt?: string | null;
+  /** Differences kept (config metrc_sample_cap, 25). */
+  sampleCap?: number;
+  /** A29: hold the gone marks when the pass read 0 rows against live rows or would-gone exceeds this share of live rows. Null runs no guard (the CSV door). */
+  goneHoldShare?: number | null;
+  /** The scope's cursor gone_override: this complete pass marks gone without the guard, once, and the caller resets it. */
+  goneOverride?: boolean;
+  /** The compared columns; the kind's own when not given. */
+  columns?: readonly string[];
+};
+
+function sampleText(value: unknown): string | null {
+  if (value == null) return null;
+  return String(value);
+}
+
+/** THE MIRROR LAW, MA1 Law 1 (ONE DOOR, TWO PATHS): the one pure reconcile both
+ * doors call. A row the mirror has never seen is added; a row whose columns
+ * moved (or that had been marked gone, or whose phase or license changed)
+ * updates in place; a row a complete pass no longer carries is gone, only
+ * within the pass's own license and phase. Plants compare across every phase
+ * (a plant moving vegetative to flowering is one tag), but only rows in the
+ * pass's own phase can go missing from it. A package transferred between two
+ * of our own licenses is one tag too: the receiving license's pass updates it
+ * in place. An incremental pass (complete null) never marks gone. The samples
+ * are deterministic: incoming order, then the kind's column order, then the
+ * gone rows in live order, up to the cap. */
+export function planMirrorPass<T extends object>(input: MirrorPassInput<T>): MirrorPlan<T> {
+  const { scope } = input;
+  const columns = input.columns ?? mirrorColumnsOf(scope.kind);
+  const cap = Math.max(0, input.sampleCap ?? 25);
+  const byKey = new Map(input.existing.map((e) => [e.key, e]));
+  const seen = new Set<string>();
+  const add: T[] = [];
+  const update: T[] = [];
+  const samples: MirrorSample[] = [];
+  const room = () => samples.length < cap;
+  let unchanged = 0;
+  let labStateChanged = 0;
+  for (const row of input.incoming) {
+    const key = mirrorKeyOf(scope.kind, row);
+    seen.add(key);
+    const was = byKey.get(key);
+    const rec = row as unknown as Record<string, unknown>;
+    if (!was) {
+      add.push(row);
+      if (scope.kind === "packages" && rec.lab_test_status != null) labStateChanged += 1;
+      if (room()) samples.push({ key, column: "(added)", mirrorValue: null, apiValue: "added" });
+      continue;
+    }
+    let moved = was.gone_at != null;
+    if (moved && room()) samples.push({ key, column: "gone_at", mirrorValue: sampleText(was.gone_at), apiValue: null });
+    if (scope.phase != null && !same(was.phase, scope.phase)) {
+      if (!moved && room()) samples.push({ key, column: "phase", mirrorValue: sampleText(was.phase), apiValue: scope.phase });
+      moved = true;
+    }
+    if (scope.license != null && was.license_value != null && !same(was.license_value, scope.license)) {
+      if (!moved && room()) samples.push({ key, column: "license_value", mirrorValue: sampleText(was.license_value), apiValue: scope.license });
+      moved = true;
+    }
+    if (!moved || room()) {
+      for (const c of columns) {
+        if (same(was[c], rec[c])) continue;
+        if (room()) samples.push({ key, column: c, mirrorValue: sampleText(was[c]), apiValue: sampleText(rec[c]) });
+        moved = true;
+        if (!room()) break;
+      }
+    }
+    if (scope.kind === "packages" && !same(was.lab_test_status, rec.lab_test_status)) labStateChanged += 1;
+    if (moved) update.push(row);
+    else unchanged += 1;
+  }
+  const gone: string[] = [];
+  let wouldGone = 0;
+  let goneHeld = false;
+  let overrideUsed = false;
+  if (input.complete) {
+    const live = input.live ?? [];
+    const started = input.passStartedAt ? Date.parse(input.passStartedAt) : NaN;
+    const after = (stamp: string | null) => Number.isFinite(started) && stamp != null && Date.parse(stamp) > started;
+    const missing: string[] = [];
+    for (const row of live) {
+      if (input.complete.seen.has(row.key)) continue;
+      if (after(row.changed_at) || after(row.first_seen_at)) continue;
+      missing.push(row.key);
+    }
+    wouldGone = missing.length;
+    const rowsRead = input.complete.rowsRead ?? input.complete.seen.size;
+    const share = input.goneHoldShare;
+    // Findings 6.2: the cursor's override is consumed by the next complete
+    // pass ("marks gone without the guard, then resets it"), whether or not
+    // the guard would have fired, so an armed override never lingers to let a
+    // later empty read past the guard (Phase C fix pass, C1 and S-H).
+    overrideUsed = !!input.goneOverride;
+    if (share != null && live.length > 0 && !overrideUsed && (rowsRead === 0 || wouldGone > share * live.length)) goneHeld = true;
+    if (!goneHeld) {
+      gone.push(...missing);
+      for (const key of missing) {
+        if (!room()) break;
+        samples.push({ key, column: "(gone)", mirrorValue: "live", apiValue: null });
+      }
+    }
+  }
+  return { scope, add, update, unchanged, gone, wouldGone, goneHeld, overrideUsed, samples, labStateChanged };
+}
+
 export type MountDiff<T extends { tag: string }> = {
   added: T[];
   updated: T[];
@@ -638,53 +843,33 @@ export type MountDiff<T extends { tag: string }> = {
   gone: string[];
 };
 
-/** THE MIRROR LAW: the file is the truth for its license (and phase). A row the
- * mirror has never seen is added; a row whose columns moved (or that had been
- * marked gone, or whose phase or license changed) updates in place; a row the
- * file no longer carries is gone. Plants compare across every phase (a plant
- * moving vegetative to flowering is one tag), but only rows in the drop's own
- * phase can go missing from it. A package transferred between two of our own
- * licenses is one tag too: the receiving license's drop updates it in place. */
+/** The CSV door's view of the one reconcile (MA1 Law 1): a thin wrapper that
+ * keeps the file door's words. Gone here is the existing rows the window did
+ * not carry, within the scope's phase, as before. */
 export function diffMount<T extends { tag: string }>(
   incoming: T[],
   existing: ExistingRow[],
   columns: readonly string[],
   scope: { phase?: string | null; license?: string | null }
 ): MountDiff<T> {
-  const byTag = new Map(existing.map((e) => [e.tag, e]));
-  const seen = new Set<string>();
-  const added: T[] = [];
-  const updated: T[] = [];
-  let unchanged = 0;
-  for (const row of incoming) {
-    seen.add(row.tag);
-    const was = byTag.get(row.tag);
-    if (!was) {
-      added.push(row);
-      continue;
-    }
-    const rec = row as unknown as Record<string, unknown>;
-    let moved = was.gone_at != null;
-    if (!moved && scope.phase != null && !same(was.phase, scope.phase)) moved = true;
-    if (!moved && scope.license != null && was.license_value != null && !same(was.license_value, scope.license)) moved = true;
-    if (!moved) {
-      for (const c of columns) {
-        if (!same(was[c], rec[c])) {
-          moved = true;
-          break;
-        }
-      }
-    }
-    if (moved) updated.push(row);
-    else unchanged += 1;
-  }
-  const gone: string[] = [];
+  const keyed: MirrorExisting[] = existing.map((e) => ({ ...e, key: e.tag }));
+  const live: LiveRow[] = [];
   for (const e of existing) {
-    if (e.gone_at != null || seen.has(e.tag)) continue;
+    if (e.gone_at != null) continue;
     if (scope.phase != null && !same(e.phase, scope.phase)) continue;
-    gone.push(e.tag);
+    live.push({ key: e.tag, changed_at: null, first_seen_at: null });
   }
-  return { added, updated, unchanged, gone };
+  const plan = planMirrorPass<T>({
+    scope: { kind: "plants", license: scope.license ?? null, phase: scope.phase ?? null },
+    incoming,
+    existing: keyed,
+    live,
+    complete: { seen: new Set(incoming.map((r) => r.tag)) },
+    columns,
+    sampleCap: 0,
+    goneHoldShare: null,
+  });
+  return { added: plan.add, updated: plan.update, unchanged: plan.unchanged, gone: plan.gone };
 }
 
 function chunkRows<T>(rows: T[], perStatement: number): T[][] {
@@ -867,33 +1052,62 @@ export async function scanMetrcExport(bytes: Uint8Array, start: number, end: num
 
 /* ------------------------------------------------------------ the mount */
 
-/** The window's existing rows by tag, every license and phase: a tag known
- * under another license or phase updates instead of colliding on insert. */
-async function loadExistingByTags(db: D1Database, kind: MetrcKind, tags: string[]): Promise<ExistingRow[]> {
-  if (tags.length === 0) return [];
-  const table = kind === "plants" ? "metrc_plants" : "metrc_packages";
-  const cols = kind === "plants" ? ["tag", "license_value", "phase", "gone_at", ...PLANT_COLS] : ["tag", "license_value", "gone_at", ...PACKAGE_COLS];
-  const stmts = chunkRows(tags, D1_MAX_PARAMS - 1).map((chunk) => {
+function mirrorTable(kind: MirrorKind): string {
+  if (kind === "plants") return "metrc_plants";
+  if (kind === "packages") return "metrc_packages";
+  return "metrc_harvests";
+}
+
+/** The key column of each mirror table (MA1 A37). */
+function mirrorKeyColumn(kind: MirrorKind): string {
+  return kind === "harvests" ? "harvest_id" : "tag";
+}
+
+function keyBind(kind: MirrorKind, key: string): string | number {
+  return kind === "harvests" ? Number(key) : key;
+}
+
+/** The window's existing rows by key, every license and phase: a tag known
+ * under another license or phase updates instead of colliding on insert
+ * (MA1 Law 1: the API door reads the same rows). */
+export async function loadExistingByKeys(db: D1Database, kind: MirrorKind, keys: readonly string[]): Promise<MirrorExisting[]> {
+  if (keys.length === 0) return [];
+  const table = mirrorTable(kind);
+  const keyColumn = mirrorKeyColumn(kind);
+  const cols =
+    kind === "plants"
+      ? [`${keyColumn} AS key`, "license_value", "phase", "gone_at", ...PLANT_COLS]
+      : [`${keyColumn} AS key`, "license_value", "gone_at", ...mirrorColumnsOf(kind)];
+  const stmts = chunkRows([...keys], D1_MAX_PARAMS - 1).map((chunk) => {
     const marks = chunk.map(() => "?").join(", ");
-    return db.prepare(`SELECT ${cols.join(", ")} FROM ${table} WHERE tag IN (${marks})`).bind(...chunk);
+    return db.prepare(`SELECT ${cols.join(", ")} FROM ${table} WHERE ${keyColumn} IN (${marks})`).bind(...chunk.map((k) => keyBind(kind, k)));
   });
-  const out: ExistingRow[] = [];
+  const out: MirrorExisting[] = [];
   for (let i = 0; i < stmts.length; i += METRC_MOUNT_CHUNK) {
-    const results = await db.batch<ExistingRow>(stmts.slice(i, i + METRC_MOUNT_CHUNK));
-    for (const r of results) out.push(...(r.results ?? []));
+    const results = await db.batch<MirrorExisting>(stmts.slice(i, i + METRC_MOUNT_CHUNK));
+    for (const r of results) for (const row of r.results ?? []) out.push({ ...row, key: String(row.key) });
   }
   return out;
 }
 
-/** The tags the mirror still holds live under the license (and phase). */
-async function loadLiveTags(db: D1Database, kind: MetrcKind, license: string, phase: string | null): Promise<string[]> {
-  const table = kind === "plants" ? "metrc_plants" : "metrc_packages";
+/** The rows the mirror still holds live under the license (and phase), with
+ * the stamps the passStartedAt guard reads. Harvests: the one gone rule of
+ * Mapping Table 3 (A19) lets only a complete active pass mark gone, so the
+ * live set is the rows last seen active or on hold; an inactive harvest is a
+ * state, never gone. */
+export async function loadLiveKeys(db: D1Database, kind: MirrorKind, license: string, phase: string | null): Promise<LiveRow[]> {
+  const table = mirrorTable(kind);
+  const keyColumn = mirrorKeyColumn(kind);
   const stmt =
     kind === "plants"
-      ? db.prepare(`SELECT tag FROM ${table} WHERE license_value = ? AND phase = ? AND gone_at IS NULL`).bind(license, phase)
-      : db.prepare(`SELECT tag FROM ${table} WHERE license_value = ? AND gone_at IS NULL`).bind(license);
-  const result = await stmt.all<{ tag: string }>();
-  return (result.results ?? []).map((r) => r.tag);
+      ? db.prepare(`SELECT ${keyColumn} AS key, changed_at, first_seen_at FROM ${table} WHERE license_value = ? AND phase = ? AND gone_at IS NULL`).bind(license, phase)
+      : kind === "harvests"
+        ? db
+            .prepare(`SELECT ${keyColumn} AS key, changed_at, first_seen_at FROM ${table} WHERE license_value = ? AND gone_at IS NULL AND state IN ('active', 'onhold')`)
+            .bind(license)
+        : db.prepare(`SELECT ${keyColumn} AS key, changed_at, first_seen_at FROM ${table} WHERE license_value = ? AND gone_at IS NULL`).bind(license);
+  const result = await stmt.all<{ key: unknown; changed_at: string | null; first_seen_at: string | null }>();
+  return (result.results ?? []).map((r) => ({ key: String(r.key), changed_at: r.changed_at ?? null, first_seen_at: r.first_seen_at ?? null }));
 }
 
 function plantInsertStmts(
@@ -977,17 +1191,66 @@ function packageUpdateStmt(db: D1Database, r: MetrcPackageRow, license: string, 
   return db.prepare(`UPDATE metrc_packages SET ${sets.join(", ")} WHERE tag = ?`).bind(...values);
 }
 
-function goneStmts(db: D1Database, table: string, tags: string[], mountId: string, ts: string): D1PreparedStatement[] {
-  const per = D1_MAX_PARAMS - 2;
-  return chunkRows(tags, per).map((chunk) => {
-    const marks = chunk.map(() => "?").join(", ");
-    return db
-      .prepare(`UPDATE ${table} SET gone_at = ?, gone_mount_id = ? WHERE tag IN (${marks}) AND gone_at IS NULL`)
-      .bind(ts, mountId, ...chunk);
+/** MA1 Law 6: 15 columns, 6 rows per statement, under the 100 binds. */
+function harvestInsertStmts(db: D1Database, rows: MetrcHarvestRow[], license: string, mountId: string, ts: string): D1PreparedStatement[] {
+  const cols = ["harvest_id", "license_value", ...HARVEST_COLS, "mount_id", "first_seen_at", "changed_at"];
+  const per = rowsPerInsert(cols.length);
+  return chunkRows(rows, per).map((chunk) => {
+    const marks = chunk.map(() => `(${cols.map(() => "?").join(", ")})`).join(", ");
+    const values: unknown[] = [];
+    for (const r of chunk) {
+      values.push(r.harvest_id, license);
+      for (const c of HARVEST_COLS) values.push(r[c]);
+      values.push(mountId, ts, ts);
+    }
+    return db.prepare(`INSERT INTO metrc_harvests (${cols.join(", ")}) VALUES ${marks}`).bind(...values);
   });
 }
 
-async function runChunked(db: D1Database, stmts: D1PreparedStatement[]): Promise<void> {
+/** A state change (active to inactive or on hold) is an in-place update, never gone. */
+function harvestUpdateStmt(db: D1Database, r: MetrcHarvestRow, license: string, mountId: string, ts: string): D1PreparedStatement {
+  const sets = ["license_value = ?", ...HARVEST_COLS.map((c) => `${c} = ?`), "mount_id = ?", "changed_at = ?", "gone_at = NULL", "gone_mount_id = NULL"];
+  const values: unknown[] = [license];
+  for (const c of HARVEST_COLS) values.push(r[c]);
+  values.push(mountId, ts, r.harvest_id);
+  return db.prepare(`UPDATE metrc_harvests SET ${sets.join(", ")} WHERE harvest_id = ?`).bind(...values);
+}
+
+function goneStmts(db: D1Database, kind: MirrorKind, keys: readonly string[], mountId: string, ts: string): D1PreparedStatement[] {
+  const per = D1_MAX_PARAMS - 2;
+  const table = mirrorTable(kind);
+  const keyColumn = mirrorKeyColumn(kind);
+  return chunkRows([...keys], per).map((chunk) => {
+    const marks = chunk.map(() => "?").join(", ");
+    return db
+      .prepare(`UPDATE ${table} SET gone_at = ?, gone_mount_id = ? WHERE ${keyColumn} IN (${marks}) AND gone_at IS NULL`)
+      .bind(ts, mountId, ...chunk.map((k) => keyBind(kind, k)));
+  });
+}
+
+/** MA1 Law 1: the plan's statements, the kind's insert, update and gone
+ * builders unchanged (multi-row inserts, under 100 binds, the gone marks in
+ * chunks of 98). A plan of one kind only; the rows are that kind's shape. */
+export function mirrorPlanStmts(db: D1Database, plan: MirrorPlan<object>, mountId: string, ts: string): D1PreparedStatement[] {
+  const { scope } = plan;
+  const license = scope.license ?? "";
+  const stmts: D1PreparedStatement[] = [];
+  if (scope.kind === "plants") {
+    const phase = scope.phase ?? "";
+    stmts.push(...plantInsertStmts(db, plan.add as MetrcPlantRow[], license, phase, mountId, ts));
+    for (const r of plan.update as MetrcPlantRow[]) stmts.push(plantUpdateStmt(db, r, license, phase, mountId, ts));
+  } else if (scope.kind === "packages") {
+    stmts.push(...packageInsertStmts(db, plan.add as MetrcPackageRow[], license, mountId, ts));
+    for (const r of plan.update as MetrcPackageRow[]) stmts.push(packageUpdateStmt(db, r, license, mountId, ts));
+  } else {
+    stmts.push(...harvestInsertStmts(db, plan.add as MetrcHarvestRow[], license, mountId, ts));
+    for (const r of plan.update as MetrcHarvestRow[]) stmts.push(harvestUpdateStmt(db, r, license, mountId, ts));
+  }
+  stmts.push(...goneStmts(db, scope.kind, plan.gone, mountId, ts));
+  return stmts;
+}
+
+export async function runChunked(db: D1Database, stmts: D1PreparedStatement[]): Promise<void> {
   for (let i = 0; i < stmts.length; i += METRC_MOUNT_CHUNK) {
     await db.batch(stmts.slice(i, i + METRC_MOUNT_CHUNK));
   }
@@ -1097,7 +1360,7 @@ function checkKind(head: MountHead, kind: MetrcKind): void {
  * reopen anything by itself. Returns the counts for the flash. */
 export async function closeLedgerForGoneTags(
   db: D1Database,
-  actorId: string,
+  actorId: string | null,
   mountId: string,
   ts: string
 ): Promise<{ items: number; packages: number }> {
@@ -1165,7 +1428,7 @@ export async function closeLedgerForGoneTags(
  * active fresh-frozen package the ledger does not already bear (live or closed)
  * lands as one finished-goods item at the Blast Freezer. A second mount of the
  * same file lands nothing. */
-export async function landFfzFromMirror(db: D1Database, actorId: string, mountId: string, ts: string): Promise<number> {
+export async function landFfzFromMirror(db: D1Database, actorId: string | null, mountId: string, ts: string): Promise<number> {
   const kinds = parseFfzItemKinds(await getConfigValue(db, CONFIG_KEYS.ffz_item_kinds));
   const kindList = kinds.length > 0 ? kinds : ["FFZ"];
   const where = kindList.map(() => ffzKindClause("m")).join(" OR ");
@@ -1340,6 +1603,57 @@ function mountedRedirect(
   return `/inventory/metrc?${q.toString()}`;
 }
 
+/** MA1 Law 1: which door wrote a mount row (metrc_mounts.source, 0096). */
+export type MountSource = "file" | "api";
+
+export type MountRowSpec = {
+  mountId: string;
+  kind: MirrorKind;
+  phase: string | null;
+  license: string;
+  source: MountSource;
+  /** The file's name, or the API door's endpoint path. */
+  filename: string;
+  /** xlsx or csv from the file door; json from the API door. */
+  fileFormat: string;
+  rowsTotal: number;
+  /** Null from the API door (A15). */
+  actorId: string | null;
+  /** The change-log reason: SYSTEM_REASON.metrc_mount or metrc_sweep. */
+  reason: string;
+  summary: unknown;
+  ts: string;
+};
+
+/** The mount row's insert and its field logs (one log row per set field, as
+ * before), for either door. The mount row leads the first batch. */
+export function mountRowStmts(db: D1Database, m: MountRowSpec): D1PreparedStatement[] {
+  const record = {
+    id: m.mountId,
+    kind: m.kind,
+    phase: m.phase,
+    license_value: m.license,
+    filename: m.filename,
+    file_format: m.fileFormat,
+    rows_total: m.rowsTotal,
+    source: m.source,
+    created_at: m.ts,
+    created_by: m.actorId,
+  };
+  return [
+    db
+      .prepare(
+        `INSERT INTO metrc_mounts (
+          id, kind, phase, license_value, filename, file_format, rows_total, rows_added, rows_updated,
+          rows_unchanged, rows_gone, summary, source, created_at, created_by, updated_at, updated_by,
+          deleted_at, deleted_by, delete_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`
+      )
+      .bind(m.mountId, m.kind, m.phase, m.license, m.filename, m.fileFormat, m.rowsTotal, JSON.stringify(m.summary), m.source, m.ts, m.actorId, m.ts, m.actorId),
+    ...logsForInsert(db, "metrc_mounts", m.mountId, record, m.actorId, m.reason, m.ts),
+  ];
+}
+
 function mountRowInsert(
   db: D1Database,
   head: MountHead,
@@ -1348,42 +1662,20 @@ function mountRowInsert(
   mountId: string,
   ts: string
 ): D1PreparedStatement[] {
-  const record = {
-    id: mountId,
+  return mountRowStmts(db, {
+    mountId,
     kind: scan.kind,
     phase,
-    license_value: head.license,
+    license: head.license,
+    source: "file",
     filename: head.file.name,
-    file_format: scan.format,
-    rows_total: scan.total,
-    created_at: ts,
-    created_by: head.actor.id,
-  };
-  return [
-    db
-      .prepare(
-        `INSERT INTO metrc_mounts (
-          id, kind, phase, license_value, filename, file_format, rows_total, rows_added, rows_updated,
-          rows_unchanged, rows_gone, summary, created_at, created_by, updated_at, updated_by,
-          deleted_at, deleted_by, delete_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?, ?, ?, ?, NULL, NULL, NULL)`
-      )
-      .bind(
-        mountId,
-        scan.kind,
-        phase,
-        head.license,
-        head.file.name,
-        scan.format,
-        scan.total,
-        JSON.stringify({ mounting: true, rows_done: 0 }),
-        ts,
-        head.actor.id,
-        ts,
-        head.actor.id
-      ),
-    ...logsForInsert(db, "metrc_mounts", mountId, record, head.actor.id, SYSTEM_REASON.metrc_mount, ts),
-  ];
+    fileFormat: scan.format,
+    rowsTotal: scan.total,
+    actorId: head.actor.id,
+    reason: SYSTEM_REASON.metrc_mount,
+    summary: { mounting: true, rows_done: 0 },
+    ts,
+  });
 }
 
 /** The mount row of a round after the first, checked against this round's file. */
@@ -1405,9 +1697,102 @@ async function mountRowFor(db: D1Database, mountId: string, head: MountHead, sca
   return { ...row, rows_added: Number(row.rows_added), rows_updated: Number(row.rows_updated), rows_unchanged: Number(row.rows_unchanged) };
 }
 
-/** Diff the window against the mirror and write it, the mount row's counts
- * growing in the same final batch; on the last round the gone rows, the
- * summary and the count logs land too. Returns the mount's counts so far. */
+export type MountCounts = { added: number; updated: number; unchanged: number; gone: number };
+
+export type WriteMirrorPassInput = {
+  plan: MirrorPlan<object>;
+  mountId: string;
+  /** Null from the API door (A15). */
+  actorId: string | null;
+  /** The change-log reason: SYSTEM_REASON.metrc_mount or metrc_sweep. */
+  reason: string;
+  /** The mount row's insert on a first write; empty after. */
+  lead: D1PreparedStatement[];
+  /** The mount's counts so far; the plan's add to them. */
+  before: MountCounts;
+  rowsTotal: number;
+  /** True when a pass completed: the 4 count logs land (A30). */
+  done: boolean;
+  summary: unknown;
+  ts: string;
+};
+
+/** MA1 Law 1: write one plan behind its mount row. The mount row leads so a
+ * chunk that fails leaves the pass on record; the counts trail in the last
+ * batch so they never run ahead of the rows; the count logs land only on a
+ * completed pass. Returns the mount's counts so far. */
+export async function writeMirrorPass(db: D1Database, w: WriteMirrorPassInput): Promise<MountCounts> {
+  const stmts: D1PreparedStatement[] = [...w.lead, ...mirrorPlanStmts(db, w.plan, w.mountId, w.ts)];
+  const counts: MountCounts = {
+    added: w.before.added + w.plan.add.length,
+    updated: w.before.updated + w.plan.update.length,
+    unchanged: w.before.unchanged + w.plan.unchanged,
+    gone: w.before.gone + w.plan.gone.length,
+  };
+  stmts.push(
+    db
+      .prepare(
+        `UPDATE metrc_mounts SET rows_total = ?, rows_added = ?, rows_updated = ?, rows_unchanged = ?, rows_gone = ?,
+         summary = ?, updated_at = ?, updated_by = ? WHERE id = ?`
+      )
+      .bind(w.rowsTotal, counts.added, counts.updated, counts.unchanged, counts.gone, JSON.stringify(w.summary), w.ts, w.actorId, w.mountId)
+  );
+  if (w.done) {
+    const finals: Record<string, number> = {
+      rows_added: counts.added,
+      rows_updated: counts.updated,
+      rows_unchanged: counts.unchanged,
+      rows_gone: counts.gone,
+    };
+    for (const [field, value] of Object.entries(finals)) {
+      stmts.push(
+        insertLog(db, {
+          record_table: "metrc_mounts",
+          record_id: w.mountId,
+          field,
+          old_value: null,
+          new_value: String(value),
+          actor_person_id: w.actorId,
+          reason: w.reason,
+          changed_at: w.ts,
+        })
+      );
+    }
+  }
+  await runChunked(db, stmts);
+  return counts;
+}
+
+export type AfterPackagesPass = {
+  /** The pass completed (the CSV file's last round; a complete API full pass). */
+  complete: boolean;
+  /** A29: the pass's gone marks were held, so nothing closes or lands. */
+  goneHeld: boolean;
+  /** The plan's lab status moves; the API door releases only when above 0. */
+  labStateChanged: number;
+  /** The CSV door releases after every complete packages mount, as before. */
+  releaseAlways?: boolean;
+};
+
+export type AfterPackagesResult = { closed: { items: number; packages: number }; landed: number; released: MirrorRelease };
+
+/** What follows a packages pass, either door: THE MIRROR CLOSES THE LEDGER
+ * (canon 0.30.128) and THE FFZ INVENTORY (0.30.225) only after a complete
+ * pass whose gone was not held; THE MIRROR RELEASES THE QUEUE (0.30.193)
+ * when a lab status moved (or always, the CSV door's way). */
+export async function afterPackagesPass(db: D1Database, actorId: string | null, mountId: string, ts: string, a: AfterPackagesPass): Promise<AfterPackagesResult> {
+  const landing = a.complete && !a.goneHeld;
+  const closed = landing ? await closeLedgerForGoneTags(db, actorId, mountId, ts) : { items: 0, packages: 0 };
+  const landed = landing ? await landFfzFromMirror(db, actorId, mountId, ts) : 0;
+  const releasing = a.releaseAlways ? a.complete : a.labStateChanged > 0;
+  const released = releasing ? await releaseTestedFromMirror(db, actorId, mountId, ts) : { total: 0, passed: 0, failed: 0 };
+  return { closed, landed, released };
+}
+
+/** The CSV door's round: diff the window through the one reconcile and write
+ * it behind the mount row; on the last round the gone rows (the file's seen
+ * set against the live rows, no guard: the file is whole), the summary and
+ * the count logs land too. Returns the mount's counts so far. */
 async function writeMountWindow(
   db: D1Database,
   head: MountHead,
@@ -1419,83 +1804,31 @@ async function writeMountWindow(
   done: boolean,
   next: number,
   ts: string
-): Promise<{ added: number; updated: number; unchanged: number; gone: number }> {
-  const stmts: D1PreparedStatement[] = [...lead];
-  let roundAdded = 0;
-  let roundUpdated = 0;
-  let roundUnchanged = 0;
-  if (scan.kind === "plants") {
-    const existing = await loadExistingByTags(db, "plants", scan.plants.map((r) => r.tag));
-    const diff = diffMount(scan.plants, existing, PLANT_COLS, { phase, license: head.license });
-    stmts.push(...plantInsertStmts(db, diff.added, head.license, phase ?? "", mountId, ts));
-    for (const r of diff.updated) stmts.push(plantUpdateStmt(db, r, head.license, phase ?? "", mountId, ts));
-    roundAdded = diff.added.length;
-    roundUpdated = diff.updated.length;
-    roundUnchanged = diff.unchanged;
-  } else {
-    const existing = await loadExistingByTags(db, "packages", scan.packages.map((r) => r.tag));
-    const diff = diffMount(scan.packages, existing, PACKAGE_COLS, { license: head.license });
-    stmts.push(...packageInsertStmts(db, diff.added, head.license, mountId, ts));
-    for (const r of diff.updated) stmts.push(packageUpdateStmt(db, r, head.license, mountId, ts));
-    roundAdded = diff.added.length;
-    roundUpdated = diff.updated.length;
-    roundUnchanged = diff.unchanged;
-  }
-  const counts = {
-    added: before.added + roundAdded,
-    updated: before.updated + roundUpdated,
-    unchanged: before.unchanged + roundUnchanged,
-    gone: 0,
-  };
-  if (done) {
-    const live = await loadLiveTags(db, scan.kind, head.license, phase);
-    const gone = live.filter((tag) => !scan.seen.has(tag));
-    stmts.push(...goneStmts(db, scan.kind === "plants" ? "metrc_plants" : "metrc_packages", gone, mountId, ts));
-    counts.gone = gone.length;
-  }
-  stmts.push(
-    db
-      .prepare(
-        `UPDATE metrc_mounts SET rows_added = ?, rows_updated = ?, rows_unchanged = ?, rows_gone = ?,
-         summary = ?, updated_at = ?, updated_by = ? WHERE id = ?`
-      )
-      .bind(
-        counts.added,
-        counts.updated,
-        counts.unchanged,
-        counts.gone,
-        JSON.stringify(done ? scan.summary : { mounting: true, rows_done: next }),
-        ts,
-        head.actor.id,
-        mountId
-      )
-  );
-  if (done) {
-    const finals: Record<string, number> = {
-      rows_added: counts.added,
-      rows_updated: counts.updated,
-      rows_unchanged: counts.unchanged,
-      rows_gone: counts.gone,
-    };
-    for (const [field, value] of Object.entries(finals)) {
-      stmts.push(
-        insertLog(db, {
-          record_table: "metrc_mounts",
-          record_id: mountId,
-          field,
-          old_value: null,
-          new_value: String(value),
-          actor_person_id: head.actor.id,
-          reason: SYSTEM_REASON.metrc_mount,
-          changed_at: ts,
-        })
-      );
-    }
-  }
-  // The mount row leads so a chunk that fails leaves the drop on record; the
-  // counts trail in the last batch so they never run ahead of the rows.
-  await runChunked(db, stmts);
-  return counts;
+): Promise<MountCounts> {
+  const incoming: object[] = scan.kind === "plants" ? scan.plants : scan.packages;
+  const existing = await loadExistingByKeys(db, scan.kind, incoming.map((r) => mirrorKeyOf(scan.kind, r)));
+  const live = done ? await loadLiveKeys(db, scan.kind, head.license, phase) : [];
+  const plan = planMirrorPass<object>({
+    scope: { kind: scan.kind, license: head.license, phase },
+    incoming,
+    existing,
+    live,
+    complete: done ? { seen: scan.seen } : null,
+    sampleCap: 0,
+    goneHoldShare: null,
+  });
+  return writeMirrorPass(db, {
+    plan,
+    mountId,
+    actorId: head.actor.id,
+    reason: SYSTEM_REASON.metrc_mount,
+    lead,
+    before: { ...before, gone: 0 },
+    rowsTotal: scan.total,
+    done,
+    summary: done ? scan.summary : { mounting: true, rows_done: next },
+    ts,
+  });
 }
 
 function sliceSize(form: FormData): number {
@@ -1538,9 +1871,11 @@ export async function mountMetrcRound(db: D1Database, form: FormData): Promise<M
   const done = next >= scan.total;
   const counts = await writeMountWindow(db, head, scan, phase, mountId, before, lead, done, next, ts);
   // THE MIRROR CLOSES THE LEDGER (canon 0.30.128): once a packages mount has landed whole.
-  const closed = done && scan.kind === "packages" ? await closeLedgerForGoneTags(db, head.actor.id, mountId, ts) : { items: 0, packages: 0 };
-  const landed = done && scan.kind === "packages" ? await landFfzFromMirror(db, head.actor.id, mountId, ts) : 0;
-  const released = done && scan.kind === "packages" ? await releaseTestedFromMirror(db, head.actor.id, mountId, ts) : { total: 0, passed: 0, failed: 0 };
+  const after =
+    scan.kind === "packages"
+      ? await afterPackagesPass(db, head.actor.id, mountId, ts, { complete: done, goneHeld: false, labStateChanged: 0, releaseAlways: true })
+      : { closed: { items: 0, packages: 0 }, landed: 0, released: { total: 0, passed: 0, failed: 0 } };
+  const { closed, landed, released } = after;
   return {
     ok: true,
     mount_id: mountId,
@@ -1578,10 +1913,11 @@ export async function mountMetrcExport(db: D1Database, form: FormData): Promise<
   const lead = mountRowInsert(db, head, scan, phase, mountId, ts);
   const counts = await writeMountWindow(db, head, scan, phase, mountId, { added: 0, updated: 0, unchanged: 0 }, lead, true, scan.total, ts);
   // THE MIRROR CLOSES THE LEDGER (canon 0.30.128): the packages mount has landed whole.
-  const closed = scan.kind === "packages" ? await closeLedgerForGoneTags(db, head.actor.id, mountId, ts) : { items: 0, packages: 0 };
-  const landed = scan.kind === "packages" ? await landFfzFromMirror(db, head.actor.id, mountId, ts) : 0;
-  const released = scan.kind === "packages" ? await releaseTestedFromMirror(db, head.actor.id, mountId, ts) : { total: 0, passed: 0, failed: 0 };
-  return { redirect: mountedRedirect(mountId, scan.kind, counts.added, counts.updated, counts.gone, closed, released, landed) };
+  const after =
+    scan.kind === "packages"
+      ? await afterPackagesPass(db, head.actor.id, mountId, ts, { complete: true, goneHeld: false, labStateChanged: 0, releaseAlways: true })
+      : { closed: { items: 0, packages: 0 }, landed: 0, released: { total: 0, passed: 0, failed: 0 } };
+  return { redirect: mountedRedirect(mountId, scan.kind, counts.added, counts.updated, counts.gone, after.closed, after.released, after.landed) };
 }
 
 /* ------------------------------------------------------------ readers */
@@ -1602,12 +1938,15 @@ export type MetrcMountRow = {
   created_at: string;
 };
 
+/** The drop page's list: the file door's mounts (MA1 Law 1 stamps the source;
+ * the API door's daily mounts are the Admin pane's, Phase D, and never push
+ * the drops out of the 40 newest). */
 export async function listMetrcMounts(db: D1Database, limit = 40): Promise<MetrcMountRow[]> {
   const result = await db
     .prepare(
       `SELECT id, kind, phase, license_value, filename, file_format, rows_total, rows_added, rows_updated,
               rows_unchanged, rows_gone, summary, created_at
-       FROM metrc_mounts WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?`
+       FROM metrc_mounts WHERE deleted_at IS NULL AND source = 'file' ORDER BY created_at DESC LIMIT ?`
     )
     .bind(limit)
     .all<MetrcMountRow>();
