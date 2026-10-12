@@ -422,11 +422,20 @@ async function localD1WhenFree(sql, ms = 20000) {
 }
 
 function localD1All(sql) {
-  const db = smokeDb();
-  try {
-    return db.prepare(sql).all();
-  } finally {
-    db.close();
+  // The same Windows handoff as localD1WhenFree: a read opened in the moment
+  // wrangler releases the SQLite file answers disk I/O. Retry, then throw.
+  const until = Date.now() + 20000;
+  for (;;) {
+    let db;
+    try {
+      db = smokeDb();
+      return db.prepare(sql).all();
+    } catch (err) {
+      if (Date.now() >= until || !(err && err.code === "ERR_SQLITE_ERROR")) throw err;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    } finally {
+      if (db) db.close();
+    }
   }
 }
 
@@ -921,6 +930,7 @@ async function run() {
     assert(reportsOpen.body.includes("/reports/line_packages") && reportsOpen.body.includes("Line packages"), "reports landing missing Line packages");
     assert(reportsOpen.body.includes("/reports/dry_weight_by_strain") && reportsOpen.body.includes("Dry Weight by Strain"), "reports landing missing Dry Weight by Strain");
     assert(reportsOpen.body.includes("/reports/environment_history") && reportsOpen.body.includes("Environment history"), "reports landing missing Environment history");
+    assert(reportsOpen.body.includes("/reports/harvest_reconciliation") && reportsOpen.body.includes("Harvest weight reconciliation"), "reports landing missing Harvest weight reconciliation");
     assert(reportsOpen.body.includes("/reports/floor_vs_metrc") && reportsOpen.body.includes("Floor vs METRC"), "reports landing missing Floor vs METRC");
     assert(!reportsOpen.body.includes("Enter PIN"), "reports must not sit behind the PIN");
     const gatedCompliance = await text("/compliance");
@@ -10359,6 +10369,13 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     const toDay = atMs(Date.now() + 2 * 24 * hourMs).slice(0, 10);
     const historyCsv = await text(`/reports/environment_history?from=${fromDay}&to=${toDay}&format=csv`);
     assert(historyCsv.res.status === 200 && historyCsv.body.includes("sr-a") && historyCsv.body.includes("sr-b"), `the history CSV expected both units, got ${historyCsv.res.status} ${historyCsv.body.slice(0, 300)}`);
+    const reconcile = await text("/reports/harvest_reconciliation?from=2026-09-01&to=2026-10-12");
+    assert(
+      reconcile.res.status === 200 && reconcile.body.includes("Wet total") && reconcile.body.includes("Dry total") && reconcile.body.includes("448 g against") && reconcile.body.includes("percent"),
+      `harvest reconciliation expected 200 with both totals and the ratio, got ${reconcile.res.status} ${reconcile.body.slice(0, 300)}`
+    );
+    const reconcileCsv = await text("/reports/harvest_reconciliation?from=2026-09-01&to=2026-10-12&format=csv");
+    assert(reconcileCsv.res.status === 200 && reconcileCsv.body.includes("Wet total"), `harvest reconciliation CSV expected 200, got ${reconcileCsv.res.status} ${reconcileCsv.body.slice(0, 300)}`);
     process.stdout.write("SMOKE PASS\n");
   } finally {
     await stopWrangler(child);

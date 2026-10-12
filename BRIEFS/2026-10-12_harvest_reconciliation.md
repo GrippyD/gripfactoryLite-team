@@ -1,8 +1,8 @@
 # BRIEF HR1: HARVEST WEIGHT RECONCILIATION REPORT (canon 0.30.449)
 
-Filed by the Scribe on 2026-10-12 from the owner's word ("do it", answering the numbered next steps after his meeting review of 10/1 to 10/12). QUEUED in the worktree `C:\Users\DennisWallace\Documents\Claude\Projects\gripfactory Practical\branches\GFLiteMetrcAPI`, to be dispatched only after SR1 (sensor retention, in build there now) hands back and merges, because one agent works one worktree. Pinned to the live tree `d6ecd7050716a753` (355 files, migrations 0001-0098, main be52e28, worker 92d5fe5b); the Scribe re-pins this line at dispatch if main has moved. NO migration in this brief.
+Filed by the Scribe on 2026-10-12 from the owner's word ("do it", answering the numbered next steps after his meeting review of 10/1 to 10/12). DISPATCHED 2026-10-12 in the worktree `C:\Users\DennisWallace\Documents\Claude\Projects\gripfactory Practical\branches\GFLiteMetrcAPI`, after SR1 (sensor retention) merged and went live. Pinned to the live tree `785104eee78a1c6e` (358 files, migrations 0001-0098 plus 0100, main c02752c, worker 96ff7160). NO migration in this brief (0101 is held for LD1, 0099 for T1).
 
-For the build session (Claude Code or Cursor): open in `branches\GFLiteMetrcAPI` (its `app\` is the app), NOT the main folder `gripfactory Practical\app` and not `branches\GFLiteOpsDashboard`; if your working folder is not under `branches\GFLiteMetrcAPI`, stop and say so. Under THE DISPATCH RULE (canon 0.30.155). Verify the pinned tree with canon's hash command before touching anything (run in `app/`, `wrangler.toml` read as LF): `(find src test scripts migrations -type f; echo wrangler.toml; echo tsconfig.json; echo package.json) | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-16`. If the hash differs, stop and say so. No git; nothing committed, pushed or deployed. Never edit `canon/` or an existing migration.
+For the build session (Claude Code or Cursor): open in `branches\GFLiteMetrcAPI` (its `app\` is the app), NOT the main folder `gripfactory Practical\app` and not `branches\GFLiteOpsDashboard`; if your working folder is not under `branches\GFLiteMetrcAPI`, stop and say so. Under THE DISPATCH RULE (canon 0.30.155). Verify the pinned tree `785104eee78a1c6e` with canon's hash command before touching anything (run in `app/`, `wrangler.toml` read as LF): `(find src test scripts migrations -type f; echo wrangler.toml; echo tsconfig.json; echo package.json) | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-16`. If the hash differs, stop and say so. No git; nothing committed, pushed or deployed. Never edit `canon/` or an existing migration.
 
 ---
 
@@ -14,7 +14,7 @@ In the 10/9 meeting two harvest totals disagreed: the app said 70,673 lb and the
 
 - `src/config.ts` `GRAMS_PER_LB` (448), `formatGrams`; `src/compliance.ts` `formatLbs` (pounds at 448, two decimals).
 - `src/drystrain.ts` (canon 0.30.427, Dry Weight by Strain): the newest report. Follow its shape for the page, the From and To dates (`resolveDryStrainRange`, 366 day cap, 30 day default), the filter form, the footnote and the CSV control. Its route and form sit near `src/index.ts` line 1020; its menu entry in the Reports menu.
-- `src/reports.ts`: `ReportColumn`, `ReportView`, the grams cell renderer (line 143 and 209).
+- `src/reports.ts`: `ReportColumn`, `ReportView`, the grams cell renderer (line 143 and 209), the report key list and the Reports menu card (SR1 added `environment_history` there the same way; follow it). `test/console.test.ts` asserts the report list length: it reads 15 after SR1 and becomes 16 with this report, so update that assertion.
 - `migrations/0001_schema.sql` `harvest_batches`, `wet_weight_entries`; `migrations/0010_unload_dry_space.sql` `dry_weights`; `migrations/0097_metrc_harvests.sql` (the METRC mirror's harvests). Read all four before writing a line.
 - `src/feeds.ts` `HARVEST_CHANGED_AT_SQL` and the harvest feed show which joins already read one wet lot per `wet_weight_entries.id`; reuse the lot grain.
 
@@ -35,7 +35,7 @@ D1 resets the database on one heavy query. The report's reads go through existin
 ## The tests and the smoke
 
 - Unit (`test/harvestreconciliation.test.ts`): a lot at 448,000 g reads 1,000.00 lb at 448 and 987.67 lb at 453.59237 (check the rounding) and the difference line; the totals row and the ratio line compute from the numbers; a lot with no dry weight leaves dry blank and still lists; a lot with no METRC harvest is flagged; a METRC harvest with no lot is listed under "METRC only"; the date range filter, the farm filter and the grow filter; the empty range message; the CSV; the Spanish words; the report reads nothing from `sensor_readings` and binds its dates.
-- Smoke (`scripts/smoke.mjs`): `/reports/harvest_reconciliation` answers 200 on the seeded data and carries both totals and the ratio line; the CSV answers 200. The `About to apply` line stays at 98 migrations on this tree.
+- Smoke (`scripts/smoke.mjs`): `/reports/harvest_reconciliation` answers 200 on the seeded data and carries both totals and the ratio line; the CSV answers 200. The `About to apply` line reads 99 migrations on this tree (0001-0098 plus 0100).
 - Gates as standing: typecheck 0; vitest under `TZ=UTC` and `TZ=America/New_York`; `node --check scripts/smoke.mjs`; the from-zero smoke, SMOKE PASS, no ` 500 `; dash and CR audit by character; no personnel names anywhere in what you write.
 
 ## Build shape

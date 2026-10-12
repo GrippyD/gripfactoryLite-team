@@ -484,6 +484,7 @@ import {
 } from "./reports";
 import { floorVsMetrcCsv, floorVsMetrcPage, loadFloorVsMetrc, shownFloorVsMetrc } from "./floormetrc";
 import { DRY_STRAIN_FARMS, DRY_STRAIN_GROW_METHODS, dryStrainNames, dryStrainRefused, dryStrainView, listDryStrainLots, resolveDryStrainRange } from "./drystrain";
+import { HARVEST_RECONCILE_KEY, loadHarvestReconciliation } from "./harvestreconciliation";
 import { ENVIRONMENT_HISTORY_KEY, loadEnvironmentHistory, rollupSensorHours } from "./sensorhistory";
 import {
   PIPELINE,
@@ -1004,6 +1005,7 @@ app.get("/reports/:key", async (c) => {
   // SENSOR RETENTION (BRIEF SR1): history reads the hourly table, with its own room list.
   let filterHtml = reportFilterForm(key, url.searchParams, s.locale);
   let view: ReportView;
+  let csvBody: string | null = null;
   if (key === ENVIRONMENT_HISTORY_KEY) {
     const today = await farmToday(c.env.DB, nowIso());
     const loaded = await loadEnvironmentHistory(c.env.DB, url.searchParams, today, s.locale);
@@ -1013,6 +1015,16 @@ app.get("/reports/:key", async (c) => {
     }
     view = loaded.view;
     filterHtml = loaded.filterHtml;
+  } else if (key === HARVEST_RECONCILE_KEY) {
+    const today = await farmToday(c.env.DB, nowIso());
+    const loaded = await loadHarvestReconciliation(c.env.DB, url.searchParams, today, s.locale);
+    if (loaded.ok) {
+      url.searchParams.set("from", loaded.from);
+      url.searchParams.set("to", loaded.to);
+    }
+    view = loaded.view;
+    filterHtml = loaded.filterHtml;
+    csvBody = loaded.csv;
   } else if (key === "dry_weight_by_strain") {
     const today = await farmToday(c.env.DB, nowIso());
     const range = resolveDryStrainRange(url.searchParams.get("from"), url.searchParams.get("to"), today);
@@ -1047,7 +1059,7 @@ app.get("/reports/:key", async (c) => {
     return html(c, s, view.title, reportPage(view, filterHtml, reportQuery(url.searchParams), s.locale));
   }
   if (format === "csv") {
-    return new Response(reportCsv(view), {
+    return new Response(csvBody ?? reportCsv(view), {
       headers: {
         "content-type": "text/csv; charset=utf-8",
         "content-disposition": `attachment; filename="${key}_${reportFileStamp()}.csv"`,

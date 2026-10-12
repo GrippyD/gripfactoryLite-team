@@ -4194,6 +4194,52 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "The room average sits under an hour with more than one unit. History reads the hourly table.",
     es: "El promedio de la sala va bajo una hora con mas de una unidad. El historial lee la tabla por hora.",
   },
+  // HARVEST WEIGHT RECONCILIATION (BRIEF HR1).
+  "Harvest weight reconciliation": { en: "Harvest weight reconciliation", es: "Conciliacion del peso de cosecha" },
+  "Wet and dry pounds of each lot at 448 g and at the standard pound, beside the METRC harvest weight.": {
+    en: "Wet and dry pounds of each lot at 448 g and at the standard pound, beside the METRC harvest weight.",
+    es: "Libras humedas y secas de cada lote a 448 g y a la libra estandar, junto al peso de cosecha de METRC.",
+  },
+  "HBN short id": { en: "HBN short id", es: "Id corto del HBN" },
+  "Wet grams": { en: "Wet grams", es: "Gramos humedos" },
+  "Wet lb at 448 g": { en: "Wet lb at 448 g", es: "Lb humedas a 448 g" },
+  "Wet lb at 453.59237 g": { en: "Wet lb at 453.59237 g", es: "Lb humedas a 453.59237 g" },
+  "Wet lb difference": { en: "Wet lb difference", es: "Diferencia de lb humedas" },
+  "Dry lb at 448 g": { en: "Dry lb at 448 g", es: "Lb secas a 448 g" },
+  "Dry lb at 453.59237 g": { en: "Dry lb at 453.59237 g", es: "Lb secas a 453.59237 g" },
+  "Dry lb difference": { en: "Dry lb difference", es: "Diferencia de lb secas" },
+  "METRC lb": { en: "METRC lb", es: "Lb METRC" },
+  "METRC UOM": { en: "METRC UOM", es: "Ud. METRC" },
+  "Flag": { en: "Flag", es: "Aviso" },
+  "No METRC harvest": { en: "No METRC harvest", es: "Sin cosecha METRC" },
+  "METRC only": { en: "METRC only", es: "Solo METRC" },
+  "No lot was harvested in that range.": { en: "No lot was harvested in that range.", es: "Ningun lote se cosecho en ese rango." },
+  "The app's pound is 448 g. The standard pound is 453.59237 g. Both are shown. METRC and the sheets use the standard pound.": {
+    en: "The app's pound is 448 g. The standard pound is 453.59237 g. Both are shown. METRC and the sheets use the standard pound.",
+    es: "La libra de la aplicacion es 448 g. La libra estandar es 453.59237 g. Se muestran ambas. METRC y las hojas usan la libra estandar.",
+  },
+  "A lot is in range on harvest_batches.entry_date.": {
+    en: "A lot is in range on harvest_batches.entry_date.",
+    es: "Un lote entra en el rango por harvest_batches.entry_date.",
+  },
+  "448 g against {standard} g, {pct} percent": {
+    en: "448 g against {standard} g, {pct} percent",
+    es: "448 g contra {standard} g, {pct} por ciento",
+  },
+  "Harvested {from} to {to}": { en: "Harvested {from} to {to}", es: "Cosechado del {from} al {to}" },
+  "Wet pounds per hour: {at448} at 448 g, {atStandard} at {standard} g, over {hours} hours on harvest_labor_hours.": {
+    en: "Wet pounds per hour: {at448} at 448 g, {atStandard} at {standard} g, over {hours} hours on harvest_labor_hours.",
+    es: "Libras humedas por hora: {at448} a 448 g, {atStandard} a {standard} g, en {hours} horas de harvest_labor_hours.",
+  },
+  "No harvest hours on harvest_labor_hours for these dates.": {
+    en: "No harvest hours on harvest_labor_hours for these dates.",
+    es: "No hay horas de cosecha en harvest_labor_hours para estas fechas.",
+  },
+  "Pounds per hour is not stated: harvest_labor_hours holds {hours} hours for these dates and has no grow method.": {
+    en: "Pounds per hour is not stated: harvest_labor_hours holds {hours} hours for these dates and has no grow method.",
+    es: "No se indican libras por hora: harvest_labor_hours tiene {hours} horas para estas fechas y no tiene metodo de cultivo.",
+  },
+  "Harvest start": { en: "Harvest start", es: "Inicio de cosecha" },
 };
 
 const FORMULA_ERRORS: Array<[string, string]> = [
