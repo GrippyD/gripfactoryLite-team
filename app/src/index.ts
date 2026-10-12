@@ -484,6 +484,7 @@ import {
 } from "./reports";
 import { floorVsMetrcCsv, floorVsMetrcPage, loadFloorVsMetrc, shownFloorVsMetrc } from "./floormetrc";
 import { DRY_STRAIN_FARMS, DRY_STRAIN_GROW_METHODS, dryStrainNames, dryStrainRefused, dryStrainView, listDryStrainLots, resolveDryStrainRange } from "./drystrain";
+import { ENVIRONMENT_HISTORY_KEY, loadEnvironmentHistory, rollupSensorHours } from "./sensorhistory";
 import {
   PIPELINE,
   TABLE_EXPORTS,
@@ -1000,9 +1001,19 @@ app.get("/reports/:key", async (c) => {
     );
   }
   // DRY WEIGHT BY STRAIN (canon 0.30.427): the filters need the strain names, so the form is built here.
+  // SENSOR RETENTION (BRIEF SR1): history reads the hourly table, with its own room list.
   let filterHtml = reportFilterForm(key, url.searchParams, s.locale);
   let view: ReportView;
-  if (key === "dry_weight_by_strain") {
+  if (key === ENVIRONMENT_HISTORY_KEY) {
+    const today = await farmToday(c.env.DB, nowIso());
+    const loaded = await loadEnvironmentHistory(c.env.DB, url.searchParams, today, s.locale);
+    if (loaded.ok) {
+      url.searchParams.set("from", loaded.from);
+      url.searchParams.set("to", loaded.to);
+    }
+    view = loaded.view;
+    filterHtml = loaded.filterHtml;
+  } else if (key === "dry_weight_by_strain") {
     const today = await farmToday(c.env.DB, nowIso());
     const range = resolveDryStrainRange(url.searchParams.get("from"), url.searchParams.get("to"), today);
     const lots = await listDryStrainLots(c.env.DB);
@@ -4498,6 +4509,12 @@ function scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext):
         await runSheetSync(env, "cron");
         await runMetrcSweep(env, "cron");
         await runInTestingSync(env, "cron");
+        try {
+          const rolled = await rollupSensorHours(env.DB, nowIso());
+          console.log(`[sensors] rolled ${rolled.hours} hours, ${rolled.readings} readings, through ${rolled.through}, purged ${rolled.purged}`);
+        } catch {
+          console.log("[sensors] rollup failed");
+        }
       })();
   ctx.waitUntil(run);
   return run;

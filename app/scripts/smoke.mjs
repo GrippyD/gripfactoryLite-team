@@ -526,8 +526,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 98 migration(s)")) {
-      throw new Error(`from-zero apply must say 98 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 99 migration(s)")) {
+      throw new Error(`from-zero apply must say 99 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -920,6 +920,7 @@ async function run() {
     assert(reportsOpen.body.includes("/reports/internal_testing"), "reports landing missing Internal testing");
     assert(reportsOpen.body.includes("/reports/line_packages") && reportsOpen.body.includes("Line packages"), "reports landing missing Line packages");
     assert(reportsOpen.body.includes("/reports/dry_weight_by_strain") && reportsOpen.body.includes("Dry Weight by Strain"), "reports landing missing Dry Weight by Strain");
+    assert(reportsOpen.body.includes("/reports/environment_history") && reportsOpen.body.includes("Environment history"), "reports landing missing Environment history");
     assert(reportsOpen.body.includes("/reports/floor_vs_metrc") && reportsOpen.body.includes("Floor vs METRC"), "reports landing missing Floor vs METRC");
     assert(!reportsOpen.body.includes("Enter PIN"), "reports must not sit behind the PIN");
     const gatedCompliance = await text("/compliance");
@@ -10300,6 +10301,64 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     jar.delete("gf_locale");
     assert(stubEs.body.includes("Host y modo") && stubEs.body.includes("Por endpoint") && stubEs.body.includes("Barrer ahora") && stubEs.body.includes("Paridad"), "the Spanish Metrc API page must carry the Law 9 words");
     noKeyText("the Spanish Metrc API page", stubEs.body);
+
+    // SENSOR RETENTION (BRIEF SR1): four hours for two units, three days back, then a 100-day row.
+    const hourMs = 60 * 60 * 1000;
+    const h0 = Math.floor((Date.now() - 3 * 24 * hourMs) / hourMs) * hourMs;
+    const atMs = (ms) => new Date(ms).toISOString();
+    const retained = [];
+    for (let h = 0; h < 4; h++) {
+      const start = h0 + h * hourMs;
+      retained.push({ room: "CSA", sensor_id: "sr-a", temperature_f: 70, humidity_pct: 40, read_at: atMs(start + 60 * 1000), source: "silo-ops" });
+      retained.push({ room: "CSA", sensor_id: "sr-a", temperature_f: 80, humidity_pct: 50, read_at: atMs(start + 2 * 60 * 1000), source: "silo-ops" });
+      retained.push({ room: "CSB", sensor_id: "sr-b", temperature_f: 60, humidity_pct: 30, read_at: atMs(start + 60 * 1000), source: "silo-ops" });
+      retained.push({ room: "CSB", sensor_id: "sr-b", temperature_f: 66, humidity_pct: 36, read_at: atMs(start + 2 * 60 * 1000), source: "silo-ops" });
+    }
+    const retainedPost = await req("/sensors/readings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(retained),
+    });
+    const retainedText = await retainedPost.text();
+    const retainedBody = JSON.parse(retainedText);
+    assert(retainedPost.status === 200 && retainedBody.stored === 16, `sixteen retained readings expected stored 16 got ${retainedPost.status} ${retainedText}`);
+    const rollCron = await req("/__scheduled?cron=15+*+*+*+*", { noIdentity: true });
+    const rollCronBody = await rollCron.text();
+    assert(rollCron.status === 200, `the retention cron expected 200 got ${rollCron.status}: ${rollCronBody.slice(0, 200)}`);
+    const hourlyA = localD1All("SELECT readings, temp_min, temp_max, temp_avg, hum_min, hum_max, hum_avg FROM sensor_hourly WHERE sensor_key = 'sr-a' ORDER BY hour_start");
+    const hourlyB = localD1All("SELECT readings, temp_avg, hum_avg FROM sensor_hourly WHERE sensor_key = 'sr-b' ORDER BY hour_start");
+    assert(hourlyA.length === 4 && hourlyB.length === 4, `each unit expected four hourly rows, got ${hourlyA.length} and ${hourlyB.length}`);
+    assert(hourlyA.every((row) => row.readings === 2 && Number(row.temp_min) === 70 && Number(row.temp_max) === 80 && Number(row.temp_avg) === 75 && Number(row.hum_min) === 40 && Number(row.hum_max) === 50 && Number(row.hum_avg) === 45), `CSA hourly averages off ${JSON.stringify(hourlyA)}`);
+    assert(hourlyB.every((row) => row.readings === 2 && Number(row.temp_avg) === 63 && Number(row.hum_avg) === 33), `CSB hourly averages off ${JSON.stringify(hourlyB)}`);
+    const watermark = String((localD1All("SELECT value FROM app_config WHERE key = 'sensor_rollup_through' AND deleted_at IS NULL")[0] || {}).value || "");
+    const fourth = atMs(h0 + 3 * hourMs);
+    assert(watermark >= fourth, `the watermark must pass the fourth hour, ${watermark} vs ${fourth}`);
+    const rawKept = localD1All("SELECT sensor_id, COUNT(*) AS n FROM sensor_readings WHERE sensor_id IN ('sr-a', 'sr-b') GROUP BY sensor_id ORDER BY sensor_id");
+    assert(rawKept.length === 2 && rawKept[0].n === 8 && rawKept[1].n === 8, `raw rows inside 90 days must stand, got ${JSON.stringify(rawKept)}`);
+    const oldAt = atMs(Date.now() - 100 * 24 * hourMs);
+    const nowAt = atMs(Date.now());
+    const thirdPost = await req("/sensors/readings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify([
+        { room: "Silo 1", sensor_id: "sr-c", temperature_f: 10, humidity_pct: 10, read_at: oldAt, source: "silo-ops" },
+        { room: "Silo 1", sensor_id: "sr-c", temperature_f: 11, humidity_pct: 11, read_at: nowAt, source: "silo-ops" },
+      ]),
+    });
+    const thirdText = await thirdPost.text();
+    const thirdBody = JSON.parse(thirdText);
+    assert(thirdPost.status === 200 && thirdBody.stored === 2, `the third unit expected stored 2 got ${thirdPost.status} ${thirdText}`);
+    const purgeCron = await req("/__scheduled?cron=15+*+*+*+*", { noIdentity: true });
+    const purgeCronBody = await purgeCron.text();
+    assert(purgeCron.status === 200, `the purge cron expected 200 got ${purgeCron.status}: ${purgeCronBody.slice(0, 200)}`);
+    const thirdLeft = localD1All("SELECT read_at FROM sensor_readings WHERE sensor_id = 'sr-c' ORDER BY read_at");
+    assert(thirdLeft.length === 1 && thirdLeft[0].read_at > oldAt, `the 100-day row must be gone and the newest must stand, got ${JSON.stringify(thirdLeft)}`);
+    const history = await text("/reports/environment_history");
+    assert(history.res.status === 200 && history.body.includes("Environment history") && history.body.includes(">CSA<") && history.body.includes(">CSB<"), `environment history expected 200 with both rooms, got ${history.res.status}`);
+    const fromDay = atMs(Date.now() - 10 * 24 * hourMs).slice(0, 10);
+    const toDay = atMs(Date.now() + 2 * 24 * hourMs).slice(0, 10);
+    const historyCsv = await text(`/reports/environment_history?from=${fromDay}&to=${toDay}&format=csv`);
+    assert(historyCsv.res.status === 200 && historyCsv.body.includes("sr-a") && historyCsv.body.includes("sr-b"), `the history CSV expected both units, got ${historyCsv.res.status} ${historyCsv.body.slice(0, 300)}`);
     process.stdout.write("SMOKE PASS\n");
   } finally {
     await stopWrangler(child);
