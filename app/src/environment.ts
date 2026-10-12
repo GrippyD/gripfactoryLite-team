@@ -122,19 +122,60 @@ export async function readDoorAverage(db: D1Database, room: string): Promise<Doo
   return { room, ...avg };
 }
 
+/** HF1 (2026-10-12): the rooms a door reading can name, from the lookups the
+ * app already keeps (the cure rooms of app_config, the dry spaces, every space
+ * with an environment range or a sensor binding), never from a GROUP BY over
+ * sensor_readings, which scanned every reading on every page (D1 reset the
+ * database for CPU time past about 175,000 rows). A room with readings but no
+ * range, binding, cure seat or dry space has nothing to flag and no pane. */
+export async function doorRoomNames(db: D1Database): Promise<string[]> {
+  const [rooms, spaces, ranges, bindings] = await Promise.all([
+    db.prepare(`SELECT value FROM app_config WHERE key = ? AND deleted_at IS NULL`).bind(CONFIG_KEYS.cure_rooms).first<{ value: string }>(),
+    db.prepare(`SELECT name FROM dry_spaces WHERE deleted_at IS NULL`).all<{ name: string }>(),
+    db.prepare(`SELECT DISTINCT space_name AS name FROM environment_ranges WHERE deleted_at IS NULL`).all<{ name: string }>(),
+    db.prepare(`SELECT DISTINCT space_name AS name FROM sensor_bindings WHERE deleted_at IS NULL AND space_name IS NOT NULL`).all<{ name: string }>(),
+  ]);
+  // The door stores a room in the lookup's own spelling (oneReading in cure.ts
+  // matches the name case-insensitively and keeps the lookup's), so the names
+  // are kept as the lookups spell them and deduped without case.
+  const out = new Map<string, string>();
+  const add = (raw: unknown) => {
+    const name = String(raw ?? "").trim();
+    if (name && !out.has(name.toUpperCase())) out.set(name.toUpperCase(), name);
+  };
+  const configured = String(rooms?.value ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  for (const room of configured.length > 0 ? configured : ["CSA", "CSB"]) add(room);
+  for (const list of [spaces, ranges, bindings]) for (const row of list.results ?? []) add(row.name);
+  return [...out.values()];
+}
+
 export async function listDoorAverages(db: D1Database): Promise<DoorAverage[]> {
-  const maxes = await db
-    .prepare(
-      `SELECT room, MAX(read_at) AS read_at FROM sensor_readings
-       WHERE role IS NULL AND lower(trim(coalesce(source, ''))) <> 'test'
-       GROUP BY room`
-    )
-    .all<{ room: string; read_at: string }>();
   const out: DoorAverage[] = [];
-  for (const max of maxes.results ?? []) {
-    if (!max.room) continue;
-    const one = await readDoorAverage(db, max.room);
+  for (const room of await doorRoomNames(db)) {
+    const one = await readDoorAverage(db, room);
     if (one) out.push(one);
+  }
+  return out;
+}
+
+export type NewestRead = { sensor_id: string; room: string | null; role: string | null; temperature_f: number; humidity_pct: number | null; read_at: string };
+
+/** HF1 (2026-10-12): the newest reading of each named sensor, one index seek
+ * per sensor (the unique index on sensor_id, read_at), in place of the
+ * correlated MAX over the whole table that ran once per reading. */
+export async function newestReadings(db: D1Database, sensorIds: readonly string[]): Promise<Map<string, NewestRead>> {
+  const ids = [...new Set(sensorIds.map((id) => String(id ?? "").trim()).filter((id) => id.length > 0))];
+  const out = new Map<string, NewestRead>();
+  if (ids.length === 0) return out;
+  const sql = `SELECT sensor_id, room, role, temperature_f, humidity_pct, read_at FROM sensor_readings
+    WHERE sensor_id = ? ORDER BY read_at DESC LIMIT 1`;
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50);
+    const results = await db.batch<NewestRead>(chunk.map((id) => db.prepare(sql).bind(id)));
+    for (const r of results) for (const row of r.results ?? []) out.set(String(row.sensor_id), row);
   }
   return out;
 }
@@ -251,7 +292,6 @@ type RangeRow = {
   humidity_low: number | null;
   humidity_high: number | null;
 };
-type ReadRow = { sensor_id: string | null; room: string; role: string | null; temperature_f: number; humidity_pct: number | null; read_at: string };
 
 export async function staleMinutes(db: D1Database): Promise<number> {
   const raw = await getConfigValue(db, CONFIG_KEYS.environment_stale_minutes);
@@ -260,7 +300,7 @@ export async function staleMinutes(db: D1Database): Promise<number> {
 }
 
 export async function listEnvironmentFlags(db: D1Database, now: string, locale: Locale = "en"): Promise<Record<string, string[]>> {
-  const [bindings, ranges, sensorReads, doorAverages, minutes] = await Promise.all([
+  const [bindings, ranges, doorAverages, minutes] = await Promise.all([
     db
       .prepare(
         `SELECT sensor_id, space_name, role, bound_at FROM sensor_bindings
@@ -273,19 +313,15 @@ export async function listEnvironmentFlags(db: D1Database, now: string, locale: 
          FROM environment_ranges WHERE deleted_at IS NULL`
       )
       .all<RangeRow>(),
-    db
-      .prepare(
-        `SELECT r.sensor_id, r.room, r.role, r.temperature_f, r.humidity_pct, r.read_at
-         FROM sensor_readings r
-         WHERE r.sensor_id IS NOT NULL
-           AND r.read_at = (SELECT MAX(r2.read_at) FROM sensor_readings r2 WHERE r2.sensor_id = r.sensor_id)`
-      )
-      .all<ReadRow>(),
     listDoorAverages(db),
     staleMinutes(db),
   ]);
+  // HF1: only the bound sensors are read, one seek each.
+  const bySensor = await newestReadings(
+    db,
+    (bindings.results ?? []).map((row) => row.sensor_id)
+  );
   const rangeOf = new Map((ranges.results ?? []).map((row) => [`${row.space_name}\n${row.role}`, row]));
-  const bySensor = new Map((sensorReads.results ?? []).map((row) => [String(row.sensor_id), row]));
   const doorOf = new Map(doorAverages.map((row) => [row.room.trim().toUpperCase(), row]));
   const out = new Map<string, string[]>();
   const push = (space: string, lines: string[]) => {
@@ -378,14 +414,11 @@ export async function loadEnvironmentPage(db: D1Database): Promise<EnvironmentPa
     listDoorAverages(db),
   ]);
   const bound = new Map((bindings.results ?? []).map((row) => [row.sensor_id, row]));
-  const reads = await db
-    .prepare(
-      `SELECT sensor_id, temperature_f, humidity_pct, read_at FROM sensor_readings
-       WHERE sensor_id IS NOT NULL
-         AND read_at = (SELECT MAX(r2.read_at) FROM sensor_readings r2 WHERE r2.sensor_id = sensor_readings.sensor_id)`
-    )
-    .all<{ sensor_id: string; temperature_f: number; humidity_pct: number | null; read_at: string }>();
-  const newest = new Map((reads.results ?? []).map((row) => [row.sensor_id, row]));
+  // HF1: the catalog's and the bindings' sensors, one seek each.
+  const newest = await newestReadings(db, [
+    ...(catalog.results ?? []).map((row) => row.sensor_id),
+    ...(bindings.results ?? []).map((row) => row.sensor_id),
+  ]);
   const spaceNames = [...(spaces.results ?? []).map((row) => row.name)];
   const roomNames = String(rooms?.value ?? "")
     .split(",")

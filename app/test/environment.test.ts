@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { environmentFlagLines, environmentPage, loadEnvironmentPage, saveEnvironmentRange, saveSensorBinding } from "../src/environment";
+import { doorRoomNames, environmentFlagLines, environmentPage, listDoorAverages, loadEnvironmentPage, newestReadings, saveEnvironmentRange, saveSensorBinding } from "../src/environment";
 import { curePanes, listCurePanes, storeSensorReadings } from "../src/cure";
 import { pullSensorPush, refreshSensorCatalog } from "../src/sensorpush";
 import { siloLiveEntry, type SiloVisual } from "../src/silo";
@@ -152,6 +152,30 @@ describe("THE ENVIRONMENT FLAGS (canon 0.30.246)", () => {
     expect(flash).toContain('data-env-refused');
     expect(flash).toContain("Re-read refused: HTTP 429");
     expect(environmentPage(await loadEnvironmentPage(m.db), "es", "refused", "429")).toContain("Relectura rechazada: HTTP 429");
+  });
+
+  it("HF1: reads the newest row per named sensor and the door rooms from the lookups, never by scanning every reading", async () => {
+    const m = await migratedDb();
+    // 3,000 readings for one unit and 3,000 for another: the newest of each must come back, and only theirs.
+    const stmt = `INSERT INTO sensor_readings (id, room, temperature_f, humidity_pct, source, read_at, received_at, sensor_id, role)
+      VALUES (?, 'CSA', ?, 50, 'silo-ops', ?, ?, ?, NULL)`;
+    for (let i = 0; i < 3000; i += 1) {
+      const at = new Date(Date.UTC(2026, 8, 1, 0, i)).toISOString();
+      m.run(stmt, `a-${i}`, 60 + (i % 7), at, at, "unit-a");
+      m.run(stmt, `b-${i}`, 70 + (i % 5), at, at, "unit-b");
+    }
+    const newest = await newestReadings(m.db, ["unit-a", "unit-b", "unit-none", " ", "unit-a"]);
+    expect([...newest.keys()].sort()).toEqual(["unit-a", "unit-b"]);
+    expect(newest.get("unit-a")?.read_at).toBe(new Date(Date.UTC(2026, 8, 1, 0, 2999)).toISOString());
+    expect(newest.get("unit-b")?.temperature_f).toBe(70 + (2999 % 5));
+    expect(await newestReadings(m.db, [])).toEqual(new Map());
+    // The door rooms come from app_config's cure rooms and the dry spaces, CSA and CSB when the config is blank.
+    const rooms = await doorRoomNames(m.db);
+    expect(rooms).toContain("CSA");
+    expect(rooms).toContain("CSB");
+    const doors = await listDoorAverages(m.db);
+    expect(doors.map((d) => d.room)).toEqual(["CSA"]);
+    expect(doors[0].units).toBe(2);
   });
 
   it("words a cure pane flag in the shell locale", async () => {
