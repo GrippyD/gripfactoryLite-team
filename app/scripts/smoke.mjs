@@ -1966,6 +1966,49 @@ async function run() {
     // groups while storage stays 1234.56.
     assert(lotView.body.includes("1,235"), "lot page missing total 1,235");
 
+    // THE HARVEST BATCH FEED (BRIEF HB1). The two smoke lots ride keyed by id:
+    // the live lot and the voided backdated lot. live=1 drops the voided row;
+    // since= is strictly after a change instant; limit=1 keeps one instant,
+    // says more, and names next_since; a bad since or limit answers 400 in
+    // words as JSON. No-store, JSON.
+    const hbAll = await req("/feeds/harvest-batches.json");
+    assert(hbAll.status === 200, `the harvest batch feed expected 200 got ${hbAll.status}`);
+    assert((hbAll.headers.get("content-type") || "").includes("application/json"), "the harvest batch feed must answer JSON");
+    assert((hbAll.headers.get("cache-control") || "") === "no-store", "the harvest batch feed must answer no-store");
+    const hbJson = await hbAll.json();
+    assert(hbJson.feed === "harvest_batches" && Array.isArray(hbJson.rows) && hbJson.count === hbJson.rows.length, "the harvest batch feed must name itself and count its rows");
+    const hbLiveLot = hbJson.rows.find((r) => r.id === wetLotId);
+    const hbVoided = hbJson.rows.find((r) => r.id === backdatedLotId);
+    assert(hbLiveLot && hbVoided, `the feed must carry both smoke lots, got ${hbJson.rows.map((r) => r.id).join(",")}`);
+    assert(hbLiveLot.voided_at === null && typeof hbVoided.voided_at === "string", "a live lot has no voided_at and a voided lot carries its void instant");
+    assert(hbLiveLot.hbn === pickedHbn && hbLiveLot.short_id === pickedHbn.slice(-5), `the lot must carry its HBN and serial, got ${hbLiveLot.hbn} ${hbLiveLot.short_id}`);
+    assert(hbLiveLot.strain === "Fruity Pebbles" && hbLiveLot.market_strain === "Fruity Pebbles", `the lot must name its strain, got ${hbLiveLot.strain} ${hbLiveLot.market_strain}`);
+    assert(hbLiveLot.farm === "PNN" && hbLiveLot.grow_method === "greenhouse" && hbLiveLot.harvest_day === "2026-09-01", `the HBN must read farm, grow method and day, got ${JSON.stringify({ farm: hbLiveLot.farm, grow_method: hbLiveLot.grow_method, harvest_day: hbLiveLot.harvest_day })}`);
+    assert(hbLiveLot.plant_count === null && hbLiveLot.wet_weight_grams === 1235, `the weighing lot must be 1235 g with no plant count yet, got ${hbLiveLot.plant_count} ${hbLiveLot.wet_weight_grams}`);
+    assert(hbLiveLot.dry_method === "silo" && hbLiveLot.dry_space === "Silo 1", `the lot must sit in Silo 1 as a silo dry, got ${hbLiveLot.dry_method} ${hbLiveLot.dry_space}`);
+    assert(hbLiveLot.dry_weight_grams === null && hbLiveLot.unload_finished_at === null, "dry grams stay null until a dry row, and the unload date stays null until Finish unload");
+    assert(hbLiveLot.customer === null && hbLiveLot.status === "weighing", `a Grip lot names no customer, got ${hbLiveLot.customer} ${hbLiveLot.status}`);
+    assert(hbLiveLot.hbn_parts && hbLiveLot.hbn_parts.farm === "PNN" && hbLiveLot.hbn_parts.serial === pickedHbn.slice(-5), "hbn_parts must read the HBN back");
+    assert(hbJson.next_since === hbJson.rows[hbJson.rows.length - 1].changed_at && hbJson.more === false, "next_since must be the last change instant with more false under the default limit");
+    const hbLive = await (await req("/feeds/harvest-batches.json?live=1")).json();
+    assert(!hbLive.rows.some((r) => r.id === backdatedLotId) && hbLive.rows.some((r) => r.id === wetLotId), "live=1 must leave the voided lot out and keep the live one");
+    const hbEarlier = hbJson.rows[0];
+    const hbSince = await (await req(`/feeds/harvest-batches.json?since=${encodeURIComponent(hbEarlier.changed_at)}`)).json();
+    assert(!hbSince.rows.some((r) => r.id === hbEarlier.id) && hbSince.rows.some((r) => r.changed_at > hbEarlier.changed_at), "since= must return the lots changed after it and not the lot at it");
+    const hbOne = await (await req("/feeds/harvest-batches.json?limit=1")).json();
+    assert(hbOne.count >= 1 && hbOne.more === true, `limit=1 must answer at least one row with more=true, got ${hbOne.count} ${hbOne.more}`);
+    assert(hbOne.rows.every((r) => r.changed_at === hbOne.rows[0].changed_at), "a limit=1 page must hold one change instant alone");
+    assert(hbOne.next_since === hbOne.rows[hbOne.rows.length - 1].changed_at, "next_since must be the page's instant");
+    const hbOneNext = await (await req(`/feeds/harvest-batches.json?limit=1&since=${encodeURIComponent(hbOne.next_since)}`)).json();
+    assert(!hbOneNext.rows.some((r) => r.changed_at === hbOne.next_since), "the next page must carry no lot of the instant already sent");
+    assert(hbOneNext.count >= 1, "the next page must carry the lots still after that instant");
+    const hbBadSince = await req("/feeds/harvest-batches.json?since=yesterday");
+    assert(hbBadSince.status === 400 && (await hbBadSince.json()).error.startsWith("since must be an ISO instant"), "a bad since must answer 400 in words as JSON");
+    const hbBadLimit = await req("/feeds/harvest-batches.json?limit=0");
+    assert(hbBadLimit.status === 400 && (await hbBadLimit.json()).error.startsWith("limit must be a whole number"), "a bad limit must answer 400 in words as JSON");
+    const hbPnn = await (await req("/feeds/harvest-batches.json?site=pnn")).json();
+    assert(hbPnn.site === "PNN" && hbPnn.rows.some((r) => r.id === wetLotId) && hbPnn.rows.every((r) => r.farm === "PNN"), "site=pnn must echo PNN and return the Penn North lots alone");
+
     // THE SILO SHAPE AND THE LIVE WET WEIGHT (canon 0.30.69; owner: "If it's
     // being filled in the wet weight screen, indicate underneath that it's
     // "filling"", "Live inventory on all screens, including the Inventory by

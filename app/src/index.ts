@@ -281,7 +281,15 @@ import {
   reconcileLocationPage,
   saveLocationEdits,
 } from "./ledgerloc";
-import { TRIM_WEIGHS_PATH, listTrimWeighs, parseTrimWeighsQuery, trimWeighsFeed } from "./feeds";
+import {
+  HARVEST_BATCHES_PATH,
+  TRIM_WEIGHS_PATH,
+  harvestBatchesFeed,
+  listHarvestBatches,
+  listTrimWeighs,
+  parseTrimWeighsQuery,
+  trimWeighsFeed,
+} from "./feeds";
 import { handleLab, LAB_FEED_PATHS, listLabComplianceSurface } from "./lab";
 import { changeLocationPage } from "./locationpane";
 import {
@@ -1937,6 +1945,24 @@ app.get(TRIM_WEIGHS_PATH, async (c) => {
     });
     const page = await listTrimWeighs(c.env.DB, query);
     return c.json(trimWeighsFeed(page, query, nowIso()), 200, { "cache-control": "no-store" });
+  } catch (err) {
+    if (err instanceof HttpError) return c.json({ ok: false, error: err.message }, err.status as 400, { "cache-control": "no-store" });
+    throw err;
+  }
+});
+
+// THE HARVEST BATCH FEED (BRIEF HB1). One row per wet lot, the same door and
+// the same query as the trim weighs feed. Read-only JSON, no PIN, no-store.
+app.get(HARVEST_BATCHES_PATH, async (c) => {
+  try {
+    const query = parseTrimWeighsQuery({
+      since: c.req.query("since"),
+      limit: c.req.query("limit"),
+      live: c.req.query("live"),
+      site: c.req.query("site"),
+    });
+    const page = await listHarvestBatches(c.env.DB, query);
+    return c.json(harvestBatchesFeed(page, query, nowIso()), 200, { "cache-control": "no-store" });
   } catch (err) {
     if (err instanceof HttpError) return c.json({ ok: false, error: err.message }, err.status as 400, { "cache-control": "no-store" });
     throw err;
