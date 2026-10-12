@@ -42,6 +42,7 @@ import {
   METRC_PACKAGE_COLUMNS,
   METRC_PLANT_COLUMNS,
   METRC_SLICE_ROWS,
+  metrcCrossCheck,
 } from "../src/metrc";
 import { metrcPane, mountRowsDone } from "../src/metrcpane";
 import { queueByKey, stationByKey, type QueueDef } from "../src/pipeline";
@@ -1230,5 +1231,38 @@ describe("THE TWO BOOKS (canon 0.30.205): a historical lot is known, and >> inhe
       strain_id: "c96d7e99-49a3-4813-9654-4f02796d8020",
     });
     expect(m.get(`SELECT COUNT(*) AS n FROM harvest_batches WHERE hbn = ?`, fixtureAliasSheetHbn())).toEqual({ n: 0 });
+  });
+});
+
+describe("HF2: the cross-check counts the claimed packages from the ledger join", () => {
+  it("counts a live mirror tag once however many ledger rows claim it, and never a gone one", async () => {
+    const m = await migratedDb();
+    const A = "1A4050300000000000000A01";
+    const B = "1A4050300000000000000B02";
+    const G = "1A4050300000000000000C03";
+    seedMirror(m, { tag: A });
+    seedMirror(m, { tag: B });
+    seedMirror(m, { tag: G, gone: "2026-10-01T00:00:00.000Z" });
+    const item = (id: string, tag: string | null) =>
+      m.run(
+        `INSERT INTO local_inventory_items (id, item_kind, package_code, qty, uom, farm_code, license_value, location, metrc_tag, created_at, updated_at)
+         VALUES (?, 'WIP', ?, 10, 'g', 'ARL', 'AU-G-C-000832', 'BARN', ?, '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')`,
+        id,
+        `PKG-${id}`,
+        tag
+      );
+    item("i-1", A);
+    item("i-2", ` ${A.toLowerCase()} `);
+    item("i-3", G);
+    item("i-4", "1A4050300000000000000D04");
+    item("i-5", "not a tag");
+    const cross = await metrcCrossCheck(m.db);
+    expect(cross.metrc_active).toBe(2);
+    expect(cross.metrc_unclaimed).toBe(1);
+    expect(cross.ledger_tagged).toBe(4);
+    expect(cross.ledger_in_metrc).toBe(2);
+    expect(cross.ledger_gone_in_metrc).toBe(1);
+    expect(cross.ledger_unknown_to_metrc).toBe(1);
+    expect(cross.ledger_untagged).toBe(1);
   });
 });
