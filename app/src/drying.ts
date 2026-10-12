@@ -30,7 +30,7 @@ import {
 import { listMenuDryingLoads, listMenuEntries, listOpenLogisticsSchedules, type BarnWetLotRow, type MenuDryingLoad, type MenuEntryRow, type SiloLoadRow, type SiloRow } from "./db";
 import { listEnvironmentFlags } from "./environment";
 import { effectiveDateField } from "./effective";
-import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmDayBounds } from "./farmday";
+import { FARM_DAY_START_HOUR_DEFAULT, etClock12, etDate, farmDay, farmDayBounds } from "./farmday";
 import { esc, lockOnSubmitScript, time24MaskScript } from "./html";
 import { t, tFill, type Locale } from "./i18n";
 import { checkCountdownScript, loadCheckLines, tileCheckSummary } from "./labsample";
@@ -132,6 +132,23 @@ export function clockMarkup(load: SiloLoadRow, nowIso: string, locale: Locale): 
   return `<span class="silo-clock" data-clock data-state="${esc(state)}" data-started="${esc(String(startedMs))}" data-paused-at="${esc(
     String(pausedAtMs)
   )}" data-paused-seconds="${esc(String(load.paused_seconds ?? 0))}">${esc(seconds == null ? "0d 00:00:00" : formatClock(seconds))}</span> <span class="muted silo-clock-state">${esc(label)}</span>`;
+}
+
+/** THE SILO START TIME (canon 0.30.445). Owner, 2026-10-09: "still need the
+ * start time of the silo shown under the silos in AM/PM on all drying
+ * screens". The clock's zero (the loaded time, else the typed start) as the
+ * farm's wall clock on the 12-hour dial with its day: "Started 2:35 PM, Oct 12".
+ * Blank when the load has no readable start, so the line never invents one. */
+export function startedLine(load: { loaded_at: string; started_at?: string | null }, locale: Locale): string {
+  const zero = clockZeroMs(load);
+  if (zero == null) return "";
+  const iso = new Date(zero).toISOString();
+  const { hhmm, meridiem } = etClock12(iso);
+  if (!hhmm) return "";
+  const clock = `${hhmm.replace(/^0/, "")} ${meridiem}`;
+  // The day as "Oct 8" (es "8 oct") so the line holds on one row of the tile; the ISO day rides in the attribute.
+  const day = new Intl.DateTimeFormat(locale === "es" ? "es" : "en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }).format(new Date(zero)).replace(".", "");
+  return `<div class="muted inv-lot-started" data-lot-started="${esc(iso)}" data-lot-started-day="${esc(etDate(iso))}">${esc(t(locale, "Started"))} ${esc(clock)}, ${esc(day)}</div>`;
 }
 
 /** THE ROWS (canon 0.30.383): figures the strip's panels read. */
@@ -250,6 +267,7 @@ export function siloStrip(
           )} ${esc(shortLotId(load.hbn ?? "", load.metrc_harvest_tag))}</a></div>
             ${lotStrainLine(load.strain_label)}
             <div class="inv-lot-time">${clockMarkup(load, nowIso, locale)}</div>
+            ${startedLine(load, locale)}
             ${loadCheckLines(checks, load.id, nowIso, locale)}
           </div>`
         )

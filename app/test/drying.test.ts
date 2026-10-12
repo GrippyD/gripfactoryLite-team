@@ -6,6 +6,7 @@ import {
   siloClockSeconds,
   siloClockState,
   siloStrip,
+  startedLine,
 } from "../src/drying";
 import { resolveLoadedAt } from "../src/actions";
 import { HttpError } from "../src/audit";
@@ -91,6 +92,23 @@ describe("the silo clock (owner rulings 2026-09-08, canon 0.30.6 and 0.30.9)", (
 });
 
 describe("the silo strip and the Load Silo page", () => {
+  it("THE SILO START TIME (canon 0.30.445): the clock's zero reads under the lot as the farm's 12-hour wall clock with its day", () => {
+    // 11:15Z on a UTC-4 day is 7:15 AM Eastern; 19:05Z is 3:05 PM; the leading zero goes.
+    expect(startedLine({ loaded_at: "2026-09-08T11:15:00.000Z" }, "en")).toBe(
+      '<div class="muted inv-lot-started" data-lot-started="2026-09-08T11:15:00.000Z" data-lot-started-day="2026-09-08">Started 7:15 AM, Sep 8</div>'
+    );
+    expect(startedLine({ loaded_at: "2026-09-08T19:05:00.000Z" }, "en")).toContain("Started 3:05 PM, Sep 8");
+    // Past midnight Eastern the day is the Eastern day, not the UTC one.
+    expect(startedLine({ loaded_at: "2026-09-09T02:30:00.000Z" }, "en")).toContain("Started 10:30 PM, Sep 8");
+    // The typed start stands in when the loaded time is unreadable; nothing is invented when both are.
+    expect(startedLine({ loaded_at: "garbage", started_at: "2026-09-08T11:15:00.000Z" }, "en")).toContain("7:15 AM");
+    expect(startedLine({ loaded_at: "garbage", started_at: null }, "en")).toBe("");
+    // The strip carries it under every load's clock, in Spanish too.
+    const live = assembleSiloVisuals(SILOS, [load()], [], CAP);
+    expect(siloStrip(live, NOW)).toContain("data-lot-started=");
+    expect(siloStrip(live, NOW, "es")).toContain("Iniciada 6:00 AM, 8 sept");
+  });
+
   it("renders five cone-topped silos with live fills, an empty word, a running clock, a paused state, and the ticking script", () => {
     const loads = [load(), load({ id: "L2", dry_space_id: "s4", silo_name: "Silo 4", paused_at: NOW })];
     // THE SILO SHAPE AND THE LIVE WET WEIGHT (canon 0.30.69): Silo 1 is being
