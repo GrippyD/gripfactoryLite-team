@@ -2388,15 +2388,15 @@ export async function metrcCrossCheck(db: D1Database): Promise<MetrcCrossCheck> 
   const active = await db
     .prepare(`SELECT COUNT(*) AS n FROM metrc_packages WHERE gone_at IS NULL`)
     .first<{ n: number }>();
-  const claimed = await db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM metrc_packages p
-       WHERE p.gone_at IS NULL AND EXISTS (
-         SELECT 1 FROM local_inventory_items i
-         WHERE i.deleted_at IS NULL AND UPPER(TRIM(i.metrc_tag)) = p.tag
-       )`
-    )
-    .first<{ n: number }>();
+  // HF2 (2026-10-12): the claimed count is the live mirror tags the ledger rows
+  // above already joined, counted once each. The EXISTS it replaced compared
+  // UPPER(TRIM(i.metrc_tag)) to every active package, a function on the ledger
+  // side no index can serve: 11,600 packages by 4,700 items, 14 seconds on a
+  // laptop's SQLite, and D1 reset the database for CPU time (the mirror page
+  // answered 500).
+  const claimedTags = new Set<string>();
+  for (const r of ledger.results ?? []) if (r.mirror_tag && !r.gone_at) claimedTags.add(String(r.mirror_tag));
+  const claimed = { n: claimedTags.size };
   const zoho = await db
     .prepare(
       `SELECT l.package_tag, p.tag AS mirror_tag, p.gone_at
