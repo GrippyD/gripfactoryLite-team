@@ -48,7 +48,8 @@
  */
 
 import { HttpError, textOrNull } from "./audit";
-import { NON_TRIM_SOURCE_SQL, inheritedLotLicense, isMetrcTag, shortLotId } from "./config";
+import { NON_TRIM_SOURCE_SQL, TRUCK_DRY_SPACE_ID, inheritedLotLicense, isMetrcTag, shortLotId } from "./config";
+import { etDate, isCalendarDate } from "./farmday";
 import { parseHbn, type HbnParts } from "./mint";
 
 /** Under /feeds, not /api: the /api tree sits behind the Admin PIN for the
@@ -323,6 +324,262 @@ export function trimWeighsFeed(page: TrimWeighsPage | TrimWeighRow[], query: Tri
   const more = Array.isArray(page) ? out.length >= query.limit : page.more;
   return {
     feed: "trim_weighs",
+    generated_at: generatedAt,
+    since: query.since,
+    site: query.site,
+    count: out.length,
+    next_since: out.length ? out[out.length - 1].changed_at : query.since,
+    more,
+    rows: out,
+  };
+}
+
+/**
+ * THE HARVEST BATCH FEED (BRIEF HB1). One row per wet lot (a wet_weight_entries
+ * row), so a batch weighed as two lots is two rows. The puller's key is the
+ * lot id. Same query as the trim weighs feed (since strictly after changed_at,
+ * limit 1 to 2000 with 500 the default, live=1 drops voided lots, site a farm
+ * code), same envelope, same tie-complete page. Read-only.
+ *
+ * changed_at is the widest instant on the lot: a wet read, the plant count, a
+ * Move To, a Load Silo, a dry row, Finish unload, a reasoned edit of the lot
+ * or its batch, or the void. Test HBNs (is_test 1) never ride. A lot whose HBN
+ * does not parse still rides, with nulls where the HBN would have answered and
+ * the stored farm in farm. grow_method is indoor, outdoor, or greenhouse from
+ * the HBN grow code, never the license. dry_weight_grams is the live total of
+ * non-voided dry rows while unloading (null until the first), and
+ * unload_finished_at is the R5 unload date, the signal that the dry figure is
+ * final. customer is the toll lot's customer once that column is on the batch
+ * (T1), and null for Grip's own and on a database that does not have it yet.
+ */
+
+export const HARVEST_BATCHES_PATH = "/feeds/harvest-batches.json";
+
+const GROW_METHOD_WORDS: Record<string, "indoor" | "outdoor" | "greenhouse"> = {
+  ID: "indoor",
+  OD: "outdoor",
+  GH: "greenhouse",
+};
+
+/** indoor, outdoor, or greenhouse from the HBN grow code. Null when the HBN does not parse, or the code is none of the three. */
+export function feedGrowMethodOf(hbn: string | null | undefined): "indoor" | "outdoor" | "greenhouse" | null {
+  const parts = parseHbn(hbn);
+  if (!parts) return null;
+  return GROW_METHOD_WORDS[parts.grow_code.toUpperCase()] ?? null;
+}
+
+/** The space Move To or Load Silo last left the lot in: the space's name, or Truck N when the lot sits on the truck sentinel. */
+export function feedDrySpaceOf(input: {
+  spaceId: string | null;
+  spaceName: string | null;
+  spaceKind: string | null;
+  truckNumber: string | null;
+}): string | null {
+  const truck = String(input.truckNumber ?? "").trim();
+  const onTruck = input.spaceId === TRUCK_DRY_SPACE_ID || input.spaceKind === "truck";
+  if (onTruck && truck) return `Truck ${truck}`;
+  const name = String(input.spaceName ?? "").trim();
+  return name ? name : null;
+}
+
+/** The R5 unload date: the newest finished session's Effective Date when one was typed, else the Eastern date of that finish. Null until Finish unload. */
+export function feedUnloadFinishedAt(effectiveDate: string | null | undefined, finishedAt: string | null | undefined): string | null {
+  const finished = textOrNull(finishedAt);
+  if (!finished) return null;
+  const typed = textOrNull(effectiveDate);
+  if (typed && isCalendarDate(typed)) return typed;
+  return etDate(finished);
+}
+
+/** The widest change instant. D1 refuses a compound SELECT past a few terms, and
+ * scalar max() turns the whole result null when any argument is null, so each
+ * stamp is coalesced to '' (it sorts before every ISO instant) and a missing
+ * child table coalesces the same way. created_at is never null, so the result
+ * is always a real instant. Repeated in the select, the since filter, and the
+ * order so a page and its tie read one clock. */
+const HARVEST_CHANGED_AT_SQL = `max(
+  max(w.created_at, w.updated_at, COALESCE(w.deleted_at, '')),
+  max(b.created_at, b.updated_at, COALESCE(b.deleted_at, '')),
+  COALESCE((SELECT max(max(COALESCE(ww.created_at, ''), COALESCE(ww.updated_at, ''), COALESCE(ww.deleted_at, ''))) FROM wet_weights ww WHERE ww.wet_weight_entry_id = w.id), ''),
+  COALESCE((SELECT max(max(COALESCE(dw.created_at, ''), COALESCE(dw.updated_at, ''), COALESCE(dw.deleted_at, ''))) FROM dry_weights dw WHERE dw.wet_weight_entry_id = w.id), ''),
+  COALESCE((SELECT max(max(COALESCE(us.created_at, ''), COALESCE(us.updated_at, ''), COALESCE(us.deleted_at, ''), COALESCE(us.finished_at, ''))) FROM unload_sessions us WHERE us.wet_weight_entry_id = w.id), ''),
+  COALESCE((SELECT max(max(COALESCE(sl.created_at, ''), COALESCE(sl.updated_at, ''), COALESCE(sl.deleted_at, ''), COALESCE(sl.loaded_at, ''), COALESCE(sl.ended_at, ''))) FROM silo_loads sl WHERE sl.wet_weight_entry_id = w.id), '')
+)`;
+
+export type HarvestBatchRow = {
+  id: string;
+  hbn: string | null;
+  strain: string | null;
+  market_strain: string | null;
+  farm_code: string | null;
+  plant_count: number | null;
+  wet_weight_grams: number | null;
+  dry_weight_grams: number | null;
+  space_id: string | null;
+  space_name: string | null;
+  space_kind: string | null;
+  truck_number: string | null;
+  unload_effective_date: string | null;
+  unload_finished_raw: string | null;
+  status: string;
+  created_at: string;
+  changed_at: string;
+  voided_at: string | null;
+  customer: string | null;
+};
+
+export type HarvestBatch = {
+  id: string;
+  hbn: string | null;
+  short_id: string | null;
+  strain: string | null;
+  market_strain: string | null;
+  farm: string | null;
+  grow_method: "indoor" | "outdoor" | "greenhouse" | null;
+  harvest_day: string | null;
+  plant_count: number | null;
+  wet_weight_grams: number;
+  dry_method: "silo" | "hang" | null;
+  dry_space: string | null;
+  dry_weight_grams: number | null;
+  unload_finished_at: string | null;
+  status: string;
+  created_at: string;
+  changed_at: string;
+  voided_at: string | null;
+  customer: string | null;
+  hbn_parts: HbnParts | null;
+};
+
+export type HarvestBatchesPage = { rows: HarvestBatchRow[]; more: boolean };
+
+export type HarvestBatchesFeed = {
+  feed: "harvest_batches";
+  generated_at: string;
+  since: string | null;
+  site: string | null;
+  count: number;
+  next_since: string | null;
+  more: boolean;
+  rows: HarvestBatch[];
+};
+
+/** True when T1's customer column is on harvest_batches. This tree has no migration for it; the feed names the customer once the column is there, and null until then. */
+async function harvestCustomerColumn(db: D1Database): Promise<boolean> {
+  const info = await db.prepare("PRAGMA table_info(harvest_batches)").all<{ name: string }>();
+  return (info.results ?? []).some((col) => col.name === "customer");
+}
+
+function harvestSelect(hasCustomer: boolean): string {
+  const customerSql = hasCustomer ? "b.customer AS customer" : "NULL AS customer";
+  return `SELECT w.id, b.hbn, s.name AS strain, COALESCE(b.market_strain, s.name) AS market_strain, b.farm_code,
+              w.plant_count,
+              COALESCE((SELECT SUM(ww.weight_grams) FROM wet_weights ww WHERE ww.wet_weight_entry_id = w.id AND ww.deleted_at IS NULL), w.weight_grams, 0) AS wet_weight_grams,
+              (SELECT SUM(dw.weight_grams) FROM dry_weights dw WHERE dw.wet_weight_entry_id = w.id AND dw.deleted_at IS NULL) AS dry_weight_grams,
+              ds.id AS space_id, ds.name AS space_name, ds.kind AS space_kind, w.truck_number,
+              uf.effective_date AS unload_effective_date, uf.finished_at AS unload_finished_raw,
+              w.status, w.created_at, ${HARVEST_CHANGED_AT_SQL} AS changed_at, w.deleted_at AS voided_at,
+              ${customerSql}
+       FROM wet_weight_entries w
+       JOIN harvest_batches b ON b.id = w.harvest_batch_id
+       LEFT JOIN strains s ON s.id = b.strain_id
+       LEFT JOIN dry_spaces ds ON ds.id = w.actual_dryspc
+       LEFT JOIN unload_sessions uf ON uf.id = (
+         SELECT u2.id FROM unload_sessions u2
+         WHERE u2.wet_weight_entry_id = w.id AND u2.deleted_at IS NULL AND u2.finished_at IS NOT NULL
+         ORDER BY u2.finished_at DESC, u2.id DESC
+         LIMIT 1)`;
+}
+
+function harvestClauses(query: TrimWeighsQuery): { clauses: string[]; binds: unknown[] } {
+  const clauses = ["COALESCE(b.is_test, 0) = 0"];
+  const binds: unknown[] = [];
+  if (query.since) {
+    clauses.push(`${HARVEST_CHANGED_AT_SQL} > ?`);
+    binds.push(query.since);
+  }
+  if (query.liveOnly) clauses.push("w.deleted_at IS NULL");
+  if (query.site) {
+    clauses.push(
+      `(b.hbn LIKE '_____-' || ? || '-%' OR (COALESCE(b.hbn, '') NOT LIKE ${HBN_SHAPE_LIKE} AND b.farm_code = ?))`
+    );
+    binds.push(query.site, query.site);
+  }
+  return { clauses, binds };
+}
+
+/** One page of harvest batches. The tie-complete page is the trim feed's: a page never ends inside one change instant. */
+export async function listHarvestBatches(db: D1Database, query: TrimWeighsQuery): Promise<HarvestBatchesPage> {
+  const hasCustomer = await harvestCustomerColumn(db);
+  const { clauses, binds } = harvestClauses(query);
+  const select = harvestSelect(hasCustomer);
+  const result = await db
+    .prepare(
+      `${select}
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY ${HARVEST_CHANGED_AT_SQL} ASC, w.id ASC
+       LIMIT ?`
+    )
+    .bind(...binds, query.limit + 1)
+    .all<HarvestBatchRow>();
+  const fetched = result.results ?? [];
+  if (fetched.length <= query.limit) return { rows: fetched, more: false };
+  const rows = fetched.slice(0, query.limit);
+  const last = rows[rows.length - 1];
+  const next = fetched[query.limit];
+  if (next.changed_at !== last.changed_at) return { rows, more: true };
+  const tail = await db
+    .prepare(
+      `${select}
+       WHERE ${clauses.join(" AND ")} AND ${HARVEST_CHANGED_AT_SQL} = ? AND w.id > ?
+       ORDER BY w.id ASC`
+    )
+    .bind(...binds, last.changed_at, last.id)
+    .all<HarvestBatchRow>();
+  return { rows: [...rows, ...(tail.results ?? [])], more: true };
+}
+
+export function harvestBatchOf(row: HarvestBatchRow): HarvestBatch {
+  const parts = parseHbn(row.hbn);
+  return {
+    id: row.id,
+    hbn: row.hbn ?? null,
+    short_id: parts && row.hbn ? shortLotId(row.hbn, null) : null,
+    strain: row.strain ?? null,
+    market_strain: row.market_strain ?? row.strain ?? null,
+    farm: feedSiteOf(row.hbn, row.farm_code),
+    grow_method: feedGrowMethodOf(row.hbn),
+    harvest_day: parts?.harvest_day ?? null,
+    plant_count: row.plant_count == null ? null : Number(row.plant_count),
+    wet_weight_grams: Number(row.wet_weight_grams ?? 0),
+    dry_method: feedDryMethodOf(row.hbn),
+    dry_space: feedDrySpaceOf({
+      spaceId: row.space_id,
+      spaceName: row.space_name,
+      spaceKind: row.space_kind,
+      truckNumber: row.truck_number,
+    }),
+    dry_weight_grams: row.dry_weight_grams == null ? null : Number(row.dry_weight_grams),
+    unload_finished_at: feedUnloadFinishedAt(row.unload_effective_date, row.unload_finished_raw),
+    status: row.status,
+    created_at: row.created_at,
+    changed_at: row.changed_at,
+    voided_at: row.voided_at ?? null,
+    customer: textOrNull(row.customer),
+    hbn_parts: parts,
+  };
+}
+
+export function harvestBatchesFeed(
+  page: HarvestBatchesPage | HarvestBatchRow[],
+  query: TrimWeighsQuery,
+  generatedAt: string
+): HarvestBatchesFeed {
+  const rows = Array.isArray(page) ? page : page.rows;
+  const out = rows.map(harvestBatchOf);
+  const more = Array.isArray(page) ? out.length >= query.limit : page.more;
+  return {
+    feed: "harvest_batches",
     generated_at: generatedAt,
     since: query.since,
     site: query.site,
