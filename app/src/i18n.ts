@@ -4169,6 +4169,31 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "METRC license": { en: "METRC license", es: "Licencia en METRC" },
   "Pending": { en: "Pending", es: "Pendiente" },
   "State": { en: "State", es: "Estado" },
+  // SENSOR RETENTION (BRIEF SR1).
+  "Environment history": { en: "Environment history", es: "Historial del ambiente" },
+  "Hourly temperature and humidity by room, one line per unit, kept after the raw readings age out.": {
+    en: "Hourly temperature and humidity by room, one line per unit, kept after the raw readings age out.",
+    es: "Temperatura y humedad por hora de una sala, una linea por unidad, guardada cuando las lecturas crudas envejecen.",
+  },
+  "Hour": { en: "Hour", es: "Hora" },
+  "Temp min": { en: "Temp min", es: "Temp min" },
+  "Temp avg": { en: "Temp avg", es: "Temp prom" },
+  "Temp max": { en: "Temp max", es: "Temp max" },
+  "Humidity min": { en: "Humidity min", es: "Humedad min" },
+  "Humidity avg": { en: "Humidity avg", es: "Humedad prom" },
+  "Humidity max": { en: "Humidity max", es: "Humedad max" },
+  "Average": { en: "Average", es: "Promedio" },
+  "All rooms": { en: "All rooms", es: "Todas las salas" },
+  "Door": { en: "Door", es: "Puerta" },
+  "No readings in that range.": { en: "No readings in that range.", es: "No hay lecturas en ese rango." },
+  "Dates are the farm's days, Eastern. One line per unit per hour.": {
+    en: "Dates are the farm's days, Eastern. One line per unit per hour.",
+    es: "Las fechas son los dias de la granja, del Este. Una linea por unidad por hora.",
+  },
+  "The room average sits under an hour with more than one unit. History reads the hourly table.": {
+    en: "The room average sits under an hour with more than one unit. History reads the hourly table.",
+    es: "El promedio de la sala va bajo una hora con mas de una unidad. El historial lee la tabla por hora.",
+  },
 };
 
 const FORMULA_ERRORS: Array<[string, string]> = [
