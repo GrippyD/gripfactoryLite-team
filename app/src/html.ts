@@ -791,6 +791,7 @@ export function reportPage(
                 : ""
         );
   const footnote = view.footnote ? `<p class="muted">${esc(view.footnote)}</p>` : "";
+  const below = view.belowTable ?? "";
   const filterBlock = view.reserved
     ? ""
     : `<form class="stack report-filters" method="get" action="/reports/${esc(view.key)}">
@@ -803,6 +804,7 @@ export function reportPage(
     ${heading}
     ${filterBlock}
     <table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
+    ${below}
     ${footnote}`;
 }
 

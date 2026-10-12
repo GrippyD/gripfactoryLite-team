@@ -37,6 +37,7 @@ export const REPORT_KEYS = [
   "floor_vs_metrc",
   "dry_weight_by_strain",
   "environment_history",
+  "harvest_reconciliation",
 ] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
@@ -160,6 +161,8 @@ export type ReportView = {
   /** A line under the title. Line packages states its window here, and the
    * CSV, XLSX and PDF carry the same line. */
   heading?: string;
+  /** HTML after the table and before the footnote. The report escapes it. */
+  belowTable?: string;
 };
 
 /** The column list a table body renders: hidden keys and the group column out. */
@@ -366,6 +369,11 @@ export const REPORT_CARDS: Array<{ key: ReportKey; title: string; blurb: string 
     key: "environment_history",
     title: "Environment history",
     blurb: "Hourly temperature and humidity by room, one line per unit, kept after the raw readings age out.",
+  },
+  {
+    key: "harvest_reconciliation",
+    title: "Harvest weight reconciliation",
+    blurb: "Wet and dry pounds of each lot at 448 g and at the standard pound, beside the METRC harvest weight.",
   },
 ];
 
