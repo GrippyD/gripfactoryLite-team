@@ -62,6 +62,7 @@ import {
   safeNextPath,
   type Identity,
 } from "./identity";
+import { mountGripcasting } from "./gripcasting/routes";
 import { SERVICE_IDENTITY, SERVICE_REFUSAL, isAccessFronted, isServiceRoute, loginEmailOf } from "./service";
 import { farmDayStartHour, farmToday } from "./effective";
 import { isCalendarDate, parseFarmDayStartHour } from "./farmday";
@@ -701,6 +702,7 @@ for (const tool of MODEL_TOOLS) {
     app.get(`${dir}${file}`, (c) => vendoredAsset(c, `${dir}${file}`));
   }
 }
+mountGripcasting(app);
 
 function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
   const minted = url.searchParams.get("minted");

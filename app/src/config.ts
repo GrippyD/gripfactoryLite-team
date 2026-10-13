@@ -1541,9 +1541,10 @@ export const HARVEST_PATH = "/harvest";
  * in Admin: [Models] - pin gated: 17853" and, beneath it, "1. [Harvest Menu Tool
  * 2026]" with the tool's hosting zip. /models is the Admin button's page, a
  * tile per model tool, behind the Models PIN (app_config models_pin, its own
- * cookie; the Admin PIN does not open it). Each tool is a vendored static app
+ * cookie; the Admin PIN does not open it). A vendored tool is a static app
  * streamed from public/models/<slug>/ untouched, served at /models/<slug>/ with
- * the trailing slash so its relative fetches (data.json) resolve beside it. */
+ * the trailing slash so its relative fetches (data.json) resolve beside it.
+ * An app tool is the same door, plus an API at /models/<slug>/api/* (GC1). */
 export const MODELS_PATH = "/models";
 /** The Models PIN posts here, outside the gated prefix, like /pin for Admin. */
 export const MODELS_PIN_PATH = "/pin/models";
@@ -1552,11 +1553,14 @@ export type ModelTool = {
   slug: string;
   /** The tile's words, his: "[Harvest Menu Tool 2026]". */
   title: string;
-  /** The vendored files beside index.html that the app fetches relatively. */
+  /** The files beside index.html that the page fetches relatively. */
   files: readonly string[];
+  /** vendored: a static zip. app: a GFLite app whose API sits beside the files. */
+  kind: "vendored" | "app";
 };
 export const MODEL_TOOLS: readonly ModelTool[] = [
-  { slug: "harvest-menu-2026", title: "Harvest Menu Tool 2026", files: ["data.json"] },
+  { slug: "harvest-menu-2026", title: "Harvest Menu Tool 2026", files: ["data.json"], kind: "vendored" },
+  { slug: "gripcasting", title: "GRIPCasting", files: ["app.js", "styles.css"], kind: "app" },
 ];
 export function modelToolPath(tool: ModelTool): string {
   return `${MODELS_PATH}/${tool.slug}/`;

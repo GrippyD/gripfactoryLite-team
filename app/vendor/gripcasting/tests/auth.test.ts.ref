@@ -1,0 +1,66 @@
+/* Identity must come from the edge. These check the Cloudflare Access token verification and the local stand-in. */
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { identity, verifyAccessJwt } from "../src/server/auth";
+import type { Env } from "../src/server/env";
+
+const TEAM = "grip-test.cloudflareaccess.com", AUD = "aud-123";
+const b64url = (b: ArrayBuffer | Uint8Array | string) => Buffer.from(typeof b === "string" ? b : new Uint8Array(b as ArrayBuffer)).toString("base64url");
+let keys: CryptoKeyPair, jwk: JsonWebKey & { kid: string };
+
+async function token(claims: Record<string, unknown>, kid = "k1", k: CryptoKey = keys.privateKey): Promise<string> {
+  const h = b64url(JSON.stringify({ alg: "RS256", kid })), p = b64url(JSON.stringify(claims));
+  const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", k, new TextEncoder().encode(`${h}.${p}`));
+  return `${h}.${p}.${b64url(sig)}`;
+}
+const good = () => ({ email: "Director@GripCannabis.com", aud: [AUD], iss: `https://${TEAM}`, exp: Math.floor(Date.now() / 1000) + 600 });
+const env = (e: Partial<Env>): Env => ({ HYPERDRIVE: { connectionString: "" }, ...e });
+
+beforeAll(async () => {
+  keys = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
+  jwk = { ...(await crypto.subtle.exportKey("jwk", keys.publicKey)), kid: "k1" };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ keys: [jwk] }))));
+});
+afterEach(() => { vi.clearAllMocks(); });
+
+describe("Cloudflare Access token", () => {
+  it("accepts a valid token and returns its claims", async () => {
+    expect((await verifyAccessJwt(await token(good()), TEAM, AUD)).email).toBe("Director@GripCannabis.com");
+  });
+  it("rejects a wrong audience", async () => { await expect(verifyAccessJwt(await token({ ...good(), aud: ["other"] }), TEAM, AUD)).rejects.toThrow(); });
+  it("rejects a wrong issuer", async () => { await expect(verifyAccessJwt(await token({ ...good(), iss: "https://evil.cloudflareaccess.com" }), TEAM, AUD)).rejects.toThrow(); });
+  it("rejects an expired token", async () => { await expect(verifyAccessJwt(await token({ ...good(), exp: 1 }), TEAM, AUD)).rejects.toThrow(/expired/); });
+  it("rejects a token signed by another key", async () => {
+    const other = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
+    await expect(verifyAccessJwt(await token(good(), "k1", other.privateKey), TEAM, AUD)).rejects.toThrow();
+  });
+  it("rejects a tampered payload", async () => {
+    const [h, , s] = (await token(good())).split(".");
+    await expect(verifyAccessJwt(`${h}.${b64url(JSON.stringify({ ...good(), email: "admin@gripcannabis.com" }))}.${s}`, TEAM, AUD)).rejects.toThrow();
+  });
+  it("rejects alg none", async () => {
+    const t = `${b64url(JSON.stringify({ alg: "none", kid: "k1" }))}.${b64url(JSON.stringify(good()))}.`;
+    await expect(verifyAccessJwt(t, TEAM, AUD)).rejects.toThrow();
+  });
+});
+
+describe("identity()", () => {
+  const req = (url: string, headers: Record<string, string> = {}) => new Request(url, { headers });
+  it("uses the Access token in production, lower-cased", async () => {
+    const e = env({ ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD, DEV_USER_EMAIL: "ignored@x.com" });
+    expect(await identity(req("https://gripcasting.pages.dev/api/me", { "cf-access-jwt-assertion": await token(good()) }), e)).toBe("director@gripcannabis.com");
+  });
+  it("never uses DEV_USER_EMAIL in production", async () => {
+    await expect(identity(req("https://gripcasting.pages.dev/api/me"), env({ ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD, DEV_USER_EMAIL: "me@x.com" }))).rejects.toThrow(/Not signed in/);
+  });
+  it("fails closed when Access isn't configured", async () => {
+    await expect(identity(req("https://gripcasting.pages.dev/api/me"), env({}))).rejects.toThrow(/isn't configured/);
+  });
+  it("local stand-in only on localhost", async () => {
+    const e = env({ ENVIRONMENT: "local", DEV_USER_EMAIL: "Me@GripCannabis.com" });
+    expect(await identity(req("http://127.0.0.1:8788/api/me"), e)).toBe("me@gripcannabis.com");
+    await expect(identity(req("https://gripcasting.pages.dev/api/me"), e)).rejects.toThrow(/localhost/);
+  });
+  it("ignores a client-sent identity header", async () => {
+    await expect(identity(req("https://gripcasting.pages.dev/api/me", { "cf-access-authenticated-user-email": "admin@gripcannabis.com" }), env({ ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD }))).rejects.toThrow(/Not signed in/);
+  });
+});
