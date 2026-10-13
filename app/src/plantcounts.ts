@@ -9,6 +9,7 @@ import { insertLog } from "./db";
 import { etWallClock } from "./farmday";
 import { t, type Locale } from "./i18n";
 import { formatLotToken } from "./mint";
+import { ownLotSql } from "./toll";
 import { esc } from "./ui";
 
 export const ASSIGN_PLANT_COUNTS_PATH = "/station/assign_plant_counts";
@@ -105,7 +106,7 @@ export async function listUncountedLots(db: D1Database, year: number): Promise<P
       `${LOT_SQL}
        FROM wet_weight_entries w
        JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-       WHERE w.deleted_at IS NULL AND w.plant_count IS NULL AND b.harvest_year = ? AND b.is_test = 0
+       WHERE w.deleted_at IS NULL AND w.plant_count IS NULL AND b.harvest_year = ? AND ${ownLotSql("b")}
        ORDER BY farm_day, w.created_at, w.id`
     )
     .bind(year)
@@ -165,7 +166,7 @@ export async function assignPlantCount(
       `SELECT w.plant_count AS plant_count
        FROM wet_weight_entries w
        JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-       WHERE w.id = ? AND w.deleted_at IS NULL AND b.harvest_year = ? AND b.is_test = 0`
+       WHERE w.id = ? AND w.deleted_at IS NULL AND b.harvest_year = ? AND ${ownLotSql("b")}`
     )
     .bind(id, year)
     .first<{ plant_count: number | null }>();

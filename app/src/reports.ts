@@ -7,6 +7,7 @@ import { dayAfter, dayBefore, etInstant, etWallClock, isCalendarDate } from "./f
 import { formatLbs, gramsToLbs, isPotencyAnalyte } from "./compliance";
 import { formatGrams, ITEM_KIND_WET_TOTAL, round2, roundGrams } from "./config";
 import { t, tFill, type Locale } from "./i18n";
+import { tollLine } from "./toll";
 import { agedDays } from "./marketplace";
 import { buildXlsx, type XlsxCell, type XlsxSheet } from "./xlsx";
 
@@ -813,9 +814,31 @@ export function tatsView(agg: TatAggRow[]): ReportView {
   };
 }
 
+export type SeasonTollLine = { customer: string; lots: number; dryGrams: number };
+
+/** Harvests by year is the season report. Toll lines sit under the year rows. */
 export function harvestsView(
-  rows: Array<{ harvest_year: number; batches: number; lots_finished: number; wet_grams: number; dry_grams: number }>
+  rows: Array<{ harvest_year: number; batches: number; lots_finished: number; wet_grams: number; dry_grams: number }>,
+  toll: readonly SeasonTollLine[] = [],
+  locale: Locale = "en"
 ): ReportView {
+  const body: ReportView["rows"] = rows.map((r) => ({
+    harvest_year: r.harvest_year,
+    batches: r.batches,
+    lots_finished: r.lots_finished,
+    wet_grams: r.wet_grams,
+    dry_grams: r.dry_grams,
+  }));
+  for (const line of toll) {
+    body.push({
+      harvest_year: tollLine(line.customer, line.lots, line.dryGrams, locale),
+      batches: "",
+      lots_finished: "",
+      wet_grams: "",
+      dry_grams: "",
+      _toll: "1",
+    });
+  }
   return {
     key: "harvests",
     title: "Harvests by year",
@@ -826,13 +849,7 @@ export function harvestsView(
       { key: "wet_grams", label: "Wet grams", grams: true },
       { key: "dry_grams", label: "Dry grams", grams: true },
     ],
-    rows: rows.map((r) => ({
-      harvest_year: r.harvest_year,
-      batches: r.batches,
-      lots_finished: r.lots_finished,
-      wet_grams: r.wet_grams,
-      dry_grams: r.dry_grams,
-    })),
+    rows: body,
   };
 }
 

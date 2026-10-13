@@ -332,6 +332,7 @@ import {
   siloSpaceOfNumber,
   fieldHoldingSpace,
   listHarvestsByYear,
+  listSeasonToll,
   listLocalInventory,
   listLookup,
   listLookupValueRows,
@@ -996,6 +997,8 @@ app.get("/reports/:key", async (c) => {
         changedAt: model.changedAt,
         packages: shown.packages,
         lots: shown.lots,
+        tollPackages: shown.tollPackages,
+        tollLots: shown.tollLots,
         filter,
         locale: s.locale,
       })
@@ -3983,7 +3986,8 @@ async function buildReportView(
     return tatsView(aggregateTatDays(groups));
   }
   if (key === "harvests") {
-    return harvestsView(await listHarvestsByYear(db, params.get("farm") || undefined));
+    const farm = params.get("farm") || undefined;
+    return harvestsView(await listHarvestsByYear(db, farm), await listSeasonToll(db, farm), locale);
   }
   const year = Number(params.get("year") ?? new Date().getUTCFullYear());
   return productMixView(await listProductMix(db, year), year);
