@@ -64,6 +64,7 @@ describe("THE BACK LINK (canon 0.30.109): the menu above every page", () => {
     expect(backLinkFor("/admin/imports")).toEqual({ href: "/admin/data-connections", label: "Data Connections" });
     expect(backLinkFor("/admin/metrc-api")).toEqual({ href: "/admin/data-connections", label: "Data Connections" });
     expect(backLinkFor("/admin/lookups")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
+    expect(backLinkFor("/admin/field_estimates")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
     expect(backLinkFor("/admin/manual-hbn")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
     expect(backLinkFor("/admin/reconcile-location")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
     expect(backLinkFor("/admin/lookups/dry_spaces")).toEqual({ href: "/admin/lookups", label: "Data Lookups" });
