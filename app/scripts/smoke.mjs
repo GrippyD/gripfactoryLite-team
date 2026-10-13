@@ -535,8 +535,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 99 migration(s)")) {
-      throw new Error(`from-zero apply must say 99 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 100 migration(s)")) {
+      throw new Error(`from-zero apply must say 100 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -10376,6 +10376,45 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     );
     const reconcileCsv = await text("/reports/harvest_reconciliation?from=2026-09-01&to=2026-10-12&format=csv");
     assert(reconcileCsv.res.status === 200 && reconcileCsv.body.includes("Wet total"), `harvest reconciliation CSV expected 200, got ${reconcileCsv.res.status} ${reconcileCsv.body.slice(0, 300)}`);
+    const settings = await text("/admin/settings");
+    assert(settings.res.status === 200 && settings.body.includes('href="/admin/field_estimates"'), `Admin Settings must list field estimates, got ${settings.res.status}`);
+    const estimates = await text("/admin/field_estimates");
+    assert(
+      estimates.res.status === 200 && estimates.body.includes("Field estimates") && estimates.body.includes("dry lb (448 g)") && estimates.body.includes('name="effective_date"'),
+      `field estimates expected 200 with the form, got ${estimates.res.status} ${estimates.body.slice(0, 300)}`
+    );
+    const estimateToday = (estimates.body.match(/name="effective_date" required value="(\d{4}-\d{2}-\d{2})"/) || [])[1];
+    assert(estimateToday, "the field estimates form must default the effective date");
+    const estimatePost = await req("/admin/field_estimates", {
+      method: "POST",
+      body: form({
+        strain_id: "98cf3164-344e-414a-9f1c-1526fde445ac",
+        farm_code: "PNN",
+        effective_date: estimateToday,
+        est_dry_weight: "2.5",
+        reason: "smoke memo",
+      }),
+    });
+    const estimateDetail = estimatePost.status === 303 ? "" : await estimatePost.text();
+    assert(
+      estimatePost.status === 303 && (estimatePost.headers.get("location") || "").endsWith("/admin/field_estimates?ok=saved"),
+      `posting a field estimate expected 303, got ${estimatePost.status} ${estimateDetail.slice(0, 300)}`
+    );
+    const estimatesListed = await text("/admin/field_estimates?ok=saved");
+    assert(
+      estimatesListed.res.status === 200 &&
+        estimatesListed.body.includes('data-strain-id="98cf3164-344e-414a-9f1c-1526fde445ac"') &&
+        estimatesListed.body.includes("After Party") &&
+        estimatesListed.body.includes("2.5") &&
+        estimatesListed.body.includes("In force") &&
+        estimatesListed.body.includes("smoke memo"),
+      `the field estimates list expected the posted row in force, got ${estimatesListed.res.status} ${estimatesListed.body.slice(0, 400)}`
+    );
+    const estimateRows = localD1All("SELECT est_dry_weight, reason, deleted_at FROM field_estimates");
+    assert(
+      estimateRows.length === 1 && Number(estimateRows[0].est_dry_weight) === 2.5 && estimateRows[0].reason === "smoke memo" && estimateRows[0].deleted_at == null,
+      `the stored field estimate must be 2.5 lb as typed, got ${JSON.stringify(estimateRows)}`
+    );
     process.stdout.write("SMOKE PASS\n");
   } finally {
     await stopWrangler(child);
