@@ -535,8 +535,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 100 migration(s)")) {
-      throw new Error(`from-zero apply must say 100 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 101 migration(s)")) {
+      throw new Error(`from-zero apply must say 101 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
