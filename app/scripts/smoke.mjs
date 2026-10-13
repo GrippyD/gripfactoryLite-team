@@ -5690,10 +5690,15 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     const consolePage = await text("/harvest");
     assert(consolePage.res.status === 200, `harvest console expected 200 got ${consolePage.res.status}`);
     assert(consolePage.body.includes("<h1>Harvest Console</h1>"), "the console must carry its title");
-    for (const section of ["plants", "drying", "trimming", "pasteurization", "testing"]) {
+    for (const section of ["plants", "strain_performance", "drying", "trimming", "pasteurization", "testing"]) {
       assert(consolePage.body.includes(`data-hc-section="${section}"`), `the console must carry the ${section} section`);
     }
-    assert(consolePage.body.includes('data-hc-section="plants" open') && consolePage.body.includes('data-hc-section="drying">') && !consolePage.body.includes('data-hc-section="drying" open'), "Plants open and Drying closed on a first visit");
+    assert(
+      consolePage.body.indexOf('data-hc-section="plants"') < consolePage.body.indexOf('data-hc-section="strain_performance"') &&
+        consolePage.body.indexOf('data-hc-section="strain_performance"') < consolePage.body.indexOf('data-hc-section="drying"'),
+      "Strain performance sits between Plants and Drying"
+    );
+    assert(consolePage.body.includes('data-hc-section="plants" open') && consolePage.body.includes('data-hc-section="strain_performance">') && !consolePage.body.includes('data-hc-section="strain_performance" open') && consolePage.body.includes('data-hc-section="drying">') && !consolePage.body.includes('data-hc-section="drying" open'), "Plants open, Strain performance and Drying closed on a first visit");
     assert((consolePage.body.match(/data-hc-stub>/g) || []).length === 0, "no stub remains: Pasteurization is built (canon 0.30.334) and Testing before it");
     assert(consolePage.body.includes('data-hc-section="pasteurization" open') && !consolePage.body.includes('hc-stub" data-hc-section="pasteurization"'), "Pasteurization must be a section, open on a first visit");
     assert(consolePage.body.includes('data-hc-section="testing"') && !consolePage.body.includes('hc-stub" data-hc-section="testing"'), "Testing must be a section, not a stub");
@@ -10504,7 +10509,7 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     assert(settings.res.status === 200 && settings.body.includes('href="/admin/field_estimates"'), `Admin Settings must list field estimates, got ${settings.res.status}`);
     const estimates = await text("/admin/field_estimates");
     assert(
-      estimates.res.status === 200 && estimates.body.includes("Field estimates") && estimates.body.includes("dry lb (448 g)") && estimates.body.includes('name="effective_date"'),
+      estimates.res.status === 200 && estimates.body.includes("Field estimates") && estimates.body.includes("dry lb per plant (448 g)") && estimates.body.includes('name="effective_date"'),
       `field estimates expected 200 with the form, got ${estimates.res.status} ${estimates.body.slice(0, 300)}`
     );
     const estimateToday = (estimates.body.match(/name="effective_date" required value="(\d{4}-\d{2}-\d{2})"/) || [])[1];
@@ -10539,6 +10544,28 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
       estimateRows.length === 1 && Number(estimateRows[0].est_dry_weight) === 2.5 && estimateRows[0].reason === "smoke memo" && estimateRows[0].deleted_at == null,
       `the stored field estimate must be 2.5 lb as typed, got ${JSON.stringify(estimateRows)}`
     );
+    // SP1: live plants under PNN's license, times the estimate in force, is Remaining dry lb.
+    // A harvested plant and a gone plant stay out of the count.
+    const seen = "2026-10-13T12:00:00.000Z";
+    await localD1WhenFree(
+      `INSERT INTO metrc_plants (tag, license_value, phase, strain, harvested, mount_id, first_seen_at, changed_at, gone_at) VALUES
+        ('sp1-live-1', 'GR-C-001132', 'flowering', 'After Party', 0, 'smoke-sp1', '${seen}', '${seen}', NULL),
+        ('sp1-live-2', 'GR-C-001132', 'flowering', 'After Party', 0, 'smoke-sp1', '${seen}', '${seen}', NULL),
+        ('sp1-live-3', 'GR-C-001132', 'flowering', 'After Party', 0, 'smoke-sp1', '${seen}', '${seen}', NULL),
+        ('sp1-live-4', 'GR-C-001132', 'flowering', 'After Party', 0, 'smoke-sp1', '${seen}', '${seen}', NULL),
+        ('sp1-cut', 'GR-C-001132', 'flowering', 'After Party', 1, 'smoke-sp1', '${seen}', '${seen}', NULL),
+        ('sp1-gone', 'GR-C-001132', 'flowering', 'After Party', 0, 'smoke-sp1', '${seen}', '${seen}', '${seen}')`
+    );
+    const strainPage = await text("/harvest");
+    assert(strainPage.res.status === 200 && strainPage.body.includes('data-hc-section="strain_performance"'), `strain performance expected 200, got ${strainPage.res.status}`);
+    const strainAt = strainPage.body.indexOf('data-sp-strain="After Party" data-sp-farm="PNN"');
+    assert(strainAt >= 0, "After Party at PNN must be a strain performance row");
+    const strainRow = strainPage.body.slice(strainAt, strainPage.body.indexOf("</tr>", strainAt));
+    const plantsLeft = Number((strainRow.match(/data-sp="plants_remaining">([\d,]+)</) || [])[1]?.replace(/,/g, ""));
+    const remainingLb = Number((strainRow.match(/data-sp="remaining">([\d,]+)</) || [])[1]?.replace(/,/g, ""));
+    assert(plantsLeft === 4, `After Party plants remaining expected 4, got ${plantsLeft}`);
+    assert(remainingLb === Math.round(plantsLeft * 2.5), `remaining dry lb expected plants times 2.5, got ${remainingLb} from ${plantsLeft}`);
+    assert(strainRow.includes('data-sp="estimate">2.50<'), `the estimate cell expected 2.50, got ${strainRow.slice(0, 500)}`);
     process.stdout.write("SMOKE PASS\n");
   } finally {
     await stopWrangler(child);

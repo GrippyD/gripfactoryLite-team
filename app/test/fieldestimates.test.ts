@@ -29,7 +29,7 @@ const ALIEN = "bb271969-e132-445b-b97b-51f676c8e225";
 
 const PAGE_KEYS = [
   "Field estimates",
-  "dry lb (448 g)",
+  "dry lb per plant (448 g)",
   "In force",
   "No field estimates yet.",
   "Dry pounds, hand entered. One pound is 448 g.",
@@ -37,7 +37,7 @@ const PAGE_KEYS = [
   "The strain this estimate is for.",
   "The farm this estimate is for.",
   "An older date stands until this date.",
-  "Hand entered dry pounds at 448 g. The number is stored as typed.",
+  "Hand entered dry pounds per plant at 448 g. The number is stored as typed.",
   "Memo, optional.",
   "Dry weight must be a positive number.",
   "Effective date is required.",
@@ -243,10 +243,10 @@ describe("FE1 field estimates", () => {
       expect(DICT[key]?.en).toBe(key);
       expect(DICT[key]?.es.length).toBeGreaterThan(0);
     }
-    expect(t("en", "dry lb (448 g)")).toBe("dry lb (448 g)");
-    expect(t("es", "dry lb (448 g)")).toBe("dry lb (448 g)");
+    expect(t("en", "dry lb per plant (448 g)")).toBe("dry lb per plant (448 g)");
+    expect(t("es", "dry lb per plant (448 g)")).toBe("dry lb per plant (448 g)");
     for (const key of PAGE_KEYS) {
-      if (key === "dry lb (448 g)") continue;
+      if (key === "dry lb per plant (448 g)") continue;
       expect(t("es", key)).not.toBe(key);
     }
 
@@ -254,8 +254,8 @@ describe("FE1 field estimates", () => {
     const html = fieldEstimatesPage(model, "en");
     expect(html).toContain(`action="${FIELD_ESTIMATES_PATH}"`);
     expect(html).toContain('name="effective_date" required value="2026-10-12"');
-    expect(html).toContain("dry lb (448 g)");
-    expect(html).toContain("Hand entered dry pounds at 448 g. The number is stored as typed.");
+    expect(html).toContain("dry lb per plant (448 g)");
+    expect(html).toContain("Hand entered dry pounds per plant at 448 g. The number is stored as typed.");
     expect(html).toContain('data-effective="2026-09-01" data-in-force="1"');
     expect(html).toContain('data-effective="2026-11-01" data-in-force="0"');
     expect(html).toContain(">In force<");
@@ -267,7 +267,7 @@ describe("FE1 field estimates", () => {
 
     const es = fieldEstimatesPage(model, "es");
     expect(es).toContain("Estimaciones de campo");
-    expect(es).toContain("dry lb (448 g)");
+    expect(es).toContain("dry lb per plant (448 g)");
     expect(es).toContain("En vigor");
     expect(es).toContain("El numero se guarda tal cual.");
     expect(es).toContain("Libras secas, escritas a mano. Una libra es 448 g.");
@@ -321,7 +321,7 @@ describe("FE1 field estimates", () => {
     expect(open.status).toBe(200);
     const body = await open.text();
     expect(body).toContain('name="effective_date" required value="2026-10-12"');
-    expect(body).toContain("dry lb (448 g)");
+    expect(body).toContain("dry lb per plant (448 g)");
     expect(body).toContain("Field estimates");
 
     const early = await app.request(
@@ -340,7 +340,7 @@ describe("FE1 field estimates", () => {
     const spanishBody = await spanish.text();
     expect(spanish.status).toBe(200);
     expect(spanishBody).toContain("Estimaciones de campo");
-    expect(spanishBody).toContain("dry lb (448 g)");
+    expect(spanishBody).toContain("dry lb per plant (448 g)");
 
     const bad = await app.request(
       "/admin/field_estimates",

@@ -1,0 +1,33 @@
+# SP1: Strain performance on the Harvest Console (harvested married to unharvested)
+
+Filed by the Scribe on 2026-10-13 (canon 0.30.462) from the owner's word: "I need to marry two things: 1. What we've harvested 2. What's left unharvested: Remaining plants x most recent estimated dry weight 3. If we can put it under plants in the dashboard under a collapsable Strain performance heading that would be ideal (between plants and drying)".
+
+For the build session (Claude Code or Cursor): open in `C:\Users\DennisWallace\Documents\Claude\Projects\gripfactory Practical\branches\GFLiteMetrcAPI` (its `app\` is the app). If your working folder is not under `branches\GFLiteMetrcAPI`, stop and say so. Under THE DISPATCH RULE (canon 0.30.155). Pinned to the live tree `e57aea288fdafeda` (main 9f80fc2, worker ae8af002, migrations 0001-0098 plus 0100 and 0102). Verify with canon's hash command in `app/` (`wrangler.toml` read as LF): `(find src test scripts migrations -type f; echo wrangler.toml; echo tsconfig.json; echo package.json) | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-16`. If it differs, stop and say so. No git; nothing committed, pushed or deployed. Never edit `canon/` or an existing migration. LF only. No migration in this brief. One build agent in this worktree; FC1 (Harvest Analysis) waits behind this brief.
+
+## Read first
+- `src/console.ts`: the page markup around `data-hc-section="plants"` and `data-hc-section="drying"`, and the Plants query that counts `metrc_plants` under each farm's licenses (`lookup_values` category `license`).
+- `src/drystrain.ts`: the strain naming rule (the market strain when one is typed, else the real strain) and how a lot's dry grams are read (`w.dry_weight_grams`, else the sum of `dry_weights`), and the finished unload.
+- `src/fieldestimates.ts` (FE1): `estimatesAsOf(db, date)`, one row per strain and farm in force on a date.
+- `src/toll.ts` is NOT on this tree (T1 is not merged yet). Leave tests out with `b.is_test = 0` as the console does today; when T1 merges, its fragment takes over.
+
+## The law
+1. THE PLACE. A new section on the Harvest Console, `<details class="hc-section" data-hc-section="strain_performance">`, between Plants and Drying, closed by default, summary "Strain performance" with the harvest year beside it as Plants shows it. EN and ES words in `src/i18n.ts`. It reads the console's harvest year and the console's day.
+2. THE GRAIN. One row per strain and farm (the strain named by the rule in drystrain.ts), sorted by strain then farm, and a Total row. A strain appears if it has a lot this harvest year or live plants in METRC.
+3. HARVESTED (Grip's own finished lots of the year, status not weighing, tests out): Lots; Plants harvested (sum of plant counts typed on the lots); Wet lb; Dry lb (lots with a finished unload and dry weight); Drying lb forecast (the wet lb of the lots not yet unloaded times the dry-down of the same strain and farm's unloaded lots pooled by weight, else the strain's across farms, else the season's; the method named in one muted line under the table); Harvested dry lb (dry plus drying forecast); Dry lb per plant (dry lb over plants of the unloaded lots that carry a count; blank when none).
+4. UNHARVESTED: Plants remaining (live METRC plants, `gone_at IS NULL AND harvested = 0`, under the farm's licenses, by `p.strain`; strain names matched trimmed and case blind); Est. dry lb per plant (the FE1 estimate in force on the console's day for that strain and farm; the strain is the strains row whose name matches the row's name, trimmed and case blind); Est. date (its effective date); Remaining dry lb (plants remaining times the estimate).
+5. NO ESTIMATE. A row with plants remaining and no estimate in force shows "no estimate" in the estimate cell and a blank Remaining dry lb; it is left out of the Remaining total, and one line under the table reads "{n} strains with plants and no estimate: {p} plants", the words in i18n. Nothing is guessed in its place.
+6. THE SEASON. Season dry lb = Harvested dry lb plus Remaining dry lb, per row and in the Total.
+7. FE1 NAMES ITS UNIT. Field estimates are dry pounds PER PLANT (the owner's word above). In `src/fieldestimates.ts` and i18n, the label becomes "dry lb per plant (448 g)" and the page's help line "Hand entered dry pounds per plant at 448 g. The number is stored as typed." in both languages; no stored value changes (none are entered yet). The FE1 tests follow the label.
+8. NOTHING ELSE MOVES. Plants and Drying stay as they are, the Plants boxes keep their numbers, no migration, no cron, no new table. Pounds are the app pound (448 g, GRAMS_PER_LB), two decimals for per plant, whole pounds elsewhere with thousands commas.
+
+## Performance (standing law, 0.30.438)
+Read the year's lots with the indexed reads the console already makes (a few hundred lots), pool in code. ONE grouped read of `metrc_plants` for this section (`GROUP BY p.license_value, p.strain` with `gone_at IS NULL AND harvested = 0`), no per strain query, at most 100 bound parameters a statement, no scan of `sensor_readings`. The Scribe times /harvest on the live-data bench; the page must stay under 1 s, and the section must not add more than 0.15 s.
+
+## Tests and the smoke
+- Unit: the naming rule and the strain and farm grain; the drying forecast's three fallbacks; the estimate in force on the day (an older estimate stands, a later one waits); no estimate leaves the row out of the Remaining total and counts it in the line; the Total; the section sits between Plants and Drying and is closed by default; i18n parity; FE1's new label.
+- Smoke (`scripts/smoke.mjs`): /harvest answers 200 with the section; with a seeded estimate and seeded live plants the Remaining dry lb equals plants times estimate. `About to apply 100 migration(s)` stays (no migration here).
+- Render at 1920 and 820 in Lite, CO and Cerberus with the section open: the table must not run together (it scrolls inside the section when narrow).
+- Gates: typecheck 0; vitest under TZ=UTC and TZ=America/New_York; node --check scripts/smoke.mjs; from-zero smoke, SMOKE PASS, no 500. Dash and CR audits by character. Report to `SESSION_REPORTS/2026-10-13_strain_performance.md` with canon's tree hash and every file touched.
+
+## What the Scribe saw on the 07:32 snapshot (for the build's sense of scale)
+38,989 live METRC plants remain across 24 strain and farm pairs; 19 of those pairs have no harvested lot yet (Lemon Cherry Sherbet PNS 9,964, Applescotti PNN 5,930, Apple Fritter PNN 3,835, Nimbus Snack PNS 3,716, Dosilato PNN 3,528, Papaya Cake PNN 3,312 and more). No field estimate is entered yet, so every Remaining cell reads "no estimate" until the owner enters them.

@@ -181,6 +181,9 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(html).toContain("<h1>Harvest Console</h1>");
     expect(html).toContain('<details class="hc-section" data-hc-section="plants" open>');
     expect(html).toContain('<summary>Plants <span class="muted hc-year">Harvest year 2026</span></summary>');
+    expect(html).toContain('<details class="hc-section" data-hc-section="strain_performance">');
+    expect(html).toContain('<summary>Strain performance <span class="muted hc-year">Harvest year 2026</span></summary>');
+    expect(html).not.toContain('data-hc-section="strain_performance" open');
     expect(html).toContain('<details class="hc-section" data-hc-section="drying">');
     expect(html).toContain("<summary>Drying</summary>");
     expect(html).toContain('<details class="hc-section" data-hc-section="trimming" open>');
@@ -203,7 +206,7 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(html).not.toContain("Stub: this section waits on the owner's definition.");
     expect(html).toContain('gf_hc_fold');
     expect(html).not.toContain('data-hc-section="drying" open');
-    const order = ["plants", "drying", "trimming", "pasteurization", "testing", "prepack"].map((k) => html.indexOf(`data-hc-section="${k}"`));
+    const order = ["plants", "strain_performance", "drying", "trimming", "pasteurization", "testing", "prepack"].map((k) => html.indexOf(`data-hc-section="${k}"`));
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     // THE DRYING TOTALS (canon 0.30.183): none handed, none drawn.
     expect(html).not.toContain("data-hc-drying-totals");
