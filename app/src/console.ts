@@ -174,6 +174,7 @@ import { HttpError, nowIso, textOrNull } from "./audit";
 import { getConfigValue, insertLog, TRIM_SCHEDULED_SQL } from "./db";
 import { formatClock, siloStrip, type DryingStripFigures } from "./drying";
 import { fulfillmentSection, emptyFulfillment, type FulfillmentDay } from "./fulfillmentboard";
+import { emptyStrainPerformance, strainPerformanceSection, type StrainPerformanceModel } from "./strainperformance";
 import { dayBefore, etClockMinutes, etDate, etDayBounds, FARM_DAY_START_HOUR_DEFAULT, FARM_TIME_ZONE, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHour } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
 import { type SiloLive, dryingTotalsMarkup, type DryingTotals } from "./silo";
@@ -1100,6 +1101,8 @@ export type HarvestConsolePageInput = {
   prepack?: PrepackConsole;
   /** FULFILLMENT (canon 0.30.306). Omitted reads as a day with no cells. */
   fulfillment?: FulfillmentDay;
+  /** SP1: harvested lots married to plants still in the ground. Omitted draws the section empty. */
+  strainPerformance?: StrainPerformanceModel;
 };
 
 function hoursBox(input: HarvestConsoleInput, locale: Locale, value: number | null): string {
@@ -2619,6 +2622,7 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
       <summary>${esc(t(locale, "Plants"))} <span class="muted hc-year">${esc(t(locale, "Harvest year"))} ${esc(String(page.input.year))}</span></summary>
       <div class="hc-farms">${boxes.map((b) => farmBox(b, page.input, locale)).join("")}</div>
     </details>
+    ${strainPerformanceSection(page.strainPerformance ?? emptyStrainPerformance(), page.input.year, locale)}
     <details class="hc-section" data-hc-section="drying">
       <summary>${esc(t(locale, "Drying"))}</summary>
       ${siloStrip(page.live, page.nowIso, locale, page.cureTiles ?? "", page.envFlags ?? {}, page.stripFigures ?? {}, "open")}

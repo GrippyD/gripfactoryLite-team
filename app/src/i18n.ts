@@ -4242,7 +4242,7 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Harvest start": { en: "Harvest start", es: "Inicio de cosecha" },
   // FE1: field estimates, effective dated. The weight label is the same words in both languages.
   "Field estimates": { en: "Field estimates", es: "Estimaciones de campo" },
-  "dry lb (448 g)": { en: "dry lb (448 g)", es: "dry lb (448 g)" },
+  "dry lb per plant (448 g)": { en: "dry lb per plant (448 g)", es: "dry lb per plant (448 g)" },
   "In force": { en: "In force", es: "En vigor" },
   "No field estimates yet.": { en: "No field estimates yet.", es: "Aun no hay estimaciones de campo." },
   "Dry pounds, hand entered. One pound is 448 g.": {
@@ -4259,10 +4259,45 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "An older date stands until this date.",
     es: "Una fecha anterior sigue vigente hasta esta fecha.",
   },
-  "Hand entered dry pounds at 448 g. The number is stored as typed.": {
-    en: "Hand entered dry pounds at 448 g. The number is stored as typed.",
-    es: "Libras secas escritas a mano a 448 g. El numero se guarda tal cual.",
+  "Hand entered dry pounds per plant at 448 g. The number is stored as typed.": {
+    en: "Hand entered dry pounds per plant at 448 g. The number is stored as typed.",
+    es: "Libras secas por planta escritas a mano a 448 g. El numero se guarda tal cual.",
   },
+  // SP1: Strain performance on the Harvest Console, between Plants and Drying.
+  "Strain performance": { en: "Strain performance", es: "Rendimiento por variedad" },
+  "Plants harvested": { en: "Plants harvested", es: "Plantas cosechadas" },
+  "Drying lb forecast": { en: "Drying lb forecast", es: "Pronóstico de lb en secado" },
+  "Harvested dry lb": { en: "Harvested dry lb", es: "Lb secas cosechadas" },
+  "Dry lb per plant": { en: "Dry lb per plant", es: "Lb secas por planta" },
+  "Plants remaining": { en: "Plants remaining", es: "Plantas restantes" },
+  "Est. dry lb per plant": { en: "Est. dry lb per plant", es: "Lb secas est. por planta" },
+  "Est. date": { en: "Est. date", es: "Fecha est." },
+  "Remaining dry lb": { en: "Remaining dry lb", es: "Lb secas restantes" },
+  "Season dry lb": { en: "Season dry lb", es: "Lb secas de la temporada" },
+  "Harvested": { en: "Harvested", es: "Cosechado" },
+  "Unharvested": { en: "Unharvested", es: "Sin cosechar" },
+  "no estimate": { en: "no estimate", es: "sin estimación" },
+  "{n} strain with plants and no estimate: {p} plant": {
+    en: "{n} strain with plants and no estimate: {p} plant",
+    es: "{n} variedad con plantas y sin estimación: {p} planta",
+  },
+  "{n} strain with plants and no estimate: {p} plants": {
+    en: "{n} strain with plants and no estimate: {p} plants",
+    es: "{n} variedad con plantas y sin estimación: {p} plantas",
+  },
+  "{n} strains with plants and no estimate: {p} plant": {
+    en: "{n} strains with plants and no estimate: {p} plant",
+    es: "{n} variedades con plantas y sin estimación: {p} planta",
+  },
+  "{n} strains with plants and no estimate: {p} plants": {
+    en: "{n} strains with plants and no estimate: {p} plants",
+    es: "{n} variedades con plantas y sin estimación: {p} plantas",
+  },
+  "Drying lb forecast is the wet pounds of lots not yet unloaded times the dry-down of that strain and farm, pooled by weight, else that strain across farms, else the season.": {
+    en: "Drying lb forecast is the wet pounds of lots not yet unloaded times the dry-down of that strain and farm, pooled by weight, else that strain across farms, else the season.",
+    es: "El pronóstico de libras en secado es las libras húmedas de los lotes aún no descargados por el secado de esa variedad y granja, agrupado por peso, si no el de esa variedad entre granjas, si no el de la temporada.",
+  },
+  "No strains this harvest year.": { en: "No strains this harvest year.", es: "No hay variedades en este año de cosecha." },
   "Memo, optional.": { en: "Memo, optional.", es: "Nota, opcional." },
   "Dry weight must be a positive number.": {
     en: "Dry weight must be a positive number.",

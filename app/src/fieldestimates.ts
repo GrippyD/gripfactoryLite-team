@@ -3,7 +3,7 @@
  * The key is strain and farm. For a date D, the estimate is the live row
  * with the greatest effective_date on or before D. A later row replaces the
  * older one only from its own date forward. The same date replaces that row.
- * Dry pounds are hand entered at GRAMS_PER_LB (448 g) and stored as typed.
+ * Dry pounds per plant are hand entered at GRAMS_PER_LB (448 g) and stored as typed.
  */
 import { nowIso, refusal, textOrNull } from "./audit";
 import { GRAMS_PER_LB } from "./config";
@@ -320,9 +320,9 @@ export function fieldEstimatesPage(model: FieldEstimatesPageModel, locale: Local
       )}
       ${fieldBlock(
         locale,
-        "dry lb (448 g)",
+        "dry lb per plant (448 g)",
         `<input type="text" name="est_dry_weight" inputmode="decimal" required data-field-estimate-weight>`,
-        "Hand entered dry pounds at 448 g. The number is stored as typed."
+        "Hand entered dry pounds per plant at 448 g. The number is stored as typed."
       )}
       ${fieldBlock(locale, "Reason", `<textarea name="reason" rows="3" data-field-estimate-reason></textarea>`, "Memo, optional.")}
       <button type="submit">${esc(t(locale, "Save"))}</button>
@@ -335,7 +335,7 @@ export function fieldEstimatesPage(model: FieldEstimatesPageModel, locale: Local
         <th>${esc(t(locale, "Strain"))}</th>
         <th>${esc(t(locale, "Farm"))}</th>
         <th>${esc(t(locale, "Effective date"))}</th>
-        <th>${esc(t(locale, "dry lb (448 g)"))}</th>
+        <th>${esc(t(locale, "dry lb per plant (448 g)"))}</th>
         <th>${esc(t(locale, "Reason"))}</th>
         <th></th>
         <th></th>
