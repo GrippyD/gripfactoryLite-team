@@ -542,9 +542,16 @@ export function cureClockScript(): string {
       shade.style.paddingTop = "";
       return;
     }
+    // CF1 (canon 0.30.459): the header ends where the conditions line ends, margins and the
+    // tile's own padding included; a sum of heights fell short and the count rode over the line.
     var head = 0;
-    pane.querySelectorAll(":scope > .inv-gauge-name, :scope > .cure-conditions").forEach(function (el) {
-      head += el.offsetHeight;
+    var top = pane.getBoundingClientRect().top;
+    pane.querySelectorAll(".inv-gauge-name, .cure-conditions").forEach(function (el) {
+      if (el.closest("[data-cure-shade]")) return;
+      var r = el.getBoundingClientRect();
+      if (r.height === 0) return;
+      var mb = parseFloat(getComputedStyle(el).marginBottom) || 0;
+      head = Math.max(head, r.bottom - top + mb);
     });
     var tile = pane.clientHeight;
     var fill = Number(shade.getAttribute("data-cure-fill")) / 100;
@@ -569,6 +576,18 @@ export function cureClockScript(): string {
     });
   });
   padAll();
+  // Measure again once the page has settled, and whenever a pane changes size.
+  window.addEventListener("load", padAll);
+  window.addEventListener("resize", padAll);
+  // A folded section (the console's Drying) can open after load: measure again on any fold.
+  document.addEventListener("toggle", padAll, true);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(padAll);
+  if (typeof ResizeObserver === "function") {
+    var ro = new ResizeObserver(function (entries) {
+      entries.forEach(function (e) { padShade(e.target); });
+    });
+    document.querySelectorAll("[data-cure-pane]").forEach(function (pane) { ro.observe(pane); });
+  }
 })();
 </script>`;
 }
