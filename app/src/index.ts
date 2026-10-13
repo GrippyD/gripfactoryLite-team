@@ -62,6 +62,7 @@ import {
   safeNextPath,
   type Identity,
 } from "./identity";
+import { mountGripcasting } from "./gripcasting/routes";
 import { SERVICE_IDENTITY, SERVICE_REFUSAL, isAccessFronted, isServiceRoute, loginEmailOf } from "./service";
 import { farmDayStartHour, farmToday } from "./effective";
 import { isCalendarDate, parseFarmDayStartHour } from "./farmday";
@@ -332,6 +333,7 @@ import {
   siloSpaceOfNumber,
   fieldHoldingSpace,
   listHarvestsByYear,
+  listSeasonToll,
   listLocalInventory,
   listLookup,
   listLookupValueRows,
@@ -701,6 +703,7 @@ for (const tool of MODEL_TOOLS) {
     app.get(`${dir}${file}`, (c) => vendoredAsset(c, `${dir}${file}`));
   }
 }
+mountGripcasting(app);
 
 function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
   const minted = url.searchParams.get("minted");
@@ -998,6 +1001,8 @@ app.get("/reports/:key", async (c) => {
         changedAt: model.changedAt,
         packages: shown.packages,
         lots: shown.lots,
+        tollPackages: shown.tollPackages,
+        tollLots: shown.tollLots,
         filter,
         locale: s.locale,
       })
@@ -4002,7 +4007,8 @@ async function buildReportView(
     return tatsView(aggregateTatDays(groups));
   }
   if (key === "harvests") {
-    return harvestsView(await listHarvestsByYear(db, params.get("farm") || undefined));
+    const farm = params.get("farm") || undefined;
+    return harvestsView(await listHarvestsByYear(db, farm), await listSeasonToll(db, farm), locale);
   }
   const year = Number(params.get("year") ?? new Date().getUTCFullYear());
   return productMixView(await listProductMix(db, year), year);

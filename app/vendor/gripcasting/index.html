@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>GRIP Harvest Forecast</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/src/web/styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="bar1">
+      <div class="brand">2026H Forecast<small>GRIP · PNN · PNS · SMI</small></div>
+      <div class="clock"><div class="months" id="months"></div><span id="clockTxt"></span></div>
+      <span class="save" id="saveState"></span>
+      <label class="viewsel"><span class="eyebrow">Forecast</span><select class="sel" id="monthSel"><option value="">Live</option></select></label>
+      <button class="btn" id="exportBtn" type="button">Export xlsx</button>
+    </div>
+    <nav class="tabs" role="tablist" id="tabs">
+      <button class="tab" role="tab" data-tab="overview" id="t-overview">Overview</button>
+      <button class="tab" role="tab" data-tab="revenue" id="t-revenue">Revenue drivers</button>
+      <button class="tab" role="tab" data-tab="build" id="t-build">Build forecast</button>
+      <button class="tab" role="tab" data-tab="txns" id="t-txns">Transactions</button>
+      <button class="tab" role="tab" data-tab="subs" id="t-subs">Submissions</button>
+      <button class="tab" role="tab" data-tab="actuals" id="t-actuals">Actuals</button>
+    </nav>
+    <div class="viewbar" id="viewBar" hidden></div>
+  </div>
+</header>
+<main class="wrap" id="main"><section class="panel"><div class="empty">Loading…</div></section></main>
+<input type="file" id="fileIn" accept=".xlsx,.xls,.xlsm" multiple hidden>
+<script type="module" src="/src/web/app.ts"></script>
+</body>
+</html>

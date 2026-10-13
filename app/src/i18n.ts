@@ -1202,6 +1202,19 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "Test HBN (holds no place in line)",
     es: "HBN de prueba (no ocupa lugar en la fila)",
   },
+  "Customer (toll lot)": {
+    en: "Customer (toll lot)",
+    es: "Cliente (lote de cliente)",
+  },
+  "A lot cannot be both a test and a toll lot.": {
+    en: "A lot cannot be both a test and a toll lot.",
+    es: "Un lote no puede ser de prueba y de cliente a la vez.",
+  },
+  "Toll lots": { en: "Toll lots", es: "Lotes de cliente" },
+  "Toll lots: {customer} {n} lots, {g} g dry": {
+    en: "Toll lots: {customer} {n} lots, {g} g dry",
+    es: "Lotes de cliente: {customer} {n} lotes, {g} g seco",
+  },
   "The year's lot numbers have reached 999.": {
     en: "The year's lot numbers have reached 999.",
     es: "Los numeros de lote del ano han llegado a 999.",

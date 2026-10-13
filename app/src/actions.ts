@@ -114,6 +114,7 @@ import { packageSplitCsv, splitFilename } from "./marketplace";
 import { recallPrefillFromBatch, recallRedirectPath, type RecallableBatch } from "./inventory";
 import { hbnWithSeq, wetWeightsFilename } from "./csv";
 import { backRedirect, HttpError, nowIso, parseGrams, parsePlantCount, refusal, requireReason, requireText, textOrNull } from "./audit";
+import { TOLL_BOTH, tollCustomer } from "./toll";
 import { EFFECTIVE_DATE_FIELD, EFFECTIVE_DATE_REASON, effectiveOverrideLog, farmDayStartHour, farmToday, resolveEffectiveDate } from "./effective";
 import { FARM_DAY_START_HOUR_DEFAULT, farmDay, farmInstant, farmInstantFromInput, trimCountedDate, wallClock24From12 } from "./farmday";
 import { capacityUomOf, drySpaceTypeOf, spaceHoldsOneLot, trimBogeyOf, maxToteLbsOf, parseMaxToteLbs, parseNameList, lotCapOf, phpPriceOf, GRAMS_PER_LB, DRY_SPACE_TYPES, CAPACITY_UOMS } from "./config";
@@ -585,6 +586,8 @@ export async function manualHbn(db: D1Database, form: FormData): Promise<ActionO
     throw err;
   }
   const isTest = checkbox01(form, "is_test") === 1 ? 1 : 0;
+  const customer = tollCustomer(form.get("customer"));
+  if (isTest === 1 && customer) throw new HttpError(400, TOLL_BOTH);
   const harvestYear = harvestYearFromEntryDate(entryDate);
   const serialFloor = lotSerialFloor(await getConfigValue(db, CONFIG_KEYS.first_lot_token), harvestYear);
   const id = crypto.randomUUID();
@@ -608,6 +611,7 @@ export async function manualHbn(db: D1Database, form: FormData): Promise<ActionO
       status: HARVEST_STATUS.open,
       license_value: licenseValue,
       is_test: isTest,
+      customer,
       created_at: ts,
       created_by: actor.id,
       updated_at: ts,
@@ -619,9 +623,9 @@ export async function manualHbn(db: D1Database, form: FormData): Promise<ActionO
           .prepare(
             `INSERT INTO harvest_batches (
           id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, planned_dryspc, material_form,
-          start_time, zone, rows_text, metrc_harvest_tag, hbn, lot_serial, harvest_year, status, license_value, is_test,
+          start_time, zone, rows_text, metrc_harvest_tag, hbn, lot_serial, harvest_year, status, license_value, is_test, customer,
           created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-        ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
           )
           .bind(
             id,
@@ -639,6 +643,7 @@ export async function manualHbn(db: D1Database, form: FormData): Promise<ActionO
             HARVEST_STATUS.open,
             licenseValue,
             isTest,
+            customer,
             ts,
             actor.id,
             ts,
@@ -4526,6 +4531,10 @@ export async function editRecord(
   const pk = tablePk(table);
   const existing = await getRow(db, table, id);
   if (!existing || existing.deleted_at) throw new HttpError(404, "Record not found.");
+  if (table === "harvest_batches" && form.has("customer")) {
+    const customer = tollCustomer(form.get("customer"));
+    if (customer && Number(existing.is_test) === 1) throw new HttpError(400, TOLL_BOTH);
+  }
 
   const sets: string[] = [];
   const values: unknown[] = [];

@@ -535,8 +535,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 100 migration(s)")) {
-      throw new Error(`from-zero apply must say 100 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 102 migration(s)")) {
+      throw new Error(`from-zero apply must say 102 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -5586,6 +5586,8 @@ async function run() {
     );
     const toolGate = await req("/models/harvest-menu-2026/");
     assert(toolGate.status === 401, `the vendored tool without the Models PIN expected 401 got ${toolGate.status}`);
+    const gcGate = await req("/models/gripcasting/");
+    assert(gcGate.status === 401, `GRIPCasting without the Models PIN expected 401 got ${gcGate.status}`);
     const evilModelsNext = await req("/pin/models", { method: "POST", body: form({ pin: MODELS_PIN, next: "https://evil.example/" }) });
     assert(
       evilModelsNext.status === 303 && (evilModelsNext.headers.get("location") || "") === "/models",
@@ -5596,6 +5598,8 @@ async function run() {
     assert(modelsHome.body.includes("<h1>Models</h1>"), "the Models page must be titled Models");
     assert(modelsHome.body.includes('<a class="tile" href="/models/harvest-menu-2026/">'), "Models must carry the [Harvest Menu Tool 2026] tile");
     assert(modelsHome.body.includes('<span class="tile-title">Harvest Menu Tool 2026</span>'), "the tile must read Harvest Menu Tool 2026");
+    assert(modelsHome.body.includes('<a class="tile" href="/models/gripcasting/">'), "Models must carry the GRIPCasting tile");
+    assert(modelsHome.body.includes('<span class="tile-title">GRIPCasting</span>'), "the tile must read GRIPCasting");
     const toolNoSlash = await req("/models/harvest-menu-2026");
     assert(
       toolNoSlash.status === 302 && (toolNoSlash.headers.get("location") || "") === "/models/harvest-menu-2026/",
@@ -5622,6 +5626,64 @@ async function run() {
     assert(toolData.body.includes('"rows"'), "data.json must carry the rows");
     assert((toolData.res.headers.get("cache-control") || "") === "no-store", "data.json must stream no-store");
     assert(sha16(toolData.body) === "979881ee7f395397", `data.json's bytes must match his zip, got ${sha16(toolData.body)}`);
+    // GC1: GRIPCasting, its own page behind the same PIN, bytes pinned, API
+    // closed until a gc_app_users row exists.
+    const gcNoSlash = await req("/models/gripcasting");
+    assert(
+      gcNoSlash.status === 302 && (gcNoSlash.headers.get("location") || "") === "/models/gripcasting/",
+      `the slash-less GRIPCasting path must redirect, got ${gcNoSlash.status} ${gcNoSlash.headers.get("location")}`
+    );
+    const gcPage = await text("/models/gripcasting/");
+    assert(gcPage.res.status === 200, `GRIPCasting expected 200 got ${gcPage.res.status}`);
+    assert(gcPage.body.includes("<title>GRIP Harvest Forecast</title>"), "GRIPCasting must stream its own page");
+    assert((gcPage.res.headers.get("cache-control") || "") === "no-store", "GRIPCasting must stream no-store");
+    assert(sha16(gcPage.body) === "ac4bc6e139b878eb", `GRIPCasting index bytes changed, got ${sha16(gcPage.body)}`);
+    assert(!/\$\d[\d,]*\.\d{2}/.test(gcPage.body), "the GRIPCasting page must not bake a figure");
+    const gcJs = await text("/models/gripcasting/app.js");
+    const gcCss = await text("/models/gripcasting/styles.css");
+    assert(gcJs.res.status === 200 && (gcJs.res.headers.get("content-type") || "").includes("javascript"), `app.js expected javascript, got ${gcJs.res.status} ${gcJs.res.headers.get("content-type")}`);
+    assert(gcCss.res.status === 200 && (gcCss.res.headers.get("content-type") || "").includes("css"), `styles.css expected css, got ${gcCss.res.status} ${gcCss.res.headers.get("content-type")}`);
+    assert((gcJs.res.headers.get("cache-control") || "") === "no-store" && (gcCss.res.headers.get("cache-control") || "") === "no-store", "GRIPCasting assets must stream no-store");
+    assert(sha16(gcJs.body) === "90d857382e0557b9", `GRIPCasting app.js bytes changed, got ${sha16(gcJs.body)}`);
+    assert(sha16(gcCss.body) === "1d9ed1d54d047b58", `GRIPCasting styles.css bytes changed, got ${sha16(gcCss.body)}`);
+    assert(gcJs.body.includes('"/models/gripcasting/api/"'), "the app must call /models/gripcasting/api/");
+    const gcDenied = await text("/models/gripcasting/api/me");
+    assert(gcDenied.res.status === 403, `GRIPCasting API with no row expected 403 got ${gcDenied.res.status}`);
+    assert(gcDenied.body.includes("doesn't have access"), "the refusal must say the login has no access");
+    const gcVol = JSON.stringify({
+      plants: 10, wetPerPlant: 2, dryDown: 0.25, ffWet: 0, shrink: 0, btr: 0.5,
+      prepackPct: 0, prepackPrice: 1, bulkPrice: 1,
+      lbsPerLiter: 1, carts: 0, gPerCart: 1, cartPrice: 1, literPrice: 1,
+      resinYield: 0, resinSplit: 0, resinPrice: 1,
+      premLbs: 0, premPrice: 1, premOn: false,
+      ghLbs: 0, ghPrice: 1, ghOn: false,
+      iprUnits: 0, iprPrice: 1, iprOn: false,
+      ibLbs: 0, ibPrice: 1, ibOn: false,
+      tps: 0, tpsOn: false,
+    });
+    localD1(`INSERT INTO gc_harvests (id, code, starts_on, is_current, wages_budget, season, vol_default, created_at, created_by) VALUES ('gc-h1', '2026H', '2026-04-01', 1, NULL, '{}', '${gcVol.replace(/'/g, "''")}', '2026-10-13T15:00:00.000Z', 'smoke');
+INSERT INTO gc_business_units (id, harvest_id, code, name, sort, created_at, created_by) VALUES ('gc-bu1', 'gc-h1', '01', '01 Outdoor Grow', 0, '2026-10-13T15:00:00.000Z', 'smoke');
+INSERT INTO gc_gl_accounts (id, harvest_id, name, created_at, created_by) VALUES ('gc-gl1', 'gc-h1', '5120 Nutrients', '2026-10-13T15:00:00.000Z', 'smoke');
+INSERT INTO gc_budget_lines (id, harvest_id, gl, bu, amount, created_at, created_by) VALUES ('gc-b1', 'gc-h1', '5120 Nutrients', '01 Outdoor Grow', 10000, '2026-10-13T15:00:00.000Z', 'smoke');
+INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_by) VALUES ('gc-admin', 'smoke@gripcannabis.com', 'Smoke', 'admin', 1, '2026-10-13T15:00:00.000Z', 'smoke');`);
+    const gcMe = await text("/models/gripcasting/api/me");
+    assert(gcMe.res.status === 200, `seeded GRIPCasting admin expected 200 got ${gcMe.res.status} ${gcMe.body.slice(0, 200)}`);
+    assert(gcMe.body.includes('"role":"admin"'), "the seeded login must be admin");
+    const gcDrivers = await text("/models/gripcasting/api/drivers", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ drivers: { vol: JSON.parse(gcVol), gl: {} }, version: null }),
+    });
+    assert(gcDrivers.res.status === 200, `PUT drivers expected 200 got ${gcDrivers.res.status} ${gcDrivers.body.slice(0, 300)}`);
+    const gcSub = await text("/models/gripcasting/api/submissions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "final", code: null }),
+    });
+    assert(gcSub.res.status === 200, `POST submissions expected 200 got ${gcSub.res.status} ${gcSub.body.slice(0, 300)}`);
+    const gcSubBody = JSON.parse(gcSub.body);
+    assert(gcSubBody.kind === "final" && gcSubBody.submittedBy === "smoke@gripcannabis.com", "the final submission must be stamped with the login");
+    assert(gcSubBody.totals && gcSubBody.totals.b === 100, `synthetic budget must round trip as 100 dollars, got ${gcSubBody.totals && gcSubBody.totals.b}`);
     // Admin, Lookups, app_config carries the second PIN as a value in data (canon L-4).
     const configPage = await text("/admin/lookups/app_config");
     assert(configPage.res.status === 200 && configPage.body.includes("models_pin"), "app_config must list models_pin beside admin_pin");
@@ -7674,9 +7736,9 @@ async function run() {
     const agreeLine = sheetExport.find((line) => line.includes(agreeHbn)) || "";
     // The sync renames the app batch to the sheet's text (THE HBN FOLLOWS METRC), so its 01 segment reads NA here; its silo column is untouched.
     const knownLine = sheetExport.find((line) => line.includes("26244-ARL-GH-027-0-NA-26010")) || "";
-    assert(aliasLine.endsWith(",sheet,,,bucked,0") && !sheetExport.some((line) => line.includes(aliasSheet)), `serial 80 must be minted under METRC's text, got ${aliasLine}`);
-    assert(agreeLine.endsWith(",sheet,,,bucked,0"), `the agreeing lot must keep the sheet's text, got ${agreeLine}`);
-    assert(knownLine.includes("Smoke Cream") && knownLine.endsWith(",app,,,bucked,0"), `the app batch must take the sheet's market strain and stay app-born, got ${knownLine}`);
+    assert(aliasLine.endsWith(",sheet,,,bucked,0,") && !sheetExport.some((line) => line.includes(aliasSheet)), `serial 80 must be minted under METRC's text, got ${aliasLine}`);
+    assert(agreeLine.endsWith(",sheet,,,bucked,0,"), `the agreeing lot must keep the sheet's text, got ${agreeLine}`);
+    assert(knownLine.includes("Smoke Cream") && knownLine.endsWith(",app,,,bucked,0,"), `the app batch must take the sheet's market strain and stay app-born, got ${knownLine}`);
     const sheetLog = await text("/log");
     assert(sheetLog.body.includes("<td>harvest details (sync)</td>") && sheetLog.body.includes("<td>Smoke Cream</td>"), "the market strain change must be logged under harvest details (sync)");
     const sheetId = aliasLine.split(",")[0];
@@ -8067,11 +8129,11 @@ async function run() {
     // born_from is followed by the in-transit close columns (0083), empty until YES.
     const batchesCsv = (await text("/export/harvest_batches.csv")).body.split(/\r?\n/);
     const newLine = batchesCsv.find((line) => line.includes(NEW_HBN)) || "";
-    assert(batchesCsv[0].endsWith(",born_from,field_closed_at,field_closed_by,material_form,is_test") && newLine.endsWith(",metrc,,,bucked,0"), `the minted batch must be born from METRC, got ${newLine}`);
+    assert(batchesCsv[0].endsWith(",born_from,field_closed_at,field_closed_by,material_form,is_test,customer") && newLine.endsWith(",metrc,,,bucked,0,"), `the minted batch must be born from METRC, got ${newLine}`);
     assert(newLine.includes(",2026,open,") || newLine.includes(",7,2026,"), `the minted batch must carry 2026 serial 7, got ${newLine}`);
     const newBatchId = newLine.split(",")[0];
     const appLines = batchesCsv.filter((line) => line.includes(pickedHbn));
-    assert(appLines.length === 1 && appLines[0].endsWith(",app,,,bucked,0"), "the app's own batch must stay born from the app");
+    assert(appLines.length === 1 && appLines[0].endsWith(",app,,,bucked,0,"), "the app's own batch must stay born from the app");
     const queuesNew = await text("/admin/queues");
     assert(!queuesNew.body.includes(NEW_HBN), "the HBN Queue must leave the METRC-born batch out");
     const wetNew = await text("/station/wet_weight");
@@ -8113,7 +8175,7 @@ async function run() {
     assert(histWork.includes(`data-schedule-tag="${HIST}" data-schedule-hbn="${aliasMetrc}">`) && histWork.includes("Sheet Apple - 33 g"), "the adopted package must read the sheet's market strain");
     const batchesAfterHist = (await text("/export/harvest_batches.csv")).body;
     assert(batchesAfterHist.split(aliasMetrc).length === batchesBeforeHist.split(aliasMetrc).length, ">> on a known lot must mint nothing");
-    assert((batchesAfterHist.split(/\r?\n/).find((line) => line.includes(aliasMetrc)) || "").endsWith(",sheet,,,bucked,0"), "the historical lot stays sheet-born");
+    assert((batchesAfterHist.split(/\r?\n/).find((line) => line.includes(aliasMetrc)) || "").endsWith(",sheet,,,bucked,0,"), "the historical lot stays sheet-born");
 
     const queuesFold = await text("/admin/queues");
     assert(queuesFold.body.includes('data-fold="hbn_queue" open') && queuesFold.body.includes('data-fold="logistics_moves" open'), "Data Queues folds must render open");
@@ -10176,7 +10238,7 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
       const row = localD1All(`SELECT lot_serial, is_test FROM harvest_batches WHERE hbn = '${minted}'`);
       return { hbn: minted, serial: Number(row[0].lot_serial), test: Number(row[0].is_test) };
     };
-    const mintManual = async (hbn, test) => {
+    const mintManual = async (hbn, test, customer) => {
       const fields = {
         hbn,
         entry_date: "2026-10-07",
@@ -10189,11 +10251,12 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
         reason: "smoke phantom slot",
       };
       if (test) fields.is_test = "1";
+      if (customer) fields.customer = customer;
       const res = await req("/admin/manual-hbn", { method: "POST", body: form(fields) });
       const detail = res.status === 303 ? "" : await res.text();
       assert(res.status === 303, `manual ${hbn} expected 303 got ${res.status} ${detail.slice(0, 300)}`);
-      const row = localD1All(`SELECT id, lot_serial, is_test FROM harvest_batches WHERE hbn = '${hbn}'`);
-      return { id: row[0].id, serial: Number(row[0].lot_serial), test: Number(row[0].is_test) };
+      const row = localD1All(`SELECT id, lot_serial, is_test, customer FROM harvest_batches WHERE hbn = '${hbn}'`);
+      return { id: row[0].id, serial: Number(row[0].lot_serial), test: Number(row[0].is_test), customer: row[0].customer };
     };
     const phAuto = await mintAuto();
     const N = Number(serialNow[0].m) + 1;
@@ -10226,6 +10289,67 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     assert(testFinish.status === 303, `finishing the test lot expected 303 got ${testFinish.status} ${finishDetail.slice(0, 300)}`);
     const plantsAfter = harvestedOf((await text("/harvest")).body);
     assert(plantsAfter === plantsBefore, `the dashboard Plants figure must leave the test's 77 out, ${plantsBefore} then ${plantsAfter}`);
+
+    // TOLL LOTS (canon 0.30.431). A made-up customer's lot takes the next serial
+    // in the line, weighs and unloads, and stays out of the season total. The
+    // dry-weight report and the season report print the toll line. The queue
+    // names the customer beside the HBN. A test and a customer together refuse.
+    const tollForm = await text("/admin/manual-hbn");
+    assert(tollForm.body.includes('name="customer"') && tollForm.body.includes("Customer (toll lot)"), "the manual form must offer the customer field");
+    const both = await req("/admin/manual-hbn", {
+      method: "POST",
+      body: form({
+        hbn: "BothBag-25902",
+        entry_date: "2026-10-07",
+        farm_code: "PNN",
+        license_value: "AU-G-C-000832",
+        grow_method_code: "GH",
+        strain_id: strainId,
+        planned_dryspc: "1",
+        material_form: "bucked",
+        reason: "smoke both",
+        is_test: "1",
+        customer: "GreenCo",
+      }),
+    });
+    const bothBody = await both.text();
+    assert(both.status === 400 && bothBody.includes("A lot cannot be both a test and a toll lot."), `a test and a customer together must refuse, got ${both.status}`);
+    const yearGramsOf = (body) => {
+      const totalBox = body.slice(body.indexOf('data-hc-farm="Total"'), body.indexOf('data-hc-section="drying"'));
+      const hit = totalBox.match(/data-hc="weight_harvested_year">[^<]*<\/span><span class="hc-sub muted">([^<]+)</);
+      return hit ? Number(String(hit[1]).replace(/[^0-9]/g, "")) : NaN;
+    };
+    const seasonBefore = await text("/harvest");
+    const plantsTollBefore = harvestedOf(seasonBefore.body);
+    const yearBefore = yearGramsOf(seasonBefore.body);
+    const tollBag = await mintManual("GreenCo-Toll-26111", false, "GreenCo");
+    assert(tollBag.serial === N + 4 && tollBag.test === 0 && tollBag.customer === "GreenCo", `a toll lot must hold ${N + 4} with its customer, got ${tollBag.serial} test ${tollBag.test} customer ${tollBag.customer}`);
+    const tollStart = await req("/station/wet_weight", {
+      method: "POST",
+      body: form({ team_lead: "Smoke Lead", harvest_batch_id: tollBag.id }),
+    });
+    assert(tollStart.status === 303, `starting a lot on the toll HBN expected 303 got ${tollStart.status}`);
+    const tollLot = new URL(tollStart.headers.get("location") || "", base).searchParams.get("lot");
+    assert(tollLot, "the toll lot must redirect with its id");
+    const tollWeight = await req(`/station/wet_weight/lot/${tollLot}/weights`, { method: "POST", body: form({ weight_grams: "500" }) });
+    assert(tollWeight.status === 303, `the toll lot's weight expected 303 got ${tollWeight.status}`);
+    const tollFinish = await req(`/station/wet_weight/lot/${tollLot}/finish`, { method: "POST", body: form({ plant_count: "40" }) });
+    assert(tollFinish.status === 303, `finishing the toll lot expected 303 got ${tollFinish.status} ${tollFinish.status === 303 ? "" : await tollFinish.text()}`);
+    const tollDry = await req(`/station/unload_dry_space/lot/${tollLot}/weights`, { method: "POST", body: form({ weight_grams: "200" }) });
+    assert(tollDry.status === 303, `the toll lot's dry weight expected 303 got ${tollDry.status}`);
+    const tollUnload = await finishUnloadLot(tollLot);
+    assert(tollUnload.loc.includes("ok=unloaded") || tollUnload.loc.includes(`pick=${tollLot}`), `the toll unload must finish, got ${tollUnload.loc}`);
+    const seasonAfter = await text("/harvest");
+    assert(harvestedOf(seasonAfter.body) === plantsTollBefore, `the season plants figure must leave the toll lot out, ${plantsTollBefore} then ${harvestedOf(seasonAfter.body)}`);
+    assert(yearGramsOf(seasonAfter.body) === yearBefore, `the season wet total must leave the toll lot out, ${yearBefore} then ${yearGramsOf(seasonAfter.body)}`);
+    const tollQueue = await text("/admin/queues");
+    assert(tollQueue.body.includes("GreenCo-Toll-26111 GreenCo") && tollQueue.body.includes('data-hbn-customer="GreenCo"'), "the HBN Queue must name GreenCo beside the toll HBN");
+    const tollReport = await text("/reports/dry_weight_by_strain");
+    assert(tollReport.res.status === 200 && tollReport.body.includes("Toll lots: GreenCo 1 lots, 200 g dry"), `Dry Weight by Strain must print the toll line, got ${tollReport.res.status}`);
+    const tollCsv = await text("/reports/dry_weight_by_strain?format=csv");
+    assert(tollCsv.body.includes("Toll lots: GreenCo 1 lots, 200 g dry"), "the dry weight CSV must carry the toll line as its own row");
+    const seasonReport = await text("/reports/harvests");
+    assert(seasonReport.body.includes("Toll lots: GreenCo 1 lots, 200 g dry"), "the season report must print the toll line");
 
     // MA1 brief section 6 (A32): the Admin pages with fake keys against a stubbed
     // host, after every keys-absent walk above. The first wrangler dev stops; a stub

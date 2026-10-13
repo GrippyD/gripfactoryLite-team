@@ -172,6 +172,7 @@ import {
 } from "./config";
 import { HttpError, nowIso, textOrNull } from "./audit";
 import { getConfigValue, insertLog, TRIM_SCHEDULED_SQL } from "./db";
+import { ownLotSql } from "./toll";
 import { formatClock, siloStrip, type DryingStripFigures } from "./drying";
 import { fulfillmentSection, emptyFulfillment, type FulfillmentDay } from "./fulfillmentboard";
 import { emptyStrainPerformance, strainPerformanceSection, type StrainPerformanceModel } from "./strainperformance";
@@ -2649,7 +2650,7 @@ const YIELD_LOTS_SQL = `SELECT w.id AS id, b.farm_code AS farm, w.status AS stat
      FROM wet_weight_entries w
      JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
      LEFT JOIN dry_spaces s ON s.id = w.actual_dryspc
-     WHERE w.deleted_at IS NULL AND b.harvest_year = ? AND b.is_test = 0`;
+     WHERE w.deleted_at IS NULL AND b.harvest_year = ? AND ${ownLotSql("b")}`;
 
 /** Trim packages of those lots, cryo and METRC excluded, grouped by lot and type. */
 const YIELD_PACKAGES_SQL = `SELECT p.wet_weight_entry_id AS lot_id, p.package_type_code AS type_code,
@@ -2657,7 +2658,7 @@ const YIELD_PACKAGES_SQL = `SELECT p.wet_weight_entry_id AS lot_id, p.package_ty
      FROM wip_packages p
      JOIN wet_weight_entries w ON w.id = p.wet_weight_entry_id AND w.deleted_at IS NULL
      JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-     WHERE p.deleted_at IS NULL AND ${NON_TRIM_SOURCE_SQL} AND b.harvest_year = ? AND b.is_test = 0
+     WHERE p.deleted_at IS NULL AND ${NON_TRIM_SOURCE_SQL} AND b.harvest_year = ? AND ${ownLotSql("b")}
      GROUP BY p.wet_weight_entry_id, p.package_type_code`;
 
 /** WEIGHTED BTR TO DATE (canon 0.30.407). Live trim packages of this season's lots:
@@ -2669,7 +2670,7 @@ const TRIM_SEASON_SQL = `SELECT p.wet_weight_entry_id AS lot_id, b.harvest_year 
      FROM wip_packages p
      JOIN wet_weight_entries w ON w.id = p.wet_weight_entry_id AND w.deleted_at IS NULL
      JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-     WHERE p.deleted_at IS NULL AND p.source IS NULL AND b.harvest_year = ? AND b.is_test = 0
+     WHERE p.deleted_at IS NULL AND p.source IS NULL AND b.harvest_year = ? AND ${ownLotSql("b")}
      GROUP BY p.wet_weight_entry_id, b.harvest_year, p.package_type_code`;
 
 /** THE CONSOLE DAY: the day the console reads. A blank, invalid, future or
@@ -2823,7 +2824,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
         `SELECT b.farm_code AS farm, SUM(w.plant_count) AS plants
          FROM wet_weight_entries w
          JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-         WHERE w.deleted_at IS NULL AND w.status <> 'weighing' AND w.plant_count IS NOT NULL AND b.harvest_year = ? AND b.is_test = 0
+         WHERE w.deleted_at IS NULL AND w.status <> 'weighing' AND w.plant_count IS NOT NULL AND b.harvest_year = ? AND ${ownLotSql("b")}
          GROUP BY b.farm_code`
       )
       .bind(year)
@@ -2833,7 +2834,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
         `SELECT b.farm_code AS farm, w.weight_grams AS wet_grams, w.dry_weight_grams AS dry_grams, w.plant_count
          FROM wet_weight_entries w
          JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-         WHERE w.deleted_at IS NULL AND w.status <> 'weighing' AND b.harvest_year = ? AND b.is_test = 0`
+         WHERE w.deleted_at IS NULL AND w.status <> 'weighing' AND b.harvest_year = ? AND ${ownLotSql("b")}`
       )
       .bind(year)
       .all<ConsoleLot>(),
@@ -2854,7 +2855,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
          FROM wet_weights x
          JOIN wet_weight_entries w ON w.id = x.wet_weight_entry_id AND w.deleted_at IS NULL
          JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
-         WHERE x.deleted_at IS NULL AND b.harvest_year = ? AND b.is_test = 0
+         WHERE x.deleted_at IS NULL AND b.harvest_year = ? AND ${ownLotSql("b")}
          GROUP BY b.farm_code`
       )
       .bind(year)

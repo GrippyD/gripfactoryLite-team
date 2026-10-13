@@ -8,6 +8,7 @@ import { formatGrams } from "./config";
 import { etWallClock } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
 import { formatLotToken } from "./mint";
+import { TOLL_HEADING, tollCustomer } from "./toll";
 
 export const FINDING_SAME = "Same";
 export const FINDING_UNITS = "Units differ";
@@ -53,6 +54,8 @@ export type BatchInput = {
   state: string;
   harvestYear: number;
   voided: boolean;
+  /** Set on a toll lot. Blank means Grip's own. */
+  customer?: string | null;
 };
 
 export type SprItemInput = {
@@ -106,6 +109,8 @@ export type FloorModel = {
   changedAt: string | null;
   packages: PackageRow[];
   lots: LotRow[];
+  tollPackages: PackageRow[];
+  tollLots: LotRow[];
 };
 
 export type FloorFilter = {
@@ -253,7 +258,9 @@ export function buildFloorVsMetrc(input: {
   const byTag = new Map<string, MirrorInput>();
   for (const row of input.mirror) byTag.set(row.tag, row);
 
+  const tollIds = new Set(input.batches.filter((batch) => tollCustomer(batch.customer)).map((batch) => batch.batchId));
   const packages: PackageRow[] = [];
+  const tollPackages: PackageRow[] = [];
   for (const item of input.items) {
     if (item.deletedAt != null && String(item.deletedAt).trim() !== "") continue;
     if (!isPackageTag(item.tag)) continue;
@@ -266,7 +273,7 @@ export function buildFloorVsMetrc(input: {
         : null
     );
     const batchId = item.batchId ?? "";
-    packages.push({
+    const packageRow: PackageRow = {
       tag,
       itemKind: item.itemKind,
       lot: item.lot ?? "",
@@ -281,13 +288,16 @@ export function buildFloorVsMetrc(input: {
       metrcLicense: mirror?.license ?? "",
       finding,
       pending: pendingFor(finding, input.uploads, batchId),
-    });
+    };
+    (tollIds.has(batchId) ? tollPackages : packages).push(packageRow);
   }
-  packages.sort((a, b) => {
+  const byTagOrder = (a: PackageRow, b: PackageRow) => {
     const kind = (KIND_ORDER[a.itemKind] ?? 9) - (KIND_ORDER[b.itemKind] ?? 9);
     if (kind !== 0) return kind;
     return a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0;
-  });
+  };
+  packages.sort(byTagOrder);
+  tollPackages.sort(byTagOrder);
 
   const sprByBatch = new Map<string, SprItemInput[]>();
   for (const row of input.spr) {
@@ -307,6 +317,7 @@ export function buildFloorVsMetrc(input: {
   }
 
   const lots: LotRow[] = [];
+  const tollLots: LotRow[] = [];
   for (const batch of input.batches) {
     const floor = groupSide(sprByBatch.get(batch.batchId) ?? []);
     const metrc = groupSide(
@@ -321,7 +332,7 @@ export function buildFloorVsMetrc(input: {
     const voided = batch.voided && metrc.present;
     if (!live && !voided) continue;
     const finding = lotFinding({ voided: batch.voided, floor, metrc });
-    lots.push({
+    (tollCustomer(batch.customer) ? tollLots : lots).push({
       lot: batch.lot,
       hbn: batch.hbn,
       state: batch.state,
@@ -337,12 +348,16 @@ export function buildFloorVsMetrc(input: {
       pending: pendingFor(finding, input.uploads, batch.batchId),
     });
   }
-  lots.sort((a, b) => (a.lot < b.lot ? -1 : a.lot > b.lot ? 1 : a.hbn < b.hbn ? -1 : a.hbn > b.hbn ? 1 : 0));
+  const byLot = (a: LotRow, b: LotRow) => (a.lot < b.lot ? -1 : a.lot > b.lot ? 1 : a.hbn < b.hbn ? -1 : a.hbn > b.hbn ? 1 : 0);
+  lots.sort(byLot);
+  tollLots.sort(byLot);
 
   return {
     changedAt: input.changedAt === undefined ? newestChangedAt(input.mirror) : input.changedAt,
     packages,
     lots,
+    tollPackages,
+    tollLots,
   };
 }
 
@@ -368,18 +383,24 @@ function lotMatches(lot: string, filter: string): boolean {
   return lot === want;
 }
 
-export function shownFloorVsMetrc(model: FloorModel, filter: FloorFilter): { packages: PackageRow[]; lots: LotRow[] } {
+export function shownFloorVsMetrc(model: FloorModel, filter: FloorFilter): {
+  packages: PackageRow[];
+  lots: LotRow[];
+  tollPackages: PackageRow[];
+  tollLots: LotRow[];
+} {
   const kind = filter.itemKind.trim();
-  const packages = model.packages.filter((row) => {
+  const keepPackage = (row: PackageRow) => {
     if (kind && row.itemKind !== kind) return false;
     if (!lotMatches(row.lot, filter.lot)) return false;
     return findingMatches(row.finding, filter.finding);
-  });
-  const lots =
-    kind === "WIP" || kind === "FG"
-      ? []
-      : model.lots.filter((row) => lotMatches(row.lot, filter.lot) && findingMatches(row.finding, filter.finding));
-  return { packages, lots };
+  };
+  const keepLot = (row: LotRow) => lotMatches(row.lot, filter.lot) && findingMatches(row.finding, filter.finding);
+  const packages = model.packages.filter(keepPackage);
+  const tollPackages = (model.tollPackages ?? []).filter(keepPackage);
+  const lots = kind === "WIP" || kind === "FG" ? [] : model.lots.filter(keepLot);
+  const tollLots = kind === "WIP" || kind === "FG" ? [] : (model.tollLots ?? []).filter(keepLot);
+  return { packages, lots, tollPackages, tollLots };
 }
 
 const COUNT_KEYS = [
@@ -516,6 +537,8 @@ export function floorVsMetrcPage(input: {
   changedAt: string | null;
   packages: readonly PackageRow[];
   lots: readonly LotRow[];
+  tollPackages?: readonly PackageRow[];
+  tollLots?: readonly LotRow[];
   filter: FloorFilter;
   locale: Locale;
 }): string {
@@ -550,7 +573,18 @@ export function floorVsMetrcPage(input: {
     <h2>${esc(t(input.locale, "Lot packages"))}</h2>
     <p class="floor-metrc-counts" data-section="lots">${esc(lotCounts)}</p>
     <div class="report-scroll">${lotTable(input.locale, input.lots)}</div>
+    ${tollSection(input.locale, input.tollPackages ?? [], input.tollLots ?? [])}
   </div>`;
+}
+
+function tollSection(locale: Locale, packages: readonly PackageRow[], lots: readonly LotRow[]): string {
+  if (packages.length === 0 && lots.length === 0) return "";
+  const packagesHtml =
+    packages.length === 0
+      ? ""
+      : `<h3>${esc(t(locale, "Packages by tag"))}</h3><div class="report-scroll">${packageTable(locale, packages)}</div>`;
+  const lotsHtml = lots.length === 0 ? "" : `<div class="report-scroll">${lotTable(locale, lots)}</div>`;
+  return `<h2 data-floor-toll="1">${esc(t(locale, TOLL_HEADING))}</h2>${packagesHtml}${lotsHtml}`;
 }
 
 const CSV_HEAD = [
@@ -574,7 +608,12 @@ const CSV_HEAD = [
 ];
 
 export function floorVsMetrcCsv(
-  shown: { packages: readonly PackageRow[]; lots: readonly LotRow[] },
+  shown: {
+    packages: readonly PackageRow[];
+    lots: readonly LotRow[];
+    tollPackages?: readonly PackageRow[];
+    tollLots?: readonly LotRow[];
+  },
   changedAt: string | null
 ): string {
   const lines = [csvCell(metrcAsOfText(changedAt, "en")), CSV_HEAD.join(",")];
@@ -628,6 +667,56 @@ export function floorVsMetrcCsv(
         .join(",")
     );
   }
+  for (const row of shown.tollPackages ?? []) {
+    lines.push(
+      [
+        TOLL_HEADING,
+        row.tag,
+        row.itemKind,
+        row.lot,
+        "",
+        "",
+        row.floorQty,
+        row.floorUom,
+        row.floorLocation,
+        row.floorLicense,
+        row.finding === FINDING_MISSING ? "" : row.tag,
+        row.metrcQty,
+        row.metrcUom,
+        row.metrcLocation,
+        row.metrcLicense,
+        row.finding,
+        row.pending,
+      ]
+        .map(csvCell)
+        .join(",")
+    );
+  }
+  for (const row of shown.tollLots ?? []) {
+    lines.push(
+      [
+        TOLL_HEADING,
+        "",
+        "SPR",
+        row.lot,
+        row.hbn,
+        row.state,
+        row.floorQty,
+        row.floorUom,
+        row.floorLocation,
+        "",
+        row.metrcTag,
+        row.metrcQty,
+        row.metrcUom,
+        row.metrcLocation,
+        "",
+        row.finding,
+        row.pending,
+      ]
+        .map(csvCell)
+        .join(",")
+    );
+  }
   return lines.join("\r\n") + "\r\n";
 }
 
@@ -636,7 +725,7 @@ function lotToken(year: number, serial: number): string {
   return formatLotToken(Number(year), Number(serial)).slice(-5);
 }
 
-type BatchSql = { id: string; hbn: string; lot_serial: number; harvest_year: number; deleted_at: string | null };
+type BatchSql = { id: string; hbn: string; lot_serial: number; harvest_year: number; deleted_at: string | null; customer: string | null };
 type LotSql = { harvest_batch_id: string; status: string; deleted_at: string | null };
 type ItemSql = {
   item_kind: string;
@@ -666,7 +755,7 @@ export async function loadFloorVsMetrc(db: D1Database, harvestYear: number): Pro
   const [fresh, batches, lotRows, packageItems, sprItems, mirror, uploads] = await Promise.all([
     db.prepare(`SELECT MAX(changed_at) AS changed_at FROM metrc_packages`).first<{ changed_at: string | null }>(),
     db
-      .prepare(`SELECT id, hbn, lot_serial, harvest_year, deleted_at FROM harvest_batches`)
+      .prepare(`SELECT id, hbn, lot_serial, harvest_year, deleted_at, customer FROM harvest_batches`)
       .all<BatchSql>(),
     db
       .prepare(`SELECT harvest_batch_id, status, deleted_at FROM wet_weight_entries`)
@@ -746,6 +835,7 @@ export async function loadFloorVsMetrc(db: D1Database, harvestYear: number): Pro
       state: [...(states.get(row.id) ?? [])].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join(", "),
       harvestYear: Number(row.harvest_year),
       voided: row.deleted_at != null && String(row.deleted_at).trim() !== "",
+      customer: row.customer,
     })),
     mirror: (mirror.results ?? []).map((row) => ({
       tag: row.tag,

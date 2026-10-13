@@ -31,6 +31,7 @@ import {
   type ScheduleStage,
 } from "./config";
 import type { WetWeightsCsvRow } from "./csv";
+import { gripCustomerSql, tollLotSql } from "./toll";
 import { LAB_CONSOLE_SET_SQL, LAB_OUTCOME_SQL } from "./labvocab";
 import type {
   DrySpaceRow,
@@ -315,7 +316,7 @@ async function listHarvestQueueRows(
     : "";
   const result = await db
     .prepare(
-      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, s.name AS strain_name, b.created_at, b.is_test${sinceSql}
+      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, s.name AS strain_name, b.created_at, b.is_test, b.customer${sinceSql}
        FROM harvest_batches b
        LEFT JOIN strains s ON s.id = b.strain_id
        WHERE b.deleted_at IS NULL AND b.status = ? AND ${farmHarvestSql("b")} ${filterSql}${farmSql}
@@ -354,7 +355,7 @@ async function listLotQueueRows(db: D1Database, def: QueueDef, filterSql: string
   // strain column, so one query serves them all.
   const result = await db
     .prepare(
-      `SELECT w.id, b.hbn, b.metrc_harvest_tag, ${SHORT_LOT_ID_SQL} AS short_id,
+      `SELECT w.id, b.hbn, b.customer, b.metrc_harvest_tag, ${SHORT_LOT_ID_SQL} AS short_id,
               COALESCE(b.market_strain, s.name) AS strain_name,
               w.weight_grams, w.wet_spear_weight_grams, w.dry_weight_grams,
               d.name AS dry_space_name, w.truck_number,
@@ -376,7 +377,7 @@ async function listPackageQueueRows(db: D1Database, def: QueueDef, filterSql: st
   const result = await db
     .prepare(
       `SELECT p.id, p.package_code, p.package_type_code, p.weight_grams, p.cryo_weight_grams,
-              b.hbn, b.metrc_harvest_tag, ${SHORT_LOT_ID_SQL} AS short_id,
+              b.hbn, b.customer, b.metrc_harvest_tag, ${SHORT_LOT_ID_SQL} AS short_id,
               COALESCE(b.market_strain, s.name) AS strain_name, p.created_at,
               p.trim_date, p.trim_operator, p.cryo_date, p.cryo_operator${
                 def.key === "testing_queue" ? ", p.source" : ""
@@ -3623,13 +3624,39 @@ export async function listHarvestsByYear(
               COALESCE(ROUND(SUM(CASE WHEN w.id IS NOT NULL AND w.status <> 'weighing' THEN COALESCE(w.dry_weight_grams, 0) ELSE 0 END), 2), 0) AS dry_grams
        FROM harvest_batches b
        LEFT JOIN wet_weight_entries w ON w.harvest_batch_id = b.id AND w.deleted_at IS NULL
-       WHERE b.deleted_at IS NULL AND ${farmHarvestSql("b")} ${farmClause}
+       WHERE b.deleted_at IS NULL AND ${farmHarvestSql("b")} AND ${gripCustomerSql("b")} ${farmClause}
        GROUP BY b.harvest_year
        ORDER BY b.harvest_year DESC`
     )
     .bind(...binds)
     .all<HarvestYearRow>();
   return result.results ?? [];
+}
+
+export type SeasonToll = { customer: string; lots: number; dryGrams: number };
+
+/** The season report's toll line: finished lots of another customer's material, by company. */
+export async function listSeasonToll(db: D1Database, farm?: string): Promise<SeasonToll[]> {
+  const farmClause = farm ? "AND b.farm_code = ?" : "";
+  const binds = farm ? [farm] : [];
+  const result = await db
+    .prepare(
+      `SELECT TRIM(b.customer) AS customer,
+              COUNT(w.id) AS lots,
+              COALESCE(SUM(COALESCE(w.dry_weight_grams, 0)), 0) AS dry_grams
+       FROM harvest_batches b
+       JOIN wet_weight_entries w ON w.harvest_batch_id = b.id AND w.deleted_at IS NULL AND w.status <> 'weighing'
+       WHERE b.deleted_at IS NULL AND ${farmHarvestSql("b")} AND ${tollLotSql("b")} ${farmClause}
+       GROUP BY TRIM(b.customer)
+       ORDER BY TRIM(b.customer)`
+    )
+    .bind(...binds)
+    .all<{ customer: string; lots: number; dry_grams: number }>();
+  return (result.results ?? []).map((row) => ({
+    customer: String(row.customer ?? ""),
+    lots: Number(row.lots ?? 0),
+    dryGrams: Number(row.dry_grams ?? 0),
+  }));
 }
 
 export type ProductMixRow = {
