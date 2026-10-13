@@ -26,8 +26,12 @@ describe("THE MODELS BUTTON (canon 0.30.86)", () => {
   });
 
   it("his list: 1. [Harvest Menu Tool 2026], with the data.json its page fetches beside it", () => {
-    expect(MODEL_TOOLS).toHaveLength(1);
-    expect(MODEL_TOOLS[0]).toEqual({ slug: "harvest-menu-2026", title: "Harvest Menu Tool 2026", files: ["data.json"] });
+    expect(MODEL_TOOLS[0]).toEqual({ slug: "harvest-menu-2026", title: "Harvest Menu Tool 2026", files: ["data.json"], kind: "vendored" });
+  });
+
+  it("GRIPCasting is an app tile beside the vendored menu tool", () => {
+    expect(MODEL_TOOLS.map((tool) => tool.slug)).toEqual(["harvest-menu-2026", "gripcasting"]);
+    expect(MODEL_TOOLS[1]).toEqual({ slug: "gripcasting", title: "GRIPCasting", files: ["app.js", "styles.css"], kind: "app" });
   });
 
   it("the bar carries Models, then Harvest Console, and Admin no longer tiles them", () => {
@@ -44,6 +48,8 @@ describe("THE MODELS BUTTON (canon 0.30.86)", () => {
     expect(html).toContain("<h1>Models</h1>");
     expect(html).toContain('<a class="tile" href="/models/harvest-menu-2026/">');
     expect(html).toContain('<span class="tile-title">Harvest Menu Tool 2026</span>');
+    expect(html).toContain('<a class="tile" href="/models/gripcasting/">');
+    expect(html).toContain('<span class="tile-title">GRIPCasting</span>');
     expect(html).toContain('<span class="tile-kind">Model</span>');
     expect(modelsPage("es")).toContain("<h1>Modelos</h1>");
   });
