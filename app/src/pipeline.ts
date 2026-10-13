@@ -215,6 +215,7 @@ export const EDITABLE_FIELDS: Record<string, EditFieldDef[]> = {
     { name: "zone", label: "Zone (optional)", input: "text" },
     { name: "rows_text", label: "Rows (optional)", input: "text" },
     { name: "metrc_harvest_tag", label: "METRC Harvest Tag", input: "text" },
+    { name: "customer", label: "Customer (toll lot)", input: "text" },
     { name: "status", label: "Status", input: "text" },
   ],
   wet_weight_entries: [

@@ -464,7 +464,7 @@ export type HarvestBatchesFeed = {
   rows: HarvestBatch[];
 };
 
-/** True when T1's customer column is on harvest_batches. This tree has no migration for it; the feed names the customer once the column is there, and null until then. */
+/** True when T1's customer column is on harvest_batches. Migration 0099 adds it. A database without it still answers, with customer null. */
 async function harvestCustomerColumn(db: D1Database): Promise<boolean> {
   const info = await db.prepare("PRAGMA table_info(harvest_batches)").all<{ name: string }>();
   return (info.results ?? []).some((col) => col.name === "customer");

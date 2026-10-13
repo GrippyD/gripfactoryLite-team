@@ -12,6 +12,7 @@ import { dayAfter } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
 import { parseHbn } from "./mint";
 import type { ReportColumn, ReportView } from "./reports";
+import { ownLotSql, tollLotSql, TOLL_HEADING, tollCustomer } from "./toll";
 import { esc } from "./ui";
 
 export const HARVEST_RECONCILE_KEY = "harvest_reconciliation" as const;
@@ -36,20 +37,24 @@ export const HARVEST_RECONCILE_NO_HOURS = "No harvest hours on harvest_labor_hou
 export const HARVEST_RECONCILE_GROW_HOURS =
   "Pounds per hour is not stated: harvest_labor_hours holds {hours} hours for these dates and has no grow method.";
 
-const LOTS_FROM = `SELECT w.id AS lot_id, b.hbn, b.entry_date, b.farm_code, b.grow_method_code,
-       s.name AS strain_name, b.market_strain,
+function lotsFrom(gate: string): string {
+  return `SELECT w.id AS lot_id, b.hbn, b.entry_date, b.farm_code, b.grow_method_code,
+       s.name AS strain_name, b.market_strain, b.customer,
        COALESCE((SELECT SUM(ww.weight_grams) FROM wet_weights ww WHERE ww.wet_weight_entry_id = w.id AND ww.deleted_at IS NULL), w.weight_grams, 0) AS wet_grams,
        (SELECT SUM(dw.weight_grams) FROM dry_weights dw WHERE dw.wet_weight_entry_id = w.id AND dw.deleted_at IS NULL) AS dry_grams
 FROM wet_weight_entries w
-JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL AND b.is_test = 0
+JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL AND ${gate}
 LEFT JOIN strains s ON s.id = b.strain_id`;
+}
 
-/** Live lots in the entry_date window. Dates are bound. Wet and dry sums seek the entry id. */
-export function harvestReconcileLotsSql(hasFarm: boolean, hasGrow: boolean): string {
+/** Live lots in the entry_date window. Dates are bound. Wet and dry sums seek the entry id.
+ * toll true reads another customer's lots. The default is Grip's own. */
+export function harvestReconcileLotsSql(hasFarm: boolean, hasGrow: boolean, toll = false): string {
   const filters = ["w.deleted_at IS NULL", "b.entry_date >= ?", "b.entry_date <= ?"];
   if (hasFarm) filters.push("b.farm_code = ?");
   if (hasGrow) filters.push("b.grow_method_code = ?");
-  return `${LOTS_FROM} WHERE ${filters.join(" AND ")} ORDER BY b.entry_date, b.hbn, w.id`;
+  const gate = toll ? tollLotSql("b") : ownLotSql("b");
+  return `${lotsFrom(gate)} WHERE ${filters.join(" AND ")} ORDER BY b.entry_date, b.hbn, w.id`;
 }
 
 /** Mirror harvests whose start falls in the window. The column is compared as stored. */
@@ -107,6 +112,7 @@ export type HarvestReconcileLot = {
   metrcPounds: number | null;
   metrcUom: string;
   metrcMatched: boolean;
+  customer?: string;
 };
 
 export type HarvestReconcileMetrcOnly = {
@@ -122,6 +128,8 @@ export type HarvestReconcileModel = {
   farm: string;
   grow: string;
   lots: HarvestReconcileLot[];
+  /** Toll lots in the same window. They are not in lots and not in the totals. */
+  tollLots?: HarvestReconcileLot[];
   metrcOnly: HarvestReconcileMetrcOnly[];
   hours: number;
 };
@@ -239,6 +247,7 @@ type LotSql = {
   grow_method_code: string | null;
   strain_name: string | null;
   market_strain: string | null;
+  customer: string | null;
   wet_grams: number | null;
   dry_grams: number | null;
 };
@@ -289,14 +298,18 @@ async function readModel(
   const lotBinds: unknown[] = [filter.from, filter.to];
   if (filter.farm) lotBinds.push(filter.farm);
   if (filter.grow) lotBinds.push(filter.grow);
-  const lotsGot = await db
-    .prepare(harvestReconcileLotsSql(Boolean(filter.farm), Boolean(filter.grow)))
-    .bind(...lotBinds)
-    .all<LotSql>();
-  const lotRows = lotsGot.results ?? [];
-  const names = [...new Set(lotRows.map((row) => String(row.hbn ?? "")).filter((name) => name !== ""))];
+  const readLots = async (toll: boolean) => {
+    const got = await db
+      .prepare(harvestReconcileLotsSql(Boolean(filter.farm), Boolean(filter.grow), toll))
+      .bind(...lotBinds)
+      .all<LotSql>();
+    return got.results ?? [];
+  };
+  const lotRows = await readLots(false);
+  const tollRows = await readLots(true);
+  const names = [...new Set([...lotRows, ...tollRows].map((row) => String(row.hbn ?? "")).filter((name) => name !== ""))];
   const metrcByName = await readMetrcByName(db, names);
-  const lots: HarvestReconcileLot[] = lotRows.map((row) => {
+  const toLot = (row: LotSql): HarvestReconcileLot => {
     const hbn = String(row.hbn ?? "");
     const hit = hbn ? metrcByName.get(hbn) : undefined;
     const metrc = hit ? metrcOf(hit) : { pounds: null, uom: "" };
@@ -313,8 +326,11 @@ async function readModel(
       metrcPounds: hit ? metrc.pounds : null,
       metrcUom: hit ? metrc.uom : "",
       metrcMatched: Boolean(hit),
+      customer: tollCustomer(row.customer) ?? "",
     };
-  });
+  };
+  const lots = lotRows.map(toLot);
+  const tollLots = tollRows.map(toLot);
 
   const upper = dayAfter(filter.to);
   const rangeGot = await db
@@ -350,6 +366,7 @@ async function readModel(
     farm: filter.farm,
     grow: filter.grow,
     lots,
+    tollLots,
     metrcOnly,
     hours: Number(hoursGot?.hours ?? 0),
   };
@@ -383,6 +400,30 @@ function hoursLine(model: HarvestReconcileModel, locale: Locale): string {
     standard: STANDARD_GRAMS_PER_LB_TEXT,
     hours,
   });
+}
+
+function tollLotsHtml(rows: readonly HarvestReconcileLot[], locale: Locale): string {
+  if (rows.length === 0) return "";
+  const head = ["HBN short id", "Customer", "Strain", "Farm", "Wet grams", "Dry grams"]
+    .map((label) => `<th>${esc(t(locale, label))}</th>`)
+    .join("");
+  const body = rows
+    .map((lot) => {
+      const cells = [
+        lot.hbn ? shortLotId(lot.hbn, null) : "",
+        lot.customer ?? "",
+        lot.strain.trim(),
+        lot.farm,
+        formatGrams(lot.wetGrams),
+        lot.dryGrams == null ? "" : formatGrams(lot.dryGrams),
+      ]
+        .map((value) => `<td>${esc(value)}</td>`)
+        .join("");
+      return `<tr data-toll-lot="1">${cells}</tr>`;
+    })
+    .join("");
+  return `<h2 data-reconcile-toll="1">${esc(t(locale, TOLL_HEADING))}</h2>
+    <table class="data toll-lots"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
 function metrcOnlyHtml(rows: readonly HarvestReconcileMetrcOnly[], locale: Locale): string {
@@ -467,7 +508,8 @@ export function harvestReconcileView(model: HarvestReconcileModel, locale: Local
   }
   const below = `<p class="report-ratio">${esc(ratioLine(locale))}</p>
     <p class="report-hours">${esc(hoursLine(model, locale))}</p>
-    ${metrcOnlyHtml(model.metrcOnly, locale)}`;
+    ${metrcOnlyHtml(model.metrcOnly, locale)}
+    ${tollLotsHtml(model.tollLots ?? [], locale)}`;
   return {
     key: HARVEST_RECONCILE_KEY,
     title: "Harvest weight reconciliation",
@@ -595,6 +637,23 @@ export function harvestReconcileCsv(model: HarvestReconcileModel): string {
   }
   lines.push(csvCell(ratioLine("en")));
   lines.push(csvCell(hoursLine(model, "en")));
+  const tollLots = model.tollLots ?? [];
+  if (tollLots.length > 0) {
+    lines.push(TOLL_HEADING);
+    lines.push(csvLine(["HBN short id", "Customer", "Strain", "Farm", "Wet grams", "Dry grams"]));
+    for (const lot of tollLots) {
+      lines.push(
+        csvLine([
+          lot.hbn ? shortLotId(lot.hbn, null) : "",
+          lot.customer ?? "",
+          lot.strain.trim(),
+          lot.farm,
+          String(roundGrams(lot.wetGrams)),
+          lot.dryGrams == null ? "" : String(roundGrams(lot.dryGrams)),
+        ])
+      );
+    }
+  }
   return lines.join("\r\n") + "\r\n";
 }
 

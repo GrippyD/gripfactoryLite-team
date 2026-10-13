@@ -17,6 +17,7 @@ import { dayBefore, etDate, isCalendarDate } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
 import { formatLotToken } from "./mint";
 import type { ReportColumn, ReportView } from "./reports";
+import { tollCustomer, tollLine } from "./toll";
 
 export const DRY_STRAIN_KEY = "dry_weight_by_strain";
 export const DRY_STRAIN_MAX_DAYS = 366;
@@ -77,6 +78,8 @@ export type DryStrainLot = {
   effectiveDate: string | null;
   /** That session's finish instant. */
   finishedAt: string;
+  /** The toll lot's customer. Blank means Grip's own. */
+  customer?: string | null;
 };
 
 /** The day a lot counts on: the typed Effective Date, else the Eastern date of the finish. */
@@ -151,7 +154,9 @@ function lotToken(lot: DryStrainLot): string {
 
 /** The rows: one per real strain and market strain pair, dry weight first, then a Total row. */
 export function dryStrainView(lots: readonly DryStrainLot[], filter: DryStrainFilter, locale: Locale = "en"): ReportView {
-  const kept = filterDryStrainLots(lots, filter);
+  const matched = filterDryStrainLots(lots, filter);
+  const kept = matched.filter((lot) => !tollCustomer(lot.customer));
+  const tollKept = matched.filter((lot) => tollCustomer(lot.customer));
   const groups = new Map<string, Group>();
   for (const lot of kept) {
     const strain = lot.strain.trim();
@@ -193,6 +198,30 @@ export function dryStrainView(lots: readonly DryStrainLot[], filter: DryStrainFi
     .sort((a, b) => sum(b.lots, (lot) => lot.dryGrams) - sum(a.lots, (lot) => lot.dryGrams) || a.strain.localeCompare(b.strain))
     .map((group) => rowOf(group.strain, group.market, group.lots, false));
   if (kept.length > 0) rows.push(rowOf(t(locale, "Total"), "", kept, true));
+  const tollGroups = new Map<string, { customer: string; lots: number; dry: number }>();
+  for (const lot of tollKept) {
+    const customer = tollCustomer(lot.customer);
+    if (!customer) continue;
+    const key = customer.toLowerCase();
+    const group = tollGroups.get(key) ?? { customer, lots: 0, dry: 0 };
+    group.lots += 1;
+    group.dry += lot.dryGrams;
+    tollGroups.set(key, group);
+  }
+  for (const group of [...tollGroups.values()].sort((a, b) => a.customer.localeCompare(b.customer))) {
+    rows.push({
+      strain: tollLine(group.customer, group.lots, group.dry, locale),
+      market_strain: "",
+      lots: "",
+      wet_lbs: "",
+      dry_lbs: "",
+      dry_pct: "",
+      plants: "",
+      dry_per_plant: "",
+      lot_ids: "",
+      _toll: "1",
+    });
+  }
   const parts = [tFill(locale, "Unloaded {from} to {to}", { from: filter.from, to: filter.to })];
   if (filter.strain.trim()) parts.push(tFill(locale, "strain {name}", { name: filter.strain.trim() }));
   const method = DRY_STRAIN_GROW_METHODS.find((m) => norm(m.code) === norm(filter.growMethod));
@@ -239,14 +268,16 @@ type LotSql = {
   plant_count: number | null;
   effective_date: string | null;
   finished_at: string;
+  customer: string | null;
 };
 
-/** Every live lot (entry and batch live, not a test HBN) with a finished unload, with that unload's dates. */
+/** Every live lot (entry and batch live, not a test HBN) with a finished unload, with that unload's dates.
+ * A toll lot is included so the view can print its line. It is not a row of Grip's own total. */
 export async function listDryStrainLots(db: D1Database): Promise<DryStrainLot[]> {
   const got = await db
     .prepare(
       `SELECT w.id AS lot_id, b.harvest_year, b.lot_serial, b.farm_code, b.grow_method_code,
-              s.name AS strain_name, b.market_strain,
+              s.name AS strain_name, b.market_strain, b.customer,
               w.weight_grams AS wet_grams,
               COALESCE(w.dry_weight_grams,
                 (SELECT SUM(d.weight_grams) FROM dry_weights d WHERE d.wet_weight_entry_id = w.id AND d.deleted_at IS NULL), 0) AS dry_grams,
@@ -275,6 +306,7 @@ export async function listDryStrainLots(db: D1Database): Promise<DryStrainLot[]>
     plantCount: row.plant_count == null ? null : Number(row.plant_count),
     effectiveDate: row.effective_date,
     finishedAt: String(row.finished_at),
+    customer: row.customer,
   }));
 }
 

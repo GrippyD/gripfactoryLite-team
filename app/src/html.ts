@@ -3828,9 +3828,19 @@ export function queueSection(
           const cells = queue.columns
             .map((c) => {
               const raw = displayValue(c.field, row.values);
+              const customer = c.field === "hbn" ? String(row.values.customer ?? "").trim() : "";
               const testMark = c.field === "hbn" && row.values.is_test === "1";
-              const shown = c.field === "lab_status_metrc" ? t(locale, raw || "not in METRC") : testMark ? `${raw} ${t(locale, "Test")}` : raw;
-              return `<td${c.field === "lab_status_metrc" ? ' data-lab-status-metrc' : ""}${testMark ? ' data-hbn-test="1"' : ""}>${esc(shown)}</td>`;
+              const tollMark = c.field === "hbn" && !testMark && customer !== "";
+              const shown =
+                c.field === "lab_status_metrc"
+                  ? t(locale, raw || "not in METRC")
+                  : testMark
+                    ? `${raw} ${t(locale, "Test")}`
+                    : tollMark
+                      ? `${raw} ${customer}`
+                      : raw;
+              const tollAttr = tollMark ? ` data-hbn-customer="${esc(customer)}"` : "";
+              return `<td${c.field === "lab_status_metrc" ? ' data-lab-status-metrc' : ""}${testMark ? ' data-hbn-test="1"' : ""}${tollAttr}>${esc(shown)}</td>`;
             })
             .join("");
           const controls = [
