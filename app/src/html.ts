@@ -2062,6 +2062,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     title: "Admin Settings",
     members: [
       { href: "/admin/lookups", kind: "Admin", title: "Lookups" },
+      { href: "/admin/field_estimates", kind: "Admin", title: "Field estimates" },
       { href: "/log", kind: "Admin", title: "Change log" },
       { href: "/admin/manual-hbn", kind: "Fallback", title: "Manual HBN" },
       { href: LEDGER_LOCATION_PATH, kind: "Admin", title: "Reconcile Ledger Location" },

@@ -486,6 +486,7 @@ import {
 import { floorVsMetrcCsv, floorVsMetrcPage, loadFloorVsMetrc, shownFloorVsMetrc } from "./floormetrc";
 import { DRY_STRAIN_FARMS, DRY_STRAIN_GROW_METHODS, dryStrainNames, dryStrainRefused, dryStrainView, listDryStrainLots, resolveDryStrainRange } from "./drystrain";
 import { HARVEST_RECONCILE_KEY, loadHarvestReconciliation } from "./harvestreconciliation";
+import { deleteFieldEstimate, fieldEstimatesPage, loadFieldEstimatesPage, saveFieldEstimate } from "./fieldestimates";
 import { ENVIRONMENT_HISTORY_KEY, loadEnvironmentHistory, rollupSensorHours } from "./sensorhistory";
 import {
   PIPELINE,
@@ -3448,6 +3449,21 @@ app.get("/testing/manifests/:id", async (c) => {
 app.get("/admin/lookups", async (c) => {
   const s = await shell(c);
   return html(c, s, "Lookups", lookupsLandingPage(s.locale));
+});
+
+// FE1: field estimates, effective dated. The PIN on /admin/* already fronts these routes.
+app.get("/admin/field_estimates", async (c) => {
+  const s = await shell(c);
+  const page = await loadFieldEstimatesPage(c.env.DB, nowIso());
+  return html(c, s, "Field estimates", fieldEstimatesPage(page, s.locale));
+});
+app.post("/admin/field_estimates", async (c) => {
+  const result = await saveFieldEstimate(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+app.post("/admin/field_estimates/:id/delete", async (c) => {
+  const result = await deleteFieldEstimate(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
 });
 
 // Fork 6 (canon 0.30.1): the Admin-buried manual HBN fallback; Acquire stays

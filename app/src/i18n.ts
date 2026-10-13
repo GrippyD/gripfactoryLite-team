@@ -4253,6 +4253,42 @@ export const DICT: Record<string, { en: string; es: string }> = {
     es: "No se indican libras por hora: harvest_labor_hours tiene {hours} horas para estas fechas y no tiene metodo de cultivo.",
   },
   "Harvest start": { en: "Harvest start", es: "Inicio de cosecha" },
+  // FE1: field estimates, effective dated. The weight label is the same words in both languages.
+  "Field estimates": { en: "Field estimates", es: "Estimaciones de campo" },
+  "dry lb (448 g)": { en: "dry lb (448 g)", es: "dry lb (448 g)" },
+  "In force": { en: "In force", es: "En vigor" },
+  "No field estimates yet.": { en: "No field estimates yet.", es: "Aun no hay estimaciones de campo." },
+  "Dry pounds, hand entered. One pound is 448 g.": {
+    en: "Dry pounds, hand entered. One pound is 448 g.",
+    es: "Libras secas, escritas a mano. Una libra es 448 g.",
+  },
+  "An older date stands until a later date replaces it. Saving the same date replaces that row.": {
+    en: "An older date stands until a later date replaces it. Saving the same date replaces that row.",
+    es: "Una fecha anterior sigue vigente hasta que una fecha posterior la reemplaza. Guardar la misma fecha reemplaza esa fila.",
+  },
+  "The strain this estimate is for.": { en: "The strain this estimate is for.", es: "La variedad de esta estimacion." },
+  "The farm this estimate is for.": { en: "The farm this estimate is for.", es: "La granja de esta estimacion." },
+  "An older date stands until this date.": {
+    en: "An older date stands until this date.",
+    es: "Una fecha anterior sigue vigente hasta esta fecha.",
+  },
+  "Hand entered dry pounds at 448 g. The number is stored as typed.": {
+    en: "Hand entered dry pounds at 448 g. The number is stored as typed.",
+    es: "Libras secas escritas a mano a 448 g. El numero se guarda tal cual.",
+  },
+  "Memo, optional.": { en: "Memo, optional.", es: "Nota, opcional." },
+  "Dry weight must be a positive number.": {
+    en: "Dry weight must be a positive number.",
+    es: "El peso seco debe ser un numero positivo.",
+  },
+  "Effective date is required.": { en: "Effective date is required.", es: "La fecha efectiva es obligatoria." },
+  "Effective date must be YYYY-MM-DD.": {
+    en: "Effective date must be YYYY-MM-DD.",
+    es: "La fecha efectiva debe ser AAAA-MM-DD.",
+  },
+  "Pick a live strain.": { en: "Pick a live strain.", es: "Elija una variedad vigente." },
+  "Pick a live farm.": { en: "Pick a live farm.", es: "Elija una granja vigente." },
+  "That estimate is not on the list.": { en: "That estimate is not on the list.", es: "Esa estimacion no esta en la lista." },
 };
 
 const FORMULA_ERRORS: Array<[string, string]> = [
