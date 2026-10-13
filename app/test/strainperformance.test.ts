@@ -308,7 +308,8 @@ describe("SP1 strain performance", () => {
   });
 
   it("reads the year's lots in one statement and the live plants in one grouped read", () => {
-    expect(STRAIN_PERFORMANCE_LOTS_SQL).toContain("b.is_test = 0");
+    expect(STRAIN_PERFORMANCE_LOTS_SQL).toContain("COALESCE(b.is_test, 0) = 0");
+    expect(STRAIN_PERFORMANCE_LOTS_SQL).toContain("b.customer IS NULL");
     expect(STRAIN_PERFORMANCE_LOTS_SQL).toContain("w.status <> 'weighing'");
     expect(STRAIN_PERFORMANCE_LOTS_SQL).toContain("b.harvest_year = ?");
     expect(STRAIN_PERFORMANCE_LOTS_SQL).toContain("w.dry_weight_grams IS NOT NULL");

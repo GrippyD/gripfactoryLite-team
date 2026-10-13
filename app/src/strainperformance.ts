@@ -8,6 +8,7 @@
  */
 import { format2, GRAMS_PER_LB, inheritMarketStrain, round2 } from "./config";
 import { estimatesAsOf } from "./fieldestimates";
+import { ownLotSql } from "./toll";
 import { t, tFill, type Locale } from "./i18n";
 import { esc } from "./ui";
 
@@ -28,7 +29,7 @@ export const STRAIN_PERFORMANCE_LOTS_SQL = `SELECT b.farm_code AS farm,
 FROM wet_weight_entries w
 JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
 LEFT JOIN strains s ON s.id = b.strain_id
-WHERE w.deleted_at IS NULL AND w.status <> 'weighing' AND b.harvest_year = ? AND b.is_test = 0`;
+WHERE w.deleted_at IS NULL AND w.status <> 'weighing' AND b.harvest_year = ? AND ${ownLotSql("b")}`;
 
 /** The one grouped read of live plants still in the ground. */
 export const STRAIN_PERFORMANCE_PLANTS_SQL = `SELECT p.license_value AS license_value,
