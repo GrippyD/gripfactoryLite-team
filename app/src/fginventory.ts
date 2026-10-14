@@ -25,6 +25,45 @@ export const FG_FOLDED_PREFIXES = [
 /** A PRE ounce when the row does not carry each_grams. */
 export const FG_PRE_EACH_GRAMS = 28;
 
+/**
+ * FG3 caps, in each category's own unit (app pounds at 448 g, liters, grams).
+ * TRI turns red at the cap. The others turn red only above it.
+ */
+export const FG_CAPS = {
+  tri: 40000,
+  sha: 5000,
+  distillate: 2000,
+  isolate: 68000,
+  infused: 20000,
+} as const;
+
+/** One truck of trim, in app pounds. */
+export const FG_TRUCK_LB = 8000;
+
+const FG_CAP_KEYS = ["tri", "sha", "distillate", "isolate", "infused"] as const;
+type FgCapKey = (typeof FG_CAP_KEYS)[number];
+
+function isCap(key: FgCatKey): key is FgCapKey {
+  return key === "tri" || key === "sha" || key === "distillate" || key === "isolate" || key === "infused";
+}
+
+/** Round half up. 6.5 trucks is 7. */
+export function fgTruckCount(pounds: number): number {
+  return Math.round(pounds / FG_TRUCK_LB);
+}
+
+/**
+ * BUD bands on the listing's THC. 20.00 through 24.99 is 20 to 25.
+ * 25.00 through 29.99 is 25 to 30. A missing THC is its own band.
+ */
+export function budThcBand(pct: number | null): string {
+  if (pct == null || !Number.isFinite(pct)) return "no THC";
+  if (pct <= 19.99) return "19.99% or less";
+  if (pct < 25) return "20 to 25%";
+  if (pct < 30) return "25 to 30%";
+  return "30% and up";
+}
+
 export const FG_LISTINGS_SQL = `SELECT item_name, category, market_uom, market_qty, qty_grams, each_grams, thc_pct, zoho_mounted_at
 FROM listings
 WHERE deleted_at IS NULL
@@ -579,6 +618,164 @@ function categoryBody(cat: FgCategory, locale: Locale): string {
   );
 }
 
+const BUD_BANDS = ["19.99% or less", "20 to 25%", "25 to 30%", "30% and up", "no THC"] as const;
+const BUD_TONE: Record<string, string> = {
+  "19.99% or less": "b1",
+  "20 to 25%": "b2",
+  "25 to 30%": "b3",
+  "30% and up": "b4",
+  "no THC": "none",
+};
+
+type BarSeg = {
+  name: string;
+  text: string;
+  title: string;
+  share: string;
+  width: string;
+  tone: string;
+  over: boolean;
+};
+
+function shareAttr(share: number): string {
+  return (Math.round(share * 10000) / 10000).toFixed(4);
+}
+
+/** Mix widths sum to 100. The last segment absorbs the rounding. */
+function mixWidths(shares: number[]): string[] {
+  const units = shares.map((share) => Math.max(0, Math.round(share * 10000)));
+  let drift = 10000 - units.reduce((sum, n) => sum + n, 0);
+  for (let i = units.length - 1; i >= 0 && drift !== 0; i -= 1) {
+    const have = units[i] ?? 0;
+    const next = have + drift;
+    if (next < 0) {
+      drift = next;
+      units[i] = 0;
+    } else {
+      units[i] = next;
+      drift = 0;
+    }
+  }
+  return units.map((n) => (n / 100).toFixed(2));
+}
+
+function flavorWord(locale: Locale, count: number): string {
+  return t(locale, count === 1 ? "flavor" : "flavors");
+}
+
+function fgTotalLine(cat: FgCategory, locale: Locale): string {
+  const total = fgAmountText(cat.unit, cat.total, locale);
+  if (!isCap(cat.key)) return total;
+  return `${total} ${t(locale, "of")} ${formatCount(FG_CAPS[cat.key])} ${cat.unit}`;
+}
+
+function fgOver(cat: FgCategory): boolean {
+  if (!isCap(cat.key)) return false;
+  const cap = FG_CAPS[cat.key];
+  return cat.key === "tri" ? cat.total >= cap : cat.total > cap;
+}
+
+function segOf(name: string, text: string, amount: string, share: number, width: string, tone: string, over: boolean): BarSeg {
+  return { name, text, title: `${text}: ${amount}`, share: shareAttr(share), width, tone, over };
+}
+
+function fgSegments(cat: FgCategory, locale: Locale, label: string): BarSeg[] {
+  if (!(cat.total > 0)) return [];
+  if (isCap(cat.key)) {
+    const cap = FG_CAPS[cat.key];
+    const visual = Math.min(1, cat.total / cap);
+    const amount = fgAmountText(cat.unit, cat.total, locale);
+    return [segOf(cat.label, label, amount, visual, (visual * 100).toFixed(2), "b3", fgOver(cat))];
+  }
+  const rows: Array<{ name: string; text: string; title?: string; amount: number; tone: string }> = [];
+  if (cat.key === "bud") {
+    const sums = new Map<string, number>();
+    for (const group of cat.groups) {
+      for (const line of group.lines) {
+        const band = budThcBand(line.thc ? Number(line.thc) : null);
+        sums.set(band, (sums.get(band) ?? 0) + line.amount);
+      }
+    }
+    for (const band of BUD_BANDS) {
+      const amount = sums.get(band) ?? 0;
+      if (amount > 0) rows.push({ name: band, text: t(locale, band), amount, tone: BUD_TONE[band] ?? "b1" });
+    }
+  } else if (cat.key === "pre") {
+    cat.groups.filter((group) => group.amount > 0).forEach((group, index) => {
+      const name = group.name || "none";
+      rows.push({ name, text: group.name || t(locale, "no strain"), amount: group.amount, tone: `c${(index % 8) + 1}` });
+    });
+  } else if (cat.key === "vape") {
+    cat.sizes.filter((size) => size.amount > 0).forEach((size, index) => {
+      const name = size.size || "none";
+      const textName = size.size || t(locale, "no size");
+      const flavors = size.flavors.length;
+      const word = flavorWord(locale, flavors);
+      const text = `${textName}: ${formatCount(size.amount)}, ${flavors} ${word}`;
+      const title = `${textName}: ${fgAmountText("each", size.amount, locale)}, ${flavors} ${word}`;
+      rows.push({ name, text, title, amount: size.amount, tone: `c${(index % 8) + 1}` });
+    });
+  } else if (cat.key === "preroll") {
+    cat.lines.filter((line) => line.amount > 0).forEach((line, index) => {
+      const name = line.name || "none";
+      const textName = line.name || t(locale, "no strain");
+      const text = `${textName}: ${formatCount(line.amount)}`;
+      const title = `${textName}: ${fgAmountText("each", line.amount, locale)}`;
+      rows.push({ name, text, title, amount: line.amount, tone: `c${(index % 8) + 1}` });
+    });
+  }
+  if (rows.length === 0) return [];
+  const widths = mixWidths(rows.map((row) => row.amount / cat.total));
+  return rows.map((row, index) => {
+    const amount = fgAmountText(cat.unit, row.amount, locale);
+    const share = row.amount / cat.total;
+    const width = widths[index] ?? "0.00";
+    if (row.title) {
+      return { name: row.name, text: row.text, title: row.title, share: shareAttr(share), width, tone: row.tone, over: false };
+    }
+    return segOf(row.name, row.text, amount, share, width, row.tone, false);
+  });
+}
+
+function fgIcon(key: FgCatKey): string {
+  const mask = `url(/icons/fg/fg-${key}.svg) center / contain no-repeat`;
+  return `<span class="hc-fg-icon" aria-hidden="true" style="background:currentColor;-webkit-mask:${mask};mask:${mask}"></span>`;
+}
+
+function fgBarHtml(cat: FgCategory, locale: Locale, label: string, totalLine: string): string {
+  const over = fgOver(cat);
+  let trucks: number | null = null;
+  let note = "";
+  if (over && cat.key === "tri") {
+    trucks = fgTruckCount(cat.total);
+    note = `${trucks} ${t(locale, "trucks")}`;
+  } else if (over) {
+    note = fgAmountText(cat.unit, cat.total, locale);
+  }
+  const segs = fgSegments(cat, locale, label);
+  const described = segs.map((seg) => seg.title).join(", ");
+  const aria = described ? `${label}: ${described}${note ? `, ${note}` : ""}` : `${label}: ${totalLine}`;
+  const parts = segs
+    .map((seg) => {
+      const overAttr = seg.over ? ` data-fg-over="1"` : "";
+      return `<span class="hc-fg-seg" data-fg-tone="${esc(seg.tone)}" data-fg-seg="${esc(seg.name)}" data-fg-share="${esc(seg.share)}" title="${esc(seg.title)}" style="width:${seg.width}%"${overAttr}>${esc(seg.text)}</span>`;
+    })
+    .join("");
+  const noteHtml = note
+    ? `<span class="hc-fg-note"${trucks != null ? ` data-fg-trucks="${trucks}"` : ""}>${esc(note)}</span>`
+    : "";
+  return `<span class="hc-fg-bar" role="img" aria-label="${esc(aria)}" data-fg-bar="${esc(cat.key)}"><span class="hc-fg-track">${parts}</span>${noteHtml}</span>`;
+}
+
+function fgCategoryHtml(cat: FgCategory, locale: Locale): string {
+  const label = t(locale, cat.label);
+  const totalLine = fgTotalLine(cat, locale);
+  return `<details class="hc-fg hc-fg-cat" data-fg-cat="${esc(cat.key)}" data-fg-total="${esc(fgTotalAttr(cat.unit, cat.total))}">
+      <summary><span class="hc-fg-row">${fgIcon(cat.key)}<span class="hc-fg-label"><span class="hc-fg-name">${esc(label)}</span><span class="muted hc-fg-total">${esc(totalLine)}</span></span>${fgBarHtml(cat, locale, label, totalLine)}</span></summary>
+      ${categoryBody(cat, locale)}
+    </details>`;
+}
+
 export function emptyFgInventory(): FgInventoryModel {
   return buildFgInventory([], []);
 }
@@ -588,14 +785,7 @@ export function fgInventorySection(model: FgInventoryModel, locale: Locale = "en
   const asOf = when
     ? ` <span class="muted hc-year" data-fg-as-of="${esc(when)}">${esc(`${t(locale, "Zoho as of")} ${when}`)}</span>`
     : "";
-  const block = (cat: FgCategory): string => {
-    const label = t(locale, cat.label);
-    const total = fgAmountText(cat.unit, cat.total, locale);
-    return `<details class="hc-fg" data-fg-cat="${esc(cat.key)}" data-fg-total="${esc(fgTotalAttr(cat.unit, cat.total))}">
-      <summary>${esc(label)} <span class="muted">${esc(total)}</span></summary>
-      ${categoryBody(cat, locale)}
-    </details>`;
-  };
+  const block = (cat: FgCategory): string => fgCategoryHtml(cat, locale);
   const headKeys = new Set<FgCatKey>(["bud", "tri", "sha"]);
   const head = model.categories.filter((cat) => headKeys.has(cat.key)).map(block).join("");
   const tail = model.categories.filter((cat) => !headKeys.has(cat.key)).map(block).join("");

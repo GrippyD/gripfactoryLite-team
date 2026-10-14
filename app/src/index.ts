@@ -2476,6 +2476,7 @@ app.get("/brand/:file", async (c) => {
 });
 
 const ICON_VARIANTS = new Set(["white", "dark"]);
+const FG_ICON_FILES = new Set(["bud", "tri", "sha", "pre", "distillate", "isolate", "infused", "preroll", "vape"].map((key) => `fg-${key}.svg`));
 const ICON_FILES: Record<string, string> = {
   "harvest-field.svg": "image/svg+xml",
   "harvest-field.png": "image/png",
@@ -2495,12 +2496,14 @@ app.get("/icons/:variant/:file", async (c) => {
   const variant = c.req.param("variant");
   const file = c.req.param("file");
   const contentType = ICON_FILES[file];
-  if (!ICON_VARIANTS.has(variant) || !contentType) return c.body("Not found", 404);
+  // FG3 (canon 0.30.483): the nine traced finished goods icons under public/icons/fg.
+  const fgIcon = variant === "fg" && FG_ICON_FILES.has(file);
+  if (!fgIcon && (!ICON_VARIANTS.has(variant) || !contentType)) return c.body("Not found", 404);
   const asset = await c.env.ASSETS.fetch(new Request(new URL(`/icons/${variant}/${file}`, c.req.url)));
   if (!asset.ok) return c.notFound();
   return new Response(asset.body, {
     headers: {
-      "content-type": contentType,
+      "content-type": fgIcon ? "image/svg+xml" : contentType,
       "cache-control": "public, max-age=3600",
     },
   });

@@ -807,6 +807,107 @@ table.data th { background: var(--panel-2); }
 .hc-fg > summary { cursor: pointer; font-weight: 700; padding: 0.12rem 0; }
 .hc-fg-lines { margin: 0.05rem 0 0.3rem 1rem; padding: 0; list-style: none; overflow-wrap: anywhere; }
 .hc-fg-lines li { font-variant-numeric: tabular-nums; }
+/* FG3: icon, name and total, then a bar. Fills are theme tokens. BUD steps light to dark on --ok. */
+.hc-fg-cat { max-width: 100%; min-width: 0; }
+.hc-fg-cat > summary { display: flex; align-items: center; gap: 0.35rem; list-style: none; max-width: 100%; }
+.hc-fg-cat > summary::-webkit-details-marker { display: none; }
+.hc-fg-cat > summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0.28rem 0 0.28rem 0.4rem;
+  border-color: transparent transparent transparent currentColor;
+}
+.hc-fg-cat[open] > summary::before {
+  border-width: 0.4rem 0.28rem 0 0.28rem;
+  border-color: currentColor transparent transparent transparent;
+}
+.hc-fg-row { display: flex; align-items: center; gap: 0.55rem; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-wrap: normal; }
+.hc-fg-icon { width: 44px; height: 30px; flex: 0 0 auto; display: block; }
+.hc-fg-label { display: flex; flex-direction: column; flex: 0 0 11.5rem; line-height: 1.15; min-width: 0; }
+.hc-fg-label .hc-fg-name { font-weight: 700; }
+.hc-fg-label .hc-fg-total { font-weight: 500; font-size: 0.78rem; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.hc-fg-bar {
+  flex: 1 1 10rem;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  --fg-track: var(--panel-2, var(--surface-2, #e7e1d4));
+  --fg-b1: color-mix(in srgb, var(--ok, var(--accent, #2f5d3a)) 30%, white);
+  --fg-b1-ink: #1c1914;
+  --fg-b2: color-mix(in srgb, var(--ok, var(--accent, #2f5d3a)) 52%, white);
+  --fg-b2-ink: #1c1914;
+  --fg-b3: color-mix(in srgb, var(--ok, var(--accent, #2f5d3a)) 74%, white);
+  --fg-b3-ink: #1c1914;
+  --fg-b4: color-mix(in srgb, var(--ok, var(--accent, #2f5d3a)) 46%, #121610);
+  --fg-b4-ink: #ffffff;
+  --fg-c1: var(--fg-b1);
+  --fg-c1-ink: var(--fg-b1-ink);
+  --fg-c2: color-mix(in srgb, var(--focus, var(--primary, #2b4c7e)) 58%, white);
+  --fg-c2-ink: #1c1914;
+  --fg-c3: var(--fg-b4);
+  --fg-c3-ink: var(--fg-b4-ink);
+  --fg-c4: color-mix(in srgb, var(--focus, var(--primary, #2b4c7e)) 42%, #121610);
+  --fg-c4-ink: #ffffff;
+  --fg-c5: var(--fg-b2);
+  --fg-c5-ink: var(--fg-b2-ink);
+  --fg-c6: color-mix(in srgb, var(--accent, var(--primary-strong, #4f6b4a)) 62%, white);
+  --fg-c6-ink: #1c1914;
+  --fg-c7: color-mix(in srgb, var(--accent, var(--primary-strong, #4f6b4a)) 46%, #121610);
+  --fg-c7-ink: #ffffff;
+  --fg-c8: color-mix(in srgb, var(--focus, var(--primary, #2b4c7e)) 28%, white);
+  --fg-c8-ink: #1c1914;
+  --fg-none: color-mix(in srgb, var(--text-dim, var(--muted, var(--ink-mute, #6e6a64))) 34%, #efece4);
+  --fg-none-ink: #1c1914;
+  --fg-over: var(--danger, var(--alert, #8b2e2e));
+  --fg-over-ink: #ffffff;
+  --fg-note: var(--danger, var(--alert, #8b2e2e));
+}
+.hc-fg-track {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--fg-track);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text, var(--ink, #1c1914)) 14%, transparent);
+}
+.hc-fg-seg {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 26px;
+}
+.hc-fg-seg[data-fg-tone="b1"] { background: var(--fg-b1); color: var(--fg-b1-ink); }
+.hc-fg-seg[data-fg-tone="b2"] { background: var(--fg-b2); color: var(--fg-b2-ink); }
+.hc-fg-seg[data-fg-tone="b3"] { background: var(--fg-b3); color: var(--fg-b3-ink); }
+.hc-fg-seg[data-fg-tone="b4"] { background: var(--fg-b4); color: var(--fg-b4-ink); }
+.hc-fg-seg[data-fg-tone="c1"] { background: var(--fg-c1); color: var(--fg-c1-ink); }
+.hc-fg-seg[data-fg-tone="c2"] { background: var(--fg-c2); color: var(--fg-c2-ink); }
+.hc-fg-seg[data-fg-tone="c3"] { background: var(--fg-c3); color: var(--fg-c3-ink); }
+.hc-fg-seg[data-fg-tone="c4"] { background: var(--fg-c4); color: var(--fg-c4-ink); }
+.hc-fg-seg[data-fg-tone="c5"] { background: var(--fg-c5); color: var(--fg-c5-ink); }
+.hc-fg-seg[data-fg-tone="c6"] { background: var(--fg-c6); color: var(--fg-c6-ink); }
+.hc-fg-seg[data-fg-tone="c7"] { background: var(--fg-c7); color: var(--fg-c7-ink); }
+.hc-fg-seg[data-fg-tone="c8"] { background: var(--fg-c8); color: var(--fg-c8-ink); }
+.hc-fg-seg[data-fg-tone="none"] { background: var(--fg-none); color: var(--fg-none-ink); }
+.hc-fg-seg[data-fg-over="1"] { background: var(--fg-over); color: var(--fg-over-ink); }
+.hc-fg-note { flex: 0 0 auto; color: var(--fg-note); font-weight: 700; font-size: 0.82rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 820px) {
+  .hc-fg-row { flex-wrap: wrap; }
+  .hc-fg-bar { flex-basis: 100%; }
+}
 .hc-farms { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0; }
 .hc-farm { position: relative; overflow: hidden; flex: 1 1 14rem; min-width: 13rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); }
 .hc-shade { position: absolute; inset: 0; background: var(--accent); pointer-events: none; }
@@ -1619,8 +1720,111 @@ table.data tbody tr:hover td { background: var(--surface-2); }
 .hc-fg > summary { cursor: pointer; font-weight: 700; padding: 0.12rem 0; }
 .hc-fg-lines { margin: 0.05rem 0 0.3rem 1rem; padding: 0; list-style: none; overflow-wrap: anywhere; }
 .hc-fg-lines li { font-variant-numeric: tabular-nums; }
+/* FG3: icon, name and total, then a bar. Fills are theme tokens. BUD steps light to dark on --ok. */
+.hc-fg-cat { max-width: 100%; min-width: 0; }
+.hc-fg-cat > summary { display: flex; align-items: center; gap: 0.35rem; list-style: none; max-width: 100%; }
+.hc-fg-cat > summary::-webkit-details-marker { display: none; }
+.hc-fg-cat > summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0.28rem 0 0.28rem 0.4rem;
+  border-color: transparent transparent transparent currentColor;
+}
+.hc-fg-cat[open] > summary::before {
+  border-width: 0.4rem 0.28rem 0 0.28rem;
+  border-color: currentColor transparent transparent transparent;
+}
+.hc-fg-row { display: flex; align-items: center; gap: 0.55rem; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-wrap: normal; }
+.hc-fg-icon { width: 44px; height: 30px; flex: 0 0 auto; display: block; }
+.hc-fg-label { display: flex; flex-direction: column; flex: 0 0 11.5rem; line-height: 1.15; min-width: 0; }
+.hc-fg-label .hc-fg-name { font-weight: 700; }
+.hc-fg-label .hc-fg-total { font-weight: 500; font-size: 0.78rem; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.hc-fg-bar {
+  flex: 1 1 10rem;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  --fg-track: var(--panel-2, var(--surface-2, #e7e1d4));
+  --fg-b1: color-mix(in srgb, var(--ok, var(--accent, #2f5d3a)) 30%, white);
+  --fg-b1-ink: #1c1914;
+  --fg-b2: color-mix(in srgb, var(--ok, var(--accent, #2f5d3a)) 52%, white);
+  --fg-b2-ink: #1c1914;
+  --fg-b3: color-mix(in srgb, var(--ok, var(--accent, #2f5d3a)) 74%, white);
+  --fg-b3-ink: #1c1914;
+  --fg-b4: color-mix(in srgb, var(--ok, var(--accent, #2f5d3a)) 46%, #121610);
+  --fg-b4-ink: #ffffff;
+  --fg-c1: var(--fg-b1);
+  --fg-c1-ink: var(--fg-b1-ink);
+  --fg-c2: color-mix(in srgb, var(--focus, var(--primary, #2b4c7e)) 58%, white);
+  --fg-c2-ink: #1c1914;
+  --fg-c3: var(--fg-b4);
+  --fg-c3-ink: var(--fg-b4-ink);
+  --fg-c4: color-mix(in srgb, var(--focus, var(--primary, #2b4c7e)) 42%, #121610);
+  --fg-c4-ink: #ffffff;
+  --fg-c5: var(--fg-b2);
+  --fg-c5-ink: var(--fg-b2-ink);
+  --fg-c6: color-mix(in srgb, var(--accent, var(--primary-strong, #4f6b4a)) 62%, white);
+  --fg-c6-ink: #1c1914;
+  --fg-c7: color-mix(in srgb, var(--accent, var(--primary-strong, #4f6b4a)) 46%, #121610);
+  --fg-c7-ink: #ffffff;
+  --fg-c8: color-mix(in srgb, var(--focus, var(--primary, #2b4c7e)) 28%, white);
+  --fg-c8-ink: #1c1914;
+  --fg-none: color-mix(in srgb, var(--text-dim, var(--muted, var(--ink-mute, #6e6a64))) 34%, #efece4);
+  --fg-none-ink: #1c1914;
+  --fg-over: var(--danger, var(--alert, #8b2e2e));
+  --fg-over-ink: #ffffff;
+  --fg-note: var(--danger, var(--alert, #8b2e2e));
+}
+.hc-fg-track {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--fg-track);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text, var(--ink, #1c1914)) 14%, transparent);
+}
+.hc-fg-seg {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 26px;
+}
+.hc-fg-seg[data-fg-tone="b1"] { background: var(--fg-b1); color: var(--fg-b1-ink); }
+.hc-fg-seg[data-fg-tone="b2"] { background: var(--fg-b2); color: var(--fg-b2-ink); }
+.hc-fg-seg[data-fg-tone="b3"] { background: var(--fg-b3); color: var(--fg-b3-ink); }
+.hc-fg-seg[data-fg-tone="b4"] { background: var(--fg-b4); color: var(--fg-b4-ink); }
+.hc-fg-seg[data-fg-tone="c1"] { background: var(--fg-c1); color: var(--fg-c1-ink); }
+.hc-fg-seg[data-fg-tone="c2"] { background: var(--fg-c2); color: var(--fg-c2-ink); }
+.hc-fg-seg[data-fg-tone="c3"] { background: var(--fg-c3); color: var(--fg-c3-ink); }
+.hc-fg-seg[data-fg-tone="c4"] { background: var(--fg-c4); color: var(--fg-c4-ink); }
+.hc-fg-seg[data-fg-tone="c5"] { background: var(--fg-c5); color: var(--fg-c5-ink); }
+.hc-fg-seg[data-fg-tone="c6"] { background: var(--fg-c6); color: var(--fg-c6-ink); }
+.hc-fg-seg[data-fg-tone="c7"] { background: var(--fg-c7); color: var(--fg-c7-ink); }
+.hc-fg-seg[data-fg-tone="c8"] { background: var(--fg-c8); color: var(--fg-c8-ink); }
+.hc-fg-seg[data-fg-tone="none"] { background: var(--fg-none); color: var(--fg-none-ink); }
+.hc-fg-seg[data-fg-over="1"] { background: var(--fg-over); color: var(--fg-over-ink); }
+.hc-fg-note { flex: 0 0 auto; color: var(--fg-note); font-weight: 700; font-size: 0.82rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 820px) {
+  .hc-fg-row { flex-wrap: wrap; }
+  .hc-fg-bar { flex-basis: 100%; }
+}
 .hc-farms { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0; }
 .hc-farm { position: relative; overflow: hidden; flex: 1 1 14rem; min-width: 13rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); }
+/* CO danger is the light alert token, so the over-cap fill takes dark text. */
+.hc-fg-bar { --fg-over-ink: #1c1914; }
 .hc-shade { position: absolute; inset: 0; background: var(--primary); pointer-events: none; }
 .hc-farm-body { position: relative; padding: 0.6rem 0.7rem; }
 /* THE YEAR PANE (canon 0.30.346): the harvest year's wet total in its own inset inside the farm box. */
@@ -2378,8 +2582,118 @@ legend { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; c
 .hc-fg > summary { cursor: pointer; font-weight: 700; padding: 0.12rem 0; }
 .hc-fg-lines { margin: 0.05rem 0 0.3rem 1rem; padding: 0; list-style: none; overflow-wrap: anywhere; }
 .hc-fg-lines li { font-variant-numeric: tabular-nums; }
+/* FG3: icon, name and total, then a bar. Fills are theme tokens. BUD steps light to dark on --ok. */
+.hc-fg-cat { max-width: 100%; min-width: 0; }
+.hc-fg-cat > summary { display: flex; align-items: center; gap: 0.35rem; list-style: none; max-width: 100%; }
+.hc-fg-cat > summary::-webkit-details-marker { display: none; }
+.hc-fg-cat > summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0.28rem 0 0.28rem 0.4rem;
+  border-color: transparent transparent transparent currentColor;
+}
+.hc-fg-cat[open] > summary::before {
+  border-width: 0.4rem 0.28rem 0 0.28rem;
+  border-color: currentColor transparent transparent transparent;
+}
+.hc-fg-row { display: flex; align-items: center; gap: 0.55rem; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-wrap: normal; }
+.hc-fg-icon { width: 44px; height: 30px; flex: 0 0 auto; display: block; }
+.hc-fg-label { display: flex; flex-direction: column; flex: 0 0 11.5rem; line-height: 1.15; min-width: 0; }
+.hc-fg-label .hc-fg-name { font-weight: 700; }
+.hc-fg-label .hc-fg-total { font-weight: 500; font-size: 0.78rem; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.hc-fg-bar {
+  flex: 1 1 10rem;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  --fg-track: var(--panel-2, var(--surface-2, #e7e1d4));
+  --fg-b1: color-mix(in srgb, var(--ok, var(--accent, #2f5d3a)) 30%, white);
+  --fg-b1-ink: #1c1914;
+  --fg-b2: color-mix(in srgb, var(--ok, var(--accent, #2f5d3a)) 52%, white);
+  --fg-b2-ink: #1c1914;
+  --fg-b3: color-mix(in srgb, var(--ok, var(--accent, #2f5d3a)) 74%, white);
+  --fg-b3-ink: #1c1914;
+  --fg-b4: color-mix(in srgb, var(--ok, var(--accent, #2f5d3a)) 46%, #121610);
+  --fg-b4-ink: #ffffff;
+  --fg-c1: var(--fg-b1);
+  --fg-c1-ink: var(--fg-b1-ink);
+  --fg-c2: color-mix(in srgb, var(--focus, var(--primary, #2b4c7e)) 58%, white);
+  --fg-c2-ink: #1c1914;
+  --fg-c3: var(--fg-b4);
+  --fg-c3-ink: var(--fg-b4-ink);
+  --fg-c4: color-mix(in srgb, var(--focus, var(--primary, #2b4c7e)) 42%, #121610);
+  --fg-c4-ink: #ffffff;
+  --fg-c5: var(--fg-b2);
+  --fg-c5-ink: var(--fg-b2-ink);
+  --fg-c6: color-mix(in srgb, var(--accent, var(--primary-strong, #4f6b4a)) 62%, white);
+  --fg-c6-ink: #1c1914;
+  --fg-c7: color-mix(in srgb, var(--accent, var(--primary-strong, #4f6b4a)) 46%, #121610);
+  --fg-c7-ink: #ffffff;
+  --fg-c8: color-mix(in srgb, var(--focus, var(--primary, #2b4c7e)) 28%, white);
+  --fg-c8-ink: #1c1914;
+  --fg-none: color-mix(in srgb, var(--text-dim, var(--muted, var(--ink-mute, #6e6a64))) 34%, #efece4);
+  --fg-none-ink: #1c1914;
+  --fg-over: var(--danger, var(--alert, #8b2e2e));
+  --fg-over-ink: #ffffff;
+  --fg-note: var(--danger, var(--alert, #8b2e2e));
+}
+.hc-fg-track {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--fg-track);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text, var(--ink, #1c1914)) 14%, transparent);
+}
+.hc-fg-seg {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 26px;
+}
+.hc-fg-seg[data-fg-tone="b1"] { background: var(--fg-b1); color: var(--fg-b1-ink); }
+.hc-fg-seg[data-fg-tone="b2"] { background: var(--fg-b2); color: var(--fg-b2-ink); }
+.hc-fg-seg[data-fg-tone="b3"] { background: var(--fg-b3); color: var(--fg-b3-ink); }
+.hc-fg-seg[data-fg-tone="b4"] { background: var(--fg-b4); color: var(--fg-b4-ink); }
+.hc-fg-seg[data-fg-tone="c1"] { background: var(--fg-c1); color: var(--fg-c1-ink); }
+.hc-fg-seg[data-fg-tone="c2"] { background: var(--fg-c2); color: var(--fg-c2-ink); }
+.hc-fg-seg[data-fg-tone="c3"] { background: var(--fg-c3); color: var(--fg-c3-ink); }
+.hc-fg-seg[data-fg-tone="c4"] { background: var(--fg-c4); color: var(--fg-c4-ink); }
+.hc-fg-seg[data-fg-tone="c5"] { background: var(--fg-c5); color: var(--fg-c5-ink); }
+.hc-fg-seg[data-fg-tone="c6"] { background: var(--fg-c6); color: var(--fg-c6-ink); }
+.hc-fg-seg[data-fg-tone="c7"] { background: var(--fg-c7); color: var(--fg-c7-ink); }
+.hc-fg-seg[data-fg-tone="c8"] { background: var(--fg-c8); color: var(--fg-c8-ink); }
+.hc-fg-seg[data-fg-tone="none"] { background: var(--fg-none); color: var(--fg-none-ink); }
+.hc-fg-seg[data-fg-over="1"] { background: var(--fg-over); color: var(--fg-over-ink); }
+.hc-fg-note { flex: 0 0 auto; color: var(--fg-note); font-weight: 700; font-size: 0.82rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 820px) {
+  .hc-fg-row { flex-wrap: wrap; }
+  .hc-fg-bar { flex-basis: 100%; }
+}
 .hc-farms { display: flex; flex-wrap: wrap; gap: 0.7rem; margin: 0.4rem 0; }
 .hc-farm { position: relative; overflow: hidden; flex: 1 1 14rem; min-width: 13rem; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); }
+/* Cerberus danger is a light red, so the over-cap fill takes dark text. Mix steps past the green use the gold token. */
+.hc-fg-bar { --fg-over-ink: #1c1914; }
+.hc-fg-bar {
+  --fg-c2: color-mix(in srgb, var(--gold) 58%, white);
+  --fg-c4: color-mix(in srgb, var(--gold) 42%, #121610);
+  --fg-c6: color-mix(in srgb, var(--gold-dim) 62%, white);
+  --fg-c7: color-mix(in srgb, var(--gold-dim) 46%, #121610);
+  --fg-c8: color-mix(in srgb, var(--gold) 28%, white);
+}
 .hc-shade { position: absolute; inset: 0; background: var(--gold); pointer-events: none; }
 .hc-farm-body { position: relative; padding: 0.6rem 0.7rem; }
 /* THE YEAR PANE (canon 0.30.346): the harvest year's wet total in its own inset inside the farm box. */

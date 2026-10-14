@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import { GRAMS_PER_LB } from "../src/config";
 import { harvestConsolePage, type HarvestConsoleInput } from "../src/console";
 import {
+  FG_CAPS,
   FG_FOLDED_PREFIXES,
   FG_LEDGER_SQL,
   FG_LISTINGS_SQL,
   FG_NOT_FINISHED,
   FG_PRE_EACH_GRAMS,
+  FG_TRUCK_LB,
+  budThcBand,
   buildFgInventory,
   classifyListing,
   distillateMaker,
@@ -14,6 +17,7 @@ import {
   fgTotalAttr,
   fgInventorySection,
   fgMountedLabel,
+  fgTruckCount,
   loadFgInventory,
   vapeSizeAndFlavor,
   type FgCategory,
@@ -22,6 +26,7 @@ import {
   type FgLedgerRow,
 } from "../src/fginventory";
 import { DICT, t } from "../src/i18n";
+import { themeStylesheet } from "../src/theme";
 import { siloVisual, type SiloLive } from "../src/silo";
 import { migratedDb } from "./migrated";
 
@@ -573,5 +578,260 @@ describe("FG1 finished goods on the Harvest Console", () => {
       expect(DICT[key]?.en).toBe(key);
       expect(DICT[key]?.es.trim().length).toBeGreaterThan(0);
     }
+  });
+});
+
+const ICON_HASH: Record<string, string> = {
+  bud: "05d9ede6900567f4",
+  tri: "745518556b563f4c",
+  sha: "6cd3bfdad13cd51c",
+  pre: "f96ae2e12f47d32b",
+  distillate: "8e87820e244263b9",
+  isolate: "aa46c6297343cabd",
+  infused: "ecdbdf6a91cf2635",
+  preroll: "dc517b1ef23ce2c0",
+  vape: "82bbbd720381c463",
+};
+
+function sliceCat(html: string, key: string): string {
+  const at = html.indexOf(`data-fg-cat="${key}"`);
+  if (at < 0) throw new Error(key);
+  const next = html.indexOf('data-fg-cat="', at + 12);
+  return html.slice(at, next < 0 ? undefined : next);
+}
+
+function trimLb(lb: number, code = "TRIM"): FgLedgerRow {
+  return { typeCode: code, strain: "Gelato", thcPct: 22, grams: lb * LB };
+}
+
+describe("FG3 icons and stacked bars", () => {
+  it("keeps the caps and the truck size as named constants", () => {
+    expect(FG_TRUCK_LB).toBe(8000);
+    expect(FG_CAPS).toEqual({ tri: 40000, sha: 5000, distillate: 2000, isolate: 68000, infused: 20000 });
+    expect(fgTruckCount(40000)).toBe(5);
+    expect(fgTruckCount(52000)).toBe(7);
+    expect(fgTruckCount(6.5 * FG_TRUCK_LB)).toBe(7);
+  });
+
+  it("bands bud THC at each edge, weighted by pounds, with no THC last", () => {
+    const edges: Array<[number | null, string, string]> = [
+      [19.99, "19.99% or less", "b1"],
+      [20, "20 to 25%", "b2"],
+      [24.99, "20 to 25%", "b2"],
+      [25, "25 to 30%", "b3"],
+      [29.99, "25 to 30%", "b3"],
+      [30, "30% and up", "b4"],
+      [null, "no THC", "none"],
+    ];
+    for (const [pct, band, tone] of edges) {
+      expect(budThcBand(pct)).toBe(band);
+      const html = fgInventorySection(buildFgInventory([listing({ qtyGrams: LB, thcPct: pct })], []));
+      const bud = sliceCat(html, "bud");
+      expect(bud.match(/data-fg-seg=/g)?.length).toBe(1);
+      expect(bud).toContain(`data-fg-tone="${tone}"`);
+      expect(bud).toContain(`data-fg-seg="${band}"`);
+      expect(bud).toContain('data-fg-share="1.0000"');
+      expect(bud).not.toContain('data-fg-over="1"');
+    }
+    const mixed = fgInventorySection(
+      buildFgInventory(
+        [
+          listing({ itemName: "BUD - Alpha - PNN", qtyGrams: LB, thcPct: 19.99 }),
+          listing({ itemName: "BUD - Bravo - PNN", qtyGrams: 3 * LB, thcPct: 30 }),
+          listing({ itemName: "BUD - Charlie - PNN", qtyGrams: LB, thcPct: null }),
+        ],
+        []
+      )
+    );
+    const bud = sliceCat(mixed, "bud");
+    const low = bud.indexOf('data-fg-seg="19.99% or less"');
+    const high = bud.indexOf('data-fg-seg="30% and up"');
+    const none = bud.indexOf('data-fg-seg="no THC"');
+    expect(low).toBeGreaterThanOrEqual(0);
+    expect(low).toBeLessThan(high);
+    expect(high).toBeLessThan(none);
+    expect(bud).toContain('data-fg-seg="19.99% or less" data-fg-share="0.2000"');
+    expect(bud).toContain('data-fg-seg="30% and up" data-fg-share="0.6000"');
+    expect(bud).toContain('data-fg-seg="no THC" data-fg-share="0.2000"');
+    expect(bud).toContain('data-fg-tone="none"');
+  });
+
+  it("turns TRI red at 40,000 lb and names the trucks, and stays plain at 39,999", () => {
+    const under = sliceCat(fgInventorySection(buildFgInventory([], [trimLb(39999)])), "tri");
+    expect(under).toContain("39,999.00 lb of 40,000 lb");
+    expect(under).not.toContain('data-fg-over="1"');
+    expect(under).not.toContain("data-fg-trucks");
+    expect(under).not.toContain("trucks");
+    const at = sliceCat(fgInventorySection(buildFgInventory([], [trimLb(40000)])), "tri");
+    expect(at).toContain("40,000.00 lb of 40,000 lb");
+    expect(at).toContain('data-fg-over="1"');
+    expect(at).toContain('data-fg-trucks="5"');
+    expect(at).toContain(">5 trucks<");
+    const over = sliceCat(fgInventorySection(buildFgInventory([], [trimLb(52000)])), "tri");
+    expect(over).toContain("52,000.00 lb of 40,000 lb");
+    expect(over).toContain('data-fg-over="1"');
+    expect(over).toContain('data-fg-trucks="7"');
+    expect(over).toContain(">7 trucks<");
+    expect(over).toContain('data-fg-share="1.0000"');
+  });
+
+  it("turns SHA, distillate, isolate and infused red only above the cap, and the note is the total", () => {
+    const shaUnder = sliceCat(fgInventorySection(buildFgInventory([], [trimLb(5000, "SHAKE")])), "sha");
+    expect(shaUnder).toContain("5,000.00 lb of 5,000 lb");
+    expect(shaUnder).not.toContain('data-fg-over="1"');
+    expect(shaUnder).not.toContain("hc-fg-note");
+    const shaOver = sliceCat(fgInventorySection(buildFgInventory([], [trimLb(5000.01, "SHAKE")])), "sha");
+    expect(shaOver).toContain('data-fg-over="1"');
+    expect(shaOver).toContain('class="hc-fg-note">5,000.01 lb<');
+    const oilUnder = sliceCat(
+      fgInventorySection(buildFgInventory([listing({ itemName: "Mitten Distillate", category: "Concentrate", marketUom: "L", marketQty: 2000, qtyGrams: 0, thcPct: null })], [])),
+      "distillate"
+    );
+    expect(oilUnder).toContain("2,000.00 L of 2,000 L");
+    expect(oilUnder).not.toContain('data-fg-over="1"');
+    const oilOver = sliceCat(
+      fgInventorySection(buildFgInventory([listing({ itemName: "Mitten Distillate", category: "Concentrate", marketUom: "L", marketQty: 2000.01, qtyGrams: 0, thcPct: null })], [])),
+      "distillate"
+    );
+    expect(oilOver).toContain('data-fg-over="1"');
+    expect(oilOver).toContain('class="hc-fg-note">2,000.01 L<');
+    const iso = (grams: number) =>
+      sliceCat(
+        fgInventorySection(
+          buildFgInventory([listing({ itemName: "HZ Holdings THCA", category: "Concentrate", marketUom: "g", marketQty: grams, qtyGrams: grams, thcPct: null })], [])
+        ),
+        "isolate"
+      );
+    expect(iso(68000)).toContain("68,000 g of 68,000 g");
+    expect(iso(68000)).not.toContain('data-fg-over="1"');
+    expect(iso(68001)).toContain('data-fg-over="1"');
+    expect(iso(68001)).toContain('class="hc-fg-note">68,001 g<');
+    const flower = (grams: number) =>
+      sliceCat(
+        fgInventorySection(
+          buildFgInventory(
+            [listing({ itemName: "GRIP Infused Flower - Grape", category: "Infused Flower", marketUom: "each", marketQty: grams, qtyGrams: grams, eachGrams: 1, thcPct: null })],
+            []
+          )
+        ),
+        "infused"
+      );
+    expect(flower(20000)).toContain("20,000 g of 20,000 g");
+    expect(flower(20000)).not.toContain('data-fg-over="1"');
+    expect(flower(20001)).toContain('data-fg-over="1"');
+    expect(flower(20001)).toContain('class="hc-fg-note">20,001 g<');
+  });
+
+  it("shares PRE by strain and writes preroll and vape segment text", () => {
+    const pre = sliceCat(
+      fgInventorySection(
+        buildFgInventory(
+          [
+            listing({ itemName: "PRE - Lemon - PNN", category: "Prepack Ounces", marketUom: "each", marketQty: 48, qtyGrams: 0, eachGrams: null, thcPct: 18 }),
+            listing({ itemName: "PRE - Gelato - PNN", category: "Prepack Ounces", marketUom: "each", marketQty: 16, qtyGrams: 0, eachGrams: null, thcPct: 22 }),
+          ],
+          []
+        )
+      ),
+      "pre"
+    );
+    expect(pre.indexOf('data-fg-seg="Gelato"')).toBeLessThan(pre.indexOf('data-fg-seg="Lemon"'));
+    expect(pre).toContain('data-fg-seg="Gelato" data-fg-share="0.2500"');
+    expect(pre).toContain('data-fg-seg="Lemon" data-fg-share="0.7500"');
+    expect(pre).toContain('title="Gelato: 1.00 lb"');
+    const rolls = sliceCat(
+      fgInventorySection(
+        buildFgInventory(
+          [
+            listing({ itemName: "IPR - Orange Crush 1.2g", category: "Infused Pre-Rolls", marketUom: "each", marketQty: 6, qtyGrams: 0, thcPct: null }),
+            listing({ itemName: "IPR - Grape Ape", category: "Infused Pre-Rolls", marketUom: "each", marketQty: 3, qtyGrams: 0, thcPct: null }),
+          ],
+          []
+        )
+      ),
+      "preroll"
+    );
+    expect(rolls).toContain(">Orange Crush 1.2g: 6<");
+    expect(rolls).toContain(">Grape Ape: 3<");
+    expect(rolls).toContain('title="Orange Crush 1.2g: 6 each"');
+    const vapes = sliceCat(
+      fgInventorySection(
+        buildFgInventory(
+          [
+            listing({ itemName: "GRIP Vape - Berry Mojito - 1g", category: "Vape/Cart", marketUom: "each", marketQty: 5, qtyGrams: 5, eachGrams: 1, thcPct: null }),
+            listing({ itemName: "GRIP Vape - Berry Mojito - 2g", category: "Vape/Cart", marketUom: "each", marketQty: 20, qtyGrams: 40, eachGrams: 2, thcPct: null }),
+            listing({ itemName: "GRIP Vape - Lemon - 2g", category: "Vape/Cart", marketUom: "each", marketQty: 3, qtyGrams: 6, eachGrams: 2, thcPct: null }),
+          ],
+          []
+        )
+      ),
+      "vape"
+    );
+    expect(vapes).toContain(">1g: 5, 1 flavor<");
+    expect(vapes).toContain(">2g: 23, 2 flavors<");
+    expect(vapes).toContain('title="1g: 5 each, 1 flavor"');
+    expect(vapes).toContain('data-fg-seg="1g"');
+    expect(vapes).toContain('data-fg-seg="2g"');
+  });
+
+  it("draws an empty track, nine bars in order, and the icon as a mask", () => {
+    const html = fgInventorySection(buildFgInventory([], []));
+    const keys = ["bud", "tri", "sha", "pre", "distillate", "isolate", "infused", "preroll", "vape"];
+    const bars = [...html.matchAll(/data-fg-bar="([^"]+)"/g)].map((hit) => hit[1]);
+    expect(bars).toEqual(keys);
+    const isolate = sliceCat(html, "isolate");
+    expect(isolate).toContain('data-fg-bar="isolate"');
+    expect(isolate).not.toContain("data-fg-seg");
+    expect(isolate).toContain('class="hc-fg-track"></span>');
+    expect(isolate).toContain('role="img"');
+    expect(isolate).toContain('aria-label="Isolate: 0 g of 68,000 g"');
+    for (const key of keys) {
+      const mask = `url(/icons/fg/fg-${key}.svg) center / contain no-repeat`;
+      expect(html).toContain(`style="background:currentColor;-webkit-mask:${mask};mask:${mask}"`);
+      expect(html).toContain('aria-hidden="true"');
+      expect(html).not.toContain(`data-fg-cat="${key}" open`);
+    }
+    for (const view of ["lite", "co", "cerberus"] as const) {
+      const css = themeStylesheet(view);
+      expect(css).toContain(".hc-fg-icon { width: 44px; height: 30px; flex: 0 0 auto; display: block; }");
+      expect(css).toContain("@media (max-width: 820px) {\n  .hc-fg-row { flex-wrap: wrap; }\n  .hc-fg-bar { flex-basis: 100%; }\n}");
+    }
+    expect(themeStylesheet("co")).toContain(".hc-fg-bar { --fg-over-ink: #1c1914; }");
+    expect(themeStylesheet("cerberus")).toContain(".hc-fg-bar { --fg-over-ink: #1c1914; }");
+  });
+
+  it("holds the nine icon files at the traced hashes", async () => {
+    const fs = (await import("node:" + "fs")) as { readFileSync(path: URL): Uint8Array };
+    const crypto = (await import("node:" + "crypto")) as {
+      createHash(alg: string): { update(data: Uint8Array): { digest(enc: "hex"): string } };
+    };
+    for (const [key, hash] of Object.entries(ICON_HASH)) {
+      const bytes = fs.readFileSync(new URL(`../public/icons/fg/fg-${key}.svg`, import.meta.url));
+      expect(crypto.createHash("sha256").update(bytes).digest("hex").slice(0, 16)).toBe(hash);
+    }
+  });
+
+  it("says trucks, of, and no THC in Spanish", () => {
+    for (const [key, es] of [
+      ["trucks", "camiones"],
+      ["of", "de"],
+      ["no THC", "sin THC"],
+      ["flavor", "sabor"],
+      ["flavors", "sabores"],
+    ] as const) {
+      expect(DICT[key]?.en).toBe(key);
+      expect(DICT[key]?.es).toBe(es);
+    }
+    const es = fgInventorySection(
+      buildFgInventory(
+        [listing({ qtyGrams: LB, thcPct: null })],
+        [trimLb(40000)]
+      ),
+      "es"
+    );
+    expect(sliceCat(es, "tri")).toContain("de 40,000 lb");
+    expect(sliceCat(es, "tri")).toContain(">5 camiones<");
+    expect(sliceCat(es, "bud")).toContain(">sin THC<");
+    expect(sliceCat(es, "bud")).toContain('data-fg-seg="no THC"');
   });
 });
