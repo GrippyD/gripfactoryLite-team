@@ -77,7 +77,7 @@ WHERE deleted_at IS NULL
  * Shake/Trim prefixes that are not finished goods: biomass (BIO, Biomass) and
  * the FG_NOT_FINISHED prefixes. They stay out of TRI and SHA entirely.
  */
-export const FG_METRC_NOT_FINISHED = ["BIO", ...FG_NOT_FINISHED.map((code) => code.toUpperCase())] as const;
+export const FG_METRC_NOT_FINISHED = FG_NOT_FINISHED.filter((code) => code !== "Biomass").map((code) => code.toUpperCase());
 const FG_METRC_NOT_FINISHED_SQL = FG_METRC_NOT_FINISHED.map((code) => `'${code}'`).join(", ");
 
 /**
@@ -227,10 +227,10 @@ export type FgInventoryModel = {
 };
 
 const CAT_ORDER: Array<{ key: FgCatKey; label: string; unit: FgUnit }> = [
-  { key: "bud", label: "BUD", unit: "lb" },
-  { key: "tri", label: "TRI", unit: "lb" },
-  { key: "sha", label: "SHA", unit: "lb" },
-  { key: "pre", label: "PRE", unit: "lb" },
+  { key: "bud", label: "Bud", unit: "lb" },
+  { key: "tri", label: "Trim/Bio", unit: "lb" },
+  { key: "sha", label: "Shake", unit: "lb" },
+  { key: "pre", label: "Ounces", unit: "lb" },
   { key: "distillate", label: "Distillate", unit: "L" },
   { key: "isolate", label: "Isolate", unit: "g" },
   { key: "infused", label: "Infused Bud", unit: "g" },
@@ -789,11 +789,6 @@ export function fgInventorySection(model: FgInventoryModel, locale: Locale = "en
   const headKeys = new Set<FgCatKey>(["bud", "tri", "sha"]);
   const head = model.categories.filter((cat) => headKeys.has(cat.key)).map(block).join("");
   const tail = model.categories.filter((cat) => !headKeys.has(cat.key)).map(block).join("");
-  const metrcWhen = fgMountedLabel(model.metrcMountedAt);
-  const metrcSentence = t(locale, "From METRC, live Shake/Trim packages, as of the last mirror mount");
-  const metrc = `<p class="muted hc-note hc-fg" data-fg-metrc${metrcWhen ? ` data-fg-metrc-as-of="${esc(metrcWhen)}"` : ""}>${esc(
-    metrcWhen ? `${metrcSentence} ${metrcWhen}` : metrcSentence
-  )}</p>`;
   const otherN = model.metrcOtherUnits ?? 0;
   const other =
     otherN > 0
@@ -807,7 +802,6 @@ export function fgInventorySection(model: FgInventoryModel, locale: Locale = "en
   return `<details class="hc-section" data-hc-section="fg_inventory">
       <summary>${esc(t(locale, "FG inventory"))}${asOf}</summary>
       ${head}
-      ${metrc}
       ${tail}
       ${hidden}
       ${other}

@@ -554,6 +554,7 @@ describe("FG1 finished goods on the Harvest Console", () => {
     expect(fgMountedLabel(model.metrcMountedAt)).toBe("2026-10-13 07:32");
     const html = fgInventorySection(model);
     expect(html).toContain('data-fg-cat="tri"');
+    for (const label of ["Bud", "Trim/Bio", "Shake", "Ounces"]) expect(html).toContain(`>${label}<`);
     expect(html).toContain('data-fg-cat="sha"');
     expect(html).toContain('data-fg-cat="pre" data-fg-total="0.00"');
     expect(html).toContain('data-fg-strain="Named Gelato"');
@@ -562,16 +563,17 @@ describe("FG1 finished goods on the Harvest Console", () => {
     expect(html).not.toContain("Zero Strain");
     expect(html).not.toContain("Buds Strain");
     expect(html).not.toContain("Ignored");
-    expect(html).not.toContain("Biomass");
+    expect(strain(model, "tri", "Biomass").amount).toBeCloseTo(9150 / LB);
+    expect(strain(model, "tri", "S").amount).toBeCloseTo(8000 / LB);
     expect(html).not.toContain("Not Finished");
-    expect(html.indexOf('data-fg-cat="sha"')).toBeLessThan(html.indexOf("data-fg-metrc"));
-    expect(html.indexOf("data-fg-metrc")).toBeLessThan(html.indexOf('data-fg-cat="pre"'));
-    expect(html).toContain('data-fg-metrc-as-of="2026-10-13 07:32"');
-    expect(html).toContain("From METRC, live Shake/Trim packages, as of the last mirror mount 2026-10-13 07:32");
+    expect(html).not.toContain("data-fg-metrc");
+    expect(html).not.toContain("From METRC, live Shake/Trim packages");
     expect(html).toContain('data-fg-other-units="1"');
     expect(html).toContain("1 METRC packages in other units not shown");
     const es = fgInventorySection(model, "es");
-    expect(es).toContain("Desde METRC, paquetes vivos de Shake/Trim, segun el ultimo montaje del espejo");
+    expect(es).not.toContain("Desde METRC");
+    expect(es).toContain("Onzas");
+    expect(es).toContain("Cogollo");
     expect(es).toContain("1 paquetes de METRC en otras unidades no mostrados");
     const keys = ["From METRC, live Shake/Trim packages, as of the last mirror mount", "{n} METRC packages in other units not shown"];
     for (const key of keys) {
