@@ -6,14 +6,16 @@
  * lots of the year (status not weighing, tests out). Plants remaining are
  * live METRC plants. Field estimates are dry pounds per plant.
  */
-import { format2, GRAMS_PER_LB, inheritMarketStrain, round2 } from "./config";
+import { weightedBtrToDate, TRIM_SEASON_SQL, type TrimSeasonRow } from "./console";
+import { CONFIG_KEYS, format2, GRAMS_PER_LB, inheritMarketStrain, parseBtrTypeCodes, round2 } from "./config";
+import { getConfigValue } from "./db";
 import { estimatesAsOf } from "./fieldestimates";
 import { ownLotSql } from "./toll";
 import { t, tFill, type Locale } from "./i18n";
 import { esc } from "./ui";
 
 /** The year's finished lots. One read, then the grain is pooled in code. */
-export const STRAIN_PERFORMANCE_LOTS_SQL = `SELECT b.farm_code AS farm,
+export const STRAIN_PERFORMANCE_LOTS_SQL = `SELECT w.id AS lot_id, b.farm_code AS farm,
        COALESCE(s.name, '') AS strain_name,
        COALESCE(b.market_strain, '') AS market_strain,
        w.weight_grams AS wet_grams,
@@ -50,6 +52,8 @@ export type ForecastSource = "strain_farm" | "strain" | "season" | "none";
 
 /** A finished lot of the harvest year, already past weighing, not a test. */
 export type StrainPerformanceLot = {
+  /** The wet weight entry. Trim packages join on this. */
+  id: string;
   farm: string;
   /** The real strain name. */
   strain: string;
@@ -95,6 +99,8 @@ export type StrainPerformanceRow = {
   harvestedDryLb: number;
   /** Blank when no unloaded lot carries a plant count. Two decimals otherwise. */
   dryLbPerPlant: string;
+  /** Blank when the row's lots have no live trim package. One decimal and a percent sign otherwise. */
+  btr: string;
   plantsRemaining: number;
   /** Blank when no estimate is in force. Two decimals otherwise. */
   estimatePerPlant: string;
@@ -196,11 +202,23 @@ type Acc = {
  * pounds over those plants. A lot unloaded with dry weight and no count stays
  * in Dry lb and out of the per-plant figure.
  */
+function btrLabel(rows: readonly TrimSeasonRow[], year: number, budCodes?: readonly string[]): string {
+  const result = weightedBtrToDate(rows, year, budCodes);
+  if (result.btr == null) return "";
+  return `${(result.btr * 100).toFixed(1)}%`;
+}
+
 export function buildStrainPerformance(input: {
   lots: readonly StrainPerformanceLot[];
   plants: readonly StrainPerformancePlants[];
   estimates: readonly StrainPerformanceEstimate[];
   day: string;
+  /** The console's harvest year. Trim rows from another year stay out. */
+  year?: number;
+  /** TRIM_SEASON_SQL rows. The Total pools all of them. A row pools its own lots. */
+  trim?: readonly TrimSeasonRow[];
+  /** parseBtrTypeCodes output. Blank uses that function's default inside weightedBtrToDate. */
+  budCodes?: readonly string[];
 }): StrainPerformanceModel {
   const rows = new Map<string, Acc>();
   const touch = (name: string, farm: string, fromLot: boolean): Acc => {
@@ -239,6 +257,8 @@ export function buildStrainPerformance(input: {
     row.plants += group.plants;
   }
 
+  const year = input.year ?? input.trim?.find((row) => Number.isFinite(Number(row.harvest_year)))?.harvest_year ?? 0;
+  const trimRows = input.trim ?? [];
   let perPlantDry = 0;
   let perPlantCount = 0;
   for (const lot of input.lots) {
@@ -291,6 +311,8 @@ export function buildStrainPerformance(input: {
       }
       const estimate = estimateInForce(input.estimates, row.strain, row.farm, input.day);
       const estimateMissing = row.plants > 0 && estimate == null;
+      const lotIds = new Set(row.lots.map((lot) => lot.id).filter((id) => id));
+      const mine = trimRows.filter((pkg) => lotIds.has(pkg.lot_id));
       const dryLb = wholePoundsFromGrams(dryGrams);
       const forecastLb = forecastGrams == null ? null : wholePoundsFromGrams(forecastGrams);
       const harvestedDryLb = dryLb + (forecastLb ?? 0);
@@ -308,6 +330,7 @@ export function buildStrainPerformance(input: {
         forecastSource: source,
         harvestedDryLb,
         dryLbPerPlant: countedPlants > 0 ? format2(round2(countedDry / GRAMS_PER_LB / countedPlants)) : "",
+        btr: btrLabel(mine, year, input.budCodes),
         plantsRemaining: row.plants,
         estimatePerPlant: estimate ? format2(round2(estimate.dryLbPerPlant)) : "",
         estimateDate: estimate?.effectiveDate ?? "",
@@ -338,6 +361,7 @@ export function buildStrainPerformance(input: {
       forecastSource: "none",
       harvestedDryLb,
       dryLbPerPlant: perPlantCount > 0 ? format2(round2(perPlantDry / GRAMS_PER_LB / perPlantCount)) : "",
+      btr: btrLabel(trimRows, year, input.budCodes),
       plantsRemaining: sum((row) => row.plantsRemaining),
       estimatePerPlant: "",
       estimateDate: "",
@@ -365,6 +389,7 @@ function missingLineKey(strains: number, plants: number): string {
 }
 
 type LotSql = {
+  lot_id: string | null;
   farm: string | null;
   strain_name: string | null;
   market_strain: string | null;
@@ -381,19 +406,61 @@ type PlantSql = {
   plants: number | null;
 };
 
-/** The section's reads: the year's lots, one grouped plant count, the estimates in force, the strain names. */
-export async function loadStrainPerformance(db: D1Database, year: number, day: string): Promise<StrainPerformanceModel> {
-  const [lotRows, plantRows, estimates, strainRows] = await Promise.all([
+type SeasonSql = {
+  lot_id: string;
+  harvest_year: number;
+  type_code: string | null;
+  weight_grams: number;
+};
+
+function seasonRowsOf(rows: readonly SeasonSql[]): TrimSeasonRow[] {
+  return rows.map((row) => ({
+    lot_id: String(row.lot_id ?? ""),
+    harvest_year: Number(row.harvest_year),
+    type_code: row.type_code,
+    weight_grams: Number(row.weight_grams ?? 0),
+    source: null,
+    deleted: false,
+    lot_deleted: false,
+  }));
+}
+
+/**
+ * The section's reads: the year's lots, one grouped plant count, the estimates
+ * in force, the strain names. Trim packages are the console's TRIM_SEASON_SQL
+ * rows when the caller already loaded them, otherwise that same statement.
+ */
+export async function loadStrainPerformance(
+  db: D1Database,
+  year: number,
+  day: string,
+  trim?: { rows?: readonly TrimSeasonRow[]; budCodes?: readonly string[] }
+): Promise<StrainPerformanceModel> {
+  const [lotRows, plantRows, estimates, strainRows, season, budCodes] = await Promise.all([
     db.prepare(STRAIN_PERFORMANCE_LOTS_SQL).bind(year).all<LotSql>(),
     db.prepare(STRAIN_PERFORMANCE_PLANTS_SQL).all<PlantSql>(),
     estimatesAsOf(db, day),
     db.prepare(`SELECT id, name FROM strains`).all<{ id: string; name: string | null }>(),
+    trim?.rows
+      ? Promise.resolve(trim.rows)
+      : db
+          .prepare(TRIM_SEASON_SQL)
+          .bind(year)
+          .all<SeasonSql>()
+          .then((result) => seasonRowsOf(result.results ?? [])),
+    trim?.budCodes
+      ? Promise.resolve(trim.budCodes)
+      : getConfigValue(db, CONFIG_KEYS.btr_type_codes).then((raw) => parseBtrTypeCodes(raw)),
   ]);
   const strainName = new Map<string, string>();
   for (const row of strainRows.results ?? []) strainName.set(String(row.id), String(row.name ?? "").trim());
   return buildStrainPerformance({
     day,
+    year,
+    trim: season,
+    budCodes,
     lots: (lotRows.results ?? []).map((row) => ({
+      id: String(row.lot_id ?? ""),
       farm: String(row.farm ?? ""),
       strain: String(row.strain_name ?? ""),
       marketStrain: String(row.market_strain ?? ""),
@@ -428,6 +495,7 @@ function cells(row: StrainPerformanceRow, locale: Locale): string {
     ["forecast", row.forecastLb == null ? "" : formatWhole(row.forecastLb)],
     ["harvested_dry", formatWhole(row.harvestedDryLb)],
     ["dry_per_plant", row.dryLbPerPlant],
+    ["btr", row.btr],
     ["plants_remaining", formatWhole(row.plantsRemaining)],
     ["estimate", estimate],
     ["estimate_date", row.estimateDate],
@@ -442,7 +510,7 @@ export function strainPerformanceSection(model: StrainPerformanceModel, year: nu
   const head = `<tr>
         <th rowspan="2">${esc(t(locale, "Strain"))}</th>
         <th rowspan="2">${esc(t(locale, "Farm"))}</th>
-        <th colspan="7">${esc(t(locale, "Harvested"))}</th>
+        <th colspan="8">${esc(t(locale, "Harvested"))}</th>
         <th colspan="4">${esc(t(locale, "Unharvested"))}</th>
         <th rowspan="2">${esc(t(locale, "Season dry lb"))}</th>
       </tr>
@@ -454,6 +522,7 @@ export function strainPerformanceSection(model: StrainPerformanceModel, year: nu
         <th>${esc(t(locale, "Drying lb forecast"))}</th>
         <th>${esc(t(locale, "Harvested dry lb"))}</th>
         <th>${esc(t(locale, "Dry lb per plant"))}</th>
+        <th>${esc(t(locale, "BTR"))}</th>
         <th>${esc(t(locale, "Plants remaining"))}</th>
         <th>${esc(t(locale, "Est. dry lb per plant"))}</th>
         <th>${esc(t(locale, "Est. date"))}</th>
@@ -461,7 +530,7 @@ export function strainPerformanceSection(model: StrainPerformanceModel, year: nu
       </tr>`;
   const body =
     model.rows.length === 0
-      ? `<tr data-sp-empty="1"><td colspan="14">${esc(t(locale, "No strains this harvest year."))}</td></tr>`
+      ? `<tr data-sp-empty="1"><td colspan="15">${esc(t(locale, "No strains this harvest year."))}</td></tr>`
       : model.rows
           .map((row) => {
             const strain = row.total ? t(locale, "Total") : row.strain;

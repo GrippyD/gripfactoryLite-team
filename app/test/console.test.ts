@@ -206,8 +206,15 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(html).not.toContain("Stub: this section waits on the owner's definition.");
     expect(html).toContain('gf_hc_fold');
     expect(html).not.toContain('data-hc-section="drying" open');
-    const order = ["plants", "strain_performance", "drying", "trimming", "pasteurization", "testing", "prepack"].map((k) => html.indexOf(`data-hc-section="${k}"`));
+    expect(html).toContain('<details class="hc-section" data-hc-section="fg_inventory">');
+    expect(html).toContain("<summary>FG inventory");
+    expect(html).not.toContain('data-hc-section="fg_inventory" open');
+    const order = ["plants", "strain_performance", "drying", "trimming", "pasteurization", "testing", "prepack", "fulfillment", "fg_inventory"].map((k) => html.indexOf(`data-hc-section="${k}"`));
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+    const fulfillmentAt = html.indexOf('data-hc-section="fulfillment"');
+    const fgAt = html.indexOf('data-hc-section="fg_inventory"');
+    expect(fgAt).toBeGreaterThan(fulfillmentAt);
+    expect(html.indexOf('data-hc-section="', fgAt + 24)).toBe(-1);
     // THE DRYING TOTALS (canon 0.30.183): none handed, none drawn.
     expect(html).not.toContain("data-hc-drying-totals");
   });
@@ -1466,12 +1473,14 @@ describe("THE TRIMMING SECTION (canon 0.30.88)", () => {
     expect(withHours).not.toContain("type the hours");
   });
 
-  it("the Fulfillment section follows Prepack and is the last section", () => {
+  it("the Fulfillment section follows Prepack, and FG inventory follows it and is the last section", () => {
     const html = harvestConsolePage({ input, live, nowIso: "2026-09-22T16:00:00.000Z" });
     expect(html.indexOf('data-hc-section="prepack"')).toBeLessThan(html.indexOf('data-hc-section="fulfillment"'));
-    const rest = html.slice(html.indexOf('data-hc-section="fulfillment"') + 'data-hc-section="fulfillment"'.length);
+    expect(html.indexOf('data-hc-section="fulfillment"')).toBeLessThan(html.indexOf('data-hc-section="fg_inventory"'));
+    const rest = html.slice(html.indexOf('data-hc-section="fg_inventory"') + 'data-hc-section="fg_inventory"'.length);
     expect(rest).not.toContain("data-hc-section=");
     expect(html).toContain('data-hc-section="fulfillment" open');
+    expect(html).not.toContain('data-hc-section="fg_inventory" open');
     expect(html).toContain("No figures typed for this day.");
   });
 });

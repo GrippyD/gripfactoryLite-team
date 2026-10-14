@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { GRAMS_PER_LB } from "../src/config";
+import { weightedBtrToDate, TRIM_SEASON_SQL, type TrimSeasonRow } from "../src/console";
+import { GRAMS_PER_LB, parseBtrTypeCodes } from "../src/config";
 import { DICT, t } from "../src/i18n";
 import {
   STRAIN_PERFORMANCE_LOTS_SQL,
@@ -21,6 +22,7 @@ import { migratedDb } from "./migrated";
 const LB = GRAMS_PER_LB;
 
 const lot = (over: Partial<StrainPerformanceLot> = {}): StrainPerformanceLot => ({
+  id: "",
   farm: "PNN",
   strain: "Gelato",
   marketStrain: "",
@@ -321,6 +323,10 @@ describe("SP1 strain performance", () => {
     expect(STRAIN_PERFORMANCE_PLANTS_SQL.includes("?")).toBe(false);
     expect(STRAIN_PERFORMANCE_LOTS_SQL.includes("sensor_readings")).toBe(false);
     expect(STRAIN_PERFORMANCE_PLANTS_SQL.includes("sensor_readings")).toBe(false);
+    expect(STRAIN_PERFORMANCE_LOTS_SQL).toContain("w.id AS lot_id");
+    expect(TRIM_SEASON_SQL).toContain("p.source IS NULL");
+    expect(TRIM_SEASON_SQL).toContain("COALESCE(b.is_test, 0) = 0");
+    expect(TRIM_SEASON_SQL).toContain("b.customer IS NULL");
   });
 
   it("loads the grain from the tables: market name, dry rows, live plants, and the estimate in force", async () => {
@@ -448,5 +454,198 @@ describe("SP1 strain performance", () => {
     expect(model.rows.at(-1)?.remainingLb).toBe(16);
     expect(model.rows.at(-1)?.seasonLb).toBe(176);
     expect(model.rows.map((item) => item.strain)).toEqual(["Grip Cake", "Lemon", "Rows Only", "Total"]);
+  });
+
+  it("puts BTR after Dry lb per plant and pools the console's weighted BTR", () => {
+    const pack = (over: Partial<TrimSeasonRow> = {}): TrimSeasonRow => ({
+      lot_id: "w1",
+      harvest_year: 2026,
+      type_code: "BUD",
+      weight_grams: 0,
+      source: null,
+      deleted: false,
+      lot_deleted: false,
+      ...over,
+    });
+    const packages: TrimSeasonRow[] = [
+      pack({ lot_id: "w1", type_code: "BUD", weight_grams: 300 }),
+      pack({ lot_id: "w1", type_code: "TRIM", weight_grams: 100 }),
+      pack({ lot_id: "w3", type_code: "TRIM", weight_grams: 100 }),
+      pack({ lot_id: "open", type_code: "BUD", weight_grams: 100 }),
+      pack({ lot_id: "w1", type_code: "BUD", weight_grams: 900, source: "cryo" }),
+      pack({ lot_id: "w1", type_code: "BUD", weight_grams: 900, deleted: true }),
+      pack({ lot_id: "w1", type_code: "BUD", weight_grams: 900, harvest_year: 2025 }),
+    ];
+    const model = buildStrainPerformance({
+      day: DAY,
+      year: 2026,
+      lots: [
+        lot({ id: "w1", strain: "Gelato", farm: "PNN" }),
+        lot({ id: "w3", strain: "Only Trim", farm: "PNN" }),
+        lot({ id: "bare", strain: "Bare", farm: "PNS" }),
+      ],
+      plants: [],
+      estimates: [],
+      trim: packages,
+      budCodes: parseBtrTypeCodes(null),
+    });
+    expect(row(model, "Gelato", "PNN").btr).toBe("75.0%");
+    expect(row(model, "Only Trim", "PNN").btr).toBe("0.0%");
+    expect(row(model, "Bare", "PNS").btr).toBe("");
+    const toDate = weightedBtrToDate(packages, 2026, parseBtrTypeCodes(null));
+    expect(model.rows.at(-1)?.btr).toBe(`${((toDate.btr ?? 0) * 100).toFixed(1)}%`);
+    expect(model.rows.at(-1)?.btr).toBe("66.7%");
+
+    const pooled = buildStrainPerformance({
+      day: DAY,
+      year: 2026,
+      lots: [lot({ id: "a" }), lot({ id: "b" })],
+      plants: [],
+      estimates: [],
+      trim: [
+        pack({ lot_id: "a", type_code: "BUD", weight_grams: 100 }),
+        pack({ lot_id: "b", type_code: "TRIM", weight_grams: 300 }),
+      ],
+      budCodes: parseBtrTypeCodes(null),
+    });
+    expect(row(pooled, "Gelato", "PNN").btr).toBe("25.0%");
+
+    const codes = parseBtrTypeCodes("TRIM");
+    expect(codes).toEqual(["TRIM"]);
+    const narrowed = buildStrainPerformance({
+      day: DAY,
+      year: 2026,
+      lots: [
+        lot({ id: "w1", strain: "Gelato", farm: "PNN" }),
+        lot({ id: "w3", strain: "Only Trim", farm: "PNN" }),
+        lot({ id: "bare", strain: "Bare", farm: "PNS" }),
+      ],
+      plants: [],
+      estimates: [],
+      trim: packages,
+      budCodes: codes,
+    });
+    expect(row(narrowed, "Gelato", "PNN").btr).toBe("25.0%");
+    expect(row(narrowed, "Only Trim", "PNN").btr).toBe("100.0%");
+    expect(row(narrowed, "Bare", "PNS").btr).toBe("");
+    const narrowDate = weightedBtrToDate(packages, 2026, codes);
+    expect(narrowed.rows.at(-1)?.btr).toBe(`${((narrowDate.btr ?? 0) * 100).toFixed(1)}%`);
+
+    const html = strainPerformanceSection(model, 2026, "en");
+    const head = html.slice(html.indexOf("<thead>"), html.indexOf("</thead>"));
+    expect(head.indexOf("Dry lb per plant")).toBeLessThan(head.indexOf(">BTR<"));
+    expect(head.indexOf(">BTR<")).toBeLessThan(head.indexOf("Plants remaining"));
+    expect(head).toContain('colspan="8"');
+    const gelato = html.slice(html.indexOf('data-sp-strain="Gelato"'));
+    expect(gelato.indexOf('data-sp="dry_per_plant"')).toBeLessThan(gelato.indexOf('data-sp="btr">75.0%'));
+    expect(gelato.indexOf('data-sp="btr">75.0%')).toBeLessThan(gelato.indexOf('data-sp="plants_remaining"'));
+    expect(html).toContain('data-sp-strain="Bare" data-sp-farm="PNS"');
+    expect(html.slice(html.indexOf('data-sp-strain="Bare"'))).toContain('data-sp="btr"></td>');
+    const es = strainPerformanceSection(model, 2026, "es");
+    expect(es).toContain(">BTR<");
+    expect(DICT.BTR.en).toBe("BTR");
+    expect(DICT.BTR.es).toBe("BTR");
+  });
+
+  it("keeps toll lots and test lots out of the season BTR", async () => {
+    const m = await migratedDb();
+    const ts = "2026-10-01T00:00:00.000Z";
+    const strain = (id: string, name: string, code: string) =>
+      m.run(`INSERT INTO strains (id, name, hbn_code, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`, id, name, code, ts, ts);
+    strain("s-btr", "Btr Gelato", "BT1");
+    strain("s-bare", "Btr Bare", "BT2");
+    strain("s-toll", "Toll Only", "BT3");
+    strain("s-test", "Test Only", "BT4");
+    const batch = (id: string, serial: number, strainId: string, extra: Record<string, string | number> = {}) => {
+      const cols = {
+        id,
+        entry_date: "2026-09-01",
+        farm_code: "PNN",
+        grow_method_code: "OD",
+        strain_id: strainId,
+        manicure: 0,
+        hbn: `HBN-${id}`,
+        lot_serial: serial,
+        harvest_year: 2026,
+        status: "open",
+        market_strain: "",
+        created_at: ts,
+        updated_at: ts,
+        ...extra,
+      };
+      m.run(`INSERT INTO harvest_batches (${Object.keys(cols).join(", ")}) VALUES (${Object.keys(cols).map(() => "?").join(", ")})`, ...Object.values(cols));
+    };
+    const entry = (id: string, batchId: string, extra: Record<string, string | number | null> = {}) => {
+      const cols = { id, harvest_batch_id: batchId, weight_grams: 10 * LB, actual_dryspc: "silo", status: "unloaded", created_at: ts, updated_at: ts, ...extra };
+      m.run(`INSERT INTO wet_weight_entries (${Object.keys(cols).join(", ")}) VALUES (${Object.keys(cols).map(() => "?").join(", ")})`, ...Object.values(cols));
+    };
+    const finish = (id: string, lotId: string) =>
+      m.run(
+        `INSERT INTO unload_sessions (id, wet_weight_entry_id, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+        id,
+        lotId,
+        ts,
+        ts,
+        ts
+      );
+    const pack = (id: string, lotId: string, type: string, grams: number, source: string | null, deleted: string | null) =>
+      m.run(
+        `INSERT INTO wip_packages (id, wet_weight_entry_id, package_code, package_type_code, weight_grams, status, source, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, 'created', ?, ?, ?, ?)`,
+        id,
+        lotId,
+        id,
+        type,
+        grams,
+        source,
+        ts,
+        ts,
+        deleted
+      );
+    batch("bb-own", 7701, "s-btr");
+    entry("bw-own", "bb-own", { dry_weight_grams: 5 * LB, plant_count: 4, status: "unloaded" });
+    finish("bu-own", "bw-own");
+    pack("bp-bud", "bw-own", "BUD", 300, null, null);
+    pack("bp-trim", "bw-own", "TRIM", 100, null, null);
+    pack("bp-cryo", "bw-own", "BUD", 900, "cryo", null);
+    pack("bp-dead", "bw-own", "BUD", 900, null, ts);
+    batch("bb-bare", 7702, "s-bare");
+    entry("bw-bare", "bb-bare");
+    finish("bu-bare", "bw-bare");
+    batch("bb-toll", 7703, "s-toll", { customer: "Other Co" });
+    entry("bw-toll", "bb-toll");
+    finish("bu-toll", "bw-toll");
+    pack("bp-toll", "bw-toll", "BUD", 1000, null, null);
+    batch("bb-test", 7704, "s-test", { is_test: 1 });
+    entry("bw-test", "bb-test");
+    finish("bu-test", "bw-test");
+    pack("bp-test", "bw-test", "BUD", 1000, null, null);
+    batch("bb-open", 7705, "s-btr");
+    entry("bw-open", "bb-open", { status: "weighing" });
+    pack("bp-open", "bw-open", "BUD", 100, null, null);
+
+    const model = await loadStrainPerformance(m.db, 2026, DAY);
+    expect(row(model, "Btr Gelato", "PNN").btr).toBe("75.0%");
+    expect(row(model, "Btr Bare", "PNN").btr).toBe("");
+    expect(model.rows.map((item) => item.strain)).not.toContain("Toll Only");
+    expect(model.rows.map((item) => item.strain)).not.toContain("Test Only");
+    const season = await m.db.prepare(TRIM_SEASON_SQL).bind(2026).all<{ lot_id: string; harvest_year: number; type_code: string | null; weight_grams: number }>();
+    const seasonRows: TrimSeasonRow[] = (season.results ?? []).map((item) => ({
+      lot_id: String(item.lot_id),
+      harvest_year: Number(item.harvest_year),
+      type_code: item.type_code,
+      weight_grams: Number(item.weight_grams ?? 0),
+      source: null,
+      deleted: false,
+      lot_deleted: false,
+    }));
+    const toDate = weightedBtrToDate(seasonRows, 2026, parseBtrTypeCodes(null));
+    expect(model.rows.at(-1)?.btr).toBe(`${((toDate.btr ?? 0) * 100).toFixed(1)}%`);
+    expect(model.rows.at(-1)?.btr).toBe("80.0%");
+    expect(seasonRows.map((item) => item.lot_id).sort()).toEqual(["bw-open", "bw-own", "bw-own"]);
+
+    m.run(`UPDATE app_config SET value = 'TRIM', updated_at = ? WHERE key = 'btr_type_codes'`, ts);
+    const narrowed = await loadStrainPerformance(m.db, 2026, DAY);
+    expect(row(narrowed, "Btr Gelato", "PNN").btr).toBe("25.0%");
+    expect(narrowed.rows.at(-1)?.btr).toBe("20.0%");
   });
 });
