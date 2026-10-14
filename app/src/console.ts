@@ -175,6 +175,7 @@ import { getConfigValue, insertLog, TRIM_SCHEDULED_SQL } from "./db";
 import { ownLotSql } from "./toll";
 import { formatClock, siloStrip, type DryingStripFigures } from "./drying";
 import { fulfillmentSection, emptyFulfillment, type FulfillmentDay } from "./fulfillmentboard";
+import { emptyFgInventory, fgInventorySection, type FgInventoryModel } from "./fginventory";
 import { emptyStrainPerformance, strainPerformanceSection, type StrainPerformanceModel } from "./strainperformance";
 import { dayBefore, etClockMinutes, etDate, etDayBounds, FARM_DAY_START_HOUR_DEFAULT, FARM_TIME_ZONE, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHour } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
@@ -1102,6 +1103,8 @@ export type HarvestConsolePageInput = {
   prepack?: PrepackConsole;
   /** FULFILLMENT (canon 0.30.306). Omitted reads as a day with no cells. */
   fulfillment?: FulfillmentDay;
+  /** FG1: finished goods after Fulfillment. Omitted draws the section empty. */
+  fgInventory?: FgInventoryModel;
   /** SP1: harvested lots married to plants still in the ground. Omitted draws the section empty. */
   strainPerformance?: StrainPerformanceModel;
 };
@@ -2637,6 +2640,7 @@ export function harvestConsolePage(page: HarvestConsolePageInput): string {
     })}
     ${prepackSection(page.prepack ?? emptyPrepack(page.input.day), page.input, locale)}
     ${fulfillmentSection(page.fulfillment ?? emptyFulfillment(), locale)}
+    ${fgInventorySection(page.fgInventory ?? emptyFgInventory(), locale)}
     ${hoursScript()}${foldScript()}`;
 }
 
@@ -2665,7 +2669,7 @@ const YIELD_PACKAGES_SQL = `SELECT p.wet_weight_entry_id AS lot_id, p.package_ty
  * source null, not deleted, the lot and its batch live, the batch's harvest year
  * the farm day's year. A package still being weighed on an open lot is in.
  * Grouped by lot and type. The season BTR the farms borrow stays on YIELD_PACKAGES_SQL. */
-const TRIM_SEASON_SQL = `SELECT p.wet_weight_entry_id AS lot_id, b.harvest_year AS harvest_year,
+export const TRIM_SEASON_SQL = `SELECT p.wet_weight_entry_id AS lot_id, b.harvest_year AS harvest_year,
             p.package_type_code AS type_code, COALESCE(SUM(p.weight_grams), 0) AS weight_grams
      FROM wip_packages p
      JOIN wet_weight_entries w ON w.id = p.wet_weight_entry_id AND w.deleted_at IS NULL

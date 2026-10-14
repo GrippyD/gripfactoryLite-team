@@ -4324,6 +4324,22 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Pick a live strain.": { en: "Pick a live strain.", es: "Elija una variedad vigente." },
   "Pick a live farm.": { en: "Pick a live farm.", es: "Elija una granja vigente." },
   "That estimate is not on the list.": { en: "That estimate is not on the list.", es: "Esa estimacion no esta en la lista." },
+  // FG1: finished goods on the Harvest Console.
+  "FG inventory": { en: "FG inventory", es: "Inventario de producto terminado" },
+  "Not shown: {n} Zoho items": { en: "Not shown: {n} Zoho items", es: "No mostrados: {n} articulos de Zoho" },
+  "From METRC, live Shake/Trim packages, as of the last mirror mount": {
+    en: "From METRC, live Shake/Trim packages, as of the last mirror mount",
+    es: "Desde METRC, paquetes vivos de Shake/Trim, segun el ultimo montaje del espejo",
+  },
+  "{n} METRC packages in other units not shown": {
+    en: "{n} METRC packages in other units not shown",
+    es: "{n} paquetes de METRC en otras unidades no mostrados",
+  },
+  "no THC": { en: "no THC", es: "sin THC" },
+  "no size": { en: "no size", es: "sin tamano" },
+  "Distillate": { en: "Distillate", es: "Destilado" },
+  "Infused Bud": { en: "Infused Bud", es: "Cogollo infundido" },
+  "each": { en: "each", es: "cada" },
 };
 
 const FORMULA_ERRORS: Array<[string, string]> = [

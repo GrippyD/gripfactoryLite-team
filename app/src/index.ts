@@ -505,6 +505,7 @@ import { anyPlantCount, queueRowsToCsv, toCsv, wetWeightsCsv, wetWeightsCsvWithC
 import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePasteurizationHours, savePrepackHours, saveTrimHours, sheetInSeason } from "./console";
 import { loadStrainPerformance } from "./strainperformance";
 import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
+import { loadFgInventory } from "./fginventory";
 import { terpRecipesPage } from "./terps";
 import { easternStamp, fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
 import { metrcApiPage, runMetrcSweep, testMetrcConnection } from "./metrcapi";
@@ -1755,13 +1756,17 @@ app.get(HARVEST_PATH, async (c) => {
   // THE CONSOLE DAY: ?day=YYYY-MM-DD picks a day before today; a blank reads today.
   // THE TESTING GATE (canon 0.30.293): the four panes are live. The stats and the pie read the harvest year. ?thc= is ignored.
   const input = await loadHarvestConsole(c.env.DB, now, c.req.query("day") ?? null);
-  const [silos, cure, testing, prepack, fulfillment, strainPerformance] = await Promise.all([
+  const [silos, cure, testing, prepack, fulfillment, strainPerformance, fgInventory] = await Promise.all([
     loadSiloVisuals(c.env.DB),
     listCurePanes(c.env.DB, now, s.locale),
     loadTestingSection(c.env.DB, input.year),
     loadPrepackSection(c.env.DB, input.day),
     loadFulfillmentSection(c.env.DB, input.day),
-    loadStrainPerformance(c.env.DB, input.year, input.day),
+    loadStrainPerformance(c.env.DB, input.year, input.day, {
+      rows: input.trimSeason ?? [],
+      budCodes: input.btrTypeCodes,
+    }),
+    loadFgInventory(c.env.DB),
   ]);
   const checkedLive = await attachLoadChecks(c.env.DB, silos.live, now);
   const stripFigures = await stripFiguresFor(c.env.DB, cure, silos.dryYieldPct);
@@ -1789,6 +1794,7 @@ app.get(HARVEST_PATH, async (c) => {
       testing,
       prepack,
       fulfillment,
+      fgInventory,
       strainPerformance,
     })
   );

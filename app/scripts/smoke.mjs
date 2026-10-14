@@ -5690,9 +5690,14 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     const consolePage = await text("/harvest");
     assert(consolePage.res.status === 200, `harvest console expected 200 got ${consolePage.res.status}`);
     assert(consolePage.body.includes("<h1>Harvest Console</h1>"), "the console must carry its title");
-    for (const section of ["plants", "strain_performance", "drying", "trimming", "pasteurization", "testing"]) {
+    for (const section of ["plants", "strain_performance", "drying", "trimming", "pasteurization", "testing", "fg_inventory"]) {
       assert(consolePage.body.includes(`data-hc-section="${section}"`), `the console must carry the ${section} section`);
     }
+    assert(
+      consolePage.body.indexOf('data-hc-section="fulfillment"') < consolePage.body.indexOf('data-hc-section="fg_inventory"') &&
+        !consolePage.body.includes('data-hc-section="fg_inventory" open'),
+      "FG inventory sits after Fulfillment and starts closed"
+    );
     assert(
       consolePage.body.indexOf('data-hc-section="plants"') < consolePage.body.indexOf('data-hc-section="strain_performance"') &&
         consolePage.body.indexOf('data-hc-section="strain_performance"') < consolePage.body.indexOf('data-hc-section="drying"'),
@@ -10556,6 +10561,29 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
         ('sp1-cut', 'GR-C-001132', 'flowering', 'After Party', 1, 'smoke-sp1', '${seen}', '${seen}', NULL),
         ('sp1-gone', 'GR-C-001132', 'flowering', 'After Party', 0, 'smoke-sp1', '${seen}', '${seen}', '${seen}')`
     );
+    // SP2: BTR on the After Party row. 300 g BUD over 400 g is 75.0%. A toll lot and a test lot stay out.
+    const sp2At = "2026-10-13T12:00:00.000Z";
+    await localD1WhenFree(
+      `INSERT INTO harvest_batches (
+         id, entry_date, farm_code, grow_method_code, strain_id, manicure, hbn, lot_serial, harvest_year, status, market_strain, created_at, updated_at, customer, is_test
+       ) VALUES
+        ('sp2-own', '2026-09-01', 'PNN', 'OD', '98cf3164-344e-414a-9f1c-1526fde445ac', 0, 'SP2-OWN', 987651, ${seasonYear}, 'open', 'After Party', '${sp2At}', '${sp2At}', NULL, 0),
+        ('sp2-toll', '2026-09-01', 'PNN', 'OD', '98cf3164-344e-414a-9f1c-1526fde445ac', 0, 'SP2-TOLL', 987652, ${seasonYear}, 'open', 'After Party', '${sp2At}', '${sp2At}', 'Smoke Toll', 0),
+        ('sp2-test', '2026-09-01', 'PNN', 'OD', '98cf3164-344e-414a-9f1c-1526fde445ac', 0, 'SP2-TEST', 987653, ${seasonYear}, 'open', 'After Party', '${sp2At}', '${sp2At}', NULL, 1);
+      INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, created_at, updated_at) VALUES
+        ('sp2-w-own', 'sp2-own', 44800, 'silo', 'unloaded', '${sp2At}', '${sp2At}'),
+        ('sp2-w-toll', 'sp2-toll', 44800, 'silo', 'unloaded', '${sp2At}', '${sp2At}'),
+        ('sp2-w-test', 'sp2-test', 44800, 'silo', 'unloaded', '${sp2At}', '${sp2At}');
+      INSERT INTO unload_sessions (id, wet_weight_entry_id, finished_at, created_at, updated_at) VALUES
+        ('sp2-u-own', 'sp2-w-own', '${sp2At}', '${sp2At}', '${sp2At}'),
+        ('sp2-u-toll', 'sp2-w-toll', '${sp2At}', '${sp2At}', '${sp2At}'),
+        ('sp2-u-test', 'sp2-w-test', '${sp2At}', '${sp2At}', '${sp2At}');
+      INSERT INTO wip_packages (id, wet_weight_entry_id, package_code, package_type_code, weight_grams, status, source, created_at, updated_at) VALUES
+        ('sp2-bud', 'sp2-w-own', 'SP2BUD', 'BUD', 300, 'created', NULL, '${sp2At}', '${sp2At}'),
+        ('sp2-trim', 'sp2-w-own', 'SP2TRIM', 'TRIM', 100, 'created', NULL, '${sp2At}', '${sp2At}'),
+        ('sp2-toll', 'sp2-w-toll', 'SP2TOLL', 'BUD', 1000, 'created', NULL, '${sp2At}', '${sp2At}'),
+        ('sp2-test', 'sp2-w-test', 'SP2TEST', 'BUD', 1000, 'created', NULL, '${sp2At}', '${sp2At}');`
+    );
     const strainPage = await text("/harvest");
     assert(strainPage.res.status === 200 && strainPage.body.includes('data-hc-section="strain_performance"'), `strain performance expected 200, got ${strainPage.res.status}`);
     const strainAt = strainPage.body.indexOf('data-sp-strain="After Party" data-sp-farm="PNN"');
@@ -10566,6 +10594,129 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     assert(plantsLeft === 4, `After Party plants remaining expected 4, got ${plantsLeft}`);
     assert(remainingLb === Math.round(plantsLeft * 2.5), `remaining dry lb expected plants times 2.5, got ${remainingLb} from ${plantsLeft}`);
     assert(strainRow.includes('data-sp="estimate">2.50<'), `the estimate cell expected 2.50, got ${strainRow.slice(0, 500)}`);
+    const strainSection = strainPage.body.slice(strainPage.body.indexOf('data-hc-section="strain_performance"'), strainPage.body.indexOf('data-hc-section="drying"'));
+    assert(
+      strainSection.indexOf("Dry lb per plant") < strainSection.indexOf(">BTR<") && strainSection.indexOf(">BTR<") < strainSection.indexOf("Plants remaining"),
+      "BTR must sit after Dry lb per plant in the harvested group"
+    );
+    assert(strainRow.includes('data-sp="btr">75.0%<'), `After Party BTR expected 75.0%, got ${strainRow.slice(0, 800)}`);
+    // FG1: seeded Zoho rows land in their categories. TRI and SHA are live Shake/Trim packages.
+    const fgAt = "2026-10-13T11:32:00.000Z";
+    await localD1WhenFree(
+      `INSERT INTO metrc_mounts (
+         id, kind, license_value, filename, file_format, rows_total, rows_added, rows_updated, rows_unchanged, rows_gone, summary, created_at, updated_at
+       ) VALUES (
+         'fg-mount', 'packages', 'AU-P-000694', 'packages.csv', 'csv', 2, 2, 0, 0, 0, 'smoke', '${fgAt}', '${fgAt}'
+       );
+      INSERT INTO metrc_packages (
+         tag, license_value, item, category, item_strain, quantity, uom, mount_id, first_seen_at, changed_at
+       ) VALUES
+        ('FGTRI', 'AU-P-000694', 'TRI - Skip - PNN', 'Shake/Trim', 'Fg1 Gelato', 896, 'g', 'fg-mount', '${fgAt}', '${fgAt}'),
+        ('FGSHA', 'AU-G-000111', 'SHA - Skip - PNN', 'Shake/Trim', 'Fg1 Lemon', 448, 'g', 'fg-mount', '${fgAt}', '${fgAt}');
+      INSERT INTO lab_compliance_samples (
+        id, program, license, market, source_metrc_tag, required_test, thc_potency_pct, status, notes, scheduled_at, finished_testing_on, source, created_at, updated_at, changed_at
+      ) VALUES (
+        'fg-new', 'compliance', 'AU-P-000694', 'AU', 'FGTRI', 'Potency', 25, 'passed', '', '${fgAt}', '2026-10-01T00:00:00.000Z', 'station', '${fgAt}', '${fgAt}', '${fgAt}'
+      );
+      INSERT INTO listings (
+        id, item_name, category, qty_grams, listed, source, market_uom, market_qty, each_grams, thc_pct, zoho_status, zoho_mounted_at, created_at, updated_at, deleted_at
+      ) VALUES
+        ('fg-bud', 'BUD - Gelato - PNN', 'Bulk Flower Outdoor', 4480, 1, 'zoho', 'lb', 10, NULL, 22.1, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-mix', 'MIX - Gelato - PNN', 'Bulk Flower Outdoor', 448, 1, 'zoho', 'lb', 1, NULL, 22.1, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-nug', 'NUG - Lemon - PNN', 'Bulk Flower Indoor', 224, 1, 'zoho', 'lb', 0.5, NULL, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-pre', 'PRE - Applescotti - PNN', 'Prepack Ounces', 0, 1, 'zoho', 'each', 16, NULL, 20.77, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-mob', 'MOB - Apple Jack - PNN', 'Max Out Bags', 0, 1, 'zoho', 'each', 32, NULL, 25.42, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-bow', 'Bow House Distillate - 83.625%', 'Concentrate', 0, 1, 'zoho', 'L', 94.6, NULL, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-mit1', 'Mitten DIstillate', 'Concentrate', 0, 1, 'zoho', 'L', 250.25, NULL, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-mit2', 'mitten distillate', 'Concentrate', 0, 1, 'zoho', 'L', 91.61, NULL, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-inf', 'GRIP THCA Infused Flower - Grape Ape -15g', 'Infused Flower', 150, 1, 'zoho', 'each', 10, 15, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-ipr', 'IPR - Orange Crush 1.2g', 'Infused Pre-Rolls', 0, 1, 'zoho', 'each', 9, NULL, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-v2', 'GRIP Vape - Berry Mojito - 2g', 'Vape/Cart', 40, 1, 'zoho', 'each', 20, 2, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-v1', 'GRIP Vape - Berry Mojito - 1g', 'Vape/Cart', 5, 1, 'zoho', 'each', 5, 1, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-wbp', 'WBP - Skip', 'Bulk', 100, 1, 'zoho', 'lb', 1, NULL, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-wipn', 'WIP - Skip', 'Bulk', 100, 1, 'zoho', 'lb', 1, NULL, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-wpr', 'WPR - Skip', 'Bulk', 100, 1, 'zoho', 'lb', 1, NULL, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-bio', 'Biomass - Skip', 'Biomass', 100, 1, 'zoho', 'lb', 1, NULL, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-ffz', 'FFZ - Skip', 'Fresh Frozen', 100, 1, 'zoho', 'lb', 1, NULL, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-odd', 'WIDGET - Thing', 'Other', 100, 1, 'zoho', 'lb', 1, NULL, NULL, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-off', 'BUD - Hidden - PNN', 'Bulk Flower Outdoor', 5000, 1, 'zoho', 'lb', 50, NULL, 1, 'Inactive', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-zero', 'BUD - Empty - PNN', 'Bulk Flower Outdoor', 0, 1, 'zoho', 'lb', 0, NULL, 1, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', NULL),
+        ('fg-dead', 'BUD - Dead - PNN', 'Bulk Flower Outdoor', 4000, 1, 'zoho', 'lb', 40, NULL, 1, 'Active', '${fgAt}', '${fgAt}', '${fgAt}', '${fgAt}');`
+    );
+    const fgPage = await text("/harvest");
+    assert(fgPage.res.status === 200, `GET /harvest with FG inventory expected 200 got ${fgPage.res.status}`);
+    const fgStart = fgPage.body.indexOf('data-hc-section="fg_inventory"');
+    assert(
+      fgPage.body.indexOf('data-hc-section="fulfillment"') < fgStart && !fgPage.body.includes('data-hc-section="fg_inventory" open'),
+      "FG inventory must follow Fulfillment and start closed"
+    );
+    const fg = fgPage.body.slice(fgStart, fgPage.body.indexOf("gf_hc_fold", fgStart));
+    const fgCat = (key) => {
+      const at = fg.indexOf(`data-fg-cat="${key}"`);
+      assert(at >= 0, `missing FG category ${key}`);
+      const next = fg.indexOf('data-fg-cat="', at + 20);
+      const end = next >= 0 ? next : fg.indexOf("data-fg-not-shown");
+      return fg.slice(at, end);
+    };
+    // The marketplace mount earlier in this run is still live, so the totals add it
+    // to the rows seeded here. The clock is the newest of those mounts.
+    const fgPick = (parts, type) => parts.find((part) => part.type === type)?.value ?? "0";
+    const fgAsOf = (iso) => {
+      const at = new Date(iso);
+      const dateParts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(at);
+      const clockParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", hour: "2-digit", minute: "2-digit" }).formatToParts(at);
+      const date = `${fgPick(dateParts, "year")}-${fgPick(dateParts, "month")}-${fgPick(dateParts, "day")}`;
+      let hour = Number(fgPick(clockParts, "hour"));
+      if (hour === 24) hour = 0;
+      const minute = Number(fgPick(clockParts, "minute"));
+      return `${date} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    };
+    const maxMount = localD1All("SELECT MAX(zoho_mounted_at) AS at FROM listings WHERE deleted_at IS NULL AND zoho_status = 'Active' AND ((market_qty IS NOT NULL AND market_qty > 0) OR (qty_grams IS NOT NULL AND qty_grams > 0))")[0].at;
+    assert(fg.includes(`data-fg-as-of="${fgAsOf(maxMount)}"`), `the section must name the Zoho mount time ${fgAsOf(maxMount)}, got ${fg.slice(fg.indexOf("data-fg-as-of"), fg.indexOf("data-fg-as-of") + 40)}`);
+    assert(fg.includes('data-fg-not-shown="6"') && fg.includes("Not shown: 6 Zoho items"), `not shown expected 6, got ${fg.slice(fg.indexOf("data-fg-not-shown"), fg.indexOf("data-fg-not-shown") + 80)}`);
+    const bud = fgCat("bud");
+    assert(bud.includes('data-fg-total="12.50"') && bud.includes('data-fg-strain="Gelato"') && bud.includes('data-fg-thc="22.10"') && bud.includes('data-fg-strain="Donny Burger"') && bud.includes('data-fg-strain="Lemon"') && bud.includes('data-fg-thc="none"'), "BUD must fold MIX and NUG, keep the mounted bud, and bucket THC");
+    const metrcMount = localD1All("SELECT MAX(created_at) AS at FROM metrc_mounts WHERE kind = 'packages' AND deleted_at IS NULL")[0].at;
+    assert(
+      fg.includes("From METRC, live Shake/Trim packages, as of the last mirror mount") && fg.includes(`data-fg-metrc-as-of="${fgAsOf(metrcMount)}"`),
+      `the TRI and SHA note must name the last packages mount ${fgAsOf(metrcMount)}`
+    );
+    assert(fg.indexOf('data-fg-cat="sha"') < fg.indexOf("data-fg-metrc") && fg.indexOf("data-fg-metrc") < fg.indexOf('data-fg-cat="pre"'), "the METRC note sits under TRI and SHA");
+    const shakeLive = localD1All("SELECT item, item_strain, quantity, uom FROM metrc_packages WHERE gone_at IS NULL AND category = 'Shake/Trim' AND quantity > 0");
+    const shakeGrams = (row) => {
+      const uom = String(row.uom || "").trim().toLowerCase();
+      const qty = Number(row.quantity);
+      if (uom === "g") return qty;
+      if (uom === "kg") return qty * 1000;
+      if (uom === "lb") return qty * 453.59237;
+      return null;
+    };
+    let triGrams = 0;
+    let shaGrams = 0;
+    for (const row of shakeLive) {
+      const grams = shakeGrams(row);
+      if (grams == null) continue;
+      const item = String(row.item || "");
+      const prefix = (item.includes(" - ") ? item.slice(0, item.indexOf(" - ")) : item).trim().toUpperCase();
+      if (prefix === "SHA") shaGrams += grams;
+      else triGrams += grams;
+    }
+    const shakeLb = (grams) => (Math.round((grams / 448) * 100) / 100).toFixed(2);
+    assert(
+      fgCat("tri").includes(`data-fg-total="${shakeLb(triGrams)}"`) && fgCat("tri").includes('data-fg-strain="Fg1 Gelato"') && fgCat("tri").includes('data-fg-thc="25.00"') && !fgCat("tri").includes('data-fg-strain="Fg1 Lemon"'),
+      "TRI is the live Shake/Trim package whose prefix is TRI, at its lab THC"
+    );
+    assert(
+      fgCat("sha").includes(`data-fg-total="${shakeLb(shaGrams)}"`) && fgCat("sha").includes('data-fg-strain="Fg1 Lemon"') && fgCat("sha").includes('data-fg-thc="none"') && !fgCat("sha").includes('data-fg-strain="Fg1 Gelato"'),
+      "SHA is the live Shake/Trim package whose prefix is SHA"
+    );
+    assert(fgCat("pre").includes('data-fg-total="11.00"') && fgCat("pre").includes('data-fg-strain="Applescotti"') && fgCat("pre").includes('data-fg-strain="Apple Jack"'), "PRE folds MOB at 70 g with the mounted max-out bags, and a PRE ounce is 28 g");
+    assert(fgCat("distillate").includes('data-fg-total="531.06"') && fgCat("distillate").includes('data-fg-maker="Bow House"') && fgCat("distillate").includes("189.20 L") && fgCat("distillate").includes('data-fg-maker="Mitten"') && fgCat("distillate").includes("341.86 L"), "distillate liters join the maker case blind, Zoho only");
+    assert(fgCat("infused").includes('data-fg-total="150"') && fgCat("infused").includes("Grape Ape"), "infused bud is grams by product");
+    assert(fgCat("preroll").includes('data-fg-total="9"') && fgCat("preroll").includes('data-fg-flavor="Orange Crush 1.2g"'), "prerolls are each by flavor");
+    const vapes = fgCat("vape");
+    assert(vapes.includes('data-fg-total="17,675"') && vapes.indexOf('data-fg-size="1g"') < vapes.indexOf('data-fg-size="2g"') && vapes.includes('data-fg-flavor="Berry Mojito"') && vapes.includes("17,670 each"), "vapes collapse into size and then flavor, with the mounted 2g cart");
+    assert(!fg.includes("Hidden") && !fg.includes(">Dead<") && !fg.includes("WIDGET"), "inactive, deleted and unknown rows stay out of the categories");
     process.stdout.write("SMOKE PASS\n");
   } finally {
     await stopWrangler(child);
