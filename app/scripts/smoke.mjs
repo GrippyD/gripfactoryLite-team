@@ -10712,6 +10712,7 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     );
     assert(fgCat("pre").includes('data-fg-total="11.00"') && fgCat("pre").includes('data-fg-strain="Applescotti"') && fgCat("pre").includes('data-fg-strain="Apple Jack"'), "PRE folds MOB at 70 g with the mounted max-out bags, and a PRE ounce is 28 g");
     assert(fgCat("distillate").includes('data-fg-total="531.06"') && fgCat("distillate").includes('data-fg-maker="Bow House"') && fgCat("distillate").includes("189.20 L") && fgCat("distillate").includes('data-fg-maker="Mitten"') && fgCat("distillate").includes("341.86 L"), "distillate liters join the maker case blind, Zoho only");
+    assert(fg.indexOf('data-fg-cat="distillate"') < fg.indexOf('data-fg-cat="isolate"') && fg.indexOf('data-fg-cat="isolate"') < fg.indexOf('data-fg-cat="infused"'), "Isolate sits between Distillate and Infused Bud");
     assert(fgCat("infused").includes('data-fg-total="150"') && fgCat("infused").includes("Grape Ape"), "infused bud is grams by product");
     assert(fgCat("preroll").includes('data-fg-total="9"') && fgCat("preroll").includes('data-fg-flavor="Orange Crush 1.2g"'), "prerolls are each by flavor");
     const vapes = fgCat("vape");

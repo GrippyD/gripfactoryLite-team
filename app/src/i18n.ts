@@ -4338,6 +4338,7 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "no THC": { en: "no THC", es: "sin THC" },
   "no size": { en: "no size", es: "sin tamano" },
   "Distillate": { en: "Distillate", es: "Destilado" },
+  "Isolate": { en: "Isolate", es: "Aislado" },
   "Infused Bud": { en: "Infused Bud", es: "Cogollo infundido" },
   "each": { en: "each", es: "cada" },
 };
