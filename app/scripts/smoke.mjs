@@ -10611,7 +10611,7 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
       INSERT INTO metrc_packages (
          tag, license_value, item, category, item_strain, quantity, uom, mount_id, first_seen_at, changed_at
        ) VALUES
-        ('FGTRI', 'AU-P-000694', 'TRI - Skip - PNN', 'Shake/Trim', 'Fg1 Gelato', 896, 'g', 'fg-mount', '${fgAt}', '${fgAt}'),
+        ('FGTRI', 'AU-P-000694', 'TRI - Skip - PNN', 'Shake/Trim', 'Fg1 Gelato', 23296000, 'g', 'fg-mount', '${fgAt}', '${fgAt}'),
         ('FGSHA', 'AU-G-000111', 'SHA - Skip - PNN', 'Shake/Trim', 'Fg1 Lemon', 448, 'g', 'fg-mount', '${fgAt}', '${fgAt}');
       INSERT INTO lab_compliance_samples (
         id, program, license, market, source_metrc_tag, required_test, thc_potency_pct, status, notes, scheduled_at, finished_testing_on, source, created_at, updated_at, changed_at
@@ -10701,10 +10701,30 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
       if (prefix === "SHA") shaGrams += grams;
       else triGrams += grams;
     }
-    const shakeLb = (grams) => (Math.round((grams / 448) * 100) / 100).toFixed(2);
+    const shakeLb = (grams) => {
+      const fixed = (Math.round((grams / 448) * 100) / 100).toFixed(2);
+      return fixed.replace(/\B(?=(\d{3})+\.)/g, ",");
+    };
     assert(
       fgCat("tri").includes(`data-fg-total="${shakeLb(triGrams)}"`) && fgCat("tri").includes('data-fg-strain="Fg1 Gelato"') && fgCat("tri").includes('data-fg-thc="25.00"') && !fgCat("tri").includes('data-fg-strain="Fg1 Lemon"'),
       "TRI is the live Shake/Trim package whose prefix is TRI, at its lab THC"
+    );
+    const fgBars = [...fg.matchAll(/data-fg-bar="([^"]+)"/g)].map((hit) => hit[1]);
+    for (const key of ["bud", "tri", "sha", "pre", "distillate", "isolate", "infused", "preroll", "vape"]) {
+      const icon = await text(`/icons/fg/fg-${key}.svg`);
+      assert(icon.res.status === 200 && (icon.res.headers.get("content-type") ?? "").includes("image/svg+xml") && icon.body.includes("<svg"), `FG icon ${key} expected 200 svg got ${icon.res.status}`);
+    }
+    const strayIcon = await text("/icons/fg/other.svg");
+    assert(strayIcon.res.status === 404, `an unlisted fg icon expected 404 got ${strayIcon.res.status}`);
+    const triLb = triGrams / 448;
+    const triTrucks = String(Math.round(triLb / 8000));
+    assert(
+      fgBars.join(",") === "bud,tri,sha,pre,distillate,isolate,infused,preroll,vape" &&
+        triLb >= 40000 &&
+        fgCat("tri").includes('data-fg-over="1"') &&
+        fgCat("tri").includes(`data-fg-trucks="${triTrucks}"`) &&
+        fgCat("tri").includes(`${triTrucks} trucks`),
+      `nine FG bars in order, and TRI over the cap names ${triTrucks} trucks`
     );
     assert(
       fgCat("sha").includes(`data-fg-total="${shakeLb(shaGrams)}"`) && fgCat("sha").includes('data-fg-strain="Fg1 Lemon"') && fgCat("sha").includes('data-fg-thc="none"') && !fgCat("sha").includes('data-fg-strain="Fg1 Gelato"'),

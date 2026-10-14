@@ -4341,6 +4341,15 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Isolate": { en: "Isolate", es: "Aislado" },
   "Infused Bud": { en: "Infused Bud", es: "Cogollo infundido" },
   "each": { en: "each", es: "cada" },
+  // FG3: the cap line, the truck note, and the BUD bands.
+  "of": { en: "of", es: "de" },
+  "trucks": { en: "trucks", es: "camiones" },
+  "flavor": { en: "flavor", es: "sabor" },
+  "flavors": { en: "flavors", es: "sabores" },
+  "19.99% or less": { en: "19.99% or less", es: "19.99% o menos" },
+  "20 to 25%": { en: "20 to 25%", es: "20 a 25%" },
+  "25 to 30%": { en: "25 to 30%", es: "25 a 30%" },
+  "30% and up": { en: "30% and up", es: "30% o mas" },
 };
 
 const FORMULA_ERRORS: Array<[string, string]> = [
