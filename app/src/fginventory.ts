@@ -141,7 +141,7 @@ LEFT JOIN (
   GROUP BY type_code, strain_name, thc_pct
 ) g ON 1 = 1`;
 
-export type FgCatKey = "bud" | "tri" | "sha" | "pre" | "distillate" | "infused" | "preroll" | "vape";
+export type FgCatKey = "bud" | "tri" | "sha" | "pre" | "distillate" | "isolate" | "infused" | "preroll" | "vape";
 export type FgUnit = "lb" | "L" | "g" | "each";
 
 export type FgListing = {
@@ -193,6 +193,7 @@ const CAT_ORDER: Array<{ key: FgCatKey; label: string; unit: FgUnit }> = [
   { key: "sha", label: "SHA", unit: "lb" },
   { key: "pre", label: "PRE", unit: "lb" },
   { key: "distillate", label: "Distillate", unit: "L" },
+  { key: "isolate", label: "Isolate", unit: "g" },
   { key: "infused", label: "Infused Bud", unit: "g" },
   { key: "preroll", label: "Prerolls", unit: "each" },
   { key: "vape", label: "Vapes", unit: "each" },
@@ -245,6 +246,13 @@ export function distillateMaker(name: string): string {
   return raw || name.trim();
 }
 
+/** The name before the word THCA or Isolate (HZ Holdings THCA - 77.38% is HZ Holdings). */
+export function isolateMaker(name: string): string {
+  const match = /^(.*?)\s*\b(thca|isolate)\b/i.exec(name.trim());
+  const raw = (match ? match[1] : name).replace(/[\s-]+$/g, "").trim();
+  return raw || name.trim();
+}
+
 /** Hardware type is the size segment (1g, 2g). Flavor is the name that remains. */
 export function vapeSizeAndFlavor(name: string): { size: string; flavor: string } {
   const parts = name.split(" - ").map((part) => part.trim()).filter(Boolean);
@@ -291,6 +299,7 @@ export function classifyListing(row: FgListing): FgCatKey | null {
   const category = (row.category ?? "").trim().toLowerCase();
   if (isNotFinished(prefix, row.category ?? "")) return null;
   if (category === "concentrate" && isLiters(row.marketUom) && /distillate/i.test(row.itemName)) return "distillate";
+  if (category === "concentrate" && !isLiters(row.marketUom) && /\b(thca|isolate)\b/i.test(row.itemName)) return "isolate";
   const folded = foldedOf(prefix);
   if (prefix === "BUD" || folded?.category === "bud") return "bud";
   if (prefix === "PRE" || folded?.category === "pre") return "pre";
@@ -370,6 +379,8 @@ export function buildFgInventory(listings: readonly FgListing[], ledger: readonl
   };
   const grams: Record<"bud" | "tri" | "sha" | "pre", number> = { bud: 0, tri: 0, sha: 0, pre: 0 };
   const makers: NamedBag = new Map();
+  const isolateMakers: NamedBag = new Map();
+  let isolateGrams = 0;
   let liters = 0;
   const products: NamedBag = new Map();
   let infusedGrams = 0;
@@ -403,6 +414,15 @@ export function buildFgInventory(listings: readonly FgListing[], ledger: readonl
       if (qty > 0) {
         liters += qty;
         addNamed(makers, distillateMaker(row.itemName), qty);
+      }
+    } else if (kind === "isolate") {
+      const stored = finite(row.qtyGrams);
+      const uom = (row.marketUom ?? "").trim().toLowerCase();
+      const qty = finite(row.marketQty);
+      const weight = stored != null && stored > 0 ? stored : qty != null && qty > 0 && (uom === "g" || uom === "grams" || uom === "gram") ? qty : 0;
+      if (weight > 0) {
+        isolateGrams += weight;
+        addNamed(isolateMakers, isolateMaker(row.itemName), weight);
       }
     } else if (kind === "infused") {
       const count = finite(row.marketQty) ?? 0;
@@ -451,6 +471,9 @@ export function buildFgInventory(listings: readonly FgListing[], ledger: readonl
     } else if (spec.key === "distillate") {
       cat.total = liters;
       cat.lines = namedLines(makers);
+    } else if (spec.key === "isolate") {
+      cat.total = isolateGrams;
+      cat.lines = namedLines(isolateMakers);
     } else if (spec.key === "infused") {
       cat.total = infusedGrams;
       cat.lines = namedLines(products);
@@ -545,7 +568,7 @@ function categoryBody(cat: FgCategory, locale: Locale): string {
       })
       .join("");
   }
-  const attr = cat.key === "distillate" ? "data-fg-maker" : cat.key === "infused" ? "data-fg-product" : "data-fg-flavor";
+  const attr = cat.key === "distillate" || cat.key === "isolate" ? "data-fg-maker" : cat.key === "infused" ? "data-fg-product" : "data-fg-flavor";
   return lineList(
     cat.lines.map((line) => ({
       attr,

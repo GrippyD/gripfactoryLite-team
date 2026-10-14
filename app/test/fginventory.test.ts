@@ -10,6 +10,8 @@ import {
   buildFgInventory,
   classifyListing,
   distillateMaker,
+  isolateMaker,
+  fgTotalAttr,
   fgInventorySection,
   fgMountedLabel,
   loadFgInventory,
@@ -184,6 +186,36 @@ describe("FG1 finished goods on the Harvest Console", () => {
     expect(model.notShown).toBe(1);
   });
 
+  it("puts THCA and isolate concentrates under Isolate in grams by maker", () => {
+    expect(isolateMaker("HZ Holdings THCA - 77.38%")).toBe("HZ Holdings");
+    expect(isolateMaker("Mitten Isolate")).toBe("Mitten");
+    const model = buildFgInventory(
+      [
+        listing({ itemName: "HZ Holdings THCA - 77.38%", category: "Concentrate", marketUom: "g", marketQty: 20000, qtyGrams: 20000, thcPct: null }),
+        listing({ itemName: "Mitten Isolate", category: "concentrate", marketUom: "g", marketQty: 500, qtyGrams: null, thcPct: null }),
+        listing({ itemName: "HZ Holdings THCA", category: "Concentrate", marketUom: "grams", marketQty: 0, qtyGrams: 250, thcPct: null }),
+        listing({ itemName: "GRIP THCA Infused Flower - Grape Ape -15g", category: "Infused Flower", marketUom: "each", marketQty: 10, qtyGrams: 150, eachGrams: 15, thcPct: null }),
+        listing({ itemName: "Mitten Distillate", category: "Concentrate", marketUom: "L", marketQty: 5, qtyGrams: 0, thcPct: null }),
+      ],
+      []
+    );
+    const iso = cat(model, "isolate");
+    expect(iso.total).toBe(20750);
+    expect(iso.lines.map((line) => [line.name, line.amount])).toEqual([
+      ["HZ Holdings", 20250],
+      ["Mitten", 500],
+    ]);
+    expect(cat(model, "infused").total).toBe(150);
+    expect(cat(model, "distillate").total).toBe(5);
+    expect(model.notShown).toBe(0);
+    const html = fgInventorySection(model);
+    expect(html).toContain(`data-fg-cat="isolate" data-fg-total="${fgTotalAttr("g", 20750)}"`);
+    expect(html).toContain('data-fg-maker="HZ Holdings"');
+    expect(html.indexOf('data-fg-cat="distillate"')).toBeLessThan(html.indexOf('data-fg-cat="isolate"'));
+    expect(html.indexOf('data-fg-cat="isolate"')).toBeLessThan(html.indexOf('data-fg-cat="infused"'));
+    expect(fgInventorySection(model, "es")).toContain("Aislado");
+  });
+
   it("collapses a vape into its size and then its flavor", () => {
     expect(vapeSizeAndFlavor("GRIP Vape - Berry Mojito - 2g")).toEqual({ size: "2g", flavor: "Berry Mojito" });
     expect(vapeSizeAndFlavor("Mitten Cart - Gelato - 1 g")).toEqual({ size: "1g", flavor: "Gelato" });
@@ -230,7 +262,7 @@ describe("FG1 finished goods on the Harvest Console", () => {
     expect(section).not.toContain('data-hc-section="fg_inventory" open');
     expect(section).toContain('data-fg-as-of="2026-10-13 07:32"');
     expect(section).toContain("Zoho as of 2026-10-13 07:32");
-    const keys = ["bud", "tri", "sha", "pre", "distillate", "infused", "preroll", "vape"];
+    const keys = ["bud", "tri", "sha", "pre", "distillate", "isolate", "infused", "preroll", "vape"];
     const at = keys.map((key) => section.indexOf(`data-fg-cat="${key}"`));
     expect(at.every((n) => n >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
@@ -511,8 +543,8 @@ describe("FG1 finished goods on the Harvest Console", () => {
     expect(strain(model, "tri", "Named Gelato").lines[0].thc).toBe("25.00");
     expect(strain(model, "tri", "Cake").amount).toBeCloseTo(453.59237 / LB);
     expect(strain(model, "tri", "Mystery").amount).toBeCloseTo(100 / LB);
-    expect(model.categories.map((item) => item.key)).toEqual(["bud", "tri", "sha", "pre", "distillate", "infused", "preroll", "vape"]);
-    for (const key of ["bud", "pre", "distillate", "infused", "preroll", "vape"]) expect(cat(model, key).total).toBe(0);
+    expect(model.categories.map((item) => item.key)).toEqual(["bud", "tri", "sha", "pre", "distillate", "isolate", "infused", "preroll", "vape"]);
+    for (const key of ["bud", "pre", "distillate", "isolate", "infused", "preroll", "vape"]) expect(cat(model, key).total).toBe(0);
     expect(model.metrcOtherUnits).toBe(1);
     expect(fgMountedLabel(model.metrcMountedAt)).toBe("2026-10-13 07:32");
     const html = fgInventorySection(model);
