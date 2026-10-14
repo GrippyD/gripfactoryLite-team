@@ -827,8 +827,8 @@ table.data th { background: var(--panel-2); }
 .hc-fg-row { display: flex; align-items: center; gap: 0.55rem; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-wrap: normal; }
 .hc-fg-icon { width: 44px; height: 30px; flex: 0 0 auto; display: block; }
 .hc-fg-label { display: flex; flex-direction: column; flex: 0 0 11.5rem; line-height: 1.15; min-width: 0; }
-.hc-fg-label .hc-fg-name { font-weight: 700; }
-.hc-fg-label .hc-fg-total { font-weight: 500; font-size: 0.78rem; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.hc-fg-label .hc-fg-name { font-weight: 700; font-size: calc(1em - 1px); }
+.hc-fg-label .hc-fg-total { font-weight: 500; font-size: calc(0.78rem - 1px); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
 .hc-fg-bar {
   flex: 1 1 10rem;
   min-width: 0;
@@ -1740,8 +1740,8 @@ table.data tbody tr:hover td { background: var(--surface-2); }
 .hc-fg-row { display: flex; align-items: center; gap: 0.55rem; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-wrap: normal; }
 .hc-fg-icon { width: 44px; height: 30px; flex: 0 0 auto; display: block; }
 .hc-fg-label { display: flex; flex-direction: column; flex: 0 0 11.5rem; line-height: 1.15; min-width: 0; }
-.hc-fg-label .hc-fg-name { font-weight: 700; }
-.hc-fg-label .hc-fg-total { font-weight: 500; font-size: 0.78rem; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.hc-fg-label .hc-fg-name { font-weight: 700; font-size: calc(1em - 1px); }
+.hc-fg-label .hc-fg-total { font-weight: 500; font-size: calc(0.78rem - 1px); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
 .hc-fg-bar {
   flex: 1 1 10rem;
   min-width: 0;
@@ -2602,8 +2602,8 @@ legend { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; c
 .hc-fg-row { display: flex; align-items: center; gap: 0.55rem; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-wrap: normal; }
 .hc-fg-icon { width: 44px; height: 30px; flex: 0 0 auto; display: block; }
 .hc-fg-label { display: flex; flex-direction: column; flex: 0 0 11.5rem; line-height: 1.15; min-width: 0; }
-.hc-fg-label .hc-fg-name { font-weight: 700; }
-.hc-fg-label .hc-fg-total { font-weight: 500; font-size: 0.78rem; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.hc-fg-label .hc-fg-name { font-weight: 700; font-size: calc(1em - 1px); }
+.hc-fg-label .hc-fg-total { font-weight: 500; font-size: calc(0.78rem - 1px); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
 .hc-fg-bar {
   flex: 1 1 10rem;
   min-width: 0;

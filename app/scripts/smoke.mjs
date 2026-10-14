@@ -10676,12 +10676,8 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     assert(fg.includes('data-fg-not-shown="6"') && fg.includes("Not shown: 6 Zoho items"), `not shown expected 6, got ${fg.slice(fg.indexOf("data-fg-not-shown"), fg.indexOf("data-fg-not-shown") + 80)}`);
     const bud = fgCat("bud");
     assert(bud.includes('data-fg-total="12.50"') && bud.includes('data-fg-strain="Gelato"') && bud.includes('data-fg-thc="22.10"') && bud.includes('data-fg-strain="Donny Burger"') && bud.includes('data-fg-strain="Lemon"') && bud.includes('data-fg-thc="none"'), "BUD must fold MIX and NUG, keep the mounted bud, and bucket THC");
-    const metrcMount = localD1All("SELECT MAX(created_at) AS at FROM metrc_mounts WHERE kind = 'packages' AND deleted_at IS NULL")[0].at;
-    assert(
-      fg.includes("From METRC, live Shake/Trim packages, as of the last mirror mount") && fg.includes(`data-fg-metrc-as-of="${fgAsOf(metrcMount)}"`),
-      `the TRI and SHA note must name the last packages mount ${fgAsOf(metrcMount)}`
-    );
-    assert(fg.indexOf('data-fg-cat="sha"') < fg.indexOf("data-fg-metrc") && fg.indexOf("data-fg-metrc") < fg.indexOf('data-fg-cat="pre"'), "the METRC note sits under TRI and SHA");
+    assert(!fg.includes("data-fg-metrc") && !fg.includes("From METRC, live Shake/Trim packages"), "the METRC mount note is gone (owner, 0.30.485)");
+    assert([">Bud<", ">Trim/Bio<", ">Shake<", ">Ounces<"].every((label) => fg.includes(label)), "the first four rows read Bud, Trim/Bio, Shake, Ounces");
     const shakeLive = localD1All("SELECT item, item_strain, quantity, uom FROM metrc_packages WHERE gone_at IS NULL AND category = 'Shake/Trim' AND quantity > 0");
     const shakeGrams = (row) => {
       const uom = String(row.uom || "").trim().toLowerCase();
