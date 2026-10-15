@@ -6,13 +6,15 @@ import { themeStylesheet } from "../src/theme";
 const REMOVED = ["Testing Override", "Environment", "Sheet sync", "Testing desk"];
 
 describe("Admin cleanup (canon 0.30.418)", () => {
-  it("Admin shows the three buttons in order, and each group lists today's URLs", () => {
+  it("Admin shows the four buttons in order, and each group lists today's URLs", () => {
     const home = adminHomePage("en");
     const titles = [...home.matchAll(/tile-title">([^<]+)/g)].map((hit) => hit[1]);
-    expect(titles).toEqual(["Data Connections", "Admin Settings", "Continuum10"]);
+    // DD S1: the Director Dashboard button joins the three (its own test covers its tiles).
+    expect(titles).toEqual(["Data Connections", "Admin Settings", "Continuum10", "Director Dashboard"]);
     expect(home).toContain('href="/admin/data-connections"');
     expect(home).toContain('href="/admin/settings"');
     expect(home).toContain('href="/admin/continuum10"');
+    expect(home).toContain('href="/admin/director"');
     for (const title of REMOVED) expect(home).not.toContain(title);
     const connections = adminGroupPage("data-connections");
     // MA1 Law 8 (Phase E1): the Metrc evaluation tile sits beside the Metrc API tile.
@@ -46,6 +48,7 @@ describe("Admin cleanup (canon 0.30.418)", () => {
       "/admin/data-connections",
       "/admin/settings",
       "/admin/continuum10",
+      "/admin/director",
     ]);
   });
 

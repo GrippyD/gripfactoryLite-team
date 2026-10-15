@@ -248,3 +248,197 @@ export function etDayBounds(date: string): { startIso: string; endIso: string } 
   end = nextMidnightAsUtc + etOffsetMinutes(new Date(end)) * 60_000;
   return { startIso: new Date(start).toISOString(), endIso: new Date(end).toISOString() };
 }
+
+/** THE PERIODS (DD S1, the week_definition ruling: dd_week_basis = iso). A
+ * weekly tile buckets on the ISO week of the farm day of its key date, Monday
+ * at the farm day start hour to the next Monday; a month, quarter and season
+ * start on a calendar day; harvest week n is a label counted from the season
+ * start pinned in app_config. Every helper here is pure and reads only the
+ * YYYY-MM-DD it is given (UTC arithmetic on the date, never the process
+ * zone), so it answers the same under any TZ. */
+export type PeriodKind = "day" | "week" | "month" | "quarter" | "season";
+
+export const PERIOD_KINDS: readonly PeriodKind[] = ["day", "week", "month", "quarter", "season"];
+
+const DAY_MS = 86_400_000;
+
+function dayMs(date: string): number {
+  return Date.parse(`${date}T00:00:00.000Z`);
+}
+
+function dateFromMs(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/** The calendar day `days` after (or before, when negative) a YYYY-MM-DD; the input when it is not a date. */
+export function dayOffset(date: string, days: number): string {
+  if (!isCalendarDate(date)) return date;
+  return dateFromMs(dayMs(date) + days * DAY_MS);
+}
+
+/** The Monday of the ISO week holding the day, YYYY-MM-DD (the input when it is not a date). */
+export function weekStartOf(dayIso: string): string {
+  if (!isCalendarDate(dayIso)) return dayIso;
+  const ms = dayMs(dayIso);
+  const mondayFirst = (new Date(ms).getUTCDay() + 6) % 7;
+  return dateFromMs(ms - mondayFirst * DAY_MS);
+}
+
+/** The ISO week year and number of the day: the year of the week's Thursday, weeks counted from the one holding Jan 4. */
+export function isoWeekOf(dayIso: string): { year: number; week: number } {
+  if (!isCalendarDate(dayIso)) return { year: 0, week: 0 };
+  const ms = dayMs(dayIso);
+  const mondayFirst = (new Date(ms).getUTCDay() + 6) % 7;
+  const thursday = ms + (3 - mondayFirst) * DAY_MS;
+  const year = new Date(thursday).getUTCFullYear();
+  const week = Math.floor((thursday - Date.UTC(year, 0, 1)) / DAY_MS / 7) + 1;
+  return { year, week };
+}
+
+/** The ISO week key of the day, "2026-W41" ("" when it is not a date). */
+export function isoWeekKey(dayIso: string): string {
+  const { year, week } = isoWeekOf(dayIso);
+  return year ? `${year}-W${String(week).padStart(2, "0")}` : "";
+}
+
+/** The UTC instants that bound the farm week holding the day: the start hour
+ * on its Monday and the start hour on the next Monday, Eastern, each through
+ * farmDayBounds so a daylight edge inside the week keeps the wall clock. */
+export function weekBoundsOf(dayIso: string, startHour: number = FARM_DAY_START_HOUR_DEFAULT): { startIso: string; endIso: string } {
+  const monday = weekStartOf(dayIso);
+  return { startIso: farmDayBounds(monday, startHour).startIso, endIso: farmDayBounds(dayOffset(monday, 7), startHour).startIso };
+}
+
+/** The first day of the month holding the day. */
+export function monthStartOf(dayIso: string): string {
+  return isCalendarDate(dayIso) ? `${dayIso.slice(0, 7)}-01` : dayIso;
+}
+
+/** The first day of the calendar quarter holding the day (Jan 1, Apr 1, Jul 1, Oct 1). */
+export function quarterStartOf(dayIso: string): string {
+  if (!isCalendarDate(dayIso)) return dayIso;
+  const month = Number(dayIso.slice(5, 7));
+  const first = Math.floor((month - 1) / 3) * 3 + 1;
+  return `${dayIso.slice(0, 4)}-${String(first).padStart(2, "0")}-01`;
+}
+
+/** The latest occurrence of an MM-DD on or before the day (this year's when
+ * it has passed or is today, else last year's); null when either shape is off. */
+export function seasonStartOf(dayIso: string, mmdd: string | null | undefined): string | null {
+  const md = String(mmdd ?? "").trim();
+  if (!isCalendarDate(dayIso) || !/^\d{2}-\d{2}$/.test(md)) return null;
+  const year = Number(dayIso.slice(0, 4));
+  const thisYear = `${year}-${md}`;
+  const candidate = thisYear <= dayIso ? thisYear : `${year - 1}-${md}`;
+  return isCalendarDate(candidate) ? candidate : null;
+}
+
+export type PeriodOptions = {
+  /** The pinned season start (app_config dd_season_start_date), used when it is a date on or before the day. */
+  seasonStartDate?: string | null;
+  /** The row's season start MM-DD, the fallback for the season kind. */
+  seasonStartMd?: string | null;
+};
+
+/** The period start a day falls in, per kind. A season with no pinned date
+ * and no MM-DD is the calendar year (the harvest year the console reads). */
+export function periodStartFor(kind: PeriodKind, dayIso: string, opts: PeriodOptions = {}): string {
+  switch (kind) {
+    case "day":
+      return dayIso;
+    case "week":
+      return weekStartOf(dayIso);
+    case "month":
+      return monthStartOf(dayIso);
+    case "quarter":
+      return quarterStartOf(dayIso);
+    default: {
+      const pinned = String(opts.seasonStartDate ?? "").trim();
+      if (isCalendarDate(pinned) && pinned <= dayIso) return pinned;
+      return seasonStartOf(dayIso, opts.seasonStartMd) ?? (isCalendarDate(dayIso) ? `${dayIso.slice(0, 4)}-01-01` : dayIso);
+    }
+  }
+}
+
+/** The period start `steps` periods after a period start (negative steps go
+ * back): days, weeks of seven days, whole months, quarters of three months,
+ * seasons of one year on the same month and day. */
+export function periodShift(kind: PeriodKind, periodStart: string, steps: number): string {
+  if (!isCalendarDate(periodStart) || !Number.isFinite(steps)) return periodStart;
+  const n = Math.trunc(steps);
+  switch (kind) {
+    case "day":
+      return dayOffset(periodStart, n);
+    case "week":
+      return dayOffset(periodStart, 7 * n);
+    case "month":
+    case "quarter": {
+      const months = kind === "month" ? n : 3 * n;
+      const year = Number(periodStart.slice(0, 4));
+      const month = Number(periodStart.slice(5, 7)) - 1 + months;
+      return dateFromMs(Date.UTC(year + Math.floor(month / 12), ((month % 12) + 12) % 12, 1));
+    }
+    default: {
+      const year = Number(periodStart.slice(0, 4)) + n;
+      return dateFromMs(Date.UTC(year, Number(periodStart.slice(5, 7)) - 1, Number(periodStart.slice(8, 10))));
+    }
+  }
+}
+
+/** The exclusive end of a period: the next period's start. */
+export function periodEndOf(kind: PeriodKind, periodStart: string): string {
+  return periodShift(kind, periodStart, 1);
+}
+
+const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS_ES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+function monthWord(date: string, es: boolean): string {
+  const index = Number(date.slice(5, 7)) - 1;
+  return (es ? MONTHS_ES : MONTHS_EN)[index] ?? "";
+}
+
+function dayNumber(date: string): string {
+  return String(Number(date.slice(8, 10)));
+}
+
+/** A period's label for a tile or a stepper, in the locale ("es" is Spanish,
+ * anything else English): "Oct 5, 2026", "W41, Oct 5 to 11" (or "W53, Dec 28
+ * to Jan 3" across a month edge), "Oct 2026", "Q4 2026", "Season from Sep 1,
+ * 2026". The input when it is not a date. */
+export function periodLabel(kind: PeriodKind, periodStart: string, locale: string): string {
+  if (!isCalendarDate(periodStart)) return periodStart;
+  const es = locale === "es";
+  const year = periodStart.slice(0, 4);
+  const month = monthWord(periodStart, es);
+  const day = dayNumber(periodStart);
+  switch (kind) {
+    case "day":
+      return es ? `${day} ${month} ${year}` : `${month} ${day}, ${year}`;
+    case "week": {
+      const { week } = isoWeekOf(periodStart);
+      const last = dayOffset(periodStart, 6);
+      const lastMonth = monthWord(last, es);
+      const lastDay = dayNumber(last);
+      const w = `${es ? "S" : "W"}${String(week).padStart(2, "0")}`;
+      if (lastMonth === month) return es ? `${w}, ${day} a ${lastDay} ${month}` : `${w}, ${month} ${day} to ${lastDay}`;
+      return es ? `${w}, ${day} ${month} a ${lastDay} ${lastMonth}` : `${w}, ${month} ${day} to ${lastMonth} ${lastDay}`;
+    }
+    case "month":
+      return `${month} ${year}`;
+    case "quarter":
+      return `${es ? "T" : "Q"}${Math.floor((Number(periodStart.slice(5, 7)) - 1) / 3) + 1} ${year}`;
+    default:
+      return es ? `Temporada desde ${day} ${month} ${year}` : `Season from ${month} ${day}, ${year}`;
+  }
+}
+
+/** Harvest week n, 1 based from the ISO week holding the season start (the
+ * pinned dd_season_start_date); null with no season start, a bad date, or a
+ * day before that week. */
+export function harvestWeekNumber(dayIso: string, seasonStartIso: string | null | undefined): number | null {
+  const start = String(seasonStartIso ?? "").trim();
+  if (!isCalendarDate(dayIso) || !isCalendarDate(start)) return null;
+  const weeks = Math.round((dayMs(weekStartOf(dayIso)) - dayMs(weekStartOf(start))) / DAY_MS / 7);
+  return weeks >= 0 ? weeks + 1 : null;
+}

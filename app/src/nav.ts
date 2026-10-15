@@ -36,6 +36,8 @@ const PREFIX_PARENTS: ReadonlyArray<[prefix: string, parent: BackLink]> = [
   ["/admin/lookups/", { href: "/admin/lookups", label: "Data Lookups" }],
   ["/admin/uploads/", { href: "/admin/uploads", label: "Pending Data Uploads" }],
   ["/admin/queues/", DATA_QUEUES_LINK],
+  // DD S1: a department wall goes back to the Director Dashboard home.
+  ["/admin/director/", { href: "/admin/director", label: "Director Dashboard" }],
   ["/admin/", ADMIN_LINK],
   [`${MODELS_PATH}/`, { href: MODELS_PATH, label: "Models" }],
   ["/reports/", { href: "/reports", label: "Reports" }],

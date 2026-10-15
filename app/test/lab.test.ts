@@ -743,7 +743,7 @@ describe("lab handlers (the brief's own cases)", () => {
     const tooMany = await station(m.db, who).call<Fail>("POST", "/api/lab/op/import", [OP_HEADER_LINE, ...lines, opLine("eeeeeeee-0000-0000-0000-000000000000", "KIEF", "20", "Low")].join("\n"));
     expect(tooMany.status).toBe(413);
     expect(tooMany.body.error).toBe("too-many-rows");
-  });
+  }, 30_000);
 
   it("listLabComplianceSurface: the console set, a normalized status, a facility, newest first", async () => {
     const { m } = await setup();

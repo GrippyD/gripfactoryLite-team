@@ -6,6 +6,7 @@ import { CONFIG_KEYS } from "../src/config";
 import { effectiveDateField, farmDayStartHour, farmToday, resolveEffectiveDate } from "../src/effective";
 import {
   dayAfter,
+  dayOffset,
   FARM_DAY_START_HOUR_DEFAULT,
   farmDay,
   farmDayBounds,
@@ -13,8 +14,21 @@ import {
   etDate,
   etHour,
   etInstant,
+  harvestWeekNumber,
+  isoWeekKey,
+  isoWeekOf,
+  monthStartOf,
   parseFarmDayStartHour,
+  PERIOD_KINDS,
+  periodEndOf,
+  periodLabel,
+  periodShift,
+  periodStartFor,
+  quarterStartOf,
+  seasonStartOf,
   trimCountedDate,
+  weekBoundsOf,
+  weekStartOf,
 } from "../src/farmday";
 import { defaultTodayScript, layout } from "../src/html";
 
@@ -289,5 +303,123 @@ describe("THE CONSOLE DAY (canon 0.30.152; owner: \"on the dashboard, can we do 
     expect(dflt.redirect).toBe("/harvest?ok=hours");
     const trim = await saveTrimHours(db as unknown as D1Database, fd({ person_id: "p1", shift: "day", work_date: "2026-09-15", hours: "6", day_picked: "1" }));
     expect(trim.redirect).toBe("/harvest?ok=trim_hours&day=2026-09-15");
+  });
+});
+
+describe("THE PERIODS (DD S1, dd_week_basis = iso): the ISO week of the farm day, months, quarters, seasons and harvest week n, the same under any TZ", () => {
+  it("the Monday and the ISO week key: the year's last week spills into January, Sep 1 is W36 in 2026 and W35 in 2027", () => {
+    expect(weekStartOf("2026-12-28")).toBe("2026-12-28");
+    expect(weekStartOf("2027-01-03")).toBe("2026-12-28");
+    expect(weekStartOf("2026-12-31")).toBe("2026-12-28");
+    expect(isoWeekKey("2026-12-28")).toBe("2026-W53");
+    expect(isoWeekKey("2027-01-03")).toBe("2026-W53");
+    expect(isoWeekKey("2027-01-04")).toBe("2027-W01");
+    expect(isoWeekOf("2027-01-01")).toEqual({ year: 2026, week: 53 });
+    expect(weekStartOf("2026-09-01")).toBe("2026-08-31");
+    expect(isoWeekKey("2026-09-01")).toBe("2026-W36");
+    expect(weekStartOf("2027-09-01")).toBe("2027-08-30");
+    expect(isoWeekKey("2027-09-01")).toBe("2027-W35");
+    // A Sunday belongs to the week that began the Monday before it; a Monday is its own week start.
+    expect(weekStartOf("2026-10-11")).toBe("2026-10-05");
+    expect(weekStartOf("2026-10-05")).toBe("2026-10-05");
+    expect(isoWeekKey("2026-10-05")).toBe("2026-W41");
+    // Not a date: the input comes back, the key is blank.
+    expect(weekStartOf("nope")).toBe("nope");
+    expect(isoWeekKey("2026-02-30")).toBe("");
+    expect(dayOffset("2026-12-31", 1)).toBe("2027-01-01");
+    expect(dayOffset("2026-03-01", -1)).toBe("2026-02-28");
+  });
+
+  it("the week's bounds run start hour to start hour on the Mondays, Eastern, and a daylight edge keeps the 06:00 wall clock", () => {
+    // 2026-11-02, the Monday after the fall back (standard time, UTC-5).
+    expect(weekBoundsOf("2026-11-02", 6)).toEqual({ startIso: "2026-11-02T11:00:00.000Z", endIso: "2026-11-09T11:00:00.000Z" });
+    expect(weekBoundsOf("2026-11-04", 6)).toEqual(weekBoundsOf("2026-11-02", 6));
+    // 2026-03-09, the Monday after the spring forward (daylight time, UTC-4).
+    expect(weekBoundsOf("2026-03-09", 6)).toEqual({ startIso: "2026-03-09T10:00:00.000Z", endIso: "2026-03-16T10:00:00.000Z" });
+    // The weeks holding the edges are 169 and 167 hours long and still bound at 06:00 Eastern.
+    expect(weekBoundsOf("2026-10-29", 6)).toEqual({ startIso: "2026-10-26T10:00:00.000Z", endIso: "2026-11-02T11:00:00.000Z" });
+    expect(weekBoundsOf("2026-03-05", 6)).toEqual({ startIso: "2026-03-02T11:00:00.000Z", endIso: "2026-03-09T10:00:00.000Z" });
+    // The default start hour is the ruling's six; zero is the midnight law.
+    expect(weekBoundsOf("2026-10-07")).toEqual({ startIso: "2026-10-05T10:00:00.000Z", endIso: "2026-10-12T10:00:00.000Z" });
+    expect(weekBoundsOf("2026-10-07", 0)).toEqual({ startIso: "2026-10-05T04:00:00.000Z", endIso: "2026-10-12T04:00:00.000Z" });
+  });
+
+  it("month, quarter and season starts; the season is the latest MM-DD on or before the day", () => {
+    expect(monthStartOf("2026-10-15")).toBe("2026-10-01");
+    expect(quarterStartOf("2026-10-15")).toBe("2026-10-01");
+    expect(quarterStartOf("2026-12-31")).toBe("2026-10-01");
+    expect(quarterStartOf("2026-02-01")).toBe("2026-01-01");
+    expect(quarterStartOf("2026-06-30")).toBe("2026-04-01");
+    expect(quarterStartOf("2026-07-01")).toBe("2026-07-01");
+    expect(seasonStartOf("2026-09-15", "09-01")).toBe("2026-09-01");
+    expect(seasonStartOf("2026-09-01", "09-01")).toBe("2026-09-01");
+    expect(seasonStartOf("2026-08-15", "09-01")).toBe("2025-09-01");
+    expect(seasonStartOf("2026-09-15", "9/1")).toBeNull();
+    expect(seasonStartOf("2026-09-15", null)).toBeNull();
+    expect(seasonStartOf("nope", "09-01")).toBeNull();
+  });
+
+  it("the period start per kind, the pinned season date first, then the row's MM-DD, then the calendar year", () => {
+    expect(PERIOD_KINDS).toEqual(["day", "week", "month", "quarter", "season"]);
+    expect(periodStartFor("day", "2026-10-07")).toBe("2026-10-07");
+    expect(periodStartFor("week", "2026-10-07")).toBe("2026-10-05");
+    expect(periodStartFor("month", "2026-10-07")).toBe("2026-10-01");
+    expect(periodStartFor("quarter", "2026-11-07")).toBe("2026-10-01");
+    expect(periodStartFor("season", "2026-10-07", { seasonStartDate: "2026-09-03", seasonStartMd: "09-01" })).toBe("2026-09-03");
+    // A pinned date after the day is not the season yet.
+    expect(periodStartFor("season", "2026-10-07", { seasonStartDate: "2026-10-20", seasonStartMd: "09-01" })).toBe("2026-09-01");
+    expect(periodStartFor("season", "2026-10-07", { seasonStartMd: "09-01" })).toBe("2026-09-01");
+    expect(periodStartFor("season", "2026-03-07", { seasonStartMd: "09-01" })).toBe("2025-09-01");
+    expect(periodStartFor("season", "2026-10-07")).toBe("2026-01-01");
+    expect(periodStartFor("season", "2026-10-07", { seasonStartDate: "" })).toBe("2026-01-01");
+  });
+
+  it("stepping periods: a week is seven days, a month a month, a quarter three, a season a year; the end is the next start", () => {
+    expect(periodShift("day", "2026-10-05", -1)).toBe("2026-10-04");
+    expect(periodShift("week", "2026-10-05", -6)).toBe("2026-08-24");
+    expect(periodShift("week", "2026-12-28", 1)).toBe("2027-01-04");
+    expect(periodShift("month", "2026-01-01", -1)).toBe("2025-12-01");
+    expect(periodShift("month", "2026-12-01", 1)).toBe("2027-01-01");
+    expect(periodShift("month", "2026-10-01", -8)).toBe("2026-02-01");
+    expect(periodShift("quarter", "2026-01-01", 1)).toBe("2026-04-01");
+    expect(periodShift("quarter", "2026-01-01", -1)).toBe("2025-10-01");
+    expect(periodShift("season", "2026-09-01", -1)).toBe("2025-09-01");
+    expect(periodShift("season", "2026-09-01", 0)).toBe("2026-09-01");
+    expect(periodEndOf("week", "2026-10-05")).toBe("2026-10-12");
+    expect(periodEndOf("month", "2026-02-01")).toBe("2026-03-01");
+    expect(periodEndOf("quarter", "2026-10-01")).toBe("2027-01-01");
+    expect(periodEndOf("season", "2026-09-01")).toBe("2027-09-01");
+    expect(periodEndOf("day", "2026-12-31")).toBe("2027-01-01");
+    expect(periodShift("week", "nope", 1)).toBe("nope");
+  });
+
+  it("labels: W41, Oct 5 to 11; W53 across the year end; Oct 2026; Q4 2026; Spanish with its own words", () => {
+    expect(periodLabel("week", "2026-10-05", "en")).toBe("W41, Oct 5 to 11");
+    expect(periodLabel("week", "2026-12-28", "en")).toBe("W53, Dec 28 to Jan 3");
+    expect(periodLabel("week", "2026-08-31", "en")).toBe("W36, Aug 31 to Sep 6");
+    expect(periodLabel("month", "2026-10-01", "en")).toBe("Oct 2026");
+    expect(periodLabel("quarter", "2026-10-01", "en")).toBe("Q4 2026");
+    expect(periodLabel("quarter", "2026-04-01", "en")).toBe("Q2 2026");
+    expect(periodLabel("day", "2026-10-05", "en")).toBe("Oct 5, 2026");
+    expect(periodLabel("season", "2026-09-01", "en")).toBe("Season from Sep 1, 2026");
+    expect(periodLabel("week", "2026-10-05", "es")).toBe("S41, 5 a 11 oct");
+    expect(periodLabel("week", "2026-12-28", "es")).toBe("S53, 28 dic a 3 ene");
+    expect(periodLabel("month", "2026-10-01", "es")).toBe("oct 2026");
+    expect(periodLabel("quarter", "2026-10-01", "es")).toBe("T4 2026");
+    expect(periodLabel("day", "2026-10-05", "es")).toBe("5 oct 2026");
+    expect(periodLabel("season", "2026-09-01", "es")).toBe("Temporada desde 1 sep 2026");
+    expect(periodLabel("week", "nope", "en")).toBe("nope");
+  });
+
+  it("harvest week n counts from the ISO week holding the season start: Sep 15 is week 3 of a Sep 1 season; none without a start", () => {
+    expect(harvestWeekNumber("2026-09-15", "2026-09-01")).toBe(3);
+    expect(harvestWeekNumber("2026-09-01", "2026-09-01")).toBe(1);
+    expect(harvestWeekNumber("2026-08-31", "2026-09-01")).toBe(1);
+    expect(harvestWeekNumber("2026-09-07", "2026-09-01")).toBe(2);
+    expect(harvestWeekNumber("2026-12-31", "2026-09-01")).toBe(18);
+    expect(harvestWeekNumber("2026-08-30", "2026-09-01")).toBeNull();
+    expect(harvestWeekNumber("2026-09-15", null)).toBeNull();
+    expect(harvestWeekNumber("2026-09-15", "")).toBeNull();
+    expect(harvestWeekNumber("2026-09-15", "nope")).toBeNull();
   });
 });
