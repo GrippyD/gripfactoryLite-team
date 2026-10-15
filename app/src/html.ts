@@ -2079,6 +2079,21 @@ export const ADMIN_GROUPS: AdminGroup[] = [
       { href: "/harvest-console", kind: "Continuum", title: "Harvest Console Lite" },
     ],
   },
+  // DD S1: the Director Dashboard button; its home renders the five walls itself
+  // (directorHomePage), so adminGroupPage("director") is never served. The
+  // members name the walls, in the walls' order, for their own tiles' titles.
+  {
+    key: "director",
+    href: "/admin/director",
+    title: "Director Dashboard",
+    members: [
+      { href: "/admin/director/bizops", kind: "Director", title: "Business Operations" },
+      { href: "/admin/director/farmops", kind: "Director", title: "Farming Operations" },
+      { href: "/admin/director/culttech", kind: "Director", title: "Cultivation and Technology" },
+      { href: "/admin/director/sales", kind: "Director", title: "Sales and Marketing" },
+      { href: "/admin/director/finance", kind: "Director", title: "Accounting and Finance" },
+    ],
+  },
 ];
 
 function adminTiles(members: AdminGroupMember[], locale: Locale): string {

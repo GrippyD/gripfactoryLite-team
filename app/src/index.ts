@@ -508,6 +508,7 @@ import { loadStrainPerformance } from "./strainperformance";
 import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { loadFgInventory } from "./fginventory";
 import { harvestDashboardPage, loadHarvestDashboard } from "./harvestdashboard";
+import { DIRECTOR_PATH, directorHomePage, directorWallPage, isDdDeptKey, loadDirectorHome, loadDirectorWall } from "./director";
 import { terpRecipesPage } from "./terps";
 import { easternStamp, fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
 import { metrcApiPage, runMetrcSweep, testMetrcConnection } from "./metrcapi";
@@ -1599,6 +1600,25 @@ app.get("/admin/settings", async (c) => {
 app.get("/admin/continuum10", async (c) => {
   const s = await shell(c);
   return html(c, s, "Continuum10", adminGroupPage("continuum10", s.locale));
+});
+
+// DD S1: the Director Dashboard, the fourth Admin group. The home renders its
+// own page (five department cards); a wall is one department's tiles. Each GET
+// is one db.batch and computes nothing; the PIN gate above covers /admin/*.
+app.get(DIRECTOR_PATH, async (c) => {
+  const s = await shell(c);
+  const now = nowIso();
+  const model = await loadDirectorHome(c.env.DB, await farmToday(c.env.DB, now), now);
+  return html(c, s, "Director Dashboard", directorHomePage(model, s.locale));
+});
+
+app.get(`${DIRECTOR_PATH}/:dept`, async (c) => {
+  const dept = c.req.param("dept");
+  if (!isDdDeptKey(dept)) throw new HttpError(404, "Unknown department.");
+  const s = await shell(c);
+  const now = nowIso();
+  const model = await loadDirectorWall(c.env.DB, dept, await farmToday(c.env.DB, now), c.req.query("cadence") ?? null, c.req.query("period") ?? null, now);
+  return html(c, s, model.title_en, directorWallPage(model, s.locale));
 });
 
 // THE SHEET SYNC (canon 0.30.162). The fixture workbook exists only when the

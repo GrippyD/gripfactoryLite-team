@@ -451,6 +451,8 @@ const CAT_ORDER: Array<{ key: FgCatKey; label: string; unit: FgUnit }> = [
 ];
 
 const SIZE_RE = /^(\d+(?:\.\d+)?)g$/i;
+/** A vape's hardware: the size, and 510 when the name says it is a 510 cart ("1g 510"; Zoho has no field for it). */
+const VAPE_SIZE_RE = /^(\d+(?:\.\d+)?)g(510)?$/i;
 
 type NamedBag = Map<string, { name: string; amount: number }>;
 type ThcBag = Map<string, number>;
@@ -503,14 +505,16 @@ export function isolateMaker(name: string): string {
   return raw || name.trim();
 }
 
-/** Hardware type is the size segment (1g, 2g). Flavor is the name that remains. */
+/** Hardware type is the size segment (1g, 2g, 1g 510). Flavor is the name that remains. A trailing size
+ * after a dash with no space before it ("Guava Gelato- 2g") still counts as the size. */
 export function vapeSizeAndFlavor(name: string): { size: string; flavor: string } {
-  const parts = name.split(" - ").map((part) => part.trim()).filter(Boolean);
+  const spaced = name.replace(/\s*-\s*(?=\d+(?:\.\d+)?\s*g(?:\s*510)?\s*$)/i, " - ");
+  const parts = spaced.split(" - ").map((part) => part.trim()).filter(Boolean);
   let size = "";
   const rest: string[] = [];
   for (const part of parts) {
-    const compact = part.replace(/\s+/g, "");
-    if (!size && SIZE_RE.test(compact)) size = compact.toLowerCase();
+    const match = VAPE_SIZE_RE.exec(part.replace(/\s+/g, ""));
+    if (!size && match) size = `${match[1]}g${match[2] ? " 510" : ""}`;
     else rest.push(part);
   }
   const flavorParts = rest.filter((part, index) => !(index === 0 && /vape|cart/i.test(part) && rest.length > 1));
@@ -749,8 +753,8 @@ export function buildFgInventory(listings: readonly FgListing[], ledger: readonl
 }
 
 function sizeRank(size: string): number {
-  const match = SIZE_RE.exec(size);
-  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+  const match = VAPE_SIZE_RE.exec(size.replace(/\s+/g, ""));
+  return match ? Number(match[1]) + (match[2] ? 0.5 : 0) : Number.POSITIVE_INFINITY;
 }
 
 function formatCount(amount: number): string {

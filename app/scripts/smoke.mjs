@@ -535,8 +535,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 103 migration(s)")) {
-      throw new Error(`from-zero apply must say 103 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 104 migration(s)")) {
+      throw new Error(`from-zero apply must say 104 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -10748,6 +10748,38 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
         hdHarvest.res.status === 200 &&
         hdHarvest.body.includes("of 30,000 lb"),
       `harvest dashboard must list every seeded key and a saved cap must show on /harvest, got landing ${hdLanding.res.status} page ${hdPage.res.status} save ${hdSave.status}`
+    );
+    // DIRECTOR DASHBOARD (S1, 2026-10-15): the Admin tile, the home with its five
+    // department cards, the bizops wall with every tile carrying a status, an
+    // unknown department answering 404, and the farmops wall on its weekly tab.
+    // Nothing is computed on load, so every tile reads no_data or out_of_season
+    // here; the statuses print in the assert message.
+    const ddAdmin = await text("/admin");
+    assert(ddAdmin.res.status === 200 && ddAdmin.body.includes('data-admin-group="director"'), `Admin must carry the Director Dashboard tile, got ${ddAdmin.res.status}`);
+    const ddHome = await text("/admin/director");
+    const ddDepts = [...ddHome.body.matchAll(/data-dd-dept="([^"]+)"/g)].map((hit) => hit[1]);
+    assert(
+      ddHome.res.status === 200 && ddHome.body.includes("data-dd-home") && ddDepts.join(",") === "bizops,farmops,culttech,sales,finance",
+      `director home expected 200 with five department cards in the walls' order, got ${ddHome.res.status} and ${ddDepts.join(",")}`
+    );
+    const ddWall = await text("/admin/director/bizops");
+    const ddKpis = [...ddWall.body.matchAll(/data-dd-kpi="([^"]+)"/g)].map((hit) => hit[1]);
+    const ddStatuses = [...ddWall.body.matchAll(/data-dd-status="([^"]+)"/g)].map((hit) => hit[1]);
+    const ddTally = {};
+    for (const status of ddStatuses) ddTally[status] = (ddTally[status] ?? 0) + 1;
+    const ddTallyText = Object.entries(ddTally).map(([status, n]) => `${status} ${n}`).join(", ");
+    assert(
+      ddWall.res.status === 200 && ddWall.body.includes('data-dd-wall="bizops"') && ddKpis.length >= 20 && ddStatuses.length === ddKpis.length,
+      `bizops wall expected 200 with at least 20 tiles each carrying a status, got ${ddWall.res.status} with ${ddKpis.length} tiles and ${ddStatuses.length} statuses (${ddTallyText})`
+    );
+    assert(ddStatuses.every((status) => status === "no_data" || status === "out_of_season" || status === "parked"), `a from-zero wall reads no_data, out_of_season or parked only, got ${ddTallyText}`);
+    const ddNope = await text("/admin/director/nope");
+    assert(ddNope.res.status === 404, `an unknown department expected 404 got ${ddNope.res.status}`);
+    const ddWeekly = await text("/admin/director/farmops?cadence=weekly");
+    const ddWeeklyKpis = [...ddWeekly.body.matchAll(/data-dd-kpi="([^"]+)"/g)].length;
+    assert(
+      ddWeekly.res.status === 200 && ddWeekly.body.includes('data-dd-wall="farmops"') && ddWeekly.body.includes('data-dd-group="weekly"') && !ddWeekly.body.includes('data-dd-group="daily"') && ddWeeklyKpis > 0,
+      `farmops weekly tab expected 200 with the weekly group alone, got ${ddWeekly.res.status} with ${ddWeeklyKpis} tiles`
     );
     process.stdout.write("SMOKE PASS\n");
   } finally {
