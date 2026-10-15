@@ -4353,6 +4353,220 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "20 to 25%": { en: "20 to 25%", es: "20 a 25%" },
   "25 to 30%": { en: "25 to 30%", es: "25 a 30%" },
   "30% and up": { en: "30% and up", es: "30% o mas" },
+  // AD1: Harvest Dashboard settings in Admin.
+  "Harvest Dashboard": { en: "Harvest Dashboard", es: "Tablero de cosecha" },
+  "The values that change what the Harvest Console shows. A number has to be a number above 0. A list is comma separated codes. THC bands have to stay increasing.": {
+    en: "The values that change what the Harvest Console shows. A number has to be a number above 0. A list is comma separated codes. THC bands have to stay increasing.",
+    es: "Los valores que cambian lo que muestra la consola de cosecha. Un numero tiene que ser un numero mayor que 0. Una lista son codigos separados por comas. Las bandas de THC tienen que seguir en aumento.",
+  },
+  "Using the fallback.": { en: "Using the fallback.", es: "Usando el valor de respaldo." },
+  "Console day": { en: "Console day", es: "Dia de la consola" },
+  "Farm day start hour": { en: "Farm day start hour", es: "Hora de inicio del dia de granja" },
+  "The Eastern hour the farm's day begins. Every pane on the Harvest Console reads this day.": {
+    en: "The Eastern hour the farm's day begins. Every pane on the Harvest Console reads this day.",
+    es: "La hora del Este en que empieza el dia de la granja. Cada panel de la consola de cosecha lee este dia.",
+  },
+  "Farm plant count": { en: "Farm plant count", es: "Conteo de plantas por granja" },
+  "One number per farm for the latest saved harvest year. Plants Remaining and Total divide by it.": {
+    en: "One number per farm for the latest saved harvest year. Plants Remaining and Total divide by it.",
+    es: "Un numero por granja para el ultimo ano de cosecha guardado. Plantas restantes y el total se dividen por el.",
+  },
+  "codes": { en: "codes", es: "codigos" },
+  "The license lookup names the farm of a live METRC plant, on Plants, Strain performance, and Testing.": {
+    en: "The license lookup names the farm of a live METRC plant, on Plants, Strain performance, and Testing.",
+    es: "La lista de licencias nombra la granja de una planta viva de METRC, en Plantas, Rendimiento por variedad y Pruebas.",
+  },
+  "The testing mirror joins this lookup to name a package's farm.": {
+    en: "The testing mirror joins this lookup to name a package's farm.",
+    es: "El espejo de pruebas une esta lista para nombrar la granja de un paquete.",
+  },
+  "BTR type codes": { en: "BTR type codes", es: "Codigos de tipo BTR" },
+  "Package types that count as bud in strain performance BTR, the same list Trimming reads.": {
+    en: "Package types that count as bud in strain performance BTR, the same list Trimming reads.",
+    es: "Tipos de paquete que cuentan como cogollo en el BTR de rendimiento por variedad, la misma lista que lee el recorte.",
+  },
+  "Package types that count as bud in the trim BTR.": {
+    en: "Package types that count as bud in the trim BTR.",
+    es: "Tipos de paquete que cuentan como cogollo en el BTR del recorte.",
+  },
+  "Dry pounds per plant, by strain and farm, that Strain performance reads.": {
+    en: "Dry pounds per plant, by strain and farm, that Strain performance reads.",
+    es: "Libras secas por planta, por variedad y granja, que lee el rendimiento por variedad.",
+  },
+  "Silo capacity": { en: "Silo capacity", es: "Capacidad del silo" },
+  "Wet pounds a silo holds. The fill of every silo scales against it.": {
+    en: "Wet pounds a silo holds. The fill of every silo scales against it.",
+    es: "Libras humedas que cabe un silo. El llenado de cada silo se escala contra esto.",
+  },
+  "Projected dry yield": { en: "Projected dry yield", es: "Rendimiento seco proyectado" },
+  "percent": { en: "percent", es: "porcentaje" },
+  "The dry-down percent on the drying totals.": {
+    en: "The dry-down percent on the drying totals.",
+    es: "El porcentaje de secado en los totales de secado.",
+  },
+  "Stale minutes": { en: "Stale minutes", es: "Minutos de lectura vieja" },
+  "minutes": { en: "minutes", es: "minutos" },
+  "A sensor reading older than this is stale on the drying tiles.": {
+    en: "A sensor reading older than this is stale on the drying tiles.",
+    es: "Una lectura de sensor mas vieja que esto se marca vieja en los mosaicos de secado.",
+  },
+  "Cure rooms": { en: "Cure rooms", es: "Salas de curado" },
+  "rooms": { en: "rooms", es: "salas" },
+  "Rooms a door reading can name, including the cure panes.": {
+    en: "Rooms a door reading can name, including the cure panes.",
+    es: "Salas que una lectura de puerta puede nombrar, incluidas las de curado.",
+  },
+  "CSA lot cap": { en: "CSA lot cap", es: "Tope de lotes CSA" },
+  "lots": { en: "lots", es: "lotes" },
+  "The number of lots CSA holds. The tile fills by lots over this cap.": {
+    en: "The number of lots CSA holds. The tile fills by lots over this cap.",
+    es: "La cantidad de lotes que cabe CSA. El mosaico se llena por lotes sobre este tope.",
+  },
+  "CSB lot cap": { en: "CSB lot cap", es: "Tope de lotes CSB" },
+  "The number of lots CSB holds. The tile fills by lots over this cap.": {
+    en: "The number of lots CSB holds. The tile fills by lots over this cap.",
+    es: "La cantidad de lotes que cabe CSB. El mosaico se llena por lotes sobre este tope.",
+  },
+  "Silo aW intervals": { en: "Silo aW intervals", es: "Intervalos de aW del silo" },
+  "Hours between water activity checks on a silo load.": {
+    en: "Hours between water activity checks on a silo load.",
+    es: "Horas entre controles de actividad de agua en una carga de silo.",
+  },
+  "Silo MC intervals": { en: "Silo MC intervals", es: "Intervalos de MC del silo" },
+  "Hours between moisture checks on a silo load.": {
+    en: "Hours between moisture checks on a silo load.",
+    es: "Horas entre controles de humedad en una carga de silo.",
+  },
+  "Environment bindings": { en: "Environment bindings", es: "Enlaces de ambiente" },
+  "bindings": { en: "bindings", es: "enlaces" },
+  "Bound sensors and their ranges. A reading outside its range flags the drying tile.": {
+    en: "Bound sensors and their ranges. A reading outside its range flags the drying tile.",
+    es: "Sensores enlazados y sus rangos. Una lectura fuera de rango marca el mosaico de secado.",
+  },
+  "Day shift operators": { en: "Day shift operators", es: "Operadores del turno de dia" },
+  "names": { en: "names", es: "nombres" },
+  "Operators whose trim packages count on the day shift.": {
+    en: "Operators whose trim packages count on the day shift.",
+    es: "Operadores cuyos paquetes de recorte cuentan en el turno de dia.",
+  },
+  "Second shift operators": { en: "Second shift operators", es: "Operadores del segundo turno" },
+  "Operators whose trim packages count on the second shift.": {
+    en: "Operators whose trim packages count on the second shift.",
+    es: "Operadores cuyos paquetes de recorte cuentan en el segundo turno.",
+  },
+  "Cryo type categories": { en: "Cryo type categories", es: "Categorias de tipo de crio" },
+  "pairs": { en: "pairs", es: "pares" },
+  "Which trim types read as prepack bud. The rest of the BTR set is bulk bud.": {
+    en: "Which trim types read as prepack bud. The rest of the BTR set is bulk bud.",
+    es: "Que tipos de recorte se leen como cogollo preempacado. El resto del conjunto BTR es cogollo a granel.",
+  },
+  "Trim bogey": { en: "Trim bogey", es: "Meta de recorte" },
+  "The percent of the trim plume that is product.": {
+    en: "The percent of the trim plume that is product.",
+    es: "El porcentaje de la pluma de recorte que es producto.",
+  },
+  "Pasteurization day operators": { en: "Pasteurization day operators", es: "Operadores de pasteurizacion, turno de dia" },
+  "Operators whose cryo outputs count on the pasteurization day shift.": {
+    en: "Operators whose cryo outputs count on the pasteurization day shift.",
+    es: "Operadores cuyas salidas de crio cuentan en el turno de dia de pasteurizacion.",
+  },
+  "Pasteurization second operators": { en: "Pasteurization second operators", es: "Operadores de pasteurizacion, segundo turno" },
+  "Operators whose cryo outputs count on the pasteurization second shift.": {
+    en: "Operators whose cryo outputs count on the pasteurization second shift.",
+    es: "Operadores cuyas salidas de crio cuentan en el segundo turno de pasteurizacion.",
+  },
+  "Pasteurization day hours": { en: "Pasteurization day hours", es: "Horas de pasteurizacion, turno de dia" },
+  "window": { en: "window", es: "ventana" },
+  "The pasteurization day shift's hours, Eastern, HH:MM-HH:MM.": {
+    en: "The pasteurization day shift's hours, Eastern, HH:MM-HH:MM.",
+    es: "Las horas del turno de dia de pasteurizacion, Este, HH:MM-HH:MM.",
+  },
+  "Pasteurization second hours": { en: "Pasteurization second hours", es: "Horas de pasteurizacion, segundo turno" },
+  "The pasteurization second shift's hours, Eastern, HH:MM-HH:MM.": {
+    en: "The pasteurization second shift's hours, Eastern, HH:MM-HH:MM.",
+    es: "Las horas del segundo turno de pasteurizacion, Este, HH:MM-HH:MM.",
+  },
+  "Gate type codes": { en: "Gate type codes", es: "Codigos de tipo de la puerta" },
+  "Package types on the four testing panes.": {
+    en: "Package types on the four testing panes.",
+    es: "Tipos de paquete en los cuatro paneles de pruebas.",
+  },
+  "Gate unit grams": { en: "Gate unit grams", es: "Gramos por unidad de la puerta" },
+  "Grams in one each on the testing panes.": {
+    en: "Grams in one each on the testing panes.",
+    es: "Gramos en una unidad en los paneles de pruebas.",
+  },
+  "Prepack units": { en: "Prepack units", es: "Unidades de preempaque" },
+  "The unit sizes the prepack pane lists.": {
+    en: "The unit sizes the prepack pane lists.",
+    es: "Los tamanos de unidad que lista el panel de preempaque.",
+  },
+  "Fulfillment unit grams": { en: "Fulfillment unit grams", es: "Gramos por unidad de despacho" },
+  "Grams in one each for the fulfillment rows METRC counts as eaches.": {
+    en: "Grams in one each for the fulfillment rows METRC counts as eaches.",
+    es: "Gramos en una unidad para las filas de despacho que METRC cuenta por unidad.",
+  },
+  "Fulfillment override": { en: "Fulfillment override", es: "Ajuste de despacho" },
+  "cells": { en: "cells", es: "celdas" },
+  "The Fulfillment pane reads one day's cells from this grid.": {
+    en: "The Fulfillment pane reads one day's cells from this grid.",
+    es: "El panel de despacho lee las celdas de un dia de esta grilla.",
+  },
+  "Trim/Bio cap": { en: "Trim/Bio cap", es: "Tope de Trim/Bio" },
+  "Trim/Bio turns red at this many pounds and names the trucks.": {
+    en: "Trim/Bio turns red at this many pounds and names the trucks.",
+    es: "Trim/Bio se pone rojo en esta cantidad de libras y nombra los camiones.",
+  },
+  "Shake cap": { en: "Shake cap", es: "Tope de shake" },
+  "Shake turns red only above this many pounds.": {
+    en: "Shake turns red only above this many pounds.",
+    es: "El shake se pone rojo solo por encima de esta cantidad de libras.",
+  },
+  "Distillate cap": { en: "Distillate cap", es: "Tope de destilado" },
+  "Distillate turns red only above this many liters.": {
+    en: "Distillate turns red only above this many liters.",
+    es: "El destilado se pone rojo solo por encima de esta cantidad de litros.",
+  },
+  "Isolate cap": { en: "Isolate cap", es: "Tope de aislado" },
+  "Isolate turns red only above this many grams.": {
+    en: "Isolate turns red only above this many grams.",
+    es: "El aislado se pone rojo solo por encima de esta cantidad de gramos.",
+  },
+  "Infused Bud cap": { en: "Infused Bud cap", es: "Tope de cogollo infundido" },
+  "Infused Bud turns red only above this many grams.": {
+    en: "Infused Bud turns red only above this many grams.",
+    es: "El cogollo infundido se pone rojo solo por encima de esta cantidad de gramos.",
+  },
+  "Truck size": { en: "Truck size", es: "Tamano del camion" },
+  "Pounds in one truck. Trim/Bio names how many of these fit when it is at the cap.": {
+    en: "Pounds in one truck. Trim/Bio names how many of these fit when it is at the cap.",
+    es: "Libras en un camion. Trim/Bio nombra cuantos caben cuando esta en el tope.",
+  },
+  "THC bands": { en: "THC bands", es: "Bandas de THC" },
+  "The two inner edges and the top edge. Below the first is the first band. The top and up is the last. No THC stays its own band.": {
+    en: "The two inner edges and the top edge. Below the first is the first band. The top and up is the last. No THC stays its own band.",
+    es: "Los dos bordes internos y el borde superior. Por debajo del primero esta la primera banda. El superior y mas es la ultima. Sin THC sigue en su propia banda.",
+  },
+  "Zoho prefixes that are not finished goods": { en: "Zoho prefixes that are not finished goods", es: "Prefijos de Zoho que no son producto terminado" },
+  "Item prefixes and categories Zoho listings leave out of finished goods.": {
+    en: "Item prefixes and categories Zoho listings leave out of finished goods.",
+    es: "Prefijos y categorias de articulos que las listas de Zoho dejan fuera del producto terminado.",
+  },
+  "METRC prefixes that are not finished goods": { en: "METRC prefixes that are not finished goods", es: "Prefijos de METRC que no son producto terminado" },
+  "Shake/Trim prefixes METRC leaves out of Trim/Bio and Shake.": {
+    en: "Shake/Trim prefixes METRC leaves out of Trim/Bio and Shake.",
+    es: "Prefijos de Shake/Trim que METRC deja fuera de Trim/Bio y Shake.",
+  },
+  "Folded prefixes": { en: "Folded prefixes", es: "Prefijos plegados" },
+  "Prefixes folded into a standing category. MIX=BUD, NUG=BUD, MOB=PRE:70. PRE is Ounces and the number is grams each.": {
+    en: "Prefixes folded into a standing category. MIX=BUD, NUG=BUD, MOB=PRE:70. PRE is Ounces and the number is grams each.",
+    es: "Prefijos plegados en una categoria fija. MIX=BUD, NUG=BUD, MOB=PRE:70. PRE es onzas y el numero son gramos por unidad.",
+  },
+  "Ounces each": { en: "Ounces each", es: "Onzas por unidad" },
+  "Grams in one ounce when the row does not carry a size. A folded prefix with its own size uses that size.": {
+    en: "Grams in one ounce when the row does not carry a size. A folded prefix with its own size uses that size.",
+    es: "Gramos en una onza cuando la fila no trae un tamano. Un prefijo plegado con su propio tamano usa ese tamano.",
+  },
 };
 
 const FORMULA_ERRORS: Array<[string, string]> = [

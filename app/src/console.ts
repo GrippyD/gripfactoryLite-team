@@ -171,11 +171,11 @@ import {
   TEST_OPEN_STATUSES,
 } from "./config";
 import { HttpError, nowIso, textOrNull } from "./audit";
-import { getConfigValue, insertLog, TRIM_SCHEDULED_SQL } from "./db";
+import { getConfigMap, getConfigValue, insertLog, TRIM_SCHEDULED_SQL } from "./db";
 import { ownLotSql } from "./toll";
 import { formatClock, siloStrip, type DryingStripFigures } from "./drying";
 import { fulfillmentSection, emptyFulfillment, type FulfillmentDay } from "./fulfillmentboard";
-import { emptyFgInventory, fgInventorySection, type FgInventoryModel } from "./fginventory";
+import { emptyFgInventory, FG_SETTING_KEYS, fgInventorySection, fgSettingsFrom, type FgInventoryModel, type FgSettings } from "./fginventory";
 import { emptyStrainPerformance, strainPerformanceSection, type StrainPerformanceModel } from "./strainperformance";
 import { dayBefore, etClockMinutes, etDate, etDayBounds, FARM_DAY_START_HOUR_DEFAULT, FARM_TIME_ZONE, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHour } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
@@ -306,6 +306,8 @@ export type HarvestConsoleInput = {
   btrTypeCodes?: string[];
   /** WEIGHTED BTR TO DATE (canon 0.30.407): this season's live trim packages. Absent reads as none. */
   trimSeason?: TrimSeasonRow[];
+  /** AD1: FG inventory settings, read with the farm day so /harvest adds no config query. */
+  fgSettings?: FgSettings;
 };
 
 /* ------------------------------------------------------------ the trimming */
@@ -2764,7 +2766,9 @@ export async function loadTestingSection(db: D1Database, year: number): Promise<
 /** The console's inputs from the floor. Every query is Postgres-portable SQL. */
 export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDay: string | null = null): Promise<HarvestConsoleInput> {
   // THE FARM DAY BEGINS AT SIX (canon 0.30.151): today and the day under view are farm days.
-  const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour));
+  const opened = await getConfigMap(db, [CONFIG_KEYS.farm_day_start_hour, ...FG_SETTING_KEYS]);
+  const startHour = parseFarmDayStartHour(opened.get(CONFIG_KEYS.farm_day_start_hour) ?? null);
+  const fgSettings = fgSettingsFrom(opened);
   const today = farmDay(atIso, startHour);
   const { day, dayPicked } = consoleDayOf(pickedDay, today);
   const year = Number(today.slice(0, 4));
@@ -3140,6 +3144,7 @@ export async function loadHarvestConsole(db: D1Database, atIso: string, pickedDa
       deleted: false,
       lot_deleted: false,
     })),
+    fgSettings,
   };
 }
 

@@ -201,6 +201,7 @@ import { EDITABLE_FIELDS, ledgerByTable, queues, type LedgerDef, type StationDef
 import { SCHEDULE_REFUSAL } from "./scheduling";
 import { oneLoadPerLot } from "./drying";
 import { normalizePhone, PHONE_REFUSAL } from "./identity";
+import { harvestField, harvestSettingText } from "./harvestdashboard";
 
 export type ActionOk = { redirect: string };
 
@@ -6363,6 +6364,16 @@ export async function addGrowMethod(db: D1Database, form: FormData): Promise<Act
  * saves one whole percent 0 to 100 into app_config trim_bogey_pct under the
  * typed reason: the row is inserted on the first save (the plume reads
  * TRIM_BOGEY_DEFAULT until then) and updated after, every change logged. */
+/** AD1: one Harvest Dashboard setting, logged the same way App config is. A bad value is refused and not stored. */
+export async function saveHarvestDashboard(db: D1Database, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const field = harvestField(textOrNull(form.get("key")));
+  if (!field) throw new HttpError(404, "Unknown setting.");
+  const reason = requireReason(textOrNull(form.get("reason")));
+  const text = harvestSettingText(field.key, form.get("value"));
+  return saveConfigNumber(db, actor, field.key, text, reason, "/admin/lookups/harvest_dashboard?ok=saved");
+}
+
 export async function saveTrimBogey(db: D1Database, form: FormData): Promise<ActionOk> {
   const actor = await requireActor(db, personIdFrom(form));
   const value = trimBogeyOf(form.get("trim_bogey_pct"));

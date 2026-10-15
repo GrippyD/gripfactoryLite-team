@@ -958,6 +958,7 @@ table.data th { background: var(--panel-2); }
 .hc-fill-pane { flex: 1 1 16rem; text-align: center; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.7rem 0.45rem 0.6rem; }
 .hc-fill-beside { display: flex; align-items: center; gap: 0.45rem; }
 .hc-fill-beside .hc-icon { width: 7.5rem; flex: 0 0 auto; margin: 0; }
+.hc-fill-pane > .hc-icon-shipping { display: block; width: 100%; max-width: 18rem; height: auto; margin: 0.2rem auto 0.3rem; }
 .hc-fill-band { flex: 1 1 auto; width: 100%; height: 2.5rem; min-width: 3rem; }
 .hc-fill-legend { list-style: none; margin: 0.45rem 0 0; padding: 0; text-align: left; font-size: 0.78rem; }
 .hc-fill-legend li { margin: 0.12rem 0; }
@@ -1873,6 +1874,7 @@ table.data tbody tr:hover td { background: var(--surface-2); }
 .hc-fill-pane { flex: 1 1 16rem; text-align: center; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.7rem 0.45rem 0.6rem; }
 .hc-fill-beside { display: flex; align-items: center; gap: 0.45rem; }
 .hc-fill-beside .hc-icon { width: 7.5rem; flex: 0 0 auto; margin: 0; }
+.hc-fill-pane > .hc-icon-shipping { display: block; width: 100%; max-width: 18rem; height: auto; margin: 0.2rem auto 0.3rem; }
 .hc-fill-band { flex: 1 1 auto; width: 100%; height: 2.5rem; min-width: 3rem; }
 .hc-fill-legend { list-style: none; margin: 0.45rem 0 0; padding: 0; text-align: left; font-size: 0.78rem; }
 .hc-fill-legend li { margin: 0.12rem 0; }
@@ -2742,6 +2744,7 @@ legend { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; c
 .hc-fill-pane { flex: 1 1 16rem; text-align: center; border: 1px solid var(--line, var(--border, #88888855)); border-radius: 0.6rem; background: var(--panel-2, var(--surface, transparent)); padding: 0.7rem 0.45rem 0.6rem; }
 .hc-fill-beside { display: flex; align-items: center; gap: 0.45rem; }
 .hc-fill-beside .hc-icon { width: 7.5rem; flex: 0 0 auto; margin: 0; }
+.hc-fill-pane > .hc-icon-shipping { display: block; width: 100%; max-width: 18rem; height: auto; margin: 0.2rem auto 0.3rem; }
 .hc-fill-band { flex: 1 1 auto; width: 100%; height: 2.5rem; min-width: 3rem; }
 .hc-fill-legend { list-style: none; margin: 0.45rem 0 0; padding: 0; text-align: left; font-size: 0.78rem; }
 .hc-fill-legend li { margin: 0.12rem 0; }

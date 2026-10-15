@@ -4,7 +4,7 @@
  * the Zoho category. TRI and SHA are METRC's live Shake/Trim packages.
  * Nothing here calls Zoho or METRC, and the ledger is not read.
  */
-import { format2, formatGrams, GRAMS_PER_LB, round2 } from "./config";
+import { CONFIG_KEYS, format2, formatGrams, GRAMS_PER_LB, round2 } from "./config";
 import { etClockMinutes, etDate } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
 import { esc } from "./ui";
@@ -40,6 +40,183 @@ export const FG_CAPS = {
 /** One truck of trim, in app pounds. */
 export const FG_TRUCK_LB = 8000;
 
+/** The two inner edges and the top edge. Below the first is the first band. The top and up is the last. */
+export const FG_BUD_THC_EDGES: readonly [number, number, number] = [20, 25, 30];
+
+export type FgFold = { prefix: string; category: "bud" | "pre"; eachGrams?: number };
+
+export type FgSettings = {
+  caps: { tri: number; sha: number; distillate: number; isolate: number; infused: number };
+  truckLb: number;
+  bands: [number, number, number];
+  notFinished: string[];
+  metrcNotFinished: string[];
+  folds: FgFold[];
+  preEachGrams: number;
+};
+
+/** The app_config keys this pane reads. They ride the harvest page's existing config read. */
+export const FG_SETTING_KEYS = [
+  CONFIG_KEYS.fg_cap_tri_lb,
+  CONFIG_KEYS.fg_cap_sha_lb,
+  CONFIG_KEYS.fg_cap_distillate_l,
+  CONFIG_KEYS.fg_cap_isolate_g,
+  CONFIG_KEYS.fg_cap_infused_g,
+  CONFIG_KEYS.fg_truck_lb,
+  CONFIG_KEYS.fg_bud_thc_bands,
+  CONFIG_KEYS.fg_not_finished,
+  CONFIG_KEYS.fg_metrc_not_finished,
+  CONFIG_KEYS.fg_folded_prefixes,
+  CONFIG_KEYS.fg_pre_each_grams,
+] as const;
+
+const FG_NUMBER_KEYS = new Set<string>([
+  CONFIG_KEYS.fg_cap_tri_lb,
+  CONFIG_KEYS.fg_cap_sha_lb,
+  CONFIG_KEYS.fg_cap_distillate_l,
+  CONFIG_KEYS.fg_cap_isolate_g,
+  CONFIG_KEYS.fg_cap_infused_g,
+  CONFIG_KEYS.fg_truck_lb,
+  CONFIG_KEYS.fg_pre_each_grams,
+]);
+
+function settingRaw(raw: ReadonlyMap<string, string> | Record<string, string | null | undefined>, key: string): string | null {
+  const value = raw instanceof Map ? raw.get(key) : (raw as Record<string, string | null | undefined>)[key];
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text === "" ? null : text;
+}
+
+/** A plain number above 0. Anything else is unreadable. */
+export function fgPositiveOf(raw: string | null | undefined): number | null {
+  const text = String(raw ?? "").trim();
+  if (!/^\d+(\.\d+)?$/.test(text)) return null;
+  const n = Number(text);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function positiveOr(raw: string | null, fallback: number): number {
+  return fgPositiveOf(raw) ?? fallback;
+}
+
+/** Three increasing percents above 0. Anything else is unreadable. */
+export function fgBandsOf(raw: string | null | undefined): [number, number, number] | null {
+  const parts = String(raw ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (parts.length !== 3) return null;
+  const nums = parts.map((part) => fgPositiveOf(part));
+  if (nums.some((n) => n == null)) return null;
+  const edges = nums as [number, number, number];
+  if (!(edges[0] < edges[1] && edges[1] < edges[2])) return null;
+  return edges;
+}
+
+function bandsOr(raw: string | null): [number, number, number] {
+  return fgBandsOf(raw) ?? [...FG_BUD_THC_EDGES];
+}
+
+/** Comma separated codes. A blank or a bad token is unreadable, so the whole list falls back. */
+export function fgCodesOf(raw: string | null | undefined): string[] | null {
+  const parts = String(raw ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (parts.length === 0) return null;
+  const codes = parts.map((part) => part.toUpperCase());
+  if (codes.some((code) => !/^[A-Z0-9]+$/.test(code))) return null;
+  return codes;
+}
+
+function codesOr(raw: string | null, fallback: readonly string[]): string[] {
+  return fgCodesOf(raw) ?? [...fallback];
+}
+
+/** MIX=BUD, NUG=BUD, MOB=PRE:70. PRE is Ounces. A bad token falls the whole list back. */
+export function fgFoldsOf(raw: string | null | undefined): FgFold[] | null {
+  const parts = String(raw ?? "")
+    .split(",")
+    .map((part) => part.trim().toUpperCase())
+    .filter((part) => part.length > 0);
+  if (parts.length === 0) return null;
+  const folds: FgFold[] = [];
+  for (const part of parts) {
+    const match = /^([A-Z0-9]+)=(BUD|PRE)(?::(\d+(?:\.\d+)?))?$/.exec(part);
+    if (!match) return null;
+    const grams = match[3] == null ? undefined : Number(match[3]);
+    if (grams != null && !(grams > 0)) return null;
+    folds.push({
+      prefix: match[1],
+      category: match[2] === "BUD" ? "bud" : "pre",
+      ...(grams != null ? { eachGrams: grams } : {}),
+    });
+  }
+  return folds;
+}
+
+function defaultFolds(): FgFold[] {
+  return FG_FOLDED_PREFIXES.map((row) =>
+    "eachGrams" in row ? { prefix: row.prefix, category: row.category, eachGrams: row.eachGrams } : { prefix: row.prefix, category: row.category }
+  );
+}
+
+function foldsOr(raw: string | null): FgFold[] {
+  return fgFoldsOf(raw) ?? defaultFolds();
+}
+
+/** What /harvest uses. A missing or bad row keeps today's number, so the page never goes blank. */
+export function fgSettingsFrom(raw: ReadonlyMap<string, string> | Record<string, string | null | undefined>): FgSettings {
+  return {
+    caps: {
+      tri: positiveOr(settingRaw(raw, CONFIG_KEYS.fg_cap_tri_lb), FG_CAPS.tri),
+      sha: positiveOr(settingRaw(raw, CONFIG_KEYS.fg_cap_sha_lb), FG_CAPS.sha),
+      distillate: positiveOr(settingRaw(raw, CONFIG_KEYS.fg_cap_distillate_l), FG_CAPS.distillate),
+      isolate: positiveOr(settingRaw(raw, CONFIG_KEYS.fg_cap_isolate_g), FG_CAPS.isolate),
+      infused: positiveOr(settingRaw(raw, CONFIG_KEYS.fg_cap_infused_g), FG_CAPS.infused),
+    },
+    truckLb: positiveOr(settingRaw(raw, CONFIG_KEYS.fg_truck_lb), FG_TRUCK_LB),
+    bands: bandsOr(settingRaw(raw, CONFIG_KEYS.fg_bud_thc_bands)),
+    notFinished: codesOr(
+      settingRaw(raw, CONFIG_KEYS.fg_not_finished),
+      FG_NOT_FINISHED.map((code) => code.toUpperCase())
+    ),
+    metrcNotFinished: codesOr(
+      settingRaw(raw, CONFIG_KEYS.fg_metrc_not_finished),
+      FG_NOT_FINISHED.filter((code) => code !== "Biomass").map((code) => code.toUpperCase())
+    ),
+    folds: foldsOr(settingRaw(raw, CONFIG_KEYS.fg_folded_prefixes)),
+    preEachGrams: positiveOr(settingRaw(raw, CONFIG_KEYS.fg_pre_each_grams), FG_PRE_EACH_GRAMS),
+  };
+}
+
+export const FG_SETTINGS: FgSettings = fgSettingsFrom(new Map());
+
+/** The stored text for a save. Null refuses the value and stores nothing. */
+export function normalizeHarvestSetting(key: string, raw: unknown): string | null {
+  const text = String(raw ?? "").trim();
+  if (key === CONFIG_KEYS.fg_bud_thc_bands) {
+    const bands = fgBandsOf(text);
+    return bands ? bands.join(",") : null;
+  }
+  if (key === CONFIG_KEYS.fg_not_finished || key === CONFIG_KEYS.fg_metrc_not_finished) {
+    const codes = fgCodesOf(text);
+    return codes ? codes.join(",") : null;
+  }
+  if (key === CONFIG_KEYS.fg_folded_prefixes) {
+    const folds = fgFoldsOf(text);
+    if (!folds) return null;
+    return folds
+      .map((fold) => `${fold.prefix}=${fold.category === "bud" ? "BUD" : "PRE"}${fold.eachGrams != null ? `:${fold.eachGrams}` : ""}`)
+      .join(",");
+  }
+  if (FG_NUMBER_KEYS.has(key)) {
+    const n = fgPositiveOf(text);
+    return n == null ? null : String(n);
+  }
+  return null;
+}
+
 const FG_CAP_KEYS = ["tri", "sha", "distillate", "isolate", "infused"] as const;
 type FgCapKey = (typeof FG_CAP_KEYS)[number];
 
@@ -48,20 +225,45 @@ function isCap(key: FgCatKey): key is FgCapKey {
 }
 
 /** Round half up. 6.5 trucks is 7. */
-export function fgTruckCount(pounds: number): number {
-  return Math.round(pounds / FG_TRUCK_LB);
+export function fgTruckCount(pounds: number, truckLb = FG_TRUCK_LB): number {
+  const size = truckLb > 0 ? truckLb : FG_TRUCK_LB;
+  return Math.round(pounds / size);
+}
+
+function bandNumber(n: number): string {
+  const fixed = Number(n.toFixed(2));
+  const text = fixed.toFixed(2);
+  if (text.endsWith(".00")) return String(Math.round(fixed));
+  return text.replace(/0$/, "");
+}
+
+/** The five band names, last is no THC. The first cutoff is one hundredth under the first edge, so 20 stays "19.99% or less". */
+export function budBandNames(edges: readonly [number, number, number] = FG_BUD_THC_EDGES): [string, string, string, string, string] {
+  const [low, mid, high] = edges;
+  const firstCut = Number((low - 0.01).toFixed(2));
+  return [
+    `${bandNumber(firstCut)}% or less`,
+    `${bandNumber(low)} to ${bandNumber(mid)}%`,
+    `${bandNumber(mid)} to ${bandNumber(high)}%`,
+    `${bandNumber(high)}% and up`,
+    "no THC",
+  ];
 }
 
 /**
  * BUD bands on the listing's THC. 20.00 through 24.99 is 20 to 25.
  * 25.00 through 29.99 is 25 to 30. A missing THC is its own band.
+ * Below the first edge is the first band. The top edge and up is the last.
  */
-export function budThcBand(pct: number | null): string {
-  if (pct == null || !Number.isFinite(pct)) return "no THC";
-  if (pct <= 19.99) return "19.99% or less";
-  if (pct < 25) return "20 to 25%";
-  if (pct < 30) return "25 to 30%";
-  return "30% and up";
+export function budThcBand(pct: number | null, edges: readonly [number, number, number] = FG_BUD_THC_EDGES): string {
+  const names = budBandNames(edges);
+  if (pct == null || !Number.isFinite(pct)) return names[4];
+  const [low, mid, high] = edges;
+  const firstCut = Number((low - 0.01).toFixed(2));
+  if (pct <= firstCut) return names[0];
+  if (pct < mid) return names[1];
+  if (pct < high) return names[2];
+  return names[3];
 }
 
 export const FG_LISTINGS_SQL = `SELECT item_name, category, market_uom, market_qty, qty_grams, each_grams, thc_pct, zoho_mounted_at
@@ -78,7 +280,15 @@ WHERE deleted_at IS NULL
  * the FG_NOT_FINISHED prefixes. They stay out of TRI and SHA entirely.
  */
 export const FG_METRC_NOT_FINISHED = FG_NOT_FINISHED.filter((code) => code !== "Biomass").map((code) => code.toUpperCase());
-const FG_METRC_NOT_FINISHED_SQL = FG_METRC_NOT_FINISHED.map((code) => `'${code}'`).join(", ");
+
+/** The ledger read, with the not-finished prefixes in the list. The default list is the seeded one. */
+export function fgLedgerSql(prefixes: readonly string[] = FG_METRC_NOT_FINISHED): string {
+  const safe = prefixes.map((code) => code.trim().toUpperCase()).filter((code) => /^[A-Z0-9]+$/.test(code));
+  const use = safe.length > 0 ? safe : [...FG_METRC_NOT_FINISHED];
+  const list = use.map((code) => `'${code}'`).join(", ");
+  const seeded = FG_METRC_NOT_FINISHED.map((code) => `'${code}'`).join(", ");
+  return FG_LEDGER_SQL.split(seeded).join(list);
+}
 
 /**
  * One grouped read of live Shake/Trim packages, every license.
@@ -136,7 +346,7 @@ weighed AS (
       ELSE NULL
     END AS grams
   FROM live
-  WHERE prefix NOT IN (${FG_METRC_NOT_FINISHED_SQL})
+  WHERE prefix NOT IN ('WBP', 'WIP', 'WPR', 'FFZ')
 ),
 rated AS (
   SELECT
@@ -220,6 +430,8 @@ export type FgInventoryModel = {
   mountedAt: string | null;
   notShown: number;
   categories: FgCategory[];
+  /** The caps, bands and prefixes this model was built with. */
+  settings?: FgSettings;
   /** Live Shake/Trim packages whose unit is not g, kg, or lb. */
   metrcOtherUnits?: number;
   /** Newest packages mirror mount, ISO. */
@@ -238,7 +450,6 @@ const CAT_ORDER: Array<{ key: FgCatKey; label: string; unit: FgUnit }> = [
   { key: "vape", label: "Vapes", unit: "each" },
 ];
 
-const NOT_FINISHED = new Set(FG_NOT_FINISHED.map((name) => name.toUpperCase()));
 const SIZE_RE = /^(\d+(?:\.\d+)?)g$/i;
 
 type NamedBag = Map<string, { name: string; amount: number }>;
@@ -313,8 +524,9 @@ export function prerollFlavor(name: string): string {
   return (kept.length > 0 ? kept : body).join(" - ").trim();
 }
 
-function isNotFinished(prefix: string, category: string): boolean {
-  return NOT_FINISHED.has(prefix.trim().toUpperCase()) || NOT_FINISHED.has(category.trim().toUpperCase());
+function isNotFinished(prefix: string, category: string, settings: FgSettings): boolean {
+  const blocked = new Set(settings.notFinished.map((code) => code.toUpperCase()));
+  return blocked.has(prefix.trim().toUpperCase()) || blocked.has(category.trim().toUpperCase());
 }
 
 function isLiters(uom: string | null): boolean {
@@ -322,24 +534,24 @@ function isLiters(uom: string | null): boolean {
   return u === "l" || u === "liter" || u === "liters" || u === "litre" || u === "litres";
 }
 
-function foldedOf(prefix: string): (typeof FG_FOLDED_PREFIXES)[number] | undefined {
-  return FG_FOLDED_PREFIXES.find((row) => row.prefix === prefix);
+function foldedOf(prefix: string, settings: FgSettings): FgFold | undefined {
+  return settings.folds.find((row) => row.prefix === prefix);
 }
 
-function prepackEach(prefix: string, stored: number | null): number {
+function prepackEach(prefix: string, stored: number | null, settings: FgSettings): number {
   if (stored != null && stored > 0) return stored;
-  const folded = foldedOf(prefix);
-  if (folded && "eachGrams" in folded && folded.eachGrams > 0) return folded.eachGrams;
-  return FG_PRE_EACH_GRAMS;
+  const folded = foldedOf(prefix, settings);
+  if (folded?.eachGrams != null && folded.eachGrams > 0) return folded.eachGrams;
+  return settings.preEachGrams > 0 ? settings.preEachGrams : FG_PRE_EACH_GRAMS;
 }
 
-export function classifyListing(row: FgListing): FgCatKey | null {
+export function classifyListing(row: FgListing, settings: FgSettings = FG_SETTINGS): FgCatKey | null {
   const prefix = itemPrefix(row.itemName).toUpperCase();
   const category = (row.category ?? "").trim().toLowerCase();
-  if (isNotFinished(prefix, row.category ?? "")) return null;
+  if (isNotFinished(prefix, row.category ?? "", settings)) return null;
   if (category === "concentrate" && isLiters(row.marketUom) && /distillate/i.test(row.itemName)) return "distillate";
   if (category === "concentrate" && !isLiters(row.marketUom) && /\b(thca|isolate)\b/i.test(row.itemName)) return "isolate";
-  const folded = foldedOf(prefix);
+  const folded = foldedOf(prefix, settings);
   if (prefix === "BUD" || folded?.category === "bud") return "bud";
   if (prefix === "PRE" || folded?.category === "pre") return "pre";
   if (prefix === "IPR" || category === "infused pre-rolls") return "preroll";
@@ -409,7 +621,7 @@ function emptyCategory(spec: (typeof CAT_ORDER)[number]): FgCategory {
   return { key: spec.key, label: spec.label, unit: spec.unit, total: 0, groups: [], lines: [], sizes: [] };
 }
 
-export function buildFgInventory(listings: readonly FgListing[], ledger: readonly FgLedgerRow[]): FgInventoryModel {
+export function buildFgInventory(listings: readonly FgListing[], ledger: readonly FgLedgerRow[], settings: FgSettings = FG_SETTINGS): FgInventoryModel {
   const strains: Record<"bud" | "tri" | "sha" | "pre", StrainBag> = {
     bud: new Map(),
     tri: new Map(),
@@ -433,7 +645,7 @@ export function buildFgInventory(listings: readonly FgListing[], ledger: readonl
   const rows = [...listings].sort((a, b) => cmp(a.itemName, b.itemName));
   for (const row of rows) {
     if (row.mountedAt && (!mountedAt || row.mountedAt > mountedAt)) mountedAt = row.mountedAt;
-    const kind = classifyListing(row);
+    const kind = classifyListing(row, settings);
     if (!kind) {
       notShown += 1;
       continue;
@@ -445,7 +657,7 @@ export function buildFgInventory(listings: readonly FgListing[], ledger: readonl
       addStrain(strains.bud, itemStrain(row.itemName), row.thcPct, weight);
     } else if (kind === "pre") {
       const count = finite(row.marketQty) ?? 0;
-      const weight = count > 0 ? count * prepackEach(itemPrefix(row.itemName).toUpperCase(), finite(row.eachGrams)) : 0;
+      const weight = count > 0 ? count * prepackEach(itemPrefix(row.itemName).toUpperCase(), finite(row.eachGrams), settings) : 0;
       grams.pre += weight;
       addStrain(strains.pre, itemStrain(row.itemName), row.thcPct, weight);
     } else if (kind === "distillate") {
@@ -533,7 +745,7 @@ export function buildFgInventory(listings: readonly FgListing[], ledger: readonl
     return cat;
   });
 
-  return { mountedAt, notShown, categories };
+  return { mountedAt, notShown, categories, settings };
 }
 
 function sizeRank(size: string): number {
@@ -618,14 +830,7 @@ function categoryBody(cat: FgCategory, locale: Locale): string {
   );
 }
 
-const BUD_BANDS = ["19.99% or less", "20 to 25%", "25 to 30%", "30% and up", "no THC"] as const;
-const BUD_TONE: Record<string, string> = {
-  "19.99% or less": "b1",
-  "20 to 25%": "b2",
-  "25 to 30%": "b3",
-  "30% and up": "b4",
-  "no THC": "none",
-};
+const BUD_TONES = ["b1", "b2", "b3", "b4", "none"] as const;
 
 type BarSeg = {
   name: string;
@@ -663,15 +868,15 @@ function flavorWord(locale: Locale, count: number): string {
   return t(locale, count === 1 ? "flavor" : "flavors");
 }
 
-function fgTotalLine(cat: FgCategory, locale: Locale): string {
+function fgTotalLine(cat: FgCategory, locale: Locale, settings: FgSettings): string {
   const total = fgAmountText(cat.unit, cat.total, locale);
   if (!isCap(cat.key)) return total;
-  return `${total} ${t(locale, "of")} ${formatCount(FG_CAPS[cat.key])} ${cat.unit}`;
+  return `${total} ${t(locale, "of")} ${formatCount(settings.caps[cat.key])} ${cat.unit}`;
 }
 
-function fgOver(cat: FgCategory): boolean {
+function fgOver(cat: FgCategory, settings: FgSettings): boolean {
   if (!isCap(cat.key)) return false;
-  const cap = FG_CAPS[cat.key];
+  const cap = settings.caps[cat.key];
   return cat.key === "tri" ? cat.total >= cap : cat.total > cap;
 }
 
@@ -679,27 +884,28 @@ function segOf(name: string, text: string, amount: string, share: number, width:
   return { name, text, title: `${text}: ${amount}`, share: shareAttr(share), width, tone, over };
 }
 
-function fgSegments(cat: FgCategory, locale: Locale, label: string): BarSeg[] {
+function fgSegments(cat: FgCategory, locale: Locale, label: string, settings: FgSettings): BarSeg[] {
   if (!(cat.total > 0)) return [];
   if (isCap(cat.key)) {
-    const cap = FG_CAPS[cat.key];
+    const cap = settings.caps[cat.key];
     const visual = Math.min(1, cat.total / cap);
     const amount = fgAmountText(cat.unit, cat.total, locale);
-    return [segOf(cat.label, label, amount, visual, (visual * 100).toFixed(2), "b3", fgOver(cat))];
+    return [segOf(cat.label, label, amount, visual, (visual * 100).toFixed(2), "b3", fgOver(cat, settings))];
   }
   const rows: Array<{ name: string; text: string; title?: string; amount: number; tone: string }> = [];
   if (cat.key === "bud") {
+    const names = budBandNames(settings.bands);
     const sums = new Map<string, number>();
     for (const group of cat.groups) {
       for (const line of group.lines) {
-        const band = budThcBand(line.thc ? Number(line.thc) : null);
+        const band = budThcBand(line.thc ? Number(line.thc) : null, settings.bands);
         sums.set(band, (sums.get(band) ?? 0) + line.amount);
       }
     }
-    for (const band of BUD_BANDS) {
+    names.forEach((band, index) => {
       const amount = sums.get(band) ?? 0;
-      if (amount > 0) rows.push({ name: band, text: t(locale, band), amount, tone: BUD_TONE[band] ?? "b1" });
-    }
+      if (amount > 0) rows.push({ name: band, text: t(locale, band), amount, tone: BUD_TONES[index] ?? "b1" });
+    });
   } else if (cat.key === "pre") {
     cat.groups.filter((group) => group.amount > 0).forEach((group, index) => {
       const name = group.name || "none";
@@ -742,17 +948,17 @@ function fgIcon(key: FgCatKey): string {
   return `<span class="hc-fg-icon" aria-hidden="true" style="background:currentColor;-webkit-mask:${mask};mask:${mask}"></span>`;
 }
 
-function fgBarHtml(cat: FgCategory, locale: Locale, label: string, totalLine: string): string {
-  const over = fgOver(cat);
+function fgBarHtml(cat: FgCategory, locale: Locale, label: string, totalLine: string, settings: FgSettings): string {
+  const over = fgOver(cat, settings);
   let trucks: number | null = null;
   let note = "";
   if (over && cat.key === "tri") {
-    trucks = fgTruckCount(cat.total);
+    trucks = fgTruckCount(cat.total, settings.truckLb);
     note = `${trucks} ${t(locale, "trucks")}`;
   } else if (over) {
     note = fgAmountText(cat.unit, cat.total, locale);
   }
-  const segs = fgSegments(cat, locale, label);
+  const segs = fgSegments(cat, locale, label, settings);
   const described = segs.map((seg) => seg.title).join(", ");
   const aria = described ? `${label}: ${described}${note ? `, ${note}` : ""}` : `${label}: ${totalLine}`;
   const parts = segs
@@ -767,11 +973,11 @@ function fgBarHtml(cat: FgCategory, locale: Locale, label: string, totalLine: st
   return `<span class="hc-fg-bar" role="img" aria-label="${esc(aria)}" data-fg-bar="${esc(cat.key)}"><span class="hc-fg-track">${parts}</span>${noteHtml}</span>`;
 }
 
-function fgCategoryHtml(cat: FgCategory, locale: Locale): string {
+function fgCategoryHtml(cat: FgCategory, locale: Locale, settings: FgSettings): string {
   const label = t(locale, cat.label);
-  const totalLine = fgTotalLine(cat, locale);
+  const totalLine = fgTotalLine(cat, locale, settings);
   return `<details class="hc-fg hc-fg-cat" data-fg-cat="${esc(cat.key)}" data-fg-total="${esc(fgTotalAttr(cat.unit, cat.total))}">
-      <summary><span class="hc-fg-row">${fgIcon(cat.key)}<span class="hc-fg-label"><span class="hc-fg-name">${esc(label)}</span><span class="muted hc-fg-total">${esc(totalLine)}</span></span>${fgBarHtml(cat, locale, label, totalLine)}</span></summary>
+      <summary><span class="hc-fg-row">${fgIcon(cat.key)}<span class="hc-fg-label"><span class="hc-fg-name">${esc(label)}</span><span class="muted hc-fg-total">${esc(totalLine)}</span></span>${fgBarHtml(cat, locale, label, totalLine, settings)}</span></summary>
       ${categoryBody(cat, locale)}
     </details>`;
 }
@@ -781,11 +987,12 @@ export function emptyFgInventory(): FgInventoryModel {
 }
 
 export function fgInventorySection(model: FgInventoryModel, locale: Locale = "en"): string {
+  const settings = model.settings ?? FG_SETTINGS;
   const when = fgMountedLabel(model.mountedAt);
   const asOf = when
     ? ` <span class="muted hc-year" data-fg-as-of="${esc(when)}">${esc(`${t(locale, "Zoho as of")} ${when}`)}</span>`
     : "";
-  const block = (cat: FgCategory): string => fgCategoryHtml(cat, locale);
+  const block = (cat: FgCategory): string => fgCategoryHtml(cat, locale, settings);
   const headKeys = new Set<FgCatKey>(["bud", "tri", "sha"]);
   const head = model.categories.filter((cat) => headKeys.has(cat.key)).map(block).join("");
   const tail = model.categories.filter((cat) => !headKeys.has(cat.key)).map(block).join("");
@@ -828,10 +1035,10 @@ type LedgerSql = {
   mounted_at: string | null;
 };
 
-export async function loadFgInventory(db: D1Database): Promise<FgInventoryModel> {
+export async function loadFgInventory(db: D1Database, settings: FgSettings = FG_SETTINGS): Promise<FgInventoryModel> {
   const [listed, ledger] = await Promise.all([
     db.prepare(FG_LISTINGS_SQL).all<ListingSql>(),
-    db.prepare(FG_LEDGER_SQL).all<LedgerSql>(),
+    db.prepare(fgLedgerSql(settings.metrcNotFinished)).all<LedgerSql>(),
   ]);
   const listings = (listed.results ?? []).map((row) => ({
     itemName: String(row.item_name ?? ""),
@@ -853,7 +1060,7 @@ export async function loadFgInventory(db: D1Database): Promise<FgInventoryModel>
       grams: finite(row.grams) ?? 0,
     }));
   return {
-    ...buildFgInventory(listings, rows),
+    ...buildFgInventory(listings, rows, settings),
     metrcOtherUnits: raw.length ? Number(raw[0].other_units ?? 0) : 0,
     metrcMountedAt: raw[0]?.mounted_at ? String(raw[0].mounted_at) : null,
   };

@@ -54,6 +54,13 @@ export const LOOKUP_LANDING: LookupLandingSection[] = [
         lookupFieldName: "Silo #",
       },
       {
+        key: "harvest_dashboard",
+        title: "Harvest Dashboard",
+        href: "/admin/lookups/harvest_dashboard",
+        description: "Every value the Harvest Console reads: the FG caps, truck size, THC bands, and the lookups each pane already uses.",
+        lookupFieldName: "Harvest Dashboard",
+      },
+      {
         key: "plant_count",
         title: "Farm Plant Count",
         href: "/admin/lookups/plant_count",
