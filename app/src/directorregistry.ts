@@ -190,6 +190,89 @@ export const DD_HISTORY_PERIODS_DEFAULT = 8;
 export const DD_HISTORY_PERIODS_MAX = 52;
 export const DD_LB_GRAMS_DEFAULT = 448;
 
+/**
+ * How a ruling checks a dd_ config value. Each rule is read off that question's
+ * recommendation and default in migration 0105. Ten keys stay text because the
+ * recommendation does not name a closed list of stored codes:
+ * dd_all_in_addback_gls (GL numbers can grow past 5570 and 5420),
+ * dd_plan_source (a pinned submission id is not a fixed word),
+ * dd_projection_basis (only the token estimates is written down),
+ * dd_product_life_cycle_mode (only batch_cycle is a code),
+ * dd_contra_recompenses_mode (the row is parked; the mode is not a code list),
+ * dd_retail_report_source (only state_cra_monthly is a code),
+ * dd_market_penetration_basis (only doors is a code),
+ * dd_btr_formula (only console_to_date is a code),
+ * dd_week_basis (only iso is a code; harvest week is a label),
+ * dd_lot_date_law (only effective_date is a code).
+ */
+export type DdConfigRule =
+  | { kind: "enum"; values: readonly string[] }
+  | { kind: "mmdd" }
+  | { kind: "integer"; min: number; max: number }
+  | { kind: "csv"; values: readonly string[] }
+  | { kind: "text" };
+
+export const DD_CONFIG_RULES: Readonly<Record<string, DdConfigRule>> = {
+  dd_ppp_basis: { kind: "enum", values: ["dry", "wet"] },
+  dd_sales_htd_start_mmdd: { kind: "mmdd" },
+  dd_processed_lbs_buckets: { kind: "csv", values: ["trim", "cryo", "prepack"] },
+  dd_shipped_includes_interco: { kind: "enum", values: ["0", "1"] },
+  dd_sales_active_days: { kind: "integer", min: 1, max: 366 },
+  dd_sales_week_basis: { kind: "enum", values: ["order", "shipped"] },
+  dd_all_in_addback_gls: { kind: "text" },
+  dd_plan_source: { kind: "text" },
+  dd_projection_basis: { kind: "text" },
+  dd_moh_window_months: { kind: "integer", min: 1, max: 36 },
+  dd_product_life_cycle_mode: { kind: "text" },
+  dd_contra_recompenses_mode: { kind: "text" },
+  dd_retail_report_source: { kind: "text" },
+  dd_market_penetration_basis: { kind: "text" },
+  dd_btr_formula: { kind: "text" },
+  dd_week_basis: { kind: "text" },
+  dd_lot_date_law: { kind: "text" },
+};
+
+const CONFIG_DASH = new RegExp("[" + String.fromCharCode(0x2013, 0x2014) + "]");
+
+/** The value a ruling may write, or the dictionary line that refuses it. */
+export function ddNormalizeConfig(rule: DdConfigRule, raw: string): { value: string } | { key: string; vars: Record<string, string> } {
+  const text = raw.trim();
+  if (CONFIG_DASH.test(text)) return { key: "A dash character is not allowed.", vars: {} };
+  if (text === "") return { key: "Value is required.", vars: {} };
+  switch (rule.kind) {
+    case "enum":
+      if (!rule.values.includes(text)) return { key: "Value must be one of: {list}.", vars: { list: rule.values.join(", ") } };
+      return { value: text };
+    case "mmdd": {
+      if (!/^\d{2}-\d{2}$/.test(text)) return { key: "Value must be a month and day, MM-DD.", vars: {} };
+      const month = Number(text.slice(0, 2));
+      const day = Number(text.slice(3, 5));
+      const probe = new Date(Date.UTC(2024, month - 1, day));
+      if (month < 1 || month > 12 || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) {
+        return { key: "Value must be a month and day, MM-DD.", vars: {} };
+      }
+      return { value: text };
+    }
+    case "integer": {
+      if (!/^-?\d+$/.test(text)) return { key: "Value must be a whole number from {min} to {max}.", vars: { min: String(rule.min), max: String(rule.max) } };
+      const n = Number(text);
+      if (!Number.isInteger(n) || n < rule.min || n > rule.max) {
+        return { key: "Value must be a whole number from {min} to {max}.", vars: { min: String(rule.min), max: String(rule.max) } };
+      }
+      return { value: String(n) };
+    }
+    case "csv": {
+      const parts = text.split(",").map((part) => part.trim()).filter((part) => part !== "");
+      if (parts.length === 0) return { key: "Value is required.", vars: {} };
+      const allowed = new Set(rule.values);
+      if (parts.some((part) => !allowed.has(part))) return { key: "Value must be a list of: {list}.", vars: { list: rule.values.join(", ") } };
+      return { value: parts.join(",") };
+    }
+    default:
+      return { value: text };
+  }
+}
+
 /** Periods of history a wall tile's sparkline reads: a whole number 1 to 52; 8 otherwise. */
 export function ddHistoryPeriods(raw: string | null | undefined): number {
   const text = String(raw ?? "").trim();

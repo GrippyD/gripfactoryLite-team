@@ -9,13 +9,35 @@ import {
   ddFormatValue,
   ddGoalDelta,
   ddSparklineSvg,
+  directorDetailPage,
+  directorGridPage,
   directorHomePage,
   directorWallPage,
+  ddAllowedDimKeys,
+  loadDirectorDetail,
+  loadDirectorGrid,
   loadDirectorHome,
   loadDirectorRegistry,
   loadDirectorWall,
+  parsePhasing,
+  phasedGoal,
+  saveDirectorGrid,
+  targetInForce,
+  type DdTarget,
 } from "../src/director";
-import { periodShift, periodStartFor } from "../src/farmday";
+import {
+  commitDirectorImport,
+  directorImportPage,
+  directorQuestionsPage,
+  inspectDdImport,
+  loadDirectorImportContext,
+  loadDirectorQuestions,
+  ruleDirectorQuestion,
+  saveDirectorTarget,
+  voidDirectorTarget,
+} from "../src/directors2b";
+import { HttpError } from "../src/audit";
+import { isoWeekOf, periodShift, periodStartFor } from "../src/farmday";
 import { ADMIN_GROUPS, adminHomePage } from "../src/html";
 import { DICT, t } from "../src/i18n";
 import { backLinkFor } from "../src/nav";
@@ -23,6 +45,7 @@ import {
   DD_CADENCES,
   DD_CONFIG_DEFAULTS,
   DD_CONFIG_KEYS,
+  DD_CONFIG_RULES,
   DD_DEPARTMENTS,
   DD_DEPT_KEYS,
   DD_GOAL_DIRECTIONS,
@@ -937,7 +960,7 @@ describe("DD S1 pages: the home and the walls", () => {
   });
 
   it("every t() key of the page module and the Admin entry has a Spanish row without a dash", async () => {
-    const page = await source("director.ts");
+    const page = `${await source("director.ts")}\n${await source("directors2b.ts")}`;
     const pageKeys = [...page.matchAll(/\bt\(locale, "([^"]*)"\)/g)].map((m) => m[1] as string);
     expect(pageKeys.length).toBeGreaterThan(12);
     const group = ADMIN_GROUPS.find((g) => g.key === "director");
@@ -964,5 +987,528 @@ describe("DD S1 pages: the home and the walls", () => {
     expect(t("en", DD_SOURCE_WORDS.mount as string)).toBe("Mount");
     expect(page.includes("\r")).toBe(false);
     expect(DASH.test(page)).toBe(false);
+  });
+});
+
+describe("DD S2a: the entry grid and the KPI detail", () => {
+  function person(m: Awaited<ReturnType<typeof migratedDb>>): void {
+    m.run(`INSERT INTO people (id, display_name, is_active, created_at, updated_at) VALUES ('dd-actor', 'actor', 1, ?, ?)`, NOW, NOW);
+  }
+
+  function entryForm(fields: Record<string, string>): FormData {
+    const form = new FormData();
+    form.set("person_id", "dd-actor");
+    for (const [key, value] of Object.entries(fields)) form.set(key, value);
+    return form;
+  }
+
+  /** Records the bind count of every prepared statement, and still lets batch run. */
+  function bindDb(inner: D1Database): { db: D1Database; binds: number[] } {
+    const binds: number[] = [];
+    const targets = new WeakMap<object, object>();
+    type Stmt = Record<string | symbol, unknown> & { bind: (...args: unknown[]) => Stmt };
+    const wrap = (stmt: Stmt): Stmt => {
+      const proxy = new Proxy(stmt, {
+        get(target, prop) {
+          if (prop === "bind") {
+            return (...args: unknown[]) => {
+              binds.push(args.length);
+              return wrap(target.bind(...args));
+            };
+          }
+          return target[prop];
+        },
+      });
+      targets.set(proxy, stmt);
+      return proxy;
+    };
+    const raw = inner as unknown as { prepare: (sql: string) => Stmt; batch: (stmts: object[]) => Promise<unknown[]> };
+    const db = {
+      prepare: (sql: string) => wrap(raw.prepare(sql)),
+      batch: (stmts: object[]) => raw.batch(stmts.map((stmt) => targets.get(stmt) ?? stmt)),
+    };
+    return { db: db as unknown as D1Database, binds };
+  }
+
+  function addHandKpi(m: Awaited<ReturnType<typeof migratedDb>>, key: string, sort: number): void {
+    m.run(
+      `INSERT INTO dd_kpis (
+        kpi_key, dept_key, wall_keys, title_en, title_es, unit, cadence, dims, goal_kind, goal_direction, source_kind, status, def_version, sort, active, created_at, updated_at
+      ) VALUES (?, 'bizops', 'bizops', ?, ?, 'count', 'weekly', '', 'none', 'at_least', 'hand', 'live', 1, ?, 1, ?, ?)`,
+      key,
+      key,
+      key,
+      sort,
+      NOW,
+      NOW
+    );
+  }
+
+  it("the grid and the detail each load in one batch", async () => {
+    const m = await migratedDb();
+    const grid = countedDb(m.db);
+    const model = await loadDirectorGrid(grid.db, "bizops", DAY, "weekly", null);
+    expect(grid.counts).toEqual({ batches: 1, direct: 0 });
+    expect(model.cadence).toBe("weekly");
+    expect(model.periodStart).toBe("2026-10-12");
+    expect(model.rows.some((row) => row.entry && row.kpi.kpi_key === "bizops.compliance_issues_opened_count")).toBe(true);
+    const page = directorGridPage(model, "en", "actor@local");
+    expect(page).toContain('data-dd-grid="bizops"');
+    expect(page).toContain('data-dd-cell="bizops.compliance_issues_opened_count|"');
+    expect(page).toContain('data-dd-cell="bizops.compliance_issues_opened_count|PNN"');
+    expect(page).toContain("Not entered here: bucket, severity.");
+    expect(page).toContain('data-supervisor>Supervisor: actor@local');
+    expect(page).toContain('value="Weekly entry"');
+    const locked = model.rows.find((row) => !row.entry);
+    expect(locked).toBeTruthy();
+    expect(page).toContain(`data-dd-cell="${locked?.kpi.kpi_key}|" data-dd-locked`);
+    expect(directorGridPage(model, "es")).toContain('value="Registro semanal"');
+    expect(directorGridPage(model, "es")).not.toContain("Weekly entry");
+    const detail = countedDb(m.db);
+    const one = await loadDirectorDetail(detail.db, "bizops.lbs_processed", DAY);
+    expect(detail.counts).toEqual({ batches: 1, direct: 0 });
+    expect(directorDetailPage(one, "en")).toContain('data-dd-detail="bizops.lbs_processed"');
+    await expect(loadDirectorDetail(m.db, "no.such.kpi", DAY)).rejects.toMatchObject({ status: 404, message: "Unknown KPI." });
+  });
+
+  it("a save of 120 changed cells stays at or under 100 binds, skips an unchanged cell, and a second save writes nothing", async () => {
+    const m = await migratedDb();
+    person(m);
+    for (let i = 0; i < 120; i += 1) addHandKpi(m, `t.k${i}`, 9000 + i);
+    addHandKpi(m, "t.same", 9120);
+    m.run(
+      `INSERT INTO dd_kpi_values (id, kpi_key, period_kind, period_start, dim_key, value, source, computed_at, def_version, created_at)
+       VALUES ('same-1', 't.same', 'week', '2026-10-12', '', 5, 'hand', ?, 1, ?)`,
+      NOW,
+      NOW
+    );
+    const fields: Record<string, string> = { reason: "Weekly entry", "cell:t.same|": "5" };
+    for (let i = 0; i < 120; i += 1) fields[`cell:t.k${i}|`] = String(i + 1);
+    const { db, binds } = bindDb(m.db);
+    const saved = await saveDirectorGrid(db, "bizops", "weekly", DAY, DAY, entryForm(fields), NOW);
+    expect(saved.redirect).toContain("?cadence=weekly&period=2026-10-12&ok=saved&n=120");
+    expect(binds.length).toBeGreaterThan(0);
+    expect(Math.max(...binds)).toBeLessThanOrEqual(100);
+    expect(m.get(`SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'dd_kpi_values'`)?.n).toBe(120);
+    expect(m.get(`SELECT COUNT(*) AS n FROM record_change_log WHERE record_id = 'same-1'`)?.n).toBe(0);
+    const values = m.get(`SELECT COUNT(*) AS n FROM dd_kpi_values WHERE superseded_at IS NULL AND kpi_key LIKE 't.%'`)?.n;
+    const logs = m.get(`SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'dd_kpi_values'`)?.n;
+    const again = await saveDirectorGrid(m.db, "bizops", "weekly", DAY, DAY, entryForm(fields), NOW);
+    expect(again.redirect).toContain("?cadence=weekly&period=2026-10-12&ok=nochange");
+    expect(m.get(`SELECT COUNT(*) AS n FROM dd_kpi_values WHERE superseded_at IS NULL AND kpi_key LIKE 't.%'`)?.n).toBe(values);
+    expect(m.get(`SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'dd_kpi_values'`)?.n).toBe(logs);
+  });
+
+  it("refuses a missing reason and a bad number, ignores a locked cell, clears a blank, and saves the three farms", async () => {
+    const m = await migratedDb();
+    person(m);
+    const weekly = entryForm({ "cell:bizops.compliance_issues_opened_count|": "4" });
+    await expect(saveDirectorGrid(m.db, "bizops", "weekly", DAY, DAY, weekly, NOW)).rejects.toBeInstanceOf(HttpError);
+    await expect(saveDirectorGrid(m.db, "bizops", "weekly", DAY, DAY, weekly, NOW)).rejects.toMatchObject({ status: 400, message: "Reason is required." });
+    const bad = entryForm({ reason: "Weekly entry", "cell:bizops.compliance_issues_opened_count|": "abc" });
+    await expect(saveDirectorGrid(m.db, "bizops", "weekly", DAY, DAY, bad, NOW)).rejects.toMatchObject({
+      status: 400,
+      message: "Compliance issues opened must be a plain number.",
+    });
+    const fraction = entryForm({ reason: "Weekly entry", "cell:bizops.compliance_issues_opened_count|": "1.5" });
+    await expect(saveDirectorGrid(m.db, "bizops", "weekly", DAY, DAY, fraction, NOW)).rejects.toMatchObject({
+      status: 400,
+      message: "Compliance issues opened must be a whole number.",
+    });
+    const pct = entryForm({ reason: "Weekly entry", "cell:farmops.labor_tasks_done_pct|": "140" });
+    await expect(saveDirectorGrid(m.db, "farmops", "daily", DAY, DAY, pct, NOW)).rejects.toMatchObject({
+      status: 400,
+      message: "Labor tasks completion must be a percent from 0 to 100.",
+    });
+    expect(m.get(`SELECT COUNT(*) AS n FROM dd_kpi_values`)?.n).toBe(0);
+    const locked = DD_KPIS.find((row) => row.wall_keys.split(",").includes("bizops") && row.cadence === "weekly" && row.source_kind === "app");
+    expect(locked).toBeTruthy();
+    const mixed = entryForm({
+      reason: "Weekly entry",
+      [`cell:${locked?.kpi_key}|`]: "nope",
+      "cell:bizops.compliance_issues_opened_count|PNN": "1",
+      "cell:bizops.compliance_issues_opened_count|ARL": "2",
+      "cell:bizops.compliance_issues_opened_count|PNS": "3",
+    });
+    const saved = await saveDirectorGrid(m.db, "bizops", "weekly", DAY, DAY, mixed, NOW);
+    expect(saved.redirect).toContain("&ok=saved&n=3");
+    const farms = m.all(
+      `SELECT dim_key, value FROM dd_kpi_values WHERE kpi_key = 'bizops.compliance_issues_opened_count' AND superseded_at IS NULL ORDER BY dim_key`
+    );
+    expect(farms.map((row) => `${row.dim_key}:${row.value}`)).toEqual(["ARL:2", "PNN:1", "PNS:3"]);
+    expect(m.get(`SELECT COUNT(*) AS n FROM dd_kpi_values WHERE kpi_key = ?`, locked?.kpi_key ?? "")?.n).toBe(0);
+    const clear = entryForm({
+      reason: "Weekly entry",
+      "cell:bizops.compliance_issues_opened_count|PNN": "",
+      "cell:bizops.compliance_issues_opened_count|ARL": "2",
+      "cell:bizops.compliance_issues_opened_count|PNS": "3",
+    });
+    const cleared = await saveDirectorGrid(m.db, "bizops", "weekly", DAY, DAY, clear, NOW);
+    expect(cleared.redirect).toContain("&ok=saved&n=1");
+    const pnn = m.get(`SELECT id, superseded_at FROM dd_kpi_values WHERE kpi_key = 'bizops.compliance_issues_opened_count' AND dim_key = 'PNN'`);
+    expect(pnn?.superseded_at).toBe(NOW);
+    expect(m.get(`SELECT COUNT(*) AS n FROM dd_kpi_values WHERE kpi_key = 'bizops.compliance_issues_opened_count' AND dim_key = 'PNN' AND superseded_at IS NULL`)?.n).toBe(0);
+    const log = m.get(
+      `SELECT record_id, old_value, new_value FROM record_change_log WHERE record_id = ? AND new_value IS NULL`,
+      String(pnn?.id)
+    );
+    expect(log?.old_value).toBe("1");
+    expect(log?.new_value).toBeNull();
+    const detail = await loadDirectorDetail(m.db, "bizops.compliance_issues_opened_count", DAY);
+    const html = directorDetailPage(detail, "en");
+    expect(html).toContain('data-dd-history-row="2026-10-12"');
+    expect(html).toContain("<s>");
+    expect(html).toContain('data-dd-log-row');
+    expect(html).toContain(">1<");
+  });
+
+  it("the enter link follows hand and mixed rows, and the home card says own KPIs", async () => {
+    const m = await migratedDb();
+    const wall = await loadDirectorWall(m.db, "bizops", DAY, null, null, NOW);
+    const html = directorWallPage(wall, "en");
+    const enters = [...html.matchAll(/data-dd-enter="([^"]+)"/g)].map((hit) => hit[1]);
+    const expected = wall.cadences.filter((cadence) =>
+      ddKpisForWall(DD_KPIS, "bizops").some((row) => row.cadence === cadence && (row.source_kind === "hand" || row.source_kind === "mixed"))
+    );
+    expect(enters).toEqual(expected);
+    expect(expected.length).toBeGreaterThan(0);
+    const quiet = wall.cadences.filter((cadence) => !expected.includes(cadence));
+    for (const cadence of quiet) expect(html).not.toContain(`data-dd-enter="${cadence}"`);
+    expect(html).toContain('href="/admin/director/kpi/bizops.lbs_processed"');
+    const home = directorHomePage(await loadDirectorHome(m.db, DAY, NOW), "en");
+    const farmops = DD_KPIS.filter((row) => row.dept_key === "farmops").length;
+    expect(home).toContain(`>${farmops}</b> own KPIs`);
+    expect(home).not.toContain(">tiles<");
+    const es = directorHomePage(await loadDirectorHome(m.db, DAY, NOW), "es");
+    expect(es).toContain("KPIs propios");
+    expect(es).not.toContain("own KPIs");
+  });
+});
+
+describe("DD S2b: targets, questions, and CSV import", () => {
+  function person(m: Awaited<ReturnType<typeof migratedDb>>): void {
+    m.run(`INSERT INTO people (id, display_name, is_active, created_at, updated_at) VALUES ('dd-actor', 'actor', 1, ?, ?)`, NOW, NOW);
+  }
+
+  function form(fields: Record<string, string>): FormData {
+    const data = new FormData();
+    data.set("person_id", "dd-actor");
+    for (const [key, value] of Object.entries(fields)) data.set(key, value);
+    return data;
+  }
+
+  function bindDb(inner: D1Database): { db: D1Database; binds: number[] } {
+    const binds: number[] = [];
+    const targets = new WeakMap<object, object>();
+    type Stmt = Record<string | symbol, unknown> & { bind: (...args: unknown[]) => Stmt };
+    const wrap = (stmt: Stmt): Stmt => {
+      const proxy = new Proxy(stmt, {
+        get(target, prop) {
+          if (prop === "bind") {
+            return (...args: unknown[]) => {
+              binds.push(args.length);
+              return wrap(target.bind(...args));
+            };
+          }
+          return target[prop];
+        },
+      });
+      targets.set(proxy, stmt);
+      return proxy;
+    };
+    const raw = inner as unknown as { prepare: (sql: string) => Stmt; batch: (stmts: object[]) => Promise<unknown[]> };
+    const db = {
+      prepare: (sql: string) => wrap(raw.prepare(sql)),
+      batch: (stmts: object[]) => raw.batch(stmts.map((stmt) => targets.get(stmt) ?? stmt)),
+    };
+    return { db: db as unknown as D1Database, binds };
+  }
+
+  function asTarget(row: Row): DdTarget {
+    return {
+      id: String(row.id),
+      kpi_key: String(row.kpi_key),
+      dim_key: String(row.dim_key ?? ""),
+      period_kind: String(row.period_kind),
+      effective_from: String(row.effective_from),
+      target: Number(row.target),
+      low: row.low == null ? null : Number(row.low),
+      high: row.high == null ? null : Number(row.high),
+      phasing: row.phasing == null || row.phasing === "" ? null : String(row.phasing),
+      note: row.note == null || row.note === "" ? null : String(row.note),
+      deleted_at: row.deleted_at == null ? null : String(row.deleted_at),
+    };
+  }
+
+  it("parsePhasing, targetInForce, and phasedGoal", () => {
+    expect(parsePhasing("", "week")).toBeNull();
+    expect(parsePhasing("  ", "month")).toBeNull();
+    expect(parsePhasing("flat", "month")).toBe("flat");
+    expect(parsePhasing("flat", "week")).toBe("flat");
+    expect(() => parsePhasing("flat", "day")).toThrow(/refused on a day, quarter, or season/);
+    expect(() => parsePhasing("flat", "quarter")).toThrow(/refused on a day, quarter, or season/);
+    expect(() => parsePhasing("flat", "season")).toThrow(/refused on a day, quarter, or season/);
+    const monthWeights = ["8", "8", "8", "8", "8", "8", "8", "8", "8", "8", "5", "15"];
+    expect(monthWeights.reduce((n, part) => n + Number(part), 0)).toBe(100);
+    const monthStored = parsePhasing(monthWeights.join(","), "month");
+    expect(monthStored?.split(",")).toHaveLength(12);
+    expect(phasedGoal(100, null, "month", "2026-10-01")).toBe(100);
+    expect(phasedGoal(120, "flat", "month", "2026-03-01")).toBe(10);
+    expect(phasedGoal(520, "flat", "week", "2026-10-12")).toBe(10);
+    expect(phasedGoal(100, monthStored, "month", "2026-10-01")).toBeCloseTo(8, 5);
+    expect(phasedGoal(100, monthStored, "month", "2026-12-01")).toBeCloseTo(15, 5);
+    const weekWeights = [...Array.from({ length: 51 }, () => "1"), "49"];
+    expect(weekWeights.reduce((n, part) => n + Number(part), 0)).toBe(100);
+    const weekStored = parsePhasing(weekWeights.join(","), "week");
+    expect(weekStored?.split(",")).toHaveLength(52);
+    expect(isoWeekOf("2024-01-01").week).toBe(1);
+    expect(isoWeekOf("2020-12-28").week).toBe(53);
+    expect(phasedGoal(100, weekStored, "week", "2024-01-01")).toBeCloseTo(1, 5);
+    expect(phasedGoal(100, weekStored, "week", "2020-12-28")).toBeCloseTo(49, 5);
+    expect(() => parsePhasing(Array.from({ length: 52 }, () => "1").join(","), "month")).toThrow(/12 weights/);
+    expect(() => parsePhasing(Array.from({ length: 12 }, () => "4").join(","), "month")).toThrow(/sum to 1 or to 100/);
+    expect(() => parsePhasing("nope", "week")).toThrow(/52 weights/);
+    const rows: DdTarget[] = [
+      { id: "a", kpi_key: "k", dim_key: "", period_kind: "week", effective_from: "2026-01-01", target: 1, low: null, high: null, phasing: null, note: null, deleted_at: null },
+      { id: "b", kpi_key: "k", dim_key: "", period_kind: "week", effective_from: "2026-06-01", target: 2, low: null, high: null, phasing: null, note: null, deleted_at: null },
+      { id: "c", kpi_key: "k", dim_key: "", period_kind: "week", effective_from: "2026-12-01", target: 3, low: null, high: null, phasing: null, note: null, deleted_at: null },
+      { id: "d", kpi_key: "k", dim_key: "PNN", period_kind: "week", effective_from: "2026-01-01", target: 9, low: null, high: null, phasing: null, note: null, deleted_at: null },
+      { id: "e", kpi_key: "k", dim_key: "", period_kind: "week", effective_from: "2026-07-01", target: 8, low: null, high: null, phasing: null, note: null, deleted_at: NOW },
+    ];
+    expect(targetInForce(rows, "k", "", "week", "2026-10-12")?.id).toBe("b");
+    expect(targetInForce(rows, "k", "", "week", "2026-01-01")?.id).toBe("a");
+    expect(targetInForce(rows, "k", "PNN", "week", "2026-10-12")?.id).toBe("d");
+    expect(targetInForce(rows, "k", "", "month", "2026-10-01")).toBeNull();
+    expect(ddAllowedDimKeys({ dims: "farm,strain" })).toEqual(["", "PNN", "ARL", "PNS"]);
+    expect(ddAllowedDimKeys({ dims: "bucket" })).toEqual([""]);
+  });
+
+  it("a target saves one log row per non blank field, refuses a duplicate, a bad range, a cadence word, and a dim outside the list, and a void logs one row", async () => {
+    const m = await migratedDb();
+    person(m);
+    const saved = await saveDirectorTarget(
+      m.db,
+      "bizops.compliance_issues_opened_count",
+      form({
+        dim_key: "PNN",
+        period_kind: "week",
+        effective_from: "2026-10-12",
+        target: "10",
+        low: "1",
+        high: "20",
+        phasing: "",
+        note: "lane",
+        reason: "set the lane",
+      }),
+      NOW
+    );
+    expect(saved.redirect).toContain("/admin/director/kpi/bizops.compliance_issues_opened_count?ok=target");
+    const row = m.get(`SELECT id FROM dd_targets WHERE kpi_key = 'bizops.compliance_issues_opened_count' AND deleted_at IS NULL`);
+    const logs = m.all(`SELECT field FROM record_change_log WHERE record_table = 'dd_targets' AND record_id = ? ORDER BY field`, String(row?.id));
+    expect(logs.map((item) => item.field).sort()).toEqual(
+      ["created_at", "created_by", "dim_key", "effective_from", "high", "kpi_key", "low", "note", "period_kind", "target", "updated_at", "updated_by"].sort()
+    );
+    await expect(
+      saveDirectorTarget(
+        m.db,
+        "bizops.compliance_issues_opened_count",
+        form({ dim_key: "PNN", period_kind: "week", effective_from: "2026-10-12", target: "11", reason: "again" }),
+        NOW
+      )
+    ).rejects.toMatchObject({ status: 400, message: "A live target already has this KPI, dimension, period kind, and effective date." });
+    expect(m.get(`SELECT COUNT(*) AS n FROM dd_targets WHERE deleted_at IS NULL`)?.n).toBe(1);
+    await expect(
+      saveDirectorTarget(
+        m.db,
+        "bizops.compliance_issues_opened_count",
+        form({ dim_key: "", period_kind: "week", effective_from: "2026-10-05", target: "4", low: "9", high: "2", reason: "range" }),
+        NOW
+      )
+    ).rejects.toMatchObject({ status: 400, message: "Low must be at most high." });
+    await expect(
+      saveDirectorTarget(
+        m.db,
+        "bizops.compliance_issues_opened_count",
+        form({ dim_key: "", period_kind: "weekly", effective_from: "2026-10-05", target: "4", reason: "cadence" }),
+        NOW
+      )
+    ).rejects.toMatchObject({ status: 400, message: "Period kind must be day, week, month, quarter, or season." });
+    await expect(
+      saveDirectorTarget(
+        m.db,
+        "bizops.compliance_issues_opened_count",
+        form({ dim_key: "strain", period_kind: "week", effective_from: "2026-10-05", target: "4", reason: "dim" }),
+        NOW
+      )
+    ).rejects.toMatchObject({ status: 400, message: "That dimension is not entered for this KPI." });
+    const voided = await voidDirectorTarget(m.db, String(row?.id), form({ reason: "retire it" }), NOW);
+    expect(voided.redirect).toContain("ok=voided");
+    expect(m.get(`SELECT deleted_at FROM dd_targets WHERE id = ?`, String(row?.id))?.deleted_at).toBe(NOW);
+    const voidLogs = m.all(`SELECT field, new_value FROM record_change_log WHERE record_table = 'dd_targets' AND record_id = ? AND field = 'deleted_at'`, String(row?.id));
+    expect(voidLogs).toEqual([{ field: "deleted_at", new_value: NOW }]);
+    await expect(voidDirectorTarget(m.db, String(row?.id), form({ reason: "again" }), NOW)).rejects.toMatchObject({
+      status: 400,
+      message: "That target is already voided.",
+    });
+  });
+
+  it("the detail names the dim and the person, and the wall fills a blank goal from the target in force", async () => {
+    const m = await migratedDb();
+    person(m);
+    await saveDirectorGrid(
+      m.db,
+      "bizops",
+      "weekly",
+      DAY,
+      DAY,
+      form({ reason: "Weekly entry", "cell:bizops.compliance_issues_opened_count|PNN": "4" }),
+      NOW
+    );
+    const detail = await loadDirectorDetail(m.db, "bizops.compliance_issues_opened_count", DAY);
+    const html = directorDetailPage(detail, "en");
+    expect(html).toContain(">actor<");
+    expect(html).toContain(">PNN<");
+    expect(html).toContain("W42, Oct 12 to 18");
+    expect(html).toContain('data-dd-target-form');
+    m.run(
+      `INSERT INTO dd_kpi_values (id, kpi_key, period_kind, period_start, dim_key, value, goal, source, computed_at, def_version, created_at)
+       VALUES ('g1', 'bizops.lbs_processed', 'day', ?, '', 10, NULL, 'app', ?, 1, ?)`,
+      DAY,
+      NOW,
+      NOW
+    );
+    m.run(
+      `INSERT INTO dd_targets (id, kpi_key, dim_key, period_kind, effective_from, target, created_at, updated_at)
+       VALUES ('tg1', 'bizops.lbs_processed', '', 'day', '2026-01-01', 40, ?, ?)`,
+      NOW,
+      NOW
+    );
+    const wall = await loadDirectorWall(m.db, "bizops", DAY, null, null, NOW);
+    const tile = wall.groups.flatMap((group) => group.tiles.concat(group.tiles.flatMap((item) => item.companions))).find((item) => item.kpi.kpi_key === "bizops.lbs_processed");
+    expect(tile?.snapshot?.goal).toBe(40);
+    expect(directorWallPage(wall, "en")).toContain('data-dd-goal="40"');
+    const home = directorHomePage(await loadDirectorHome(m.db, DAY, NOW), "en");
+    expect(home).toContain('data-dd-import');
+    expect(home).toContain('href="/admin/director/import"');
+    expect(home).toContain('href="/admin/director/questions"');
+  });
+
+  it("a ruling writes config, bumps every named KPI, restates open app rows, and leaves an unchanged value and a bad value alone", async () => {
+    const m = await migratedDb();
+    person(m);
+    for (const question of DD_QUESTIONS) {
+      expect(question.config_key, question.question_key).toBeTruthy();
+      expect(DD_CONFIG_RULES[String(question.config_key)], String(question.config_key)).toBeTruthy();
+    }
+    const before = m.get(`SELECT COUNT(*) AS n FROM record_change_log`)?.n;
+    const same = await ruleDirectorQuestion(m.db, "active_window", form({ value: "30", reason: "same window" }), DAY, NOW);
+    expect(same.redirect).toContain("ok=nochange");
+    expect(m.get(`SELECT COUNT(*) AS n FROM record_change_log`)?.n).toBe(before);
+    expect(m.get(`SELECT def_version FROM dd_kpis WHERE kpi_key = 'sales.active_accounts_count'`)?.def_version).toBe(1);
+    await expect(ruleDirectorQuestion(m.db, "ppp_basis", form({ value: "nope", reason: "bad" }), DAY, NOW)).rejects.toMatchObject({ status: 400 });
+    expect(m.get(`SELECT COUNT(*) AS n FROM record_change_log`)?.n).toBe(before);
+    const ruled = await ruleDirectorQuestion(m.db, "active_window", form({ value: "45", reason: "wider window" }), DAY, NOW);
+    expect(ruled.redirect).toContain("ok=ruled");
+    expect(m.get(`SELECT value FROM app_config WHERE key = 'dd_sales_active_days' AND deleted_at IS NULL`)?.value).toBe("45");
+    expect(m.get(`SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'app_config' AND record_id = 'dd_sales_active_days' AND field = 'value' AND new_value = '45'`)?.n).toBe(1);
+    const questions = await loadDirectorQuestions(m.db);
+    const page = directorQuestionsPage(questions, "en", "ruled");
+    expect(page.match(/data-dd-question="/g)).toHaveLength(17);
+    expect(page).toContain('data-dd-question="active_window"');
+    expect(page).toContain('data-dd-current="45"');
+    expect(page).toContain("Status: Ruled");
+    const counted = countedDb(m.db);
+    await loadDirectorQuestions(counted.db);
+    expect(counted.counts).toEqual({ batches: 1, direct: 0 });
+  });
+
+  it("week_definition bumps every weekly KPI, and htd_start bumps harvest.ppp_dry_lb and restates open app rows only", async () => {
+    const weekDb = await migratedDb();
+    person(weekDb);
+    expect(DD_KPIS.filter((row) => row.cadence === "weekly")).toHaveLength(33);
+    await ruleDirectorQuestion(weekDb.db, "week_definition", form({ value: "harvest", reason: "label" }), DAY, NOW);
+    expect(weekDb.get(`SELECT COUNT(*) AS n FROM dd_kpis WHERE def_version = 2`)?.n).toBe(33);
+    expect(weekDb.get(`SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'dd_kpis' AND field = 'def_version' AND new_value = '2'`)?.n).toBe(33);
+    const m = await migratedDb();
+    person(m);
+    m.run(
+      `INSERT INTO dd_kpi_values (id, kpi_key, period_kind, period_start, dim_key, value, source, computed_at, def_version, created_at) VALUES
+        ('open-today', 'harvest.ppp_dry_lb', 'day', '2026-10-15', '', 1, 'app', ?, 1, ?),
+        ('open-yday', 'harvest.ppp_dry_lb', 'day', '2026-10-14', '', 2, 'app', ?, 1, ?),
+        ('closed', 'harvest.ppp_dry_lb', 'day', '2026-10-13', '', 3, 'app', ?, 1, ?),
+        ('hand-today', 'harvest.ppp_dry_lb', 'day', '2026-10-15', 'PNN', 4, 'hand', ?, 1, ?)`,
+      NOW,
+      NOW,
+      NOW,
+      NOW,
+      NOW,
+      NOW,
+      NOW,
+      NOW
+    );
+    const dry = m.get(`SELECT config_key, def_version FROM dd_kpis WHERE kpi_key = 'harvest.ppp_dry_lb'`);
+    expect(dry?.config_key).not.toBe("dd_sales_htd_start_mmdd");
+    expect(dry?.def_version).toBe(1);
+    await ruleDirectorQuestion(m.db, "htd_start", form({ value: "05-01", reason: "april moves" }), DAY, NOW);
+    expect(m.get(`SELECT def_version FROM dd_kpis WHERE kpi_key = 'harvest.ppp_dry_lb'`)?.def_version).toBe(2);
+    expect(m.get(`SELECT def_version FROM dd_kpis WHERE kpi_key = 'harvest.ppp_wet_lb'`)?.def_version).toBe(2);
+    expect(m.get(`SELECT def_version FROM dd_kpis WHERE kpi_key = 'sales.returns_count'`)?.def_version).toBe(2);
+    expect(m.get(`SELECT superseded_at FROM dd_kpi_values WHERE id = 'open-today'`)?.superseded_at).toBe(NOW);
+    expect(m.get(`SELECT superseded_at FROM dd_kpi_values WHERE id = 'open-yday'`)?.superseded_at).toBe(NOW);
+    expect(m.get(`SELECT superseded_at FROM dd_kpi_values WHERE id = 'closed'`)?.superseded_at).toBeNull();
+    expect(m.get(`SELECT superseded_at FROM dd_kpi_values WHERE id = 'hand-today'`)?.superseded_at).toBeNull();
+    expect(m.get(`SELECT COUNT(*) AS n FROM record_change_log WHERE record_id IN ('open-today', 'open-yday') AND field = 'superseded_at'`)?.n).toBe(2);
+    expect(m.get(`SELECT COUNT(*) AS n FROM record_change_log WHERE record_id = 'hand-today'`)?.n).toBe(0);
+  });
+
+  it("CSV import commits 500 value rows under 100 binds, refuses bad and duplicate rows, and reads a phased target back", async () => {
+    const m = await migratedDb();
+    person(m);
+    const ctx = await loadDirectorImportContext(m.db);
+    let start = "2026-10-12";
+    const lines = ["kpi_key,period_kind,period_start,dim_key,value"];
+    for (let i = 0; i < 500; i += 1) {
+      lines.push(`bizops.compliance_issues_opened_count,week,${start},,${i + 1}`);
+      start = periodShift("week", start, -1);
+    }
+    const csv = lines.join("\n");
+    const { db, binds } = bindDb(m.db);
+    const committed = await commitDirectorImport(db, "values", form({ csv, reason: "bulk" }), NOW);
+    expect(committed.redirect).toContain("ok=imported&n=500&skipped=0");
+    expect(binds.length).toBeGreaterThan(0);
+    expect(Math.max(...binds)).toBeLessThanOrEqual(100);
+    expect(m.get(`SELECT COUNT(*) AS n FROM dd_kpi_values WHERE source = 'hand' AND kpi_key = 'bizops.compliance_issues_opened_count'`)?.n).toBe(500);
+    expect(m.get(`SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'dd_kpi_values' AND field = 'value'`)?.n).toBe(500);
+    const bad = ["kpi_key,period_kind,period_start,dim_key,value", "no.such,week,2026-10-12,,1", "bizops.compliance_issues_opened_count,week,2026-10-12,,abc"].join("\n");
+    const preview = inspectDdImport("values", bad, ctx);
+    expect(preview.errors).toBe(2);
+    expect(preview.rows.every((row) => row.error)).toBe(true);
+    const before = m.get(`SELECT COUNT(*) AS n FROM dd_kpi_values`)?.n;
+    await expect(commitDirectorImport(m.db, "values", form({ csv: bad, reason: "bad" }), NOW)).rejects.toMatchObject({ status: 400 });
+    expect(m.get(`SELECT COUNT(*) AS n FROM dd_kpi_values`)?.n).toBe(before);
+    const dash = `kpi_key,period_kind,period_start,dim_key,value\nbizops.compliance_issues_opened_count,week,2026-10-12,,1${String.fromCharCode(0x2013)}2`;
+    expect(inspectDdImport("values", dash, ctx).rows[0]?.error?.key).toBe("A dash character is not allowed.");
+    const dupValues = ["kpi_key,period_kind,period_start,dim_key,value", "bizops.compliance_issues_opened_count,week,2026-09-28,,1", "bizops.compliance_issues_opened_count,week,2026-09-28,,2"].join("\n");
+    expect(inspectDdImport("values", dupValues, ctx).errors).toBe(1);
+    const noted = ["kpi_key,period_kind,period_start,dim_key,value,note", "bizops.compliance_issues_opened_count,week,2026-09-28,,1,hello"].join("\n");
+    expect(inspectDdImport("values", noted, ctx).fileError?.key).toBe("A values CSV cannot carry a note column.");
+    const targets = ["kpi_key,dim_key,period_kind,effective_from,target,low,high,phasing,note", "bizops.compliance_issues_opened_count,,week,2026-01-01,520,,,flat,"].join("\n");
+    const targetCommit = await commitDirectorImport(m.db, "targets", form({ csv: targets, reason: "phase it" }), NOW);
+    expect(targetCommit.redirect).toContain("ok=imported&n=1");
+    const stored = m.all(`SELECT * FROM dd_targets WHERE kpi_key = 'bizops.compliance_issues_opened_count' AND deleted_at IS NULL AND phasing = 'flat'`);
+    expect(stored).toHaveLength(1);
+    expect(targetInForce(stored.map(asTarget), "bizops.compliance_issues_opened_count", "", "week", "2026-10-12")?.phasing).toBe("flat");
+    expect(phasedGoal(520, "flat", "week", "2026-10-12")).toBe(10);
+    const dupTargets = ["kpi_key,dim_key,period_kind,effective_from,target,low,high,phasing,note", "bizops.biomass_shipped_lb,,week,2026-02-01,10,,,,,", "bizops.biomass_shipped_lb,,week,2026-02-01,11,,,,,"].join("\n");
+    expect(inspectDdImport("targets", dupTargets, ctx).errors).toBe(1);
+    const liveDup = ["kpi_key,dim_key,period_kind,effective_from,target,low,high,phasing,note", "bizops.compliance_issues_opened_count,,week,2026-01-01,100,,,flat,again"].join("\n");
+    const again = await loadDirectorImportContext(m.db);
+    expect(inspectDdImport("targets", liveDup, again).errors).toBe(1);
+    expect(directorImportPage("en")).toContain('data-dd-import-form="values"');
+    expect(directorImportPage("en")).toContain('data-dd-import-form="targets"');
+    const index = await source("index.ts");
+    const deptAt = index.indexOf("DIRECTOR_PATH}/:dept");
+    expect(index.indexOf("DIRECTOR_PATH}/questions")).toBeLessThan(deptAt);
+    expect(index.indexOf("DIRECTOR_PATH}/import")).toBeLessThan(deptAt);
   });
 });

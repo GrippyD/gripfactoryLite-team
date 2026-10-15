@@ -465,7 +465,7 @@ body.device-phone .report-scroll > table.data { display: table; overflow: visibl
    through the chrome's token chains only (the accent per view); no fixed
    widths, so 820 has no sideways scroll; a phone stacks cards and tiles in
    one column and the sparkline keeps the tile's width. */
-main:has(.dd-wall), main:has(.dd-cards) { max-width: none; }
+main:has(.dd-wall), main:has(.dd-cards), main:has(.dd-grid), main:has(.dd-detail), main:has(.dd-import), main:has(.dd-question-list) { max-width: none; }
 .dd-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.8rem; margin: 0 0 1.2rem; }
 .dd-card { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; text-decoration: none; color: inherit; background: var(--panel, var(--surface, transparent)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); padding: 0.8rem 1rem; }
 .dd-card:focus, .dd-card:hover { border-color: ${accent}; }
@@ -507,7 +507,42 @@ main:has(.dd-wall), main:has(.dd-cards) { max-width: none; }
 .dd-companion { display: flex; justify-content: space-between; gap: 0.5rem; min-width: 0; }
 .dd-companion-title { min-width: 0; overflow-wrap: anywhere; }
 .dd-companion-value { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+a.dd-tile-title, a.dd-companion-title { color: inherit; text-decoration: none; }
+a.dd-tile-title:hover, a.dd-companion-title:hover { text-decoration: underline; }
+.dd-enter { margin-left: 0.4rem; }
+.dd-grid, .dd-detail, .dd-grid-page, .dd-import, .dd-question-list { min-width: 0; max-width: 100%; }
+.dd-question-card { min-width: 0; margin: 0 0 1rem; padding: 0.8rem 1rem; border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); background: var(--panel, var(--surface, transparent)); }
+.dd-question-card p, .dd-question-card h2 { overflow-wrap: anywhere; }
+.dd-target-form, .dd-import-form { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; max-width: 40rem; margin: 0.6rem 0 1.2rem; }
+.dd-target-form input, .dd-target-form select, .dd-import-form input, .dd-import-form textarea, .dd-question-card input, .dd-question-card select { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+.dd-import-form textarea { min-height: 8rem; }
+.dd-preview { display: grid; grid-template-columns: minmax(0, 1fr); max-width: 100%; min-width: 0; }
+.dd-preview-scroll { display: block; width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.dd-preview-table { width: max-content; min-width: 100%; border-collapse: collapse; }
+.dd-preview-table th, .dd-preview-table td { text-align: left; vertical-align: top; padding: 0.35rem 0.45rem; border-bottom: 1px solid var(--line, var(--border, currentColor)); white-space: nowrap; }
+.dd-grid-table, .dd-detail-table { width: 100%; border-collapse: collapse; }
+.dd-grid-table th, .dd-grid-table td, .dd-detail-table th, .dd-detail-table td { text-align: left; vertical-align: top; padding: 0.35rem 0.45rem; border-bottom: 1px solid var(--line, var(--border, currentColor)); overflow-wrap: anywhere; }
+.dd-grid-table input[type="text"] { width: 100%; max-width: 8rem; min-width: 0; box-sizing: border-box; }
+.dd-note { font-size: 0.82rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.dd-def { display: grid; grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr); gap: 0.2rem 0.8rem; margin: 0 0 1rem; }
+.dd-def dt { font-weight: 600; }
+.dd-def dd { margin: 0; overflow-wrap: anywhere; }
+.dd-hist-val { display: inline-block; margin-right: 0.4rem; }
 body.device-phone .dd-cards, body.device-phone .dd-tiles { grid-template-columns: 1fr; }
+body.device-phone .dd-grid-table, body.device-phone .dd-detail-table, body.device-phone .dd-grid-table tbody, body.device-phone .dd-detail-table tbody, body.device-phone .dd-grid-table tr, body.device-phone .dd-detail-table tr, body.device-phone .dd-grid-table th, body.device-phone .dd-detail-table th, body.device-phone .dd-grid-table td, body.device-phone .dd-detail-table td { display: block; width: 100%; }
+body.device-phone .dd-grid-table thead, body.device-phone .dd-detail-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+body.device-phone .dd-grid-table td::before, body.device-phone .dd-detail-table td::before { content: attr(data-label); display: block; font-weight: 600; font-size: 0.78rem; }
+body.device-phone .dd-grid-table input[type="text"] { max-width: none; }
+body.device-phone .dd-cell-na { display: none; }
+body.device-phone .dd-def { grid-template-columns: 1fr; }
+@media (max-width: 900px) {
+  .dd-grid-table, .dd-detail-table, .dd-grid-table tbody, .dd-detail-table tbody, .dd-grid-table tr, .dd-detail-table tr, .dd-grid-table th, .dd-detail-table th, .dd-grid-table td, .dd-detail-table td { display: block; width: 100%; }
+  .dd-grid-table thead, .dd-detail-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .dd-grid-table td::before, .dd-detail-table td::before { content: attr(data-label); display: block; font-weight: 600; font-size: 0.78rem; }
+  .dd-grid-table input[type="text"] { max-width: none; }
+  .dd-cell-na { display: none; }
+  .dd-def { grid-template-columns: 1fr; }
+}
 body.device-phone .dd-card, body.device-phone .dd-tile { width: auto; max-width: 100%; }
 body.device-phone .dd-spark { width: 100%; }
 body.device-phone .dd-group-head { flex-direction: column; align-items: flex-start; }

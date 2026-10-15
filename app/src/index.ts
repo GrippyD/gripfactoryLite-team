@@ -508,7 +508,18 @@ import { loadStrainPerformance } from "./strainperformance";
 import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { loadFgInventory } from "./fginventory";
 import { harvestDashboardPage, loadHarvestDashboard } from "./harvestdashboard";
-import { DIRECTOR_PATH, directorHomePage, directorWallPage, isDdDeptKey, loadDirectorHome, loadDirectorWall } from "./director";
+import { DIRECTOR_PATH, directorDetailPage, directorGridPage, directorHomePage, directorWallPage, isDdDeptKey, loadDirectorDetail, loadDirectorGrid, loadDirectorHome, loadDirectorWall, saveDirectorGrid } from "./director";
+import {
+  commitDirectorImport,
+  directorImportPage,
+  directorImportPreviewPage,
+  directorQuestionsPage,
+  loadDirectorQuestions,
+  previewDirectorImport,
+  ruleDirectorQuestion,
+  saveDirectorTarget,
+  voidDirectorTarget,
+} from "./directors2b";
 import { terpRecipesPage } from "./terps";
 import { easternStamp, fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
 import { metrcApiPage, runMetrcSweep, testMetrcConnection } from "./metrcapi";
@@ -1610,6 +1621,83 @@ app.get(DIRECTOR_PATH, async (c) => {
   const now = nowIso();
   const model = await loadDirectorHome(c.env.DB, await farmToday(c.env.DB, now), now);
   return html(c, s, "Director Dashboard", directorHomePage(model, s.locale));
+});
+
+// DD S2a: the entry grid and the KPI detail. Literal routes sit above /:dept so
+// "kpi" is never read as a department. Each GET is one batch; the POST reads
+// in one batch and writes in one batch, and a save that changes nothing writes nothing.
+app.get(`${DIRECTOR_PATH}/kpi/:key`, async (c) => {
+  const s = await shell(c);
+  const now = nowIso();
+  const model = await loadDirectorDetail(c.env.DB, c.req.param("key"), await farmToday(c.env.DB, now));
+  return html(c, s, model.kpi.title_en, directorDetailPage(model, s.locale, c.req.query("ok") ?? null));
+});
+
+app.post(`${DIRECTOR_PATH}/kpi/:key/target`, async (c) => {
+  const now = nowIso();
+  const result = await saveDirectorTarget(c.env.DB, c.req.param("key"), actorForm(c, await c.req.formData()), now);
+  return c.redirect(result.redirect, 303);
+});
+
+app.post(`${DIRECTOR_PATH}/target/:id/void`, async (c) => {
+  const now = nowIso();
+  const result = await voidDirectorTarget(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()), now);
+  return c.redirect(result.redirect, 303);
+});
+
+// Literal pages before /:dept, or "questions" and "import" read as departments.
+app.get(`${DIRECTOR_PATH}/questions`, async (c) => {
+  const s = await shell(c);
+  const model = await loadDirectorQuestions(c.env.DB);
+  return html(c, s, "Questions", directorQuestionsPage(model, s.locale, c.req.query("ok") ?? null, c.req.query("kpi") ?? null));
+});
+
+app.post(`${DIRECTOR_PATH}/questions/:key/rule`, async (c) => {
+  const now = nowIso();
+  const result = await ruleDirectorQuestion(c.env.DB, c.req.param("key"), actorForm(c, await c.req.formData()), await farmToday(c.env.DB, now), now);
+  return c.redirect(result.redirect, 303);
+});
+
+app.get(`${DIRECTOR_PATH}/import`, async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Import", directorImportPage(s.locale, c.req.query("ok") ?? null, c.req.query("n") ?? "", c.req.query("skipped") ?? ""));
+});
+
+app.post(`${DIRECTOR_PATH}/import/preview`, async (c) => {
+  const s = await shell(c);
+  const built = await previewDirectorImport(c.env.DB, c.req.query("kind") ?? null, await c.req.formData());
+  return html(c, s, "Preview", directorImportPreviewPage(built.preview, s.locale, built.csv, built.reason));
+});
+
+app.post(`${DIRECTOR_PATH}/import/commit`, async (c) => {
+  const now = nowIso();
+  const result = await commitDirectorImport(c.env.DB, c.req.query("kind") ?? null, actorForm(c, await c.req.formData()), now);
+  return c.redirect(result.redirect, 303);
+});
+
+app.get(`${DIRECTOR_PATH}/:dept/enter`, async (c) => {
+  const dept = c.req.param("dept");
+  if (!isDdDeptKey(dept)) throw new HttpError(404, "Unknown department.");
+  const s = await shell(c);
+  const now = nowIso();
+  const model = await loadDirectorGrid(c.env.DB, dept, await farmToday(c.env.DB, now), c.req.query("cadence") ?? null, c.req.query("period") ?? null);
+  return html(c, s, model.title_en, directorGridPage(model, s.locale, s.personEmail, c.req.query("ok") ?? null, c.req.query("n") ?? null));
+});
+
+app.post(`${DIRECTOR_PATH}/:dept/enter`, async (c) => {
+  const dept = c.req.param("dept");
+  if (!isDdDeptKey(dept)) throw new HttpError(404, "Unknown department.");
+  const now = nowIso();
+  const result = await saveDirectorGrid(
+    c.env.DB,
+    dept,
+    c.req.query("cadence") ?? null,
+    c.req.query("period") ?? null,
+    await farmToday(c.env.DB, now),
+    actorForm(c, await c.req.formData()),
+    now
+  );
+  return c.redirect(result.redirect, 303);
 });
 
 app.get(`${DIRECTOR_PATH}/:dept`, async (c) => {
