@@ -10781,6 +10781,85 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
       ddWeekly.res.status === 200 && ddWeekly.body.includes('data-dd-wall="farmops"') && ddWeekly.body.includes('data-dd-group="weekly"') && !ddWeekly.body.includes('data-dd-group="daily"') && ddWeeklyKpis > 0,
       `farmops weekly tab expected 200 with the weekly group alone, got ${ddWeekly.res.status} with ${ddWeeklyKpis} tiles`
     );
+    // DD S2a: the bizops entry grid, a no-op save, one typed value, and the KPI detail.
+    const ddLogsBefore = Number(localD1All("SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'dd_kpi_values'")[0].n);
+    const ddGrid = await text("/admin/director/bizops/enter");
+    const ddCell = (ddGrid.body.match(/<input[^>]*data-dd-cell="([^"]+)"/) || [])[1] || "";
+    const ddKey = ddCell.split("|")[0];
+    const ddAction = ((ddGrid.body.match(/<form class="dd-grid" method="post" action="([^"]+)"/) || [])[1] || "/admin/director/bizops/enter").replace(/&amp;/g, "&");
+    const ddNoop = await req(ddAction, { method: "POST", body: form({ reason: "Weekly entry" }) });
+    const ddLogsNoop = Number(localD1All("SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'dd_kpi_values'")[0].n);
+    const ddSaved = await req(ddAction, { method: "POST", body: form({ reason: "Weekly entry", [`cell:${ddCell}`]: "6" }) });
+    const ddDetail = await text(`/admin/director/kpi/${encodeURIComponent(ddKey)}`);
+    const ddLogsAfter = Number(localD1All("SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'dd_kpi_values'")[0].n);
+    assert(
+      ddGrid.res.status === 200 &&
+        ddGrid.body.includes("data-dd-grid") &&
+        ddGrid.body.includes("data-dd-cell") &&
+        ddNoop.status === 303 &&
+        ddLogsNoop === ddLogsBefore &&
+        ddSaved.status === 303 &&
+        ddDetail.res.status === 200 &&
+        ddDetail.body.includes("data-dd-detail") &&
+        ddDetail.body.includes("data-dd-log-row") &&
+        ddLogsAfter === ddLogsBefore + 1,
+      `director grid and detail expected 200/303/303/200 with one log row, got grid ${ddGrid.res.status} noop ${ddNoop.status} save ${ddSaved.status} detail ${ddDetail.res.status} logs ${ddLogsBefore} to ${ddLogsNoop} to ${ddLogsAfter} cell ${ddCell}`
+    );
+    // DD S2b: a target on the detail, the questions page, a ruling, and a CSV import.
+    const ddCadence = ((ddGrid.body.match(/data-dd-cadence="([^"]+)"/) || [])[1] || "");
+    const ddPeriod = ((ddGrid.body.match(/data-dd-period="([^"]+)"/) || [])[1] || "");
+    const ddKind = { daily: "day", weekly: "week", monthly: "month", quarterly: "quarter", seasonal: "season" }[ddCadence] || "";
+    const ddDim = ddCell.includes("|") ? ddCell.slice(ddCell.indexOf("|") + 1) : "";
+    const ddTarget = await req(`/admin/director/kpi/${encodeURIComponent(ddKey)}/target`, {
+      method: "POST",
+      body: form({
+        reason: "smoke target",
+        dim_key: ddDim,
+        period_kind: ddKind,
+        effective_from: ddPeriod || "2026-10-12",
+        target: "15",
+        low: "",
+        high: "",
+        phasing: "",
+        note: "",
+      }),
+    });
+    const ddTargetPage = await text(`/admin/director/kpi/${encodeURIComponent(ddKey)}`);
+    const ddQuestions = await text("/admin/director/questions");
+    const ddQuestionCount = (ddQuestions.body.match(/data-dd-question="/g) || []).length;
+    const ddRule = await req("/admin/director/questions/active_window/rule", { method: "POST", body: form({ value: "45", reason: "smoke ruling" }) });
+    const ddRuled = await text("/admin/director/questions");
+    const ddRuledAt = ddRuled.body.indexOf('data-dd-question="active_window"');
+    const ddRuledCard = ddRuledAt < 0 ? "" : ddRuled.body.slice(ddRuledAt, ddRuledAt + 1800);
+    const ddAbc = await text("/admin/director/questions/active_window/rule", { method: "POST", body: form({ value: "abc", reason: "smoke ruling" }) });
+    const ddImport = await text("/admin/director/import");
+    const ddCsv = [
+      "kpi_key,period_kind,period_start,dim_key,value",
+      "bizops.compliance_issues_opened_count,week,2026-10-12,,7",
+      "bizops.compliance_issues_opened_count,week,2026-10-12,PNN,8",
+      "bizops.compliance_issues_opened_count,week,2026-10-05,,9",
+    ].join("\n");
+    const ddPreview = await text("/admin/director/import/preview?kind=values", { method: "POST", body: form({ csv: ddCsv, reason: "smoke import" }) });
+    const ddOkRows = (ddPreview.body.match(/data-dd-import-ok="1"/g) || []).length;
+    const ddCommit = await req("/admin/director/import/commit?kind=values", { method: "POST", body: form({ csv: ddCsv, reason: "smoke import" }) });
+    assert(
+      ddTarget.status === 303 &&
+        ddTargetPage.res.status === 200 &&
+        ddTargetPage.body.includes('data-dd-target-value="15"') &&
+        ddQuestions.res.status === 200 &&
+        ddQuestionCount === 17 &&
+        ddRule.status === 303 &&
+        ddRuledCard.includes('data-dd-current="45"') &&
+        ddRuledCard.toLowerCase().includes("ruled") &&
+        ddAbc.res.status === 400 &&
+        !ddQuestions.body.includes("Unknown department.") &&
+        !ddImport.body.includes("Unknown department.") &&
+        ddImport.res.status === 200 &&
+        ddPreview.res.status === 200 &&
+        ddOkRows === 3 &&
+        ddCommit.status === 303,
+      `director S2b expected target 303, 17 questions, ruling 303 with 45 ruled, abc 400, import preview 3 ok and commit 303, got target ${ddTarget.status} questions ${ddQuestions.res.status}/${ddQuestionCount} rule ${ddRule.status} abc ${ddAbc.res.status} import ${ddImport.res.status} preview ${ddPreview.res.status}/${ddOkRows} commit ${ddCommit.status} kind ${ddKind} dim ${ddDim} period ${ddPeriod}`
+    );
     process.stdout.write("SMOKE PASS\n");
   } finally {
     await stopWrangler(child);
