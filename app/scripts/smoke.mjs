@@ -535,8 +535,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 102 migration(s)")) {
-      throw new Error(`from-zero apply must say 102 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 103 migration(s)")) {
+      throw new Error(`from-zero apply must say 103 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -10734,6 +10734,21 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     const vapes = fgCat("vape");
     assert(vapes.includes('data-fg-total="17,675"') && vapes.indexOf('data-fg-size="1g"') < vapes.indexOf('data-fg-size="2g"') && vapes.includes('data-fg-flavor="Berry Mojito"') && vapes.includes("17,670 each"), "vapes collapse into size and then flavor, with the mounted 2g cart");
     assert(!fg.includes("Hidden") && !fg.includes(">Dead<") && !fg.includes("WIDGET"), "inactive, deleted and unknown rows stay out of the categories");
+    const hdKeys = ["fg_cap_tri_lb", "fg_cap_sha_lb", "fg_cap_distillate_l", "fg_cap_isolate_g", "fg_cap_infused_g", "fg_truck_lb", "fg_bud_thc_bands", "fg_not_finished", "fg_metrc_not_finished", "fg_folded_prefixes", "fg_pre_each_grams"];
+    const hdLanding = await text("/admin/lookups");
+    const hdPage = await text("/admin/lookups/harvest_dashboard");
+    const hdSave = await req("/admin/lookups/harvest_dashboard", { method: "POST", body: form({ key: "fg_cap_tri_lb", value: "30000", reason: "smoke cap" }) });
+    const hdHarvest = await text("/harvest");
+    assert(
+      hdLanding.res.status === 200 &&
+        hdLanding.body.includes('data-lookup-key="harvest_dashboard"') &&
+        hdPage.res.status === 200 &&
+        hdKeys.every((key) => hdPage.body.includes(`data-hd-key="${key}"`)) &&
+        hdSave.status === 303 &&
+        hdHarvest.res.status === 200 &&
+        hdHarvest.body.includes("of 30,000 lb"),
+      `harvest dashboard must list every seeded key and a saved cap must show on /harvest, got landing ${hdLanding.res.status} page ${hdPage.res.status} save ${hdSave.status}`
+    );
     process.stdout.write("SMOKE PASS\n");
   } finally {
     await stopWrangler(child);

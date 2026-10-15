@@ -40,6 +40,15 @@ function fakeDb(config: Record<string, string> = { admin_pin: "21319", farm_day_
         },
         async all() {
           seen.push({ sql, args });
+          if (sql.includes("FROM app_config")) {
+            const results = args
+              .map((key) => {
+                const value = config[String(key)];
+                return value == null ? null : { key: String(key), value };
+              })
+              .filter((row) => row != null);
+            return { results };
+          }
           return { results: [] };
         },
         async run() {

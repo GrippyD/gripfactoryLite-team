@@ -73,6 +73,7 @@ import {
   addGrowMethod,
   addLookupValue,
   saveTrimBogey,
+  saveHarvestDashboard,
   saveMaxToteLbs,
   saveLotCap,
   savePhpPrice,
@@ -506,6 +507,7 @@ import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTesting
 import { loadStrainPerformance } from "./strainperformance";
 import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { loadFgInventory } from "./fginventory";
+import { harvestDashboardPage, loadHarvestDashboard } from "./harvestdashboard";
 import { terpRecipesPage } from "./terps";
 import { easternStamp, fixtureHttpResponse, loadSheetSyncAdmin, runSheetSync, sheetSyncAdminPage, translateSheetMessage } from "./sheetsync";
 import { metrcApiPage, runMetrcSweep, testMetrcConnection } from "./metrcapi";
@@ -1766,7 +1768,7 @@ app.get(HARVEST_PATH, async (c) => {
       rows: input.trimSeason ?? [],
       budCodes: input.btrTypeCodes,
     }),
-    loadFgInventory(c.env.DB),
+    loadFgInventory(c.env.DB, input.fgSettings),
   ]);
   const checkedLive = await attachLoadChecks(c.env.DB, silos.live, now);
   const stripFigures = await stripFiguresFor(c.env.DB, cure, silos.dryYieldPct);
@@ -3509,6 +3511,10 @@ app.get("/admin/lookups/:section", async (c) => {
     return html(c, s, "Testing labs", testingLabsPage(labs, s.locale));
   }
   // THE TRIM BOGEY (canon 0.30.249): one whole percent, the plume's product line.
+  if (section === "harvest_dashboard") {
+    const page = await loadHarvestDashboard(c.env.DB);
+    return html(c, s, "Harvest Dashboard", harvestDashboardPage(page, s.locale, c.req.query("ok") || undefined));
+  }
   if (section === "trim_bogey") {
     const raw = await getConfigValue(c.env.DB, CONFIG_KEYS.trim_bogey_pct);
     return html(c, s, "Trim Bogey", trimBogeyPage(parseTrimBogey(raw), trimBogeyOf(raw) != null, s.locale, c.req.query("ok") || undefined));
@@ -3574,6 +3580,7 @@ app.post("/admin/lookups/:table", async (c) => {
   const action = String(form.get("action") ?? "add");
   let result;
   if (table === "testing_labs") result = await saveTestingLab(c.env.DB, form);
+  else if (table === "harvest_dashboard") result = await saveHarvestDashboard(c.env.DB, form);
   else if (table === "trim_bogey") result = await saveTrimBogey(c.env.DB, form);
   else if (table === "max_tote_lbs") result = await saveMaxToteLbs(c.env.DB, form);
   else if (table === "csa_lot_cap" || table === "csb_lot_cap") result = await saveLotCap(c.env.DB, form, table);

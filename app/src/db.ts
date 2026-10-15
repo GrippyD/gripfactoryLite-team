@@ -1753,6 +1753,19 @@ export async function getConfigValue(db: D1Database, key: string): Promise<strin
   return row?.value ?? null;
 }
 
+/** Several app_config values in the one read a caller already makes. Absent keys are missing from the map. */
+export async function getConfigMap(db: D1Database, keys: readonly string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (keys.length === 0) return out;
+  const marks = keys.map(() => "?").join(", ");
+  const rows = await db
+    .prepare(`SELECT key, value FROM app_config WHERE deleted_at IS NULL AND key IN (${marks})`)
+    .bind(...keys)
+    .all<{ key: string; value: string }>();
+  for (const row of rows.results ?? []) out.set(String(row.key), String(row.value ?? ""));
+  return out;
+}
+
 export async function getHarvestByHbn(
   db: D1Database,
   hbn: string

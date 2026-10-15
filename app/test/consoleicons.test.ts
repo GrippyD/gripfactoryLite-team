@@ -13,7 +13,6 @@ const WORDS: Partial<Record<ConsoleIconName, readonly string[]>> = {
   ready: ["Pretest checks"],
   scheduled: ["Today"],
   passed: ["COA"],
-  submitted: ["PLUG"],
 };
 
 const PAIRED = new Set(["svg", "g", "text", "tspan"]);
@@ -94,7 +93,7 @@ describe("THE ICONS AS LINE ART (canon 0.30.282)", () => {
       const root = rootTag(svg);
       expect(root).toContain(`class="hc-icon hc-icon-${name}"`);
       expect(root).toContain(`data-hc-icon="${name}"`);
-      expect(root).toContain(name === "shipping" ? `viewBox="0 0 160 100"` : `viewBox="0 0 100 100"`);
+      expect(root).toContain(name === "shipping" ? `viewBox="0 0 160 37"` : `viewBox="0 0 100 100"`);
       expect(root).toContain(`role="img"`);
       expect(root).toContain(`aria-label="${CONSOLE_ICON_LABELS[name]}"`);
       expect(root).toContain(`focusable="false"`);
@@ -111,7 +110,8 @@ describe("THE ICONS AS LINE ART (canon 0.30.282)", () => {
       expect(svg).not.toContain(" id=");
       expect(svg).not.toContain("<defs");
       expect(svg).not.toContain("<use");
-      expect(utf8Bytes(svg)).toBeLessThan(5000);
+      // The traced tractor trailer and phone (owner, canon 0.30.490) carry a bigger budget; the drawn icons stay under 5000.
+      expect(utf8Bytes(svg)).toBeLessThan(name === "shipping" || name === "submitted" ? 8000 : 5000);
       assertBalanced(svg);
       const words = WORDS[name] ?? [];
       expect(textsOf(svg)).toEqual(words);
@@ -131,6 +131,11 @@ describe("THE ICONS AS LINE ART (canon 0.30.282)", () => {
     expect(siren).toContain('fill="currentColor"');
     const shipping = consoleIconSvg("shipping");
     expect(shipping.match(/data-icon-trailer-cargo/g)).toHaveLength(1);
+    expect(shipping.match(/data-icon-truck/g)).toHaveLength(1);
+    expect(consoleIconSvg("submitted").match(/data-icon-phone/g)).toHaveLength(1);
+    expect(consoleIconSvg("accepted").match(/data-icon-handshake/g)).toHaveLength(1);
+    expect(TRAILER_CARGO.x + TRAILER_CARGO.width).toBeLessThanOrEqual(160);
+    expect(TRAILER_CARGO.y + TRAILER_CARGO.height).toBeLessThanOrEqual(37);
     expect(shipping).toContain(
       `data-icon-trailer-cargo x="${TRAILER_CARGO.x}" y="${TRAILER_CARGO.y}" width="${TRAILER_CARGO.width}" height="${TRAILER_CARGO.height}"`
     );

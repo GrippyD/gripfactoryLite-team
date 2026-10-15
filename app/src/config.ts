@@ -598,6 +598,19 @@ export const CONFIG_KEYS = {
   // transfer and template searches (T1, T2, X2, TT2); a 400 retries once with
   // 1 day. Seeded 30 by migration 0098; editable at Admin\Data Lookups\People and System\App config.
   metrc_eval_window_days: "metrc_eval_window_days",
+  // AD1 (canon 0.30.490): Harvest Dashboard settings. Seeded by migration 0104.
+  // A missing or unreadable row falls back to the same value in code.
+  fg_cap_tri_lb: "fg_cap_tri_lb",
+  fg_cap_sha_lb: "fg_cap_sha_lb",
+  fg_cap_distillate_l: "fg_cap_distillate_l",
+  fg_cap_isolate_g: "fg_cap_isolate_g",
+  fg_cap_infused_g: "fg_cap_infused_g",
+  fg_truck_lb: "fg_truck_lb",
+  fg_bud_thc_bands: "fg_bud_thc_bands",
+  fg_not_finished: "fg_not_finished",
+  fg_metrc_not_finished: "fg_metrc_not_finished",
+  fg_folded_prefixes: "fg_folded_prefixes",
+  fg_pre_each_grams: "fg_pre_each_grams",
 } as const;
 
 /** Owner ruling 2026-09-14 (canon 0.30.55): the serial floor for one harvest
