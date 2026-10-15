@@ -243,6 +243,29 @@ describe("FG1 finished goods on the Harvest Console", () => {
     ]);
   });
 
+  it("reads a 510 cart from the name and a size after a dash with no space", () => {
+    expect(vapeSizeAndFlavor("GRIP Vape - Pancake Ice - 1g 510")).toEqual({ size: "1g 510", flavor: "Pancake Ice" });
+    expect(vapeSizeAndFlavor("GRIP Vape - Pancake Ice - 1G510")).toEqual({ size: "1g 510", flavor: "Pancake Ice" });
+    expect(vapeSizeAndFlavor("GRIP Vape - Guava Gelato- 2g")).toEqual({ size: "2g", flavor: "Guava Gelato" });
+    expect(vapeSizeAndFlavor("GRIP Vape - Mystery")).toEqual({ size: "", flavor: "Mystery" });
+    const model = buildFgInventory(
+      [
+        listing({ itemName: "GRIP Vape - Pancake Ice - 2g", category: "Vape/Cart", marketUom: "each", marketQty: 10, qtyGrams: 20, eachGrams: 2, thcPct: null }),
+        listing({ itemName: "GRIP Vape - Pancake Ice - 1g 510", category: "Vape/Cart", marketUom: "each", marketQty: 7, qtyGrams: 7, eachGrams: 1, thcPct: null }),
+        listing({ itemName: "GRIP Vape - GMO - 1g 510", category: "Vape/Cart", marketUom: "each", marketQty: 4, qtyGrams: 4, eachGrams: 1, thcPct: null }),
+        listing({ itemName: "GRIP Vape - GMO - 1g", category: "Vape/Cart", marketUom: "each", marketQty: 2, qtyGrams: 2, eachGrams: 1, thcPct: null }),
+        listing({ itemName: "GRIP Vape - Guava Gelato- 2g", category: "Vape/Cart", marketUom: "each", marketQty: 3, qtyGrams: 6, eachGrams: 2, thcPct: null }),
+      ],
+      []
+    );
+    const vapes = cat(model, "vape");
+    expect(vapes.sizes.map((size) => [size.size, size.amount, size.flavors.length])).toEqual([
+      ["1g", 2, 1],
+      ["1g 510", 11, 2],
+      ["2g", 13, 2],
+    ]);
+  });
+
   it("buckets ledger trim and shake by strain and then THC, and leaves a package with none under no THC", () => {
     const ledger: FgLedgerRow[] = [
       { typeCode: "TRIM", strain: "Gelato", thcPct: 25, grams: 2 * LB },
