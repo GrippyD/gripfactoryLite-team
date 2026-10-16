@@ -75,7 +75,7 @@ function plainNumber(raw: string): number | null {
 function requirePeriodKind(raw: string | null): string {
   const kind = raw ?? "";
   if (!(DD_PERIOD_KINDS as readonly string[]).includes(kind)) {
-    throw new HttpError(400, "Period kind must be day, week, month, quarter, or season.");
+    throw new HttpError(400, "Pick a day, a week, a month, a quarter, or a season.");
   }
   return kind;
 }
@@ -100,27 +100,40 @@ export async function saveDirectorTarget(
   if (!kpi) throw new HttpError(404, "Unknown KPI.");
   const dim = textOrNull(form.get("dim_key")) ?? "";
   if (!ddAllowedDimKeys({ dims: String(kpi.dims ?? "") }).includes(dim)) {
-    throw new HttpError(400, "That dimension is not entered for this KPI.");
+    throw new HttpError(400, "That farm is not one this number uses.");
   }
   const periodKind = requirePeriodKind(textOrNull(form.get("period_kind")));
   const effective = textOrNull(form.get("effective_from")) ?? "";
-  if (!isCalendarDate(effective)) throw new HttpError(400, "Effective from must be a date.");
+  if (!isCalendarDate(effective)) throw new HttpError(400, "Starting must be a date.");
   const targetRaw = textOrNull(form.get("target")) ?? "";
   const target = plainNumber(targetRaw);
-  if (target == null) throw new HttpError(400, "Target must be a plain number.");
+  if (target == null) throw new HttpError(400, "The goal must be a plain number.");
   const lowRaw = textOrNull(form.get("low"));
   const highRaw = textOrNull(form.get("high"));
   const low = lowRaw == null ? null : plainNumber(lowRaw);
   const high = highRaw == null ? null : plainNumber(highRaw);
-  if (lowRaw != null && low == null) throw new HttpError(400, "Low must be a plain number or blank.");
-  if (highRaw != null && high == null) throw new HttpError(400, "High must be a plain number or blank.");
-  if (low != null && high != null && low > high) throw new HttpError(400, "Low must be at most high.");
-  const phasing = parsePhasing(textOrNull(form.get("phasing")), periodKind);
+  if (lowRaw != null && low == null) throw new HttpError(400, "The low number must be a plain number or blank.");
+  if (highRaw != null && high == null) throw new HttpError(400, "The high number must be a plain number or blank.");
+  if (low != null && high != null && low > high) throw new HttpError(400, "The low number must be at most the high number.");
+  const spread = textOrNull(form.get("spread"));
+  const phasing = parsePhasing(spread === "flat" ? "flat" : textOrNull(form.get("phasing")), periodKind);
   const note = textOrNull(form.get("note"));
   const clash = resultsOf(read[1]).some(
     (row) => String(row.dim_key ?? "") === dim && String(row.period_kind ?? "") === periodKind && String(row.effective_from ?? "") === effective
   );
-  if (clash) throw new HttpError(400, "A live target already has this KPI, dimension, period kind, and effective date.");
+  if (clash) {
+    const sentence =
+      periodKind === "day"
+        ? "A goal for that day already starts on that date."
+        : periodKind === "month"
+          ? "A goal for that month already starts on that date."
+          : periodKind === "quarter"
+            ? "A goal for that quarter already starts on that date."
+            : periodKind === "season"
+              ? "A goal for that season already starts on that date."
+              : "A goal for that week already starts on that date.";
+    throw new HttpError(400, sentence);
+  }
   const id = crypto.randomUUID();
   const record: Record<string, unknown> = {
     kpi_key: kpiKey,
@@ -165,7 +178,7 @@ export async function voidDirectorTarget(
     )[0]
   )[0];
   if (!row) throw new HttpError(404, "Unknown target.");
-  if (row.deleted_at != null) throw new HttpError(400, "That target is already voided.");
+  if (row.deleted_at != null) throw new HttpError(400, "That goal is already removed.");
   await db.batch([
     db
       .prepare(`UPDATE dd_targets SET deleted_at = ?, deleted_by = ?, updated_at = ?, updated_by = ? WHERE id = ? AND deleted_at IS NULL`)
@@ -277,7 +290,8 @@ export function directorQuestionsPage(model: DirectorQuestionsModel, locale: Loc
       : ok === "nochange"
         ? `<p class="banner ok" data-dd-notice="nochange">${esc(t(locale, "Nothing changed, nothing written."))}</p>`
         : "";
-  const cards = model.questions
+  const ordered = [...model.questions].sort((a, b) => Number(a.status === "ruled") - Number(b.status === "ruled"));
+  const cards = ordered
     .map((row) => {
       const question = locale === "es" && row.question_es.trim() !== "" ? row.question_es : row.question_en;
       const current = currentConfig(row, model.config);
@@ -302,32 +316,35 @@ export function directorQuestionsPage(model: DirectorQuestionsModel, locale: Loc
           ? `<p>${esc(t(locale, "Ruled at"))}: ${esc(row.ruled_at ?? "")}. ${esc(t(locale, "Reason"))}: ${esc(row.reason ?? "")}</p>`
           : "";
       const focused = focus && row.kpi_keys.split(",").map((key) => key.trim()).includes(focus) ? "1" : "0";
-      return `<article class="dd-question-card" data-dd-question="${esc(row.question_key)}" data-dd-status="${esc(row.status)}" data-dd-current="${esc(current)}" data-dd-focus="${focused}">
-        <h2>${esc(question)}</h2>
-        <p><b>${esc(t(locale, "Position A"))}.</b> ${esc(row.position_a)}</p>
-        <p><b>${esc(t(locale, "Position B"))}.</b> ${esc(row.position_b)}</p>
-        <p><b>${esc(t(locale, "Recommendation"))}.</b> ${esc(row.recommendation)}</p>
-        <p>${esc(t(locale, "Default"))}: ${esc(row.default_value)}</p>
-        <p>${esc(t(locale, "Current value"))}: ${esc(current)}</p>
-        <p>${esc(t(locale, "Status"))}: ${esc(t(locale, statusKey(row.status)))}</p>
-        ${ruled}
-        <p>${esc(t(locale, "Affected KPIs"))}: ${esc(titles.join(", "))}</p>
-        <form method="post" action="${esc(directorQuestionRulePath(row.question_key))}">
-          <label class="field">${esc(t(locale, "Value"))}
-            ${valueControl}
-          </label>
-          <label class="field">${esc(t(locale, "Reason"))}
-            <input type="text" name="reason" required autocomplete="off">
-          </label>
-          <button type="submit">${esc(t(locale, "Rule"))}</button>
-        </form>
-      </article>`;
+      return `<details class="dd-question-card" data-dd-question="${esc(row.question_key)}" data-dd-status="${esc(row.status)}" data-dd-current="${esc(current)}" data-dd-focus="${focused}">
+        <summary>
+          <span class="dd-q-line">${esc(question)}</span>
+          <span class="dd-q-now">${esc(current)}</span>
+          <span>${esc(t(locale, "Status"))}: ${esc(t(locale, statusKey(row.status)))}</span>
+          <span class="dd-change">${esc(t(locale, "Change"))}</span>
+        </summary>
+        <div class="dd-q-body">
+          <p><b>${esc(t(locale, "Position A"))}.</b> ${esc(row.position_a)}</p>
+          <p><b>${esc(t(locale, "Position B"))}.</b> ${esc(row.position_b)}</p>
+          <p><b>${esc(t(locale, "Recommendation"))}.</b> ${esc(row.recommendation)}</p>
+          <p>${esc(t(locale, "Affected KPIs"))}: ${esc(titles.join(", "))}</p>
+          ${ruled}
+          <form method="post" action="${esc(directorQuestionRulePath(row.question_key))}">
+            <label class="field">${esc(t(locale, "Value"))}
+              ${valueControl}
+            </label>
+            <label class="field">${esc(t(locale, "Reason"))}
+              <input type="text" name="reason" required autocomplete="off">
+            </label>
+            <button type="submit">${esc(t(locale, "Change"))}</button>
+          </form>
+        </div>
+      </details>`;
     })
     .join("");
   return `<div class="dd-question-list">
     ${banner}
     <h1>${esc(t(locale, "Questions"))}</h1>
-    <p class="muted">${esc(t(locale, "A ruling writes the config value, bumps each named KPI, and restates open periods."))}</p>
     ${cards}
   </div>`;
 }
