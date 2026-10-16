@@ -10794,7 +10794,8 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     const ddLogsAfter = Number(localD1All("SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'dd_kpi_values'")[0].n);
     assert(
       ddGrid.res.status === 200 &&
-        ddGrid.body.includes("data-dd-grid") &&
+        ddGrid.body.includes("data-dd-card") &&
+        ddGrid.body.includes("data-dd-progress") &&
         ddGrid.body.includes("data-dd-cell") &&
         ddNoop.status === 303 &&
         ddLogsNoop === ddLogsBefore &&

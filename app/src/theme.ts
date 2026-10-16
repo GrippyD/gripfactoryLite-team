@@ -465,7 +465,7 @@ body.device-phone .report-scroll > table.data { display: table; overflow: visibl
    through the chrome's token chains only (the accent per view); no fixed
    widths, so 820 has no sideways scroll; a phone stacks cards and tiles in
    one column and the sparkline keeps the tile's width. */
-main:has(.dd-wall), main:has(.dd-cards), main:has(.dd-grid), main:has(.dd-detail), main:has(.dd-import), main:has(.dd-question-list) { max-width: none; }
+main:has(.dd-wall), main:has(.dd-cards), main:has(.dd-grid), main:has(.dd-checkin), main:has(.dd-detail), main:has(.dd-import), main:has(.dd-question-list) { max-width: none; }
 .dd-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.8rem; margin: 0 0 1.2rem; }
 .dd-card { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; text-decoration: none; color: inherit; background: var(--panel, var(--surface, transparent)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); padding: 0.8rem 1rem; }
 .dd-card:focus, .dd-card:hover { border-color: ${accent}; }
@@ -510,7 +510,29 @@ main:has(.dd-wall), main:has(.dd-cards), main:has(.dd-grid), main:has(.dd-detail
 a.dd-tile-title, a.dd-companion-title { color: inherit; text-decoration: none; }
 a.dd-tile-title:hover, a.dd-companion-title:hover { text-decoration: underline; }
 .dd-enter { margin-left: 0.4rem; }
-.dd-grid, .dd-detail, .dd-grid-page, .dd-import, .dd-question-list { min-width: 0; max-width: 100%; }
+.dd-grid, .dd-detail, .dd-grid-page, .dd-checkin, .dd-import, .dd-question-list { min-width: 0; max-width: 100%; }
+.dd-checkin-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; margin: 0 0 0.4rem; }
+.dd-checkin-head h1 { margin: 0; flex: 1 1 12rem; min-width: 0; font-size: 1.35rem; }
+.dd-arrow { display: inline-flex; align-items: center; justify-content: center; min-width: 2.4rem; min-height: 2.4rem; font-size: 1.4rem; text-decoration: none; color: ${accent}; }
+.dd-checkin-card, .dd-auto { min-width: 0; margin: 0 0 0.7rem; padding: 0.7rem 0.85rem; border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); background: var(--panel, var(--surface, transparent)); }
+.dd-checkin-card summary, .dd-auto summary, .dd-question-card summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.7rem; cursor: pointer; }
+.dd-checkin-title, .dd-q-line { font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+.dd-checkin-value { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.dd-check { color: var(--ok, var(--accent, currentColor)); font-weight: 700; }
+.dd-edit, .dd-change, .dd-what { color: ${accent}; text-decoration: underline; }
+.dd-checkin-input, .dd-checkin-box input, .dd-checkin-box textarea { width: 100%; max-width: 16rem; min-width: 0; box-sizing: border-box; font-size: 1.45rem; }
+.dd-checkin-box { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: 0.45rem 0; min-width: 0; }
+.dd-checkin-box-total { margin-top: 0.2rem; }
+.dd-unit-word, .dd-affix, .dd-prior, .dd-goal-line { color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.dd-goal-line { font-weight: 600; color: inherit; }
+.dd-farms { margin: 0.3rem 0 0; }
+.dd-plain { margin: 0.2rem 0 0.8rem; overflow-wrap: anywhere; }
+.dd-question-card summary { display: block; font-weight: 400; }
+.dd-q-line { display: block; }
+.dd-q-body { margin-top: 0.6rem; }
+body.device-phone .dd-checkin-save { position: sticky; bottom: 0; z-index: 4; margin: 0.4rem 0 0; padding: 0.6rem 0.2rem calc(0.6rem + env(safe-area-inset-bottom)); background: var(--panel, var(--bg, transparent)); border-top: 1px solid var(--line, var(--border, currentColor)); }
+body.device-phone .dd-checkin-save button { width: 100%; }
+.dd-checkin-save button { min-height: 2.8rem; }
 .dd-question-card { min-width: 0; margin: 0 0 1rem; padding: 0.8rem 1rem; border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); background: var(--panel, var(--surface, transparent)); }
 .dd-question-card p, .dd-question-card h2 { overflow-wrap: anywhere; }
 .dd-target-form, .dd-import-form { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; max-width: 40rem; margin: 0.6rem 0 1.2rem; }

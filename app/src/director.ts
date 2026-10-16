@@ -34,7 +34,7 @@ import {
   type DdSourceKind,
   type DdUnit,
 } from "./directorregistry";
-import { etWallClock, isCalendarDate, isoWeekOf, periodLabel, periodShift, periodStartFor, type PeriodKind } from "./farmday";
+import { dayOffset, etWallClock, isCalendarDate, isoWeekOf, periodLabel, periodShift, periodStartFor, type PeriodKind } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
 import { esc, tabBar } from "./ui";
 
@@ -66,7 +66,7 @@ export function isDdCadence(value: string | null | undefined): value is DdCadenc
   return (DD_CADENCES as readonly string[]).includes(String(value ?? ""));
 }
 
-/** The entry grid S2a builds, one cadence of one wall. */
+/** The weekly check-in S2c shows, one cadence of one wall, at the entry URL. */
 export function directorGridPath(dept: DdDeptKey, cadence?: DdCadence | null, period?: string | null): string {
   const query = new URLSearchParams();
   if (cadence) query.set("cadence", cadence);
@@ -780,6 +780,7 @@ export type DdStoredValue = {
   dim_key: string;
   value: number | null;
   value_text: string | null;
+  goal: number | null;
   source: string;
   computed_at: string;
   def_version: number;
@@ -801,6 +802,7 @@ function storedFromRow(row: Row): DdStoredValue {
     dim_key: String(row.dim_key ?? ""),
     value: num(row.value),
     value_text: row.value_text == null ? null : String(row.value_text),
+    goal: num(row.goal),
     source: String(row.source ?? ""),
     computed_at: String(row.computed_at ?? ""),
     def_version: Number(row.def_version ?? 1),
@@ -820,7 +822,7 @@ function gridLower(kind: PeriodKind, day: string): string {
   return lower;
 }
 
-const GRID_VALUES_SQL = `SELECT id, kpi_key, period_kind, period_start, dim_key, value, value_text, source, computed_at, def_version
+const GRID_VALUES_SQL = `SELECT id, kpi_key, period_kind, period_start, dim_key, value, value_text, goal, source, computed_at, def_version
   FROM dd_kpi_values
   WHERE superseded_at IS NULL
     AND dim_key IN ('', 'PNN', 'ARL', 'PNS')
@@ -830,6 +832,11 @@ const GRID_VALUES_SQL = `SELECT id, kpi_key, period_kind, period_start, dim_key,
       OR (period_kind = 'month' AND period_start >= ? AND period_start <= ?)
       OR (period_kind = 'quarter' AND period_start >= ? AND period_start <= ?)
       OR (period_kind = 'season' AND period_start >= ? AND period_start <= ?))`;
+
+const GRID_TARGETS_SQL = `SELECT id, kpi_key, dim_key, period_kind, effective_from, target, low, high, phasing, note, deleted_at
+  FROM dd_targets
+  WHERE deleted_at IS NULL
+    AND kpi_key IN (SELECT kpi_key FROM dd_kpis WHERE active = 1 AND (',' || wall_keys || ',') LIKE ?)`;
 
 export type DdGridHand = { id: string; value: number | null; value_text: string | null };
 
@@ -843,7 +850,7 @@ export type DdGridCell = {
   live: { value: number | null; value_text: string | null; source: string } | null;
 };
 
-export type DdGridRow = { kpi: DdKpi; entry: boolean; otherDims: string[]; cells: DdGridCell[] };
+export type DdGridRow = { kpi: DdKpi; entry: boolean; otherDims: string[]; cells: DdGridCell[]; goal: number | null };
 
 export type DirectorGridModel = {
   dept: DdDeptKey;
@@ -856,6 +863,8 @@ export type DirectorGridModel = {
   nextStart: string;
   farmToday: string;
   rows: DdGridRow[];
+  /** A past period, or a hand value already stored, so the reason box is on the page. */
+  askReason: boolean;
 };
 
 function winning(rows: readonly DdStoredValue[]): DdStoredValue | null {
@@ -871,7 +880,14 @@ function winning(rows: readonly DdStoredValue[]): DdStoredValue | null {
   return best;
 }
 
-function buildGridRows(kpis: readonly DdKpi[], values: readonly DdStoredValue[], periodKind: DdPeriodKind, periodStart: string, prevStart: string): DdGridRow[] {
+function buildGridRows(
+  kpis: readonly DdKpi[],
+  values: readonly DdStoredValue[],
+  targets: readonly DdTarget[],
+  periodKind: DdPeriodKind,
+  periodStart: string,
+  prevStart: string
+): DdGridRow[] {
   return kpis.map((kpi) => {
     const entry = isHandEntry(kpi.source_kind);
     const shown = ddAllowedDimKeys(kpi);
@@ -889,11 +905,31 @@ function buildGridRows(kpis: readonly DdKpi[], values: readonly DdStoredValue[],
         live: liveRow ? { value: liveRow.value, value_text: liveRow.value_text, source: liveRow.source } : null,
       };
     });
-    return { kpi, entry, otherDims: ddOtherDims(kpi.dims), cells };
+    const hit = targetInForce(targets, kpi.kpi_key, "", periodKind, periodStart);
+    const liveGoal = winning(
+      values.filter((row) => row.kpi_key === kpi.kpi_key && row.dim_key === "" && row.period_kind === periodKind && row.period_start === periodStart)
+    )?.goal;
+    const raw = hit ? phasedGoal(hit.target, hit.phasing, periodKind, periodStart) : liveGoal;
+    const goal = raw != null && Number.isFinite(raw) ? raw : null;
+    return { kpi, entry, otherDims: ddOtherDims(kpi.dims), cells, goal };
   });
 }
 
-/** The entry grid: one batch (registry, live values for this period and the previous one, the dd_* config). */
+/** The day a cadence is read on: the query's day when it applies, otherwise the farm today. */
+function gridDay(cadence: DdCadence, requested: DdCadence | null, periodDay: string | null, farmToday: string): string {
+  return periodDay && (requested === null || requested === cadence) ? periodDay : farmToday;
+}
+
+function totalHandBlank(values: readonly DdStoredValue[], kpi: DdKpi, kind: DdPeriodKind, start: string): boolean {
+  const hand = values.find(
+    (row) => row.kpi_key === kpi.kpi_key && row.source === "hand" && row.dim_key === "" && row.period_kind === kind && row.period_start === start
+  );
+  if (!hand) return true;
+  if (kpi.unit === "text") return hand.value_text == null || hand.value_text === "";
+  return hand.value == null;
+}
+
+/** The check-in: one batch (registry, live values, the dd_* config, the live targets). */
 export async function loadDirectorGrid(
   db: D1Database,
   dept: DdDeptKey,
@@ -906,7 +942,7 @@ export async function loadDirectorGrid(
   const bounds: string[] = [];
   for (const cadence of DD_CADENCES) {
     // A period in the query applies to the named cadence, or to every cadence when the page is choosing the default.
-    const day = periodDay && (requested === null || requested === cadence) ? periodDay : farmToday;
+    const day = gridDay(cadence, requested, periodDay, farmToday);
     const kind = ddPeriodKindOf(cadence);
     bounds.push(gridLower(kind, day), day);
   }
@@ -914,27 +950,41 @@ export async function loadDirectorGrid(
     db.prepare(REGISTRY_SQL),
     db.prepare(GRID_VALUES_SQL).bind(`%,${dept},%`, ...bounds),
     ddConfigStatement(db),
+    db.prepare(GRID_TARGETS_SQL).bind(`%,${dept},%`),
   ]);
   const registry = registryFromRows(resultsOf(results[0]));
   const wall = ddKpisForWall(registry, dept);
-  const cadences = DD_CADENCES.filter((cadence) => wall.some((row) => row.cadence === cadence));
-  const cadence: DdCadence = requested ?? cadences[0] ?? "weekly";
   const config = pageConfigFrom(resultsOf(results[2]));
-  const viewDay = periodDay && (requested === null || requested === cadence) ? periodDay : farmToday;
+  const values = resultsOf(results[1]).map(storedFromRow);
+  const targets = resultsOf(results[3]).map(targetFromRow);
+  const typed = DD_CADENCES.filter((cadence) => wall.some((row) => row.cadence === cadence && isHandEntry(row.source_kind)));
+  const hasEmpty = (cadence: DdCadence) => {
+    const kind = ddPeriodKindOf(cadence);
+    const day = gridDay(cadence, requested, periodDay, farmToday);
+    const start = periodStartFor(kind, day, { seasonStartDate: config.seasonStartDate });
+    return wall.some((row) => row.cadence === cadence && isHandEntry(row.source_kind) && totalHandBlank(values, row, kind, start));
+  };
+  const cadence: DdCadence = requested && typed.includes(requested) ? requested : (typed.find(hasEmpty) ?? typed[0] ?? "weekly");
+  const viewDay = gridDay(cadence, requested, periodDay, farmToday);
   const periodKind = ddPeriodKindOf(cadence);
   const periodStart = periodStartFor(periodKind, viewDay, { seasonStartDate: config.seasonStartDate });
   const prevStart = periodShift(periodKind, periodStart, -1);
   const nextStart = periodShift(periodKind, periodStart, 1);
-  const values = resultsOf(results[1]).map(storedFromRow);
   const rows = buildGridRows(
     wall.filter((row) => row.cadence === cadence),
     values,
+    targets,
     periodKind,
     periodStart,
     prevStart
   );
+  const currentStart = periodStartFor(periodKind, farmToday, { seasonStartDate: config.seasonStartDate });
+  const overwrite = rows.some((row) => row.entry && row.cells.some((cell) => !handIsBlank(cell.hand)));
+  // S2c gate fix: a past period always asks why; on the current period the why box opens only when a saved card is opened to edit (see checkinScript).
+  const askReason = periodStart < currentStart;
+  void overwrite;
   const title = DD_DEPARTMENTS.find((row) => row.dept_key === dept)?.title_en ?? dept;
-  return { dept, title_en: title, cadence, cadences, periodDay: viewDay, periodStart, prevStart, nextStart, farmToday, rows };
+  return { dept, title_en: title, cadence, cadences: typed, periodDay: viewDay, periodStart, prevStart, nextStart, farmToday, rows, askReason };
 }
 
 function plainValue(unit: DdUnit, value: number | null, valueText: string | null): string {
@@ -948,103 +998,298 @@ function shownValue(unit: DdUnit, value: number | null, valueText: string | null
   return ddFormatValue(unit, value, valueText);
 }
 
-function dimWord(dim: string, locale: Locale): string {
-  return dim === "" ? t(locale, "Total") : dim;
-}
-
 function cellField(kpiKey: string, dim: string): string {
   return `cell:${kpiKey}|${dim}`;
 }
 
-function gridCellHtml(row: DdGridRow, cell: DdGridCell, locale: Locale): string {
-  const kpi = row.kpi;
-  const marker = `${kpi.kpi_key}|${cell.dim}`;
-  const label = dimWord(cell.dim, locale);
-  if (cell.locked) {
-    const live = cell.live;
-    const text = live ? shownValue(kpi.unit, live.value, live.value_text) : "";
-    const sourceKey = live ? (DD_SOURCE_WORDS[live.source] ?? "") : "";
-    const badge = live && sourceKey ? `<span class="dd-badge dd-badge-source" data-dd-source="${esc(live.source)}">${esc(t(locale, sourceKey))}</span>` : "";
-    const empty = text === "" ? `<span class="muted">${esc(t(locale, "No snapshot yet"))}</span>` : esc(text);
-    return `<td data-label="${esc(label)}"><span data-dd-cell="${esc(marker)}" data-dd-locked>${empty}${badge ? ` ${badge}` : ""}</span></td>`;
-  }
-  const value = cell.hand ? plainValue(kpi.unit, cell.hand.value, cell.hand.value_text) : "";
-  const placeholder = cell.previous ? plainValue(kpi.unit, cell.previous.value, cell.previous.value_text) : "";
-  const text = kpi.unit === "text";
-  return `<td data-label="${esc(label)}"><input type="text" name="${esc(cellField(kpi.kpi_key, cell.dim))}" value="${esc(value)}" placeholder="${esc(placeholder)}" ${text ? `maxlength="80"` : `inputmode="decimal"`} autocomplete="off" data-dd-cell="${esc(marker)}"${text ? ` data-dd-text="1"` : ""}></td>`;
+const CHECKIN_CADENCE: Record<DdCadence, string> = {
+  daily: "Today",
+  weekly: "This week",
+  monthly: "This month",
+  quarterly: "This quarter",
+  seasonal: "This season",
+};
+
+const CHECKIN_PREVIOUS: Record<DdCadence, string> = {
+  daily: "Yesterday",
+  weekly: "Last week",
+  monthly: "Last month",
+  quarterly: "Last quarter",
+  seasonal: "Last season",
+};
+
+/** The word beside a typed number. Dollars and percent sit on the number. A count has none. */
+const CHECKIN_UNIT: Partial<Record<DdUnit, string>> = {
+  lb448: "pounds",
+  g: "grams",
+  ea: "each",
+  L: "liters",
+  h: "hours",
+  days: "days",
+  score: "score",
+  ratio: "ratio",
+  mol_m2_day: "mol/m2/day",
+};
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function monthIndex(iso: string): number {
+  return Number(iso.slice(5, 7)) - 1;
 }
 
-function gridRowHtml(row: DdGridRow, farmCols: boolean, locale: Locale): string {
+function dayNum(iso: string): string {
+  return String(Number(iso.slice(8, 10)));
+}
+
+function shortDate(iso: string, locale: Locale): string {
+  return `${t(locale, MONTH_SHORT[monthIndex(iso)] ?? "")} ${dayNum(iso)}`;
+}
+
+function weekdayOf(iso: string): string {
+  const year = Number(iso.slice(0, 4));
+  const month = Number(iso.slice(5, 7));
+  const day = Number(iso.slice(8, 10));
+  return WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()] ?? "Sunday";
+}
+
+/** The period in words: "week of Oct 12 to 18", "October 2026", "Q4 2026", "Thursday, Oct 15". */
+function checkinWhen(kind: PeriodKind, start: string, locale: Locale): string {
+  if (kind === "week") {
+    const end = dayOffset(start, 6);
+    const sameMonth = start.slice(5, 7) === end.slice(5, 7);
+    return tFill(locale, "week of {start} to {end}", { start: shortDate(start, locale), end: sameMonth ? dayNum(end) : shortDate(end, locale) });
+  }
+  if (kind === "month") return `${t(locale, MONTH_LONG[monthIndex(start)] ?? "")} ${start.slice(0, 4)}`;
+  if (kind === "quarter") return tFill(locale, "Q{n} {year}", { n: String(Math.floor(monthIndex(start) / 3) + 1), year: start.slice(0, 4) });
+  if (kind === "day") {
+    return tFill(locale, "{weekday}, {month} {day}", {
+      weekday: t(locale, weekdayOf(start)),
+      month: t(locale, MONTH_SHORT[monthIndex(start)] ?? ""),
+      day: dayNum(start),
+    });
+  }
+  return tFill(locale, "season of {when}", { when: `${shortDate(start, locale)}, ${start.slice(0, 4)}` });
+}
+
+function trimNum(n: number): string {
+  if (!Number.isFinite(n)) return "";
+  const rounded = Math.round(n * 100) / 100;
+  if (Object.is(rounded, -0)) return "0";
+  if (Math.abs(rounded - Math.round(rounded)) < 1e-9) return String(Math.round(rounded));
+  return String(rounded);
+}
+
+/** The number a director reads. Dollars take a $ in front. A percent takes % after. */
+function bareNumber(unit: DdUnit, value: number): string {
+  if (unit === "usd") {
+    const n = Math.round(value);
+    return `${n < 0 ? "-" : ""}$${Math.abs(n)}`;
+  }
+  if (unit === "pct") return `${trimNum(value)}%`;
+  if (unit === "count" || unit === "ea" || unit === "g") return String(Math.round(value));
+  return trimNum(value);
+}
+
+function goalBound(direction: DdGoalDirection, unit: DdUnit, goal: number, locale: Locale): string {
+  const word = direction === "at_most" ? t(locale, "under") : t(locale, "at least");
+  return `${word} ${bareNumber(unit, goal)}`;
+}
+
+function goalWords(direction: DdGoalDirection, unit: DdUnit, goal: number, locale: Locale): string {
+  return `${t(locale, "Goal")}: ${goalBound(direction, unit, goal, locale)}`;
+}
+
+function priorLine(kpi: DdKpi, cell: DdGridCell | undefined, cadence: DdCadence, locale: Locale): string {
+  const label = t(locale, CHECKIN_PREVIOUS[cadence]);
+  const prev = cell?.previous ?? null;
+  const empty = !prev || (kpi.unit === "text" ? prev.value_text == null || prev.value_text === "" : prev.value == null || !Number.isFinite(prev.value));
+  const shown = empty ? t(locale, "none yet") : kpi.unit === "text" ? (prev?.value_text ?? "") : bareNumber(kpi.unit, prev?.value ?? 0);
+  return `${label}: ${shown}`;
+}
+
+function hasFarm(dims: string): boolean {
+  return dims.split(",").map((part) => part.trim()).includes("farm");
+}
+
+function entryBox(kpi: DdKpi, cell: DdGridCell, large: boolean, autofocus: boolean): string {
+  const value = cell.hand ? plainValue(kpi.unit, cell.hand.value, cell.hand.value_text) : "";
+  const name = esc(cellField(kpi.kpi_key, cell.dim));
+  const marker = esc(`${kpi.kpi_key}|${cell.dim}`);
+  const focus = autofocus ? " autofocus" : "";
+  const control =
+    kpi.unit === "text"
+      ? `<textarea name="${name}" rows="2" maxlength="80" autocomplete="off" data-dd-cell="${marker}" data-dd-text="1"${focus}>${esc(value)}</textarea>`
+      : `<input type="text" name="${name}" value="${esc(value)}" inputmode="decimal" autocomplete="off" data-dd-cell="${marker}"${large ? ` class="dd-checkin-input"` : ""}${focus}>`;
+  const before = kpi.unit === "usd" ? `<span class="dd-affix" data-dd-unit="usd">$</span>` : "";
+  const after = kpi.unit === "pct" ? `<span class="dd-affix" data-dd-unit="pct">%</span>` : "";
+  const farm = cell.dim === "" ? "" : `<span class="dd-farm-name">${esc(cell.dim)}</span> `;
+  return `<label class="dd-checkin-box${large ? " dd-checkin-box-total" : ""}">${farm}${before}${control}${after}</label>`;
+}
+
+function farmSection(row: DdGridRow, locale: Locale): string {
+  if (!hasFarm(row.kpi.dims)) return "";
+  const boxes = DD_FARM_DIMS.map((dim) => {
+    const cell = row.cells.find((item) => item.dim === dim);
+    return cell ? entryBox(row.kpi, cell, false, false) : "";
+  }).join("");
+  return `<details class="dd-farms" data-dd-farms="${esc(row.kpi.kpi_key)}"><summary>${esc(t(locale, "By farm (optional)"))}</summary>${boxes}</details>`;
+}
+
+function cardDone(row: DdGridRow): boolean {
+  const total = row.cells.find((cell) => cell.dim === "");
+  return total ? !handIsBlank(total.hand) : false;
+}
+
+function shownHand(kpi: DdKpi, hand: DdGridHand | null): string {
+  if (!hand) return "";
+  if (kpi.unit === "text") return hand.value_text ?? "";
+  if (hand.value == null || !Number.isFinite(hand.value)) return "";
+  return bareNumber(kpi.unit, hand.value);
+}
+
+function checkinCard(row: DdGridRow, model: DirectorGridModel, locale: Locale, firstEmpty: boolean): string {
   const kpi = row.kpi;
-  const question = kpi.open_question_en
-    ? `<a class="dd-question" href="${esc(`${DIRECTOR_QUESTIONS_PATH}?kpi=${encodeURIComponent(kpi.kpi_key)}`)}" title="${esc(locale === "es" && kpi.open_question_es ? kpi.open_question_es : kpi.open_question_en)}" data-dd-question="${esc(kpi.kpi_key)}">?</a>`
-    : "";
-  const byDim = new Map(row.cells.map((cell) => [cell.dim, cell]));
-  const dims = [""].concat(farmCols ? [...DD_FARM_DIMS] : []);
-  const cells = dims
-    .map((dim) => {
-      const cell = byDim.get(dim);
-      if (!cell) return `<td class="dd-cell-na" data-label="${esc(dimWord(dim, locale))}"></td>`;
-      return gridCellHtml(row, cell, locale);
+  const total = row.cells.find((cell) => cell.dim === "");
+  const filled = cardDone(row);
+  const id = firstEmpty ? ` id="dd-next"` : "";
+  const open = filled ? "" : " open";
+  const unitKey = CHECKIN_UNIT[kpi.unit];
+  const unitWordText = unitKey ? t(locale, unitKey) : "";
+  const title = kpiTitle(kpi, locale);
+  const unitHtml = unitWordText && !title.toLowerCase().includes(unitWordText.toLowerCase()) ? ` <span class="dd-unit-word">${esc(unitWordText)}</span>` : "";
+  const shown = shownHand(kpi, total?.hand ?? null);
+  const summary = filled
+    ? `<summary><span class="dd-check" aria-hidden="true">&#10003;</span> <span class="dd-checkin-title">${esc(title)}</span>${unitHtml} <span class="dd-checkin-value" data-dd-shown="${esc(shown)}">${esc(shown)}</span> <span class="dd-edit">${esc(t(locale, "Edit"))}</span></summary>`
+    : `<summary><span class="dd-checkin-title">${esc(title)}</span>${unitHtml}</summary>`;
+  const goal = row.goal == null ? "" : goalWords(kpi.goal_direction, kpi.unit, row.goal, locale);
+  const box = total ? entryBox(kpi, total, true, firstEmpty) : "";
+  return `<details data-dd-card="${esc(kpi.kpi_key)}" data-dd-filled="${filled ? "1" : "0"}" class="dd-checkin-card"${id}${open}>
+    ${summary}
+    <div class="dd-checkin-body">
+      <p class="dd-prior">${esc(priorLine(kpi, total, model.cadence, locale))}</p>
+      ${goal ? `<p class="dd-goal-line">${esc(goal)}</p>` : ""}
+      ${box}
+      <p><a class="dd-what" href="${esc(directorKpiPath(kpi.kpi_key))}">${esc(t(locale, "What is this?"))}</a></p>
+      ${farmSection(row, locale)}
+    </div>
+  </details>`;
+}
+
+function autoList(rows: readonly DdGridRow[], locale: Locale): string {
+  const locked = rows.filter((row) => !row.entry);
+  if (locked.length === 0) return "";
+  const items = locked
+    .map((row) => {
+      const total = row.cells.find((cell) => cell.dim === "");
+      const live = total?.live ?? null;
+      const empty = !live || (row.kpi.unit === "text" ? live.value_text == null || live.value_text === "" : live.value == null || !Number.isFinite(live.value));
+      const shown = empty ? t(locale, "not yet") : row.kpi.unit === "text" ? (live?.value_text ?? "") : bareNumber(row.kpi.unit, live?.value ?? 0);
+      return `<li data-dd-auto-kpi="${esc(row.kpi.kpi_key)}">${esc(kpiTitle(row.kpi, locale))}: ${esc(shown)}</li>`;
     })
     .join("");
-  const note =
-    row.otherDims.length > 0
-      ? `<td class="dd-note" data-label="${esc(t(locale, "Dimensions"))}">${esc(tFill(locale, "Not entered here: {dims}.", { dims: row.otherDims.join(", ") }))}</td>`
-      : `<td class="dd-note" data-label="${esc(t(locale, "Dimensions"))}"></td>`;
-  const unit = DD_UNIT_WORDS[kpi.unit];
-  return `<tr data-dd-kpi="${esc(kpi.kpi_key)}" data-dd-entry="${row.entry ? "1" : "0"}">
-      <th scope="row"><a href="${esc(directorKpiPath(kpi.kpi_key))}">${esc(kpiTitle(kpi, locale))}</a>${question}</th>
-      <td data-label="${esc(t(locale, "Unit"))}">${unit ? esc(t(locale, unit)) : ""}</td>
-      ${cells}
-      ${note}
-    </tr>`;
+  return `<details class="dd-auto" data-dd-auto><summary>${esc(tFill(locale, "Filled in automatically: {n}", { n: String(locked.length) }))}</summary><ul>${items}</ul></details>`;
 }
 
-/** The entry grid: one row per KPI, inputs on hand and mixed rows, locked values on the rest. */
+function checkinScript(): string {
+  return `<script>
+(function () {
+  var form = document.querySelector("[data-dd-grid]");
+  if (!form || !form.addEventListener) return;
+  form.addEventListener("toggle", function (ev) {
+    var card = ev.target;
+    if (!card || card.tagName !== "DETAILS" || !card.open || card.getAttribute("data-dd-filled") !== "1") return;
+    var wrap = form.querySelector("[data-dd-why-wrap]");
+    var why = form.querySelector("[data-dd-why]");
+    var def = form.querySelector("[data-dd-why-default]");
+    if (!wrap || !why || !def || !wrap.hidden) return;
+    wrap.hidden = false;
+    wrap.style.display = "";
+    def.removeAttribute("name");
+    why.setAttribute("name", "reason");
+    why.required = true;
+  }, true);
+  form.addEventListener("keydown", function (ev) {
+    if (ev.key !== "Enter" || ev.shiftKey || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+    var box = ev.target;
+    if (!box || box.tagName !== "INPUT") return;
+    var name = box.getAttribute("name") || "";
+    if (name.indexOf("cell:") !== 0) return;
+    var found = form.querySelectorAll("input[name^='cell:'], textarea[name^='cell:']");
+    var list = [];
+    for (var i = 0; i < found.length; i += 1) {
+      var nm = found[i].getAttribute("name") || "";
+      if (found[i] === box || nm.charAt(nm.length - 1) === "|") list.push(found[i]);
+    }
+    var start = list.indexOf(box);
+    if (start < 0) return;
+    for (var step = 1; step <= list.length; step += 1) {
+      var next = list[(start + step) % list.length];
+      if (String(next.value || "").trim() !== "") continue;
+      ev.preventDefault();
+      var node = next;
+      while (node && node !== form) {
+        if (node.tagName === "DETAILS") node.open = true;
+        node = node.parentElement;
+      }
+      next.focus();
+      return;
+    }
+  });
+})();
+</script>`;
+}
+
+/** The weekly check-in: one card per number a person types, locked rows in one closed line. */
 export function directorGridPage(model: DirectorGridModel, locale: Locale = "en", supervisor = "", ok: string | null = null, savedN: string | null = null): string {
-  const tabs = model.cadences.map((cadence) => ({ href: directorGridPath(model.dept, cadence), key: cadence, label: DD_CADENCE_WORDS[cadence] }));
-  if (!model.cadences.includes(model.cadence)) tabs.push({ href: directorGridPath(model.dept, model.cadence), key: model.cadence, label: DD_CADENCE_WORDS[model.cadence] });
-  const farmCols = model.rows.some((row) => row.cells.some((cell) => cell.dim !== ""));
-  const heads = [t(locale, "Total")].concat(farmCols ? [...DD_FARM_DIMS] : []);
+  const kind = ddPeriodKindOf(model.cadence);
+  const cards = model.rows.filter((row) => row.entry);
+  const done = cards.filter(cardDone).length;
+  const left = String(cards.length - done);
+  const savedCount = savedN && /^\d+$/.test(savedN) ? savedN : "0";
   const banner =
     ok === "nochange"
-      ? `<p class="banner ok" data-dd-notice="nochange">${esc(t(locale, "Nothing changed, nothing written."))}</p>`
+      ? `<p class="banner ok" data-dd-notice="nochange">${esc(t(locale, "Nothing changed."))}</p>`
       : ok === "saved"
-        ? `<p class="banner ok" data-dd-notice="saved">${esc(tFill(locale, "Saved {n} values.", { n: savedN && /^\d+$/.test(savedN) ? savedN : "0" }))}</p>`
+        ? `<p class="banner ok" data-dd-notice="saved">${esc(tFill(locale, "Saved {n}. {left} left.", { n: savedCount, left }))}</p>`
         : "";
-  const body = model.rows.map((row) => gridRowHtml(row, farmCols, locale)).join("");
-  const kind = ddPeriodKindOf(model.cadence);
-  return `<div class="dd-grid-page">
+  const tabs = model.cadences.map((cadence) => ({ href: directorGridPath(model.dept, cadence), key: cadence, label: CHECKIN_CADENCE[cadence] }));
+  if (!model.cadences.includes(model.cadence)) tabs.push({ href: directorGridPath(model.dept, model.cadence), key: model.cadence, label: CHECKIN_CADENCE[model.cadence] });
+  let marked = false;
+  const body = cards
+    .map((row) => {
+      const first = !cardDone(row) && !marked;
+      if (first) marked = true;
+      return checkinCard(row, model, locale, first);
+    })
+    .join("");
+  const reason = model.askReason
+    ? `<label class="field">${esc(t(locale, "You are changing a saved number. Say why."))}
+        <input type="text" name="reason" required autocomplete="off" data-dd-reason>
+      </label>`
+    : `<input type="hidden" name="reason" value="${esc(t(locale, "Weekly check-in"))}" data-dd-why-default>
+      <label class="field" data-dd-why-wrap hidden style="display:none">${esc(t(locale, "You are changing a saved number. Say why."))}
+        <input type="text" autocomplete="off" data-dd-why>
+      </label>`;
+  const when = checkinWhen(kind, model.periodStart, locale);
+  return `<div class="dd-grid-page dd-checkin">
     ${banner}
-    <h1>${esc(t(locale, model.title_en))}</h1>
-    <p class="muted">${esc(t(locale, "Type the hand figures for this period. A locked row fills from its source later."))}</p>
+    <header class="dd-checkin-head">
+      <a class="dd-arrow" href="${esc(directorGridPath(model.dept, model.cadence, model.prevStart))}" data-dd-step="prev" aria-label="${esc(t(locale, "Previous period"))}">&#8592;</a>
+      <h1>${esc(tFill(locale, "{title}, {when}", { title: t(locale, model.title_en), when }))}</h1>
+      <a class="dd-arrow" href="${esc(directorGridPath(model.dept, model.cadence, model.nextStart))}" data-dd-step="next" aria-label="${esc(t(locale, "Next period"))}">&#8594;</a>
+    </header>
+    <p data-dd-progress="${done}/${cards.length}">${esc(tFill(locale, "{done} of {total} done", { done: String(done), total: String(cards.length) }))}</p>
     ${tabs.length > 0 ? tabBar(locale, tabs, model.cadence) : ""}
     <form class="dd-grid" method="post" action="${esc(directorGridPath(model.dept, model.cadence, model.periodStart))}" data-dd-grid="${esc(model.dept)}" data-dd-cadence="${esc(model.cadence)}" data-dd-period="${esc(model.periodStart)}">
-      <div class="dd-group-head">
-        <h2>${esc(t(locale, DD_CADENCE_WORDS[model.cadence]))}</h2>
-        <span class="dd-period">${esc(periodLabel(kind, model.periodStart, locale))}</span>
-        <nav class="dd-stepper" aria-label="${esc(t(locale, "Period"))}">
-          <a class="tab-link" href="${esc(directorGridPath(model.dept, model.cadence, model.prevStart))}" data-dd-step="prev">${esc(t(locale, "Previous period"))}</a>
-          <a class="tab-link" href="${esc(directorGridPath(model.dept, model.cadence))}" data-dd-step="current">${esc(t(locale, "Current period"))}</a>
-          <a class="tab-link" href="${esc(directorGridPath(model.dept, model.cadence, model.nextStart))}" data-dd-step="next">${esc(t(locale, "Next period"))}</a>
-        </nav>
-      </div>
-      <table class="dd-grid-table">
-        <thead><tr>
-          <th>${esc(t(locale, "KPI"))}</th>
-          <th>${esc(t(locale, "Unit"))}</th>
-          ${heads.map((head) => `<th>${esc(head)}</th>`).join("")}
-          <th>${esc(t(locale, "Dimensions"))}</th>
-        </tr></thead>
-        <tbody>${body || `<tr><td colspan="${3 + heads.length}">${esc(t(locale, "No tiles on this wall."))}</td></tr>`}</tbody>
-      </table>
-      <label class="field">${esc(t(locale, "Reason"))}
-        <input type="text" name="reason" required value="${esc(t(locale, "Weekly entry"))}" autocomplete="off" data-dd-reason>
-      </label>
+      ${body || `<p>${esc(t(locale, "No tiles on this wall."))}</p>`}
+      ${autoList(model.rows, locale)}
+      ${reason}
       <p class="muted supervisor-line" data-supervisor>${esc(t(locale, "Supervisor"))}: ${esc(supervisor)}</p>
-      <button type="submit">${esc(t(locale, "Save"))}</button>
+      <div class="dd-checkin-save"><button type="submit">${esc(t(locale, "Save"))}</button></div>
     </form>
+    ${checkinScript()}
   </div>`;
 }
 
@@ -1181,7 +1426,7 @@ export async function saveDirectorGrid(
     );
   }
   await db.batch(stmts);
-  return { redirect: `${back}${join}ok=saved&n=${changes.length}` };
+  return { redirect: `${back}${join}ok=saved&n=${changes.length}#dd-next` };
 }
 
 export type DdDetailQuestion = { status: string; ruling: string | null; question_en: string; question_es: string };
@@ -1221,7 +1466,7 @@ const DETAIL_KPI_SQL = `SELECT k.kpi_key, k.dept_key, k.wall_keys, k.title_en, k
 
 const DETAIL_COUNT_SQL = `SELECT COUNT(*) AS n FROM dd_kpis WHERE active = 1`;
 
-const DETAIL_VALUES_SQL = `SELECT id, kpi_key, period_kind, period_start, dim_key, value, value_text, source, computed_at, def_version, superseded_at, reason
+const DETAIL_VALUES_SQL = `SELECT id, kpi_key, period_kind, period_start, dim_key, value, value_text, goal, source, computed_at, def_version, superseded_at, reason
   FROM dd_kpi_values
   WHERE kpi_key = ? AND period_start >= ? AND period_start <= ?
   ORDER BY period_start, dim_key, source, computed_at, id`;
@@ -1306,51 +1551,91 @@ function defRow(label: string, value: string, locale: Locale): string {
   return `<dt>${esc(t(locale, label))}</dt><dd>${esc(value)}</dd>`;
 }
 
-function historyCell(rows: readonly DdStoredValue[], source: string, unit: DdUnit, locale: Locale): string {
-  const live = rows.filter((row) => row.source === source && row.superseded_at == null);
-  if (live.length === 0) return "";
-  return live
-    .map((row) => {
-      const dim = row.dim_key === "" ? t(locale, "Total") : row.dim_key;
-      return `<span class="dd-hist-val"><span class="dd-hist-dim">${esc(dim)}</span> <span>${esc(shownValue(unit, row.value, row.value_text))}</span></span>`;
-    })
-    .join(" ");
-}
-
 function goalShown(unit: DdUnit, goal: number): string {
   if (unit === "text") return String(goal);
   return ddFormatValue(unit, goal);
 }
 
-/** The target in force for each dim that has one this period, and the variance where a live number exists too. */
-function periodGoalCells(model: DirectorDetailModel, start: string, locale: Locale): { target: string; variance: string } {
-  const kpi = model.kpi;
-  const live = model.rows.filter((row) => row.period_start === start && row.superseded_at == null);
-  const dims = new Set<string>();
-  for (const row of live) dims.add(row.dim_key);
-  for (const target of model.targets) {
-    if (target.period_kind === model.periodKind && target.effective_from <= start) dims.add(target.dim_key);
+function mdWords(md: string, locale: Locale): string {
+  if (!/^\d{2}-\d{2}$/.test(md)) return md;
+  const name = MONTH_SHORT[Number(md.slice(0, 2)) - 1];
+  if (!name) return md;
+  return `${t(locale, name)} ${String(Number(md.slice(3, 5)))}`;
+}
+
+function seasonWords(kpi: DdKpi, locale: Locale): string {
+  if (!kpi.season_start_md || !kpi.season_end_md) return t(locale, "All year");
+  return `${mdWords(kpi.season_start_md, locale)} to ${mdWords(kpi.season_end_md, locale)}`;
+}
+
+function comesFrom(source: string, locale: Locale): string {
+  if (source === "hand") return t(locale, "You type it");
+  if (source === "mixed") return t(locale, "Both");
+  return t(locale, "The app fills it");
+}
+
+function plainUnit(unit: DdUnit, locale: Locale): string {
+  const key = CHECKIN_UNIT[unit];
+  if (key) return t(locale, key);
+  if (unit === "usd") return "$";
+  if (unit === "pct") return "%";
+  return "";
+}
+
+function detailGoalNumber(model: DirectorDetailModel): number | null {
+  const start = model.periods[0] ?? "";
+  const hit = targetInForce(model.targets, model.kpi.kpi_key, "", model.periodKind, start);
+  if (hit) {
+    const n = phasedGoal(hit.target, hit.phasing, model.periodKind, start);
+    return Number.isFinite(n) ? n : null;
   }
-  const targets: string[] = [];
-  const variances: string[] = [];
-  for (const dim of [...dims].sort()) {
-    const hit = targetInForce(model.targets, kpi.kpi_key, dim, model.periodKind, start);
-    if (!hit) continue;
-    const goal = phasedGoal(hit.target, hit.phasing, model.periodKind, start);
-    const label = dim === "" ? t(locale, "Total") : dim;
-    targets.push(`${label} ${goalShown(kpi.unit, goal)}`);
-    const win = winning(live.filter((row) => row.dim_key === dim));
-    if (win && win.value != null) variances.push(`${label} ${signed(kpi.unit, ddGoalDelta(kpi.goal_direction, win.value, goal))}`);
-  }
-  return { target: targets.join(" "), variance: variances.join(" ") };
+  const live = winning(model.rows.filter((row) => row.period_start === start && row.superseded_at == null && row.dim_key === ""));
+  return live?.goal != null && Number.isFinite(live.goal) ? live.goal : null;
+}
+
+const HIST_DIMS = ["", ...DD_FARM_DIMS];
+
+function historyValueHtml(rows: readonly DdStoredValue[], unit: DdUnit, locale: Locale): string {
+  const live = rows.filter((row) => row.superseded_at == null);
+  const dims = [...new Set(live.map((row) => row.dim_key))].sort((a, b) => {
+    const ia = HIST_DIMS.indexOf(a);
+    const ib = HIST_DIMS.indexOf(b);
+    if (ia >= 0 && ib >= 0) return ia - ib;
+    if (ia >= 0) return -1;
+    if (ib >= 0) return 1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  const parts = dims
+    .map((dim) => {
+      const win = winning(live.filter((row) => row.dim_key === dim));
+      if (!win) return "";
+      const label = dim === "" ? t(locale, "Total") : dim;
+      return `${label} ${shownValue(unit, win.value, win.value_text)}`;
+    })
+    .filter((part) => part !== "");
+  const earlier = rows
+    .filter((row) => row.superseded_at != null)
+    .map((row) => `<s>${esc(shownValue(unit, row.value, row.value_text))}</s>`)
+    .join(" ");
+  return `${esc(parts.join(", "))}${earlier ? ` ${earlier}` : ""}`;
+}
+
+function historyVerdict(model: DirectorDetailModel, start: string, locale: Locale): { goal: string; verdict: string } {
+  const hit = targetInForce(model.targets, model.kpi.kpi_key, "", model.periodKind, start);
+  const raw = hit ? phasedGoal(hit.target, hit.phasing, model.periodKind, start) : null;
+  const goal = raw != null && Number.isFinite(raw) ? raw : null;
+  const live = winning(model.rows.filter((row) => row.period_start === start && row.superseded_at == null && row.dim_key === ""));
+  const goalText = goal == null ? "" : goalBound(model.kpi.goal_direction, model.kpi.unit, goal, locale);
+  let verdict = "";
+  if (live && live.value != null && goal != null) verdict = ddGoalDelta(model.kpi.goal_direction, live.value, goal) >= 0 ? t(locale, "On goal") : t(locale, "Off goal");
+  else if (live && live.value != null) verdict = t(locale, "No goal");
+  return { goal: goalText, verdict };
 }
 
 function targetsBlock(model: DirectorDetailModel, locale: Locale): string {
   const kpi = model.kpi;
-  const dims = ddAllowedDimKeys(kpi);
-  const dimOptions = dims
-    .map((dim) => `<option value="${esc(dim)}">${esc(dim === "" ? t(locale, "Total") : dim)}</option>`)
-    .join("");
+  const farm = hasFarm(kpi.dims);
+  const spread = model.periodKind === "week" || model.periodKind === "month";
   const kindOptions = DD_PERIOD_KINDS.map(
     (kind) => `<option value="${esc(kind)}"${kind === model.periodKind ? " selected" : ""}>${esc(t(locale, kind))}</option>`
   ).join("");
@@ -1361,65 +1646,79 @@ function targetsBlock(model: DirectorDetailModel, locale: Locale): string {
           .map((row) => {
             const label = row.dim_key === "" ? t(locale, "Total") : row.dim_key;
             return `<tr data-dd-target-row="${esc(row.id)}" data-dd-target-value="${esc(row.target)}">
-              <td data-label="${esc(t(locale, "Dimension"))}">${esc(label)}</td>
-              <td data-label="${esc(t(locale, "Period kind"))}">${esc(t(locale, row.period_kind))}</td>
-              <td data-label="${esc(t(locale, "Effective from"))}">${esc(row.effective_from)}</td>
-              <td data-label="${esc(t(locale, "Target"))}">${esc(goalShown(kpi.unit, row.target))}</td>
+              <td data-label="${esc(t(locale, "Farm"))}">${esc(label)}</td>
+              <td data-label="${esc(t(locale, "Each"))}">${esc(t(locale, row.period_kind))}</td>
+              <td data-label="${esc(t(locale, "Starting"))}">${esc(row.effective_from)}</td>
+              <td data-label="${esc(t(locale, "Goal"))}">${esc(goalShown(kpi.unit, row.target))}</td>
               <td data-label="${esc(t(locale, "Low"))}">${esc(row.low == null ? "" : goalShown(kpi.unit, row.low))}</td>
               <td data-label="${esc(t(locale, "High"))}">${esc(row.high == null ? "" : goalShown(kpi.unit, row.high))}</td>
-              <td data-label="${esc(t(locale, "Phasing"))}">${esc(row.phasing ?? "")}</td>
+              <td data-label="${esc(t(locale, "Spread"))}">${esc(row.phasing ?? "")}</td>
               <td data-label="${esc(t(locale, "Note"))}">${esc(row.note ?? "")}</td>
-              <td data-label="${esc(t(locale, "Void"))}">
+              <td data-label="${esc(t(locale, "Remove"))}">
                 <form method="post" action="${esc(directorTargetVoidPath(row.id))}">
                   <input type="text" name="reason" required autocomplete="off" aria-label="${esc(t(locale, "Reason"))}">
-                  <button type="submit">${esc(t(locale, "Void"))}</button>
+                  <button type="submit">${esc(t(locale, "Remove"))}</button>
                 </form>
               </td>
             </tr>`;
           })
           .join("");
+  const start = model.periods[0] ?? model.farmToday;
+  const farmField = farm
+    ? `<label class="field">${esc(t(locale, "Which farm (optional)"))}
+        <select name="dim_key"><option value="">${esc(t(locale, "All farms"))}</option>${DD_FARM_DIMS.map((dim) => `<option value="${esc(dim)}">${esc(dim)}</option>`).join("")}</select>
+      </label>`
+    : `<input type="hidden" name="dim_key" value="">`;
+  const spreadField = spread
+    ? `<details data-dd-spread><summary>${esc(t(locale, "Spread a yearly goal"))}</summary>
+        <p class="muted">${esc(t(locale, "Evenly splits the year into equal parts. Custom is 12 weights for a month or 52 for a week, and they must sum to 1 or to 100."))}</p>
+        <label class="choice"><input type="radio" name="spread" value="flat"> ${esc(t(locale, "Evenly"))}</label>
+        <label class="choice"><input type="radio" name="spread" value="custom"> ${esc(t(locale, "Custom"))}</label>
+        <label class="field">${esc(t(locale, "Custom"))}
+          <input type="text" name="phasing" autocomplete="off">
+        </label>
+      </details>`
+    : `<input type="hidden" name="phasing" value="">`;
   return `<section data-dd-target>
-    <h2>${esc(t(locale, "Targets"))}</h2>
+    <h2>${esc(t(locale, "Goals"))}</h2>
     <table class="dd-detail-table">
       <thead><tr>
-        <th>${esc(t(locale, "Dimension"))}</th>
-        <th>${esc(t(locale, "Period kind"))}</th>
-        <th>${esc(t(locale, "Effective from"))}</th>
-        <th>${esc(t(locale, "Target"))}</th>
+        <th>${esc(t(locale, "Farm"))}</th>
+        <th>${esc(t(locale, "Each"))}</th>
+        <th>${esc(t(locale, "Starting"))}</th>
+        <th>${esc(t(locale, "Goal"))}</th>
         <th>${esc(t(locale, "Low"))}</th>
         <th>${esc(t(locale, "High"))}</th>
-        <th>${esc(t(locale, "Phasing"))}</th>
+        <th>${esc(t(locale, "Spread"))}</th>
         <th>${esc(t(locale, "Note"))}</th>
-        <th>${esc(t(locale, "Void"))}</th>
+        <th>${esc(t(locale, "Remove"))}</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <form class="dd-target-form" method="post" action="${esc(directorTargetPostPath(kpi.kpi_key))}" data-dd-target-form>
-      <h3>${esc(t(locale, "Add a target"))}</h3>
-      <label class="field">${esc(t(locale, "Dimension"))}
-        <select name="dim_key">${dimOptions}</select>
-      </label>
-      <label class="field">${esc(t(locale, "Period kind"))}
-        <select name="period_kind">${kindOptions}</select>
-      </label>
-      <label class="field">${esc(t(locale, "Effective from"))}
-        <input type="date" name="effective_from" required autocomplete="off">
-      </label>
-      <label class="field">${esc(t(locale, "Target"))}
+      <h3>${esc(t(locale, "Set a goal"))}</h3>
+      <label class="field">${esc(t(locale, "Goal"))}
         <input type="text" name="target" required inputmode="decimal" autocomplete="off">
       </label>
-      <label class="field">${esc(t(locale, "Low"))}
-        <input type="text" name="low" inputmode="decimal" autocomplete="off">
+      <label class="field">${esc(t(locale, "Goal for each"))}
+        <select name="period_kind">${kindOptions}</select>
       </label>
-      <label class="field">${esc(t(locale, "High"))}
-        <input type="text" name="high" inputmode="decimal" autocomplete="off">
+      <label class="field">${esc(t(locale, "Starting"))}
+        <input type="date" name="effective_from" required value="${esc(start)}" autocomplete="off">
       </label>
-      <label class="field">${esc(t(locale, "Phasing"))}
-        <input type="text" name="phasing" autocomplete="off" placeholder="${esc(t(locale, "blank, flat, or weights"))}">
-      </label>
-      <label class="field">${esc(t(locale, "Note"))}
-        <input type="text" name="note" autocomplete="off">
-      </label>
+      ${spreadField}
+      <details><summary>${esc(t(locale, "Range (optional)"))}</summary>
+        <label class="field">${esc(t(locale, "Low"))}
+          <input type="text" name="low" inputmode="decimal" autocomplete="off">
+        </label>
+        <label class="field">${esc(t(locale, "High"))}
+          <input type="text" name="high" inputmode="decimal" autocomplete="off">
+        </label>
+        <label class="field">${esc(t(locale, "Note"))}
+          <input type="text" name="note" autocomplete="off">
+        </label>
+      </details>
+      ${farmField}
       <label class="field">${esc(t(locale, "Reason"))}
         <input type="text" name="reason" required autocomplete="off">
       </label>
@@ -1431,38 +1730,20 @@ function targetsBlock(model: DirectorDetailModel, locale: Locale): string {
 /** The definition, the history with the target in force, the change log, and the targets block. */
 export function directorDetailPage(model: DirectorDetailModel, locale: Locale = "en", ok: string | null = null): string {
   const kpi = model.kpi;
-  const found = new Set(model.rows.map((row) => row.source));
-  const sources = [...DD_SOURCE_PRECEDENCE.filter((source) => found.has(source)), ...[...found].filter((source) => !DD_SOURCE_PRECEDENCE.includes(source))];
-  const season = kpi.season_start_md && kpi.season_end_md ? `${kpi.season_start_md} to ${kpi.season_end_md}` : t(locale, "All year");
   const statusWord = kpi.status === "live" ? t(locale, "Live") : t(locale, kpi.status === "needs_definition" ? "Needs definition" : "Parked");
-  const sourceWord = DD_SOURCE_WORDS[kpi.source_kind] ? t(locale, DD_SOURCE_WORDS[kpi.source_kind]) : kpi.source_kind;
   const ruling = model.question?.ruling ?? "";
   const configLine = kpi.config_key ? `${kpi.config_key}${model.configValue != null ? ` = ${model.configValue}` : ""}` : "";
+  const goalNumber = detailGoalNumber(model);
+  const plainParts = [t(locale, DD_CADENCE_WORDS[kpi.cadence]), plainUnit(kpi.unit, locale), goalNumber == null ? "" : goalWords(kpi.goal_direction, kpi.unit, goalNumber, locale), seasonWords(kpi, locale), comesFrom(kpi.source_kind, locale)].filter((part) => part !== "");
   const history = model.periods
     .map((start) => {
       const inPeriod = model.rows.filter((row) => row.period_start === start);
-      const old = inPeriod.filter((row) => row.superseded_at != null);
-      const earlier = old
-        .map((row) => {
-          const dim = row.dim_key === "" ? t(locale, "Total") : row.dim_key;
-          const word = DD_SOURCE_WORDS[row.source] ? t(locale, DD_SOURCE_WORDS[row.source]) : row.source;
-          return `<span><s>${esc(shownValue(kpi.unit, row.value, row.value_text))}</s> ${esc(word)} ${esc(dim)}</span>`;
-        })
-        .join(" ");
-      const fold = old.length > 0 ? `<details><summary>${esc(t(locale, "Earlier values"))}</summary>${earlier}</details>` : "";
-      const cells = sources
-        .map((source) => {
-          const word = DD_SOURCE_WORDS[source] ? t(locale, DD_SOURCE_WORDS[source]) : source;
-          return `<td data-label="${esc(word)}">${historyCell(inPeriod, source, kpi.unit, locale)}</td>`;
-        })
-        .join("");
-      const goal = periodGoalCells(model, start, locale);
+      const verdict = historyVerdict(model, start, locale);
       return `<tr data-dd-history-row="${esc(start)}">
           <th scope="row">${esc(periodLabel(model.periodKind, start, locale))}</th>
-          ${cells}
-          <td data-label="${esc(t(locale, "Target"))}">${esc(goal.target)}</td>
-          <td data-label="${esc(t(locale, "Variance"))}">${esc(goal.variance)}</td>
-          <td data-label="${esc(t(locale, "Earlier values"))}">${fold}</td>
+          <td data-label="${esc(t(locale, "Value"))}">${historyValueHtml(inPeriod, kpi.unit, locale)}</td>
+          <td data-label="${esc(t(locale, "Goal"))}">${esc(verdict.goal)}</td>
+          <td data-label="${esc(t(locale, "Result"))}">${esc(verdict.verdict)}</td>
         </tr>`;
     })
     .join("");
@@ -1490,28 +1771,26 @@ export function directorDetailPage(model: DirectorDetailModel, locale: Locale = 
       : ok === "voided"
         ? `<p class="banner ok" data-dd-notice="voided">${esc(t(locale, "Target voided."))}</p>`
         : "";
-  const sourceHeads = sources
-    .map((source) => `<th>${esc(DD_SOURCE_WORDS[source] ? t(locale, DD_SOURCE_WORDS[source]) : source)}</th>`)
-    .join("");
   return `<div class="dd-detail" data-dd-detail="${esc(kpi.kpi_key)}">
     ${banner}
     <h1>${esc(kpiTitle(kpi, locale))}</h1>
-    <dl class="dd-def">
-      ${defRow("Unit", DD_UNIT_WORDS[kpi.unit] ? t(locale, DD_UNIT_WORDS[kpi.unit]) : kpi.unit, locale)}
-      ${defRow("Cadence", t(locale, DD_CADENCE_WORDS[kpi.cadence]), locale)}
-      ${defRow("Season window", season, locale)}
-      ${defRow("Dimensions", kpi.dims === "" ? t(locale, "Total") : kpi.dims, locale)}
-      ${defRow("Goal kind", kpi.goal_kind, locale)}
-      ${defRow("Goal ref", kpi.goal_ref ?? "", locale)}
-      ${defRow("Source", sourceWord, locale)}
-      ${defRow("Status", statusWord, locale)}
-      ${defRow("Definition version", String(kpi.def_version), locale)}
-      ${kpi.config_key ? defRow("Config key", configLine, locale) : ""}
-      ${ruling ? defRow("Ruling", ruling, locale) : ""}
-    </dl>
+    <p class="dd-plain" data-dd-plain>${esc(plainParts.join(". "))}.</p>
+    <details data-dd-definition>
+      <summary>${esc(t(locale, "Definition details"))}</summary>
+      <dl class="dd-def">
+        ${defRow("Goal kind", kpi.goal_kind, locale)}
+        ${defRow("Goal ref", kpi.goal_ref ?? "", locale)}
+        ${defRow("Compute key", kpi.compute_key ?? "", locale)}
+        ${defRow("Status", statusWord, locale)}
+        ${defRow("Definition version", String(kpi.def_version), locale)}
+        ${kpi.config_key ? defRow("Config key", configLine, locale) : ""}
+        ${defRow("Dimensions", kpi.dims === "" ? t(locale, "Total") : kpi.dims, locale)}
+        ${ruling ? defRow("Ruling", ruling, locale) : ""}
+      </dl>
+    </details>
     <h2>${esc(t(locale, "History"))}</h2>
     <table class="dd-detail-table">
-      <thead><tr><th>${esc(t(locale, "Period"))}</th>${sourceHeads}<th>${esc(t(locale, "Target"))}</th><th>${esc(t(locale, "Variance"))}</th><th>${esc(t(locale, "Earlier values"))}</th></tr></thead>
+      <thead><tr><th>${esc(t(locale, "Period"))}</th><th>${esc(t(locale, "Value"))}</th><th>${esc(t(locale, "Goal"))}</th><th>${esc(t(locale, "Result"))}</th></tr></thead>
       <tbody>${history || `<tr><td>${esc(t(locale, "No history yet"))}</td></tr>`}</tbody>
     </table>
     ${targetsBlock(model, locale)}

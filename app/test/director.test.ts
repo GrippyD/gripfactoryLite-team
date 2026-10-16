@@ -1054,16 +1054,19 @@ describe("DD S2a: the entry grid and the KPI detail", () => {
     expect(model.rows.some((row) => row.entry && row.kpi.kpi_key === "bizops.compliance_issues_opened_count")).toBe(true);
     const page = directorGridPage(model, "en", "actor@local");
     expect(page).toContain('data-dd-grid="bizops"');
+    expect(page).toContain('data-dd-card="bizops.compliance_issues_opened_count"');
     expect(page).toContain('data-dd-cell="bizops.compliance_issues_opened_count|"');
     expect(page).toContain('data-dd-cell="bizops.compliance_issues_opened_count|PNN"');
-    expect(page).toContain("Not entered here: bucket, severity.");
+    expect(page).not.toContain("Not entered here");
     expect(page).toContain('data-supervisor>Supervisor: actor@local');
-    expect(page).toContain('value="Weekly entry"');
+    expect(page).toContain('value="Weekly check-in"');
+    expect(page).toContain("data-dd-progress");
     const locked = model.rows.find((row) => !row.entry);
     expect(locked).toBeTruthy();
-    expect(page).toContain(`data-dd-cell="${locked?.kpi.kpi_key}|" data-dd-locked`);
-    expect(directorGridPage(model, "es")).toContain('value="Registro semanal"');
-    expect(directorGridPage(model, "es")).not.toContain("Weekly entry");
+    expect(page).not.toContain(`data-dd-card="${locked?.kpi.kpi_key}"`);
+    expect(page).toContain("Filled in automatically:");
+    expect(directorGridPage(model, "es")).toContain('value="Chequeo semanal"');
+    expect(directorGridPage(model, "es")).not.toContain("Weekly check-in");
     const detail = countedDb(m.db);
     const one = await loadDirectorDetail(detail.db, "bizops.lbs_processed", DAY);
     expect(detail.counts).toEqual({ batches: 1, direct: 0 });
@@ -1315,7 +1318,7 @@ describe("DD S2b: targets, questions, and CSV import", () => {
         form({ dim_key: "PNN", period_kind: "week", effective_from: "2026-10-12", target: "11", reason: "again" }),
         NOW
       )
-    ).rejects.toMatchObject({ status: 400, message: "A live target already has this KPI, dimension, period kind, and effective date." });
+    ).rejects.toMatchObject({ status: 400, message: "A goal for that week already starts on that date." });
     expect(m.get(`SELECT COUNT(*) AS n FROM dd_targets WHERE deleted_at IS NULL`)?.n).toBe(1);
     await expect(
       saveDirectorTarget(
@@ -1324,7 +1327,7 @@ describe("DD S2b: targets, questions, and CSV import", () => {
         form({ dim_key: "", period_kind: "week", effective_from: "2026-10-05", target: "4", low: "9", high: "2", reason: "range" }),
         NOW
       )
-    ).rejects.toMatchObject({ status: 400, message: "Low must be at most high." });
+    ).rejects.toMatchObject({ status: 400, message: "The low number must be at most the high number." });
     await expect(
       saveDirectorTarget(
         m.db,
@@ -1332,7 +1335,7 @@ describe("DD S2b: targets, questions, and CSV import", () => {
         form({ dim_key: "", period_kind: "weekly", effective_from: "2026-10-05", target: "4", reason: "cadence" }),
         NOW
       )
-    ).rejects.toMatchObject({ status: 400, message: "Period kind must be day, week, month, quarter, or season." });
+    ).rejects.toMatchObject({ status: 400, message: "Pick a day, a week, a month, a quarter, or a season." });
     await expect(
       saveDirectorTarget(
         m.db,
@@ -1340,7 +1343,7 @@ describe("DD S2b: targets, questions, and CSV import", () => {
         form({ dim_key: "strain", period_kind: "week", effective_from: "2026-10-05", target: "4", reason: "dim" }),
         NOW
       )
-    ).rejects.toMatchObject({ status: 400, message: "That dimension is not entered for this KPI." });
+    ).rejects.toMatchObject({ status: 400, message: "That farm is not one this number uses." });
     const voided = await voidDirectorTarget(m.db, String(row?.id), form({ reason: "retire it" }), NOW);
     expect(voided.redirect).toContain("ok=voided");
     expect(m.get(`SELECT deleted_at FROM dd_targets WHERE id = ?`, String(row?.id))?.deleted_at).toBe(NOW);
@@ -1348,7 +1351,7 @@ describe("DD S2b: targets, questions, and CSV import", () => {
     expect(voidLogs).toEqual([{ field: "deleted_at", new_value: NOW }]);
     await expect(voidDirectorTarget(m.db, String(row?.id), form({ reason: "again" }), NOW)).rejects.toMatchObject({
       status: 400,
-      message: "That target is already voided.",
+      message: "That goal is already removed.",
     });
   });
 
@@ -1510,5 +1513,163 @@ describe("DD S2b: targets, questions, and CSV import", () => {
     const deptAt = index.indexOf("DIRECTOR_PATH}/:dept");
     expect(index.indexOf("DIRECTOR_PATH}/questions")).toBeLessThan(deptAt);
     expect(index.indexOf("DIRECTOR_PATH}/import")).toBeLessThan(deptAt);
+  });
+});
+
+describe("DD S2c: the weekly check-in", () => {
+  function cardTag(page: string, key: string): string {
+    return page.match(new RegExp(`<details data-dd-card="${key}"[^>]*>`))?.[0] ?? "";
+  }
+
+  it("counts progress, collapses a filled card, and speaks in plain words", async () => {
+    const m = await migratedDb();
+    const empty = await loadDirectorGrid(m.db, "bizops", DAY, "weekly", null);
+    const emptyPage = directorGridPage(empty, "en", "actor@local");
+    expect(emptyPage).not.toContain("data-dd-reason");
+    expect(emptyPage).toContain('value="Weekly check-in"');
+    expect(emptyPage).not.toContain("Not entered here");
+    const past = directorGridPage(await loadDirectorGrid(m.db, "bizops", DAY, "weekly", "2026-10-05"), "en");
+    expect(past).toContain("data-dd-reason");
+    expect(past).toContain("You are changing a saved number. Say why.");
+    // S2c gate fix: a saved number on the current week does not make the why box required; it opens only when a saved card is opened.
+    m.run(
+      `INSERT INTO dd_kpi_values (id, kpi_key, period_kind, period_start, dim_key, value, source, computed_at, def_version, created_at)
+       VALUES ('s2c-gate-why', 'bizops.labor_forecast_hours', 'week', '2026-10-12', '', 140, 'hand', ?, 1, ?)`,
+      NOW,
+      NOW
+    );
+    const halfDone = directorGridPage(await loadDirectorGrid(m.db, "bizops", DAY, "weekly", null), "en");
+    expect(halfDone).not.toContain("data-dd-reason");
+    expect(halfDone).toContain('name="reason" value="Weekly check-in" data-dd-why-default');
+    expect(halfDone).toMatch(/data-dd-why-wrap hidden style="display:none"/);
+    expect(halfDone).not.toMatch(/<input[^>]*data-dd-why[^>]*required/);
+    m.run(`DELETE FROM dd_kpi_values WHERE id = 's2c-gate-why'`);
+    m.run(
+      `INSERT INTO dd_kpi_values (id, kpi_key, period_kind, period_start, dim_key, value, source, computed_at, def_version, created_at)
+       VALUES ('s2c-hand', 'bizops.compliance_issues_opened_count', 'week', '2026-10-12', '', 4, 'hand', ?, 1, ?)`,
+      NOW,
+      NOW
+    );
+    m.run(
+      `INSERT INTO dd_targets (id, kpi_key, dim_key, period_kind, effective_from, target, created_at, updated_at)
+       VALUES ('s2c-atleast', 'bizops.compliance_issues_opened_count', '', 'week', '2026-01-01', 140, ?, ?),
+              ('s2c-atmost', 'finance.all_in_cost_per_dry_lb', '', 'month', '2026-01-01', 10, ?, ?)`,
+      NOW,
+      NOW,
+      NOW,
+      NOW
+    );
+    const model = await loadDirectorGrid(m.db, "bizops", DAY, "weekly", null);
+    const page = directorGridPage(model, "en");
+    const cards = model.rows.filter((row) => row.entry);
+    const done = cards.filter((row) => row.cells.some((cell) => cell.dim === "" && cell.hand != null && cell.hand.value != null)).length;
+    expect(page).toContain(`data-dd-progress="${done}/${cards.length}"`);
+    expect(page).toContain(`${done} of ${cards.length} done`);
+    const filled = cardTag(page, "bizops.compliance_issues_opened_count");
+    expect(filled).toContain('data-dd-filled="1"');
+    expect(filled).not.toContain(" open");
+    expect(page).toContain('data-dd-shown="4"');
+    expect(page).toContain(">Edit<");
+    expect(page).toContain("Goal: at least 140");
+    expect(page).toContain('data-dd-farms="bizops.compliance_issues_opened_count"');
+    expect(page).toContain("hours");
+    expect(page).toContain("pounds");
+    const quiet = cards.find((row) => !row.kpi.dims.split(",").map((part) => part.trim()).includes("farm"));
+    expect(quiet).toBeTruthy();
+    const at = page.indexOf(`data-dd-card="${quiet?.kpi.kpi_key}"`);
+    const next = page.indexOf("data-dd-card=", at + 12);
+    expect(page.slice(at, next < 0 ? undefined : next)).not.toContain("data-dd-farms");
+    const locked = model.rows.find((row) => !row.entry);
+    expect(locked).toBeTruthy();
+    expect(page).not.toContain(`data-dd-card="${locked?.kpi.kpi_key}"`);
+    expect(page).toContain(`data-dd-auto-kpi="${locked?.kpi.kpi_key}"`);
+    expect(page).toContain("not yet");
+    const farmops = directorGridPage(await loadDirectorGrid(m.db, "farmops", DAY, "weekly", null), "en");
+    expect(farmops).toContain("Farming Operations, week of Oct 12 to 18");
+    const month = directorGridPage(await loadDirectorGrid(m.db, "finance", DAY, "monthly", null), "en");
+    expect(month).toContain("Accounting and Finance, October 2026");
+    expect(month).toContain("Goal: under $10");
+    const day = directorGridPage(await loadDirectorGrid(m.db, "farmops", DAY, "daily", null), "en");
+    expect(day).toContain("Farming Operations, Thursday, Oct 15");
+    const quarter = directorGridPage(await loadDirectorGrid(m.db, "farmops", DAY, "quarterly", null), "en");
+    expect(quarter).toContain("Farming Operations, Q4 2026");
+    const sample = model.rows.find((row) => row.entry);
+    expect(sample).toBeTruthy();
+    const total = sample?.cells.find((cell) => cell.dim === "") ?? sample?.cells[0];
+    const unitPage = (unit: string) =>
+      directorGridPage(
+        {
+          ...model,
+          rows: [
+            {
+              ...sample!,
+              kpi: { ...sample!.kpi, unit: unit as "g" | "ea" | "L" | "days" | "usd" | "pct" | "count", dims: "", kpi_key: "t.unit", title_en: "Sample", source_kind: "hand" },
+              entry: true,
+              otherDims: [],
+              cells: [{ ...total!, dim: "" }],
+              goal: null,
+            },
+          ],
+        },
+        "en"
+      );
+    expect(unitPage("g")).toContain("grams");
+    expect(unitPage("ea")).toContain("each");
+    expect(unitPage("L")).toContain("liters");
+    expect(unitPage("days")).toContain("days");
+    expect(unitPage("usd")).toContain('data-dd-unit="usd"');
+    expect(unitPage("pct")).toContain('data-dd-unit="pct"');
+    const countHtml = unitPage("count");
+    const countAt = countHtml.indexOf('data-dd-card="t.unit"');
+    expect(countHtml.slice(countAt, countHtml.indexOf("</details>", countAt))).not.toContain("dd-unit-word");
+  });
+
+  it("keeps the definition inside its closed section and hides a yearly spread on a quarter", async () => {
+    const m = await migratedDb();
+    const html = directorDetailPage(await loadDirectorDetail(m.db, "bizops.compliance_issues_opened_count", DAY), "en");
+    const at = html.indexOf("data-dd-definition");
+    expect(at).toBeGreaterThan(0);
+    const before = html.slice(0, at);
+    for (const label of ["Goal kind", "Goal ref", "Compute key", "Definition version", "Dimensions"]) {
+      expect(before, label).not.toContain(label);
+    }
+    const block = html.slice(at, html.indexOf("</details>", at));
+    expect(block).toContain("Goal kind");
+    expect(block).toContain("Goal ref");
+    expect(block).toContain("Compute key");
+    expect(block).toContain("Definition version");
+    expect(block).toContain("Dimensions");
+    expect(html).toContain("You type it");
+    expect(html).toContain("Aug 1 to Oct 31");
+    expect(html).toContain("Weekly");
+    const quarter = directorDetailPage(await loadDirectorDetail(m.db, "farmops.assets_for_sale_count", DAY), "en");
+    expect(quarter).not.toContain("data-dd-spread");
+    expect(html).toContain("data-dd-spread");
+    expect(html).toContain("Set a goal");
+    expect(html).toContain("Goal for each");
+    expect(html).toContain("Which farm (optional)");
+    expect(html).toContain('value="2026-10-12"');
+  });
+
+  it("puts open questions ahead of ruled ones and leaves every card closed", async () => {
+    const m = await migratedDb();
+    m.run(`INSERT INTO people (id, display_name, is_active, created_at, updated_at) VALUES ('dd-actor', 'actor', 1, ?, ?)`, NOW, NOW);
+    const form = new FormData();
+    form.set("person_id", "dd-actor");
+    form.set("value", "45");
+    form.set("reason", "wider window");
+    await ruleDirectorQuestion(m.db, "active_window", form, DAY, NOW);
+    const questions = await loadDirectorQuestions(m.db);
+    const page = directorQuestionsPage(questions, "en");
+    const open = questions.questions.filter((row) => row.status !== "ruled");
+    const ruled = questions.questions.filter((row) => row.status === "ruled");
+    expect(ruled.map((row) => row.question_key)).toContain("active_window");
+    const lastOpen = page.lastIndexOf(`data-dd-question="${open[open.length - 1]?.question_key}"`);
+    const firstRuled = page.indexOf(`data-dd-question="${ruled[0]?.question_key}"`);
+    expect(lastOpen).toBeGreaterThan(-1);
+    expect(firstRuled).toBeGreaterThan(lastOpen);
+    expect(page).not.toMatch(/<details[^>]*\sopen/);
+    expect(page).toContain("Change");
+    expect(page).toContain("Status: Ruled");
   });
 });
