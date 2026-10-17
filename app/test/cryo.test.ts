@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONFIG_KEYS, CRYO_CATEGORIES_DEFAULT, LOC_CRYO_ROOM, METRC_UPLOAD_KINDS, STATUS_TRANSITIONS, WIP_SOURCE, WIP_STATUS, applyTransition, demoteStep, parseCryoCategories, parseCryoTypeCategories } from "../src/config";
+import { CONFIG_KEYS, CRYO_CATEGORIES_DEFAULT, LOC_CRYO_ROOM, METRC_UPLOAD_KINDS, SCHEDULE_STAGES, STATUS_TRANSITIONS, WIP_SOURCE, WIP_STATUS, applyTransition, demoteStep, parseCryoCategories, parseCryoTypeCategories } from "../src/config";
 import {
   CRYO_REFUSAL,
   NEW_PACKAGES_ROW1,
@@ -11,14 +11,16 @@ import {
   newPackagesRows,
   newPackagesSheet,
   overIssuesPool,
+  pasteurizationRunLabel,
   poolTotals,
   poolView,
 } from "../src/cryo";
-import { cryoRunIdentity, foldCryoPool, newPackagesFilename, type CryoRunRow } from "../src/db";
+import { cryoRunIdentity, foldCryoPool, listPendingNewPackagesUploads, listScheduleAvailable, listScheduleComplete, listScheduleWorking, newPackagesFilename, shakePackagesFilename, type CryoRunRow } from "../src/db";
+import { refusalText } from "../src/i18n";
 import { stationByKey } from "../src/pipeline";
 import { schedulingPage } from "../src/scheduling";
 import { buildXlsx, xlsxHasParts } from "../src/xlsx";
-import { addCryoOutput } from "../src/actions";
+import { addCryoOutput, addShakeOutput, buildNewPackagesXlsx, buildShakeNewPackagesXlsx, finishCryoRun, markUploaded, unfinishCryoOutput, unfinishScheduleItem } from "../src/actions";
 import { formOf, migratedDb, seedBatch, seedLot, seedPerson } from "./migrated";
 
 /** THE CRYO RUN (canon 0.30.110). Owner rulings 2026-09-17, verbatim: "For
@@ -176,7 +178,10 @@ describe("THE CRYO RUN: the Cryo Weight Entry page", () => {
   it("lists the runs by HBN in the pane, no containers, and prompts for a pick", () => {
     const html = cryoStationPage({ runs: [run], nowIso: "2026-09-17T12:00:00.000Z" });
     expect(html).toContain("<h1>Cryo Weight Entry</h1>");
-    expect(html).toContain('<a class="queue-pane-item" href="/station/cryo_weight?pick=run-1" data-cryo-run="run-1"><strong>26260-PNN-GH-027-0-NA-26011</strong> <span class="muted">3 containers / 22,679 g</span></a>');
+    expect(html).toContain('<a class="queue-pane-item" href="/station/cryo_weight?pick=run-1" title="26260-PNN-GH-027-0-NA-26011" data-cryo-run="run-1"><strong>26011 - no tag - 3 containers</strong> <span class="muted">22,679 g - 50.62 lb - Fruity Pebbles</span></a>');
+    expect(html).toContain('Pasteurization runs <span class="tile-count">1</span>');
+    expect(html).toContain('data-cryo-finished');
+    expect(html).toContain('Finished <span class="tile-count">0</span>');
     expect(html).toContain("Pick a run from the pane.");
     expect(html).not.toContain("1A40503000311FB000038864");
     expect(html).not.toContain('name="package_id"');
@@ -191,8 +196,9 @@ describe("THE CRYO RUN: the Cryo Weight Entry page", () => {
   it("the picked run shows the pool, the trim-style line, the entered packages and Finish run", () => {
     const html = cryoStationPage({ runs: [run], picked: { run, pool, outputs, categories }, nowIso: "2026-09-17T12:00:00.000Z" });
     expect(html).toContain('<a class="queue-pane-item selected" href="/station/cryo_weight?pick=run-1"');
-    expect(html).toContain('<h2 class="working-pick">26260-PNN-GH-027-0-NA-26011</h2>');
-    expect(html).toContain("PNN / Fruity Pebbles / 2026-09-17");
+    expect(html).toContain('<h2 class="working-pick">26011 - no tag - 3 containers</h2>');
+    expect(html).toContain("22,679 g - 50.62 lb - Fruity Pebbles");
+    expect(html).toContain("<p class=\"muted\">26260-PNN-GH-027-0-NA-26011</p>");
     // THE POOL BY CATEGORY (owner: "the available weight in each category, so
     // the TL in cryo knows they're not over-issuing one particular product
     // category"): one row per category with In, Out and Remaining, the Total
@@ -265,7 +271,8 @@ describe("THE CRYO RUN: the Cryo Weight Entry page", () => {
   it("speaks Spanish", () => {
     const html = cryoStationPage({ runs: [run], picked: { run, pool, outputs: [], categories }, nowIso: "2026-09-17T12:00:00.000Z", locale: "es" });
     expect(html).toContain("Corridas de pasteurizacion");
-    expect(html).toContain("3 contenedores / 22,679 g");
+    expect(html).toContain("26011 - sin etiqueta - 3 contenedores");
+    expect(html).toContain("22,679 g - 50.62 lb - Fruity Pebbles");
     expect(html).toContain("<th>Categoria</th><th>Entrada (g)</th><th>Salida (g)</th><th>Restante (g)</th>");
     // THE DUPLICATE TAG warns "in the language selected at the pill".
     expect(html).toContain("data-dup-tag-warning>Esa etiqueta ya esta ingresada abajo. Escanee otro paquete.</p>");
@@ -295,6 +302,11 @@ describe("THE CRYO RUN: the Pasteurization panes collapse to the HBN", () => {
     strain_name: "Fruity Pebbles",
     entry_date: "2026-09-17",
     identity: cryoRunIdentity({ containers: 3, in_grams: 22679, outputs: 1, out_grams: 22000 }),
+    containers: 3,
+    in_grams: 22679,
+    out_count: 1,
+    out_grams: 22000,
+    harvest_tags: ["1A4050300000000000004F2A1"],
     status,
     scheduled_at: run.scheduled_at,
     completed_at: status === "complete" ? "2026-09-17T13:00:00.000Z" : null,
@@ -307,13 +319,15 @@ describe("THE CRYO RUN: the Pasteurization panes collapse to the HBN", () => {
     farm_code: "ARL",
     strain_name: "Rainbow Candies",
     entry_date: "2026-09-16",
-    items: [{ id: "hb2", itemId: "hb2", harvest_batch_id: "hb2", hbn: "26261-ARL-GH-031-0-NA-26012", farm_code: "ARL", strain_name: "Rainbow Candies", entry_date: "2026-09-16", identity: cryoRunIdentity({ containers: 2, in_grams: 9000 }) }],
+    items: [{ id: "hb2", itemId: "hb2", harvest_batch_id: "hb2", hbn: "26261-ARL-GH-031-0-NA-26012", farm_code: "ARL", strain_name: "Rainbow Candies", entry_date: "2026-09-16", identity: cryoRunIdentity({ containers: 2, in_grams: 9000 }), containers: 2, in_grams: 9000, harvest_tags: ["1A4050300000000000004F2A1"] }],
   };
 
   it("Available reads the HBN and its pool on one line with the >>, nothing to unfold and no container", () => {
     const html = schedulingPage("cryo", { available: [avail], working: [], complete: [] }, "en", "2026-09-17T12:00:00.000Z");
     expect(html).toContain('<div class="pane-group schedule-run" data-schedule-hbn="hb2">');
-    expect(html).toContain('<span class="schedule-hbn-line">26261-ARL-GH-031-0-NA-26012 <span class="muted schedule-pool">2 containers / 9,000 g in</span></span>');
+    expect(html).toContain('title="26261-ARL-GH-031-0-NA-26012"');
+    expect(html).toContain("26012 - 4F2A1 - 2 containers");
+    expect(html).toContain("9,000 g - 20.09 lb - Rainbow Candies");
     expect(html).toContain('name="hbn_id" value="hb2"');
     expect(html).not.toContain("schedule-item-readonly");
     expect(html).not.toContain('<details class="pane-group" data-schedule-hbn="hb2">');
@@ -321,7 +335,9 @@ describe("THE CRYO RUN: the Pasteurization panes collapse to the HBN", () => {
 
   it("Scheduled reads the run's pool with Pasteurizing and the arrows; Complete carries Unfinish", () => {
     const html = schedulingPage("cryo", { available: [], working: [group("scheduled")], complete: [group("complete")] }, "en", "2026-09-17T12:00:00.000Z");
-    expect(html).toContain('<span class="schedule-identity">3 containers / 22,679 g in / 1 out, 22,000 g</span>');
+    expect(html).toContain("26011 - 4F2A1 - 3 containers");
+    expect(html).toContain("22,679 g - 50.62 lb - Fruity Pebbles");
+    expect(html).toContain("1 out, 22,000 g");
     expect(html).toContain('<span class="muted schedule-status">Pasteurizing</span>');
     expect(html).toContain('action="/production/scheduling/cryo/unschedule/run-1"');
     expect(html).toContain('action="/production/scheduling/cryo/complete/run-1"');
@@ -499,5 +515,321 @@ describe("THE PACKAGE CARRIES ITS HBN (canon 0.30.196)", () => {
     );
     const indexes = m.all(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'wip_packages' ORDER BY name`).map((row) => row.name);
     expect(indexes).toEqual(["sqlite_autoindex_wip_packages_1", "wip_packages_created_at", "wip_packages_harvest_batch", "wip_packages_status"]);
+  });
+});
+
+describe("PS1: pasteurization runs read by lot, and Add Shake", () => {
+  const PIN = "21319";
+  const WHEN = "2026-10-17T12:00:00.000Z";
+  const LATER = "2026-10-17T13:00:00.000Z";
+  const BUD_TAG = "1A4050300000000000000C11";
+  const SHAKE_TAG = "1A4050300000000000000C21";
+  const SHAKE_TAG_2 = "1A4050300000000000000C22";
+  const HARVEST_TAG = "1A4050300000000000000A91";
+
+  function must(found: Record<string, unknown> | undefined, label: string): Record<string, unknown> {
+    if (!found) throw new Error(label);
+    return found;
+  }
+
+  it("pasteurizationRunLabel: tags, one container, pounds at 448, no strain, no dash characters", () => {
+    const one = pasteurizationRunLabel(
+      { hbn: "26260-PNN-GH-027-0-NA-26072", containers: 23, in_grams: 180085, strain_name: "Gelato 41" },
+      ["1A4050300000000000004F2A1"]
+    );
+    expect(one.line1).toBe("26072 - 4F2A1 - 23 containers");
+    expect(one.line2).toBe("180,085 g - 401.98 lb - Gelato 41");
+    const two = pasteurizationRunLabel(
+      { hbn: "26260-PNN-GH-027-0-NA-26072", containers: 23, in_grams: 180085, strain_name: "Gelato 41" },
+      ["1A4050300000000000004F2A1", "1A4050300000000000009B3C2"]
+    );
+    expect(two.line1).toBe("26072 - 4F2A1, 9B3C2 - 23 containers");
+    const none = pasteurizationRunLabel({ hbn: "26260-PNN-GH-027-0-NA-26072", containers: 1, in_grams: 448, strain_name: "  " }, []);
+    expect(none.line1).toBe("26072 - no tag - 1 container");
+    expect(none.line2).toBe("448 g - 1.00 lb - no strain");
+    const es = pasteurizationRunLabel({ hbn: "26260-PNN-GH-027-0-NA-26072", containers: 1, in_grams: 448, strain_name: null }, [], "es");
+    expect(es.line1).toBe("26072 - sin etiqueta - 1 contenedor");
+    expect(es.line2).toBe("448 g - 1.00 lb - sin variedad");
+    const text = `${one.line1} ${one.line2} ${two.line1} ${none.line1} ${none.line2} ${es.line1}`;
+    expect(text).not.toMatch(/\u2013|\u2014/);
+    expect(one.line1).toContain(" - ");
+  });
+
+  it("the left pane orders working runs by lot serial and parks finished runs under Finished", () => {
+    const base = { ...run, containers: 1, in_grams: 448, strain_name: "Gelato 41", harvest_tags: [] as string[] };
+    const low = { ...base, id: "low", hbn: "26244-ARL-GH-027-0-NA-26005", lot_serial: 5, scheduled_at: LATER };
+    const later = { ...base, id: "later", hbn: low.hbn, lot_serial: 5, scheduled_at: "2026-10-17T14:00:00.000Z" };
+    const high = { ...base, id: "high", hbn: "26244-ARL-GH-027-0-NA-26020", lot_serial: 20, scheduled_at: WHEN };
+    const done = { ...base, id: "done", status: "complete", completed_at: LATER, lot_serial: 1, hbn: "26244-ARL-GH-027-0-NA-26001" };
+    const doneOld = { ...base, id: "done-old", status: "complete", completed_at: WHEN, lot_serial: 99, hbn: "26244-ARL-GH-027-0-NA-26099" };
+    const html = cryoStationPage({ runs: [high, doneOld, low, done, later], nowIso: LATER });
+    const working = html.slice(html.indexOf("data-cryo-runs"), html.indexOf("data-cryo-finished"));
+    expect(working.indexOf('data-cryo-run="low"')).toBeGreaterThan(-1);
+    expect(working.indexOf('data-cryo-run="low"')).toBeLessThan(working.indexOf('data-cryo-run="later"'));
+    expect(working.indexOf('data-cryo-run="later"')).toBeLessThan(working.indexOf('data-cryo-run="high"'));
+    expect(working).not.toContain('data-cryo-run="done"');
+    expect(working).not.toContain('data-cryo-run="done-old"');
+    expect(html).toContain('Pasteurization runs <span class="tile-count">3</span>');
+    const finished = html.slice(html.indexOf("data-cryo-finished"));
+    expect(finished).toContain('Finished <span class="tile-count">2</span>');
+    expect(finished.indexOf('data-cryo-run="done"')).toBeLessThan(finished.indexOf('data-cryo-run="done-old"'));
+    expect(finished).toContain("26001 - no tag - 1 container");
+    const picked = cryoStationPage({
+      runs: [done],
+      picked: { run: done, pool, outputs, categories },
+      nowIso: LATER,
+      shakeOpen: true,
+    });
+    expect(picked).toContain('<h2 class="working-pick">26001 - no tag - 1 container</h2>');
+    expect(picked).toContain('data-cryo-add-shake open');
+    expect(picked).toContain('action="/station/cryo_weight/run/done/add-shake"');
+    expect(picked).toContain('data-pool-category="SHA"');
+    expect(picked).toContain("This weight over issues the pool for its category. Record it anyway?");
+    expect(picked).not.toContain('action="/station/cryo_weight/run/done/add"');
+    expect(picked).not.toContain("reopened");
+  });
+
+  async function finishedFloor(m: Awaited<ReturnType<typeof migratedDb>>, batch = { id: "hb-1", hbn: "26244-ARL-GH-027-0-NA-26072", serial: 72 }) {
+    const person = seedPerson(m);
+    seedBatch(m, batch);
+    m.run(`UPDATE harvest_batches SET market_strain = 'Gelato 41' WHERE id = ?`, batch.id);
+    seedLot(m, "lot-1", batch.id);
+    m.run(
+      `INSERT INTO wip_packages (id, wet_weight_entry_id, harvest_batch_id, package_code, package_type_code, weight_grams, status, source, created_at, updated_at)
+       VALUES ('c1', 'lot-1', ?, 'BUD-1', 'BUD', 100, 'cryo_queue', 'trim', ?, ?)`,
+      batch.id,
+      WHEN,
+      WHEN
+    );
+    m.run(
+      `INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, harvest_batch_id, wet_weight_entry_id, qty, uom, farm_code, license_value, location, created_at, updated_at)
+       VALUES ('hp-1', 'WIP', 'HARVEST-1', ?, ?, 'lot-1', 100, 'g', 'ARL', 'AU-G-C-000832', 'Cryo Room', ?, ?)`,
+      HARVEST_TAG,
+      batch.id,
+      WHEN,
+      WHEN
+    );
+    m.run(
+      `INSERT INTO production_schedules (id, stage, harvest_batch_id, status, scheduled_at, created_at, updated_at)
+       VALUES ('run-1', 'cryo', ?, 'scheduled', ?, ?, ?)`,
+      batch.id,
+      WHEN,
+      WHEN,
+      WHEN
+    );
+    m.run(
+      `INSERT INTO cryo_run_inputs (id, run_id, wip_package_id, package_type_code, weight_grams, created_at) VALUES ('in-1', 'run-1', 'c1', 'BUD', 100, ?)`,
+      WHEN
+    );
+    await addCryoOutput(m.db, "run-1", formOf({ package_code: BUD_TAG, package_type_code: "BUD", weight_grams: "40", cryo_operator: "Austin", person_id: person }));
+    await finishCryoRun(m.db, "run-1", formOf({ person_id: person }));
+    m.run(
+      `INSERT INTO metrc_uploads (id, kind, harvest_batch_id, filename, uploaded_at, ref_id, created_at, updated_at)
+       VALUES ('up-run', 'new_packages', ?, 'new_packages_run.xlsx', ?, 'run-1', ?, ?)`,
+      batch.id,
+      WHEN,
+      WHEN,
+      WHEN
+    );
+    return person;
+  }
+
+  it("Add Shake writes one SHA output, leaves the run finished, and pends its own file", async () => {
+    const m = await migratedDb();
+    const person = await finishedFloor(m);
+    const before = m.get(`SELECT status, completed_at FROM production_schedules WHERE id = 'run-1'`);
+    const first = await addShakeOutput(m.db, "run-1", formOf({ package_code: SHAKE_TAG, weight_grams: "30", cryo_operator: "Austin", person_id: person }));
+    expect(first.redirect).toContain("ok=shake");
+    // PS1 gate fix: the flag reads the run's total remaining (100 in, 40 out, 60 left), so 30 g of shake is not an over issue.
+    expect(first.redirect).not.toContain("over=1");
+    const shake = must(m.get(`SELECT id, package_type_code, cryo_run_id, status, weight_grams FROM wip_packages WHERE package_code = ? AND deleted_at IS NULL`, SHAKE_TAG) as Record<string, unknown> | undefined, "shake");
+    expect(shake).toMatchObject({ package_type_code: "SHA", cryo_run_id: "run-1", status: "testing_queue", weight_grams: 30 });
+    expect(m.get(`SELECT status, completed_at FROM production_schedules WHERE id = 'run-1'`)).toEqual(before);
+    expect(m.get(`SELECT reason FROM record_change_log WHERE record_table = 'wip_packages' AND record_id = ? AND field = 'status'`, String(shake.id))).toEqual({
+      reason: "cryo output entered",
+    });
+    const pending = await listPendingNewPackagesUploads(m.db);
+    expect(pending.filter((row) => row.kind === "new_packages")).toEqual([]);
+    expect(pending.filter((row) => row.kind === "new_packages_shake").map((row) => row.id)).toEqual([String(shake.id)]);
+    expect(pending[0].filename).toBe(shakePackagesFilename("26244-ARL-GH-027-0-NA-26072", SHAKE_TAG));
+    expect(m.get(`SELECT COUNT(*) AS n FROM metrc_uploads WHERE kind = 'new_packages' AND ref_id = 'run-1' AND deleted_at IS NULL`)).toEqual({ n: 1 });
+    const runFile = await buildNewPackagesXlsx(m.db, "run-1");
+    expect(new TextDecoder().decode(runFile.bytes)).not.toContain(SHAKE_TAG);
+    await addShakeOutput(m.db, "run-1", formOf({ package_code: SHAKE_TAG_2, weight_grams: "10", cryo_operator: "Austin", person_id: person }));
+    const again = await listPendingNewPackagesUploads(m.db);
+    expect(again.filter((row) => row.kind === "new_packages_shake")).toHaveLength(2);
+    // 60 left less 30 and 10 leaves 20; 21 g more flags (flag, never block).
+    const over = await addShakeOutput(m.db, "run-1", formOf({ package_code: "1A4050300000000000000C23", weight_grams: "21", cryo_operator: "Austin", person_id: person }));
+    expect(over.redirect).toContain("over=1");
+    expect(m.get(`SELECT COUNT(*) AS n FROM metrc_uploads WHERE kind = 'new_packages' AND ref_id = 'run-1' AND deleted_at IS NULL`)).toEqual({ n: 1 });
+  });
+
+  it("Add Shake refuses a bad tag, a used tag, a weight, a missing operator, and a working run", async () => {
+    const m = await migratedDb();
+    const person = await finishedFloor(m);
+    const shake = (fields: Record<string, string>) => addShakeOutput(m.db, "run-1", formOf({ person_id: person, cryo_operator: "Austin", weight_grams: "5", package_code: SHAKE_TAG, ...fields }));
+    await expect(shake({ package_code: "tote 9" })).rejects.toThrow(CRYO_REFUSAL.tagShape);
+    await expect(shake({ package_code: BUD_TAG })).rejects.toThrow(CRYO_REFUSAL.tagTaken);
+    await expect(shake({ weight_grams: "0" })).rejects.toThrow(CRYO_REFUSAL.weight);
+    await expect(shake({ cryo_operator: "" })).rejects.toThrow(CRYO_REFUSAL.operator);
+    const open = await migratedDb();
+    const hand = seedPerson(open);
+    seedBatch(open, { id: "hb-1", hbn: "26244-ARL-GH-027-0-NA-26072", serial: 72 });
+    seedLot(open, "lot-1", "hb-1");
+    open.run(
+      `INSERT INTO wip_packages (id, wet_weight_entry_id, harvest_batch_id, package_code, package_type_code, weight_grams, status, source, created_at, updated_at)
+       VALUES ('c1', 'lot-1', 'hb-1', 'BUD-1', 'BUD', 100, 'cryo_queue', 'trim', ?, ?)`,
+      WHEN,
+      WHEN
+    );
+    open.run(
+      `INSERT INTO production_schedules (id, stage, harvest_batch_id, status, scheduled_at, created_at, updated_at)
+       VALUES ('run-1', 'cryo', 'hb-1', 'scheduled', ?, ?, ?)`,
+      WHEN,
+      WHEN,
+      WHEN
+    );
+    open.run(`INSERT INTO cryo_run_inputs (id, run_id, wip_package_id, package_type_code, weight_grams, created_at) VALUES ('in-1', 'run-1', 'c1', 'BUD', 100, ?)`, WHEN);
+    await expect(addShakeOutput(open.db, "run-1", formOf({ package_code: SHAKE_TAG, weight_grams: "5", cryo_operator: "Austin", person_id: hand }))).rejects.toThrow(
+      CRYO_REFUSAL.shakeWhileWorking
+    );
+    expect(open.get(`SELECT status FROM production_schedules WHERE id = 'run-1'`)).toEqual({ status: "scheduled" });
+    for (const message of [CRYO_REFUSAL.tagShape, CRYO_REFUSAL.tagTaken, CRYO_REFUSAL.weight, CRYO_REFUSAL.operator, CRYO_REFUSAL.shakeWhileWorking]) {
+      expect(refusalText("en", { message })).toBe(message);
+      expect(refusalText("es", { message })).not.toBe(message);
+    }
+    expect(refusalText("es", { message: CRYO_REFUSAL.shakeWhileWorking })).toBe(
+      "Agregar picadillo es para una corrida terminada; use la linea de mas mientras esta trabajando."
+    );
+  });
+
+  it("removing a pending shake file drops it; an uploaded shake file refuses", async () => {
+    const m = await migratedDb();
+    const person = await finishedFloor(m);
+    await addShakeOutput(m.db, "run-1", formOf({ package_code: SHAKE_TAG, weight_grams: "30", cryo_operator: "Austin", person_id: person }));
+    const shake = must(m.get(`SELECT id FROM wip_packages WHERE package_code = ? AND deleted_at IS NULL`, SHAKE_TAG) as Record<string, unknown> | undefined, "shake");
+    await unfinishCryoOutput(m.db, String(shake.id), formOf({ person_id: person, unfinish_pin: PIN }));
+    const pending = await listPendingNewPackagesUploads(m.db);
+    expect(pending.some((row) => row.id === String(shake.id))).toBe(false);
+    expect(must(m.get(`SELECT deleted_at FROM wip_packages WHERE id = ?`, String(shake.id)) as Record<string, unknown> | undefined, "voided").deleted_at).toBeTruthy();
+    await addShakeOutput(m.db, "run-1", formOf({ package_code: SHAKE_TAG_2, weight_grams: "10", cryo_operator: "Austin", person_id: person }));
+    const second = must(m.get(`SELECT id FROM wip_packages WHERE package_code = ? AND deleted_at IS NULL`, SHAKE_TAG_2) as Record<string, unknown> | undefined, "second");
+    await markUploaded(m.db, METRC_UPLOAD_KINDS.new_packages_shake, "hb-1", formOf({ person_id: person }), String(second.id));
+    expect((await listPendingNewPackagesUploads(m.db)).some((row) => row.id === String(second.id))).toBe(false);
+    const kept = must(m.get(`SELECT id, filename FROM metrc_uploads WHERE kind = 'new_packages_shake' AND ref_id = ? AND deleted_at IS NULL`, String(second.id)) as Record<string, unknown> | undefined, "mark");
+    expect(String(kept.filename)).toContain("_shake_");
+    await expect(unfinishCryoOutput(m.db, String(second.id), formOf({ person_id: person, unfinish_pin: PIN }))).rejects.toThrow(/marked uploaded/);
+    expect(m.get(`SELECT deleted_at FROM wip_packages WHERE id = ?`, String(second.id))).toEqual({ deleted_at: null });
+  });
+
+  it("PS1 gate fix: unfinishing a run refuses while one of its shake files is marked uploaded", async () => {
+    const m = await migratedDb();
+    const person = await finishedFloor(m);
+    // The run's own file not yet uploaded, so only the shake file can stop the unfinish.
+    m.run(`DELETE FROM metrc_uploads WHERE id = 'up-run'`);
+    await addShakeOutput(m.db, "run-1", formOf({ package_code: SHAKE_TAG, weight_grams: "30", cryo_operator: "Austin", person_id: person }));
+    const shake = must(m.get(`SELECT id FROM wip_packages WHERE package_code = ? AND deleted_at IS NULL`, SHAKE_TAG) as Record<string, unknown> | undefined, "shake");
+    await markUploaded(m.db, METRC_UPLOAD_KINDS.new_packages_shake, "hb-1", formOf({ person_id: person }), String(shake.id));
+    await expect(unfinishScheduleItem(m.db, SCHEDULE_STAGES.cryo, "run-1", formOf({ person_id: person, unfinish_pin: PIN }))).rejects.toThrow(/shake file .* is marked uploaded/);
+    expect(m.get(`SELECT status FROM production_schedules WHERE id = 'run-1'`)).toEqual({ status: "complete" });
+    expect(m.get(`SELECT deleted_at FROM wip_packages WHERE id = ?`, String(shake.id))).toEqual({ deleted_at: null });
+  });
+
+  it("the shake file is one T3 line with the tag, the grams, and the harvest ingredients", async () => {
+    const m = await migratedDb();
+    const person = await finishedFloor(m);
+    await addShakeOutput(m.db, "run-1", formOf({ package_code: SHAKE_TAG, weight_grams: "30", cryo_operator: "Austin", person_id: person }));
+    const shake = must(m.get(`SELECT id FROM wip_packages WHERE package_code = ?`, SHAKE_TAG) as Record<string, unknown> | undefined, "shake");
+    const built = await buildShakeNewPackagesXlsx(m.db, String(shake.id));
+    expect(built.filename).toBe(`new_packages_26244-ARL-GH-027-0-NA-26072_shake_${SHAKE_TAG.slice(-5)}.xlsx`);
+    const text = new TextDecoder().decode(built.bytes);
+    expect(text).toContain("new_packages_autofill_template.");
+    expect(text).toContain(`<t>${SHAKE_TAG}</t>`);
+    expect(text).toContain("<t>Cryo Room</t>");
+    expect(text).toContain("<t>yes</t>");
+    expect(text).toContain("<v>30</v>");
+    expect(text).toContain(`<t>${HARVEST_TAG}</t>`);
+    expect(text.split(`<t>${SHAKE_TAG}</t>`)).toHaveLength(2);
+  });
+
+  it("scheduling columns render the label, sort by lot serial, and keep their controls", async () => {
+    const m = await migratedDb();
+    const plant = async (id: string, hbn: string, serial: number, grams: number, scheduled: string, status: "scheduled" | "complete") => {
+      const tag = `1A405030000000000${String(serial).padStart(2, "0")}4F2A1`;
+      seedBatch(m, { id, hbn, serial });
+      m.run(`UPDATE harvest_batches SET market_strain = 'Gelato 41' WHERE id = ?`, id);
+      seedLot(m, `lot-${id}`, id);
+      m.run(
+        `INSERT INTO wip_packages (id, wet_weight_entry_id, harvest_batch_id, package_code, package_type_code, weight_grams, status, source, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'BUD', ?, ?, 'trim', ?, ?)`,
+        `pkg-${id}`,
+        `lot-${id}`,
+        id,
+        `BUD-${id}`,
+        grams,
+        status === "complete" ? "pasteurized" : "cryo_queue",
+        WHEN,
+        WHEN
+      );
+      if (status === "scheduled" || status === "complete") {
+        m.run(
+          `INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, harvest_batch_id, wet_weight_entry_id, qty, uom, farm_code, license_value, location, created_at, updated_at)
+           VALUES (?, 'WIP', ?, ?, ?, ?, 100, 'g', 'ARL', 'AU-G-C-000832', 'Cryo Room', ?, ?)`,
+          `hp-${id}`,
+          `H-${id}`,
+          tag,
+          id,
+          `lot-${id}`,
+          WHEN,
+          WHEN
+        );
+      }
+      if (status === "complete" || scheduled) {
+        m.run(
+          `INSERT INTO production_schedules (id, stage, harvest_batch_id, status, scheduled_at, completed_at, created_at, updated_at)
+           VALUES (?, 'cryo', ?, ?, ?, ?, ?, ?)`,
+          `run-${id}`,
+          id,
+          status,
+          scheduled,
+          status === "complete" ? LATER : null,
+          WHEN,
+          WHEN
+        );
+        m.run(
+          `INSERT INTO cryo_run_inputs (id, run_id, wip_package_id, package_type_code, weight_grams, created_at) VALUES (?, ?, ?, 'BUD', ?, ?)`,
+          `in-${id}`,
+          `run-${id}`,
+          `pkg-${id}`,
+          grams,
+          WHEN
+        );
+      }
+    };
+    await plant("hb-high", "26244-ARL-GH-027-0-NA-26020", 20, 896, WHEN, "scheduled");
+    await plant("hb-low", "26244-ARL-GH-027-0-NA-26005", 5, 448, LATER, "scheduled");
+    await plant("hb-free-high", "26244-ARL-GH-027-0-NA-26040", 40, 448, "", "scheduled");
+    await plant("hb-free-low", "26244-ARL-GH-027-0-NA-26003", 3, 448, "", "scheduled");
+    await plant("hb-done", "26244-ARL-GH-027-0-NA-26011", 11, 448, WHEN, "complete");
+    const available = await listScheduleAvailable(m.db, SCHEDULE_STAGES.cryo);
+    const working = await listScheduleWorking(m.db, SCHEDULE_STAGES.cryo);
+    const complete = await listScheduleComplete(m.db, SCHEDULE_STAGES.cryo);
+    expect(available.map((group) => group.hbn)).toEqual(["26244-ARL-GH-027-0-NA-26003", "26244-ARL-GH-027-0-NA-26040"]);
+    expect(working.map((group) => group.hbn)).toEqual(["26244-ARL-GH-027-0-NA-26005", "26244-ARL-GH-027-0-NA-26020"]);
+    expect(complete.map((group) => group.hbn)).toEqual(["26244-ARL-GH-027-0-NA-26011"]);
+    const html = schedulingPage(SCHEDULE_STAGES.cryo, { available, working, complete }, "en", LATER);
+    expect(html.indexOf("26003 - 4F2A1 - 1 container")).toBeLessThan(html.indexOf("26040 - 4F2A1 - 1 container"));
+    expect(html.indexOf("26005 - 4F2A1 - 1 container")).toBeLessThan(html.indexOf("26020 - 4F2A1 - 1 container"));
+    expect(html).toContain("448 g - 1.00 lb - Gelato 41");
+    expect(html).toContain("896 g - 2.00 lb - Gelato 41");
+    expect(html).toContain('title="26244-ARL-GH-027-0-NA-26005"');
+    expect(html).toContain("0 out, 0 g");
+    expect(html).toContain("data-terp-pick");
+    expect(html).toContain('name="terp_dose_pct"');
+    expect(html).toContain('action="/production/scheduling/cryo/unschedule/run-hb-low"');
+    expect(html).toContain('action="/production/scheduling/cryo/complete/run-hb-low"');
+    expect(html).toContain('name="unfinish_pin"');
+    expect(html).toContain('name="effective_date"');
+    expect(html).toContain('name="hbn_id" value="hb-free-low"');
   });
 });

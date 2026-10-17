@@ -143,8 +143,10 @@ import {
   savePick,
   completePick,
   addCryoOutput,
+  addShakeOutput,
   finishCryoRun,
   buildNewPackagesXlsx,
+  buildShakeNewPackagesXlsx,
   startFieldLoad,
   addFieldLoadWeight,
   sendFieldLoad,
@@ -2207,6 +2209,17 @@ app.get("/admin/uploads/:kind/:file", async (c) => {
       },
     });
   }
+  // PS1: one New Packages file for a single Add Shake line.
+  if (kind === "new_packages_shake") {
+    if (!file.endsWith(".xlsx")) return c.body("Not found", 404);
+    const builtShake = await buildShakeNewPackagesXlsx(c.env.DB, file.slice(0, -5));
+    return new Response(builtShake.bytes, {
+      headers: {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-disposition": `attachment; filename="${builtShake.filename}"`,
+      },
+    });
+  }
   // THE CRYO RUN (canon 0.30.110): the New Packages file, the owner's T3
   // autofill template as an .xlsx, one per finished run.
   if (kind === "new_packages") {
@@ -2311,6 +2324,17 @@ app.post("/admin/uploads/:kind/:id/uploaded", async (c) => {
       c.req.param("id")
     );
     return c.redirect(resultTest.redirect, 303);
+  }
+  if (kind === "new_packages_shake") {
+    const builtShake = await buildShakeNewPackagesXlsx(c.env.DB, c.req.param("id"));
+    const markedShake = await markUploaded(
+      c.env.DB,
+      METRC_UPLOAD_KINDS.new_packages_shake,
+      builtShake.harvest_batch_id,
+      actorForm(c, await c.req.formData()),
+      c.req.param("id")
+    );
+    return c.redirect(markedShake.redirect, 303);
   }
   if (kind === "new_packages" || kind === "package_finish") {
     const job = await getScheduleRow(c.env.DB, c.req.param("id"));
@@ -2935,8 +2959,8 @@ app.post(`${PREPACK_STATION_PATH}/:id/finish`, async (c) => {
 app.get("/station/cryo_weight", async (c) => {
   const s = await shell(c);
   const [workingRuns, finishedRuns] = await Promise.all([
-    listCryoRuns(c.env.DB, SCHEDULE_STATUS.scheduled),
-    listCryoRuns(c.env.DB, SCHEDULE_STATUS.complete),
+    listCryoRuns(c.env.DB, SCHEDULE_STATUS.scheduled, "lot"),
+    listCryoRuns(c.env.DB, SCHEDULE_STATUS.complete, "finished"),
   ]);
   const runs = [...workingRuns, ...finishedRuns];
   const pick = c.req.query("pick") ?? "";
@@ -2958,13 +2982,28 @@ app.get("/station/cryo_weight", async (c) => {
     c,
     s,
     "Cryo Weight Entry",
-    cryoStationPage({ runs, picked, nowIso: nowIso(), locale: s.locale, ok: c.req.query("ok") ?? undefined, err: c.req.query("err") ?? undefined })
+    cryoStationPage({
+      runs,
+      picked,
+      nowIso: nowIso(),
+      locale: s.locale,
+      ok: c.req.query("ok") ?? undefined,
+      err: c.req.query("err") ?? undefined,
+      over: c.req.query("over") === "1",
+      shakeOpen: c.req.query("shake") === "open",
+    })
   );
 });
 
 app.post("/station/cryo_weight/run/:id/add", async (c) => {
   const form = actorForm(c, await c.req.formData());
   const result = await addCryoOutput(c.env.DB, c.req.param("id"), form);
+  return c.redirect(result.redirect, 303);
+});
+
+app.post("/station/cryo_weight/run/:id/add-shake", async (c) => {
+  const form = actorForm(c, await c.req.formData());
+  const result = await addShakeOutput(c.env.DB, c.req.param("id"), form);
   return c.redirect(result.redirect, 303);
 });
 

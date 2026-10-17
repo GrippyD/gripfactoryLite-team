@@ -25,6 +25,7 @@ import type { BarnWetLotRow, DryingCompleteRow, FinishedLogisticsRow, ScheduleHb
 import { barnLotLabel, clockMarkup, formatRunClock, loadLotLabel, shareOrder, siloClockSeconds, siloClockState, unloadTogetherForm } from "./drying";
 import type { MetrcAdoptPane, MetrcAdoptRow } from "./metrc";
 import { lastSix, packageIdentityMarkup } from "./prepack";
+import { pasteurizationRunLabel } from "./cryo";
 import { effectiveDateField } from "./effective";
 import { FARM_DAY_START_HOUR_DEFAULT, dayBefore, farmDay, farmDayBounds } from "./farmday";
 import { QUEUE_FOLD_SCRIPT, localTimeScript, queueFold } from "./html";
@@ -89,6 +90,28 @@ function groupHeading(group: ScheduleHbnGroup): string {
   return esc(group.hbn);
 }
 
+/** PS1: the two-line pasteurization label. The full HBN is the hover title.
+ * Scheduled and Complete keep the out line under it. */
+function cryoLabel(item: ScheduleItemRow, locale: Locale): string {
+  const label = pasteurizationRunLabel(
+    {
+      hbn: item.hbn,
+      containers: item.containers ?? 0,
+      in_grams: item.in_grams ?? 0,
+      strain_name: item.strain_name,
+    },
+    item.harvest_tags ?? [],
+    locale
+  );
+  const out =
+    item.out_count == null
+      ? ""
+      : `<span class="muted pasteur-out">${esc(`${Number(item.out_count)} out, ${formatGrams(item.out_grams ?? 0)} g`)}</span>`;
+  return `<span class="pasteur-lines" title="${esc(item.hbn)}"><span class="pasteur-line1">${esc(label.line1)}</span><span class="muted pasteur-line2">${esc(
+    label.line2
+  )}</span>${out}</span>`;
+}
+
 function availableGroup(stage: ScheduleStage, group: ScheduleHbnGroup, locale: Locale): string {
   const title = t(
     locale,
@@ -102,10 +125,10 @@ function availableGroup(stage: ScheduleStage, group: ScheduleHbnGroup, locale: L
   // Pasteurization pane reads the HBN and its pool on one line, nothing to
   // unfold; the count would only count the pool line.
   if (stage === SCHEDULE_STAGES.cryo) {
-    const pool = group.items.map((item) => esc(item.identity)).join("; ");
+    const label = group.items.map((item) => cryoLabel(item, locale)).join("");
     return `<div class="pane-group schedule-run" data-schedule-hbn="${esc(group.harvest_batch_id)}">
       <div class="schedule-hbn-summary">
-        <span class="schedule-hbn-line">${groupHeading(group)} <span class="muted schedule-pool">${pool}</span></span>
+        <span class="schedule-hbn-line">${label}</span>
         ${button}
       </div>
     </div>`;
@@ -126,9 +149,10 @@ function workingItem(stage: ScheduleStage, item: ScheduleItemRow, locale: Locale
   const status = t(locale, scheduleStatusWord(stage, item));
   const done = item.workDone ? `<span class="muted">${esc(t(locale, item.workDone))}</span>` : "";
   const terp = stage === SCHEDULE_STAGES.cryo ? terpScheduleControls(item, recipes, locale) : "";
+  const identity = stage === SCHEDULE_STAGES.cryo ? cryoLabel(item, locale) : `<span class="schedule-identity">${esc(item.identity)}</span>`;
   const base = `${PRODUCTION_SCHEDULING_PATH}/${stage}`;
   return `<li class="schedule-item" data-schedule-id="${esc(item.id)}">
-      <span class="schedule-identity">${esc(item.identity)}</span>
+      ${identity}
       ${terp}
       <span class="muted schedule-status">${esc(status)}</span>
       ${done}
@@ -164,8 +188,9 @@ function completeItem(stage: ScheduleStage, item: ScheduleItemRow, locale: Local
     ? `<time datetime="${esc(item.completed_at)}" data-local>${esc(item.completed_at)}</time>`
     : "";
   const terp = stage === SCHEDULE_STAGES.cryo ? terpCompleteLine(item, locale) : "";
+  const identity = stage === SCHEDULE_STAGES.cryo ? cryoLabel(item, locale) : `<span class="schedule-identity">${esc(item.identity)}</span>`;
   return `<li class="schedule-item" data-schedule-id="${esc(item.id)}">
-      <span class="schedule-identity">${esc(item.identity)}</span>
+      ${identity}
       ${terp}
       ${when}
       ${unfinishForm(stage, item.id, locale)}
@@ -174,16 +199,18 @@ function completeItem(stage: ScheduleStage, item: ScheduleItemRow, locale: Local
 
 function workingGroup(stage: ScheduleStage, group: ScheduleHbnGroup, locale: Locale, recipes: readonly TerpRecipeOption[]): string {
   const items = group.items.map((item) => workingItem(stage, item, locale, recipes)).join("");
+  const heading = stage === SCHEDULE_STAGES.cryo ? "" : `<h3 class="schedule-hbn-label">${groupHeading(group)}</h3>`;
   return `<section class="schedule-group" data-schedule-hbn="${esc(group.harvest_batch_id)}">
-      <h3 class="schedule-hbn-label">${groupHeading(group)}</h3>
+      ${heading}
       <ul>${items}</ul>
     </section>`;
 }
 
 function completeGroup(stage: ScheduleStage, group: ScheduleHbnGroup, locale: Locale): string {
   const items = group.items.map((item) => completeItem(stage, item, locale)).join("");
+  const heading = stage === SCHEDULE_STAGES.cryo ? "" : `<h3 class="schedule-hbn-label">${groupHeading(group)}</h3>`;
   return `<section class="schedule-group" data-schedule-hbn="${esc(group.harvest_batch_id)}">
-      <h3 class="schedule-hbn-label">${groupHeading(group)}</h3>
+      ${heading}
       <ul>${items}</ul>
     </section>`;
 }

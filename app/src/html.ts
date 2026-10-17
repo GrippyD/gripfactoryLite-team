@@ -2435,17 +2435,19 @@ export function pendingUploadsPage(
   const npHead = `<tr>${checkHead(npForm, locale)}<th>${esc(t(locale, "Type"))}</th><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "HBN"))}</th><th>${esc(t(locale, "Packages"))}</th><th>${esc(t(locale, "Last activity"))}</th><th>${esc(t(locale, "Controls"))}</th></tr>`;
   const npBody = newPackagesRows
     .map((row) => {
-      const href = `/admin/uploads/new_packages/${esc(row.id)}.xlsx`;
-      return `<tr data-new-packages="${esc(row.id)}">
-        ${checkCell(npForm, "item", `new_packages:${row.id}`)}
-        <td>${esc(t(locale, "New Packages"))}</td>
+      const shake = row.kind === "new_packages_shake";
+      const kind = shake ? "new_packages_shake" : "new_packages";
+      const href = `/admin/uploads/${kind}/${esc(row.id)}.xlsx`;
+      return `<tr data-new-packages="${esc(row.id)}"${shake ? ` data-shake-packages="${esc(row.id)}"` : ""}>
+        ${checkCell(npForm, "item", `${kind}:${row.id}`)}
+        <td>${esc(t(locale, shake ? "Shake" : "New Packages"))}</td>
         <td><a href="${href}">${esc(row.filename)}</a></td>
         <td>${esc(row.hbn)}</td>
         <td>${esc(String(row.outputs))} / ${esc(formatGrams(row.out_grams))} g</td>
         <td>${esc(row.newest_activity)}</td>
         <td class="row-actions">
           <a class="btn secondary" href="${href}">${esc(t(locale, "Download"))}</a>
-          <form method="post" action="/admin/uploads/new_packages/${esc(row.id)}/uploaded">
+          <form method="post" action="/admin/uploads/${kind}/${esc(row.id)}/uploaded">
             <button type="submit">${esc(t(locale, "Mark uploaded"))}</button>
           </form>
         </td>

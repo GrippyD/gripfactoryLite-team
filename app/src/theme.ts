@@ -151,8 +151,20 @@ body.device-phone .bar-actions { flex: 1 1 100%; flex-wrap: wrap; margin-left: 0
    mid-token, and the pool words sit on their own line; a fieldset never grows
    past its pane on a phone (its min-content default did, around the line's
    table), and Finish run keeps a breath above it. */
-.queue-pane-item[data-cryo-run] strong { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.queue-pane-item[data-cryo-run] strong { font-variant-numeric: tabular-nums; word-break: normal; overflow-wrap: break-word; }
+.queue-pane-item[data-cryo-run] .muted { word-break: normal; overflow-wrap: break-word; }
 .queue-pane-item[data-cryo-run] .muted { display: block; font-weight: 400; }
+.pasteur-lines { display: flex; flex-direction: column; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.pasteur-lines .pasteur-line2, .pasteur-lines .pasteur-out { display: block; font-weight: 400; }
+.schedule-item .pasteur-lines { flex: 1 1 12rem; }
+.cryo-finished, .cryo-add-shake { margin-top: 0.8rem; max-width: 100%; }
+.cryo-add-shake .pkg-table { width: 100%; }
+@media (max-width: 820px) {
+  .station-split:has([data-cryo-runs]) > * { flex: 1 1 100%; max-width: 100%; min-width: 0; }
+  .station-split:has([data-cryo-runs]) table.data td,
+  .station-split:has([data-cryo-runs]) table.data th,
+  .station-split:has([data-cryo-runs]) table.data td code { overflow-wrap: anywhere; }
+}
 fieldset { min-width: 0; max-width: 100%; box-sizing: border-box; }
 .cryo-finish { margin-top: 0.9rem; }
 .cryo-pool tfoot th { font-weight: 700; }

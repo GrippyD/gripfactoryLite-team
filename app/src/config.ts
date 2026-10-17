@@ -398,6 +398,9 @@ export const METRC_UPLOAD_KINDS = {
   // THE CRYO RUN (canon 0.30.110): the New Packages file, one per finished run,
   // in the owner's T3 autofill template (new_packages_autofill_template.t3.xlsx).
   new_packages: "new_packages",
+  // PS1: one New Packages file per Add Shake, keyed by the shake output, so it
+  // never shares the run's own file.
+  new_packages_shake: "new_packages_shake",
   // THE TESTING DESK (canon 0.30.164): the New Packages CSV for a test sample.
   test_sample: "test_sample",
 } as const;

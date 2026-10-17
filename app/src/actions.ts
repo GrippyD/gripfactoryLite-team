@@ -66,7 +66,7 @@ import {
   type ScheduleStage,
   type TransitionName,
 } from "./config";
-import { CRYO_REFUSAL, CRYO_STATION_PATH, allocateIngredients, newPackagesSheet, type NewPackagesLine } from "./cryo";
+import { CRYO_REFUSAL, CRYO_STATION_PATH, allocateIngredients, isShakePackage, newPackagesSheet, overIssuesPool, poolTotals, type NewPackagesLine } from "./cryo";
 import { changeToteGrams } from "./finishedlots";
 import { buildXlsx } from "./xlsx";
 import {
@@ -133,11 +133,13 @@ import {
   getCryoRun,
   listCryoRunInputs,
   listCryoRunOutputs,
+  listCryoRunPool,
   getCryoTypeCategories,
   listCryoCategories,
   listHbnHarvestPackages,
   listPendingNewPackagesUploads,
   newPackagesFilename,
+  shakePackagesFilename,
   getConfigValue,
   getHarvestByHbn,
   getBuckedChildForLot,
@@ -3282,6 +3284,13 @@ async function unfinishCryoRun(
   const marked = await markedUpload(db, "new_packages", run.id);
   if (marked) throw refusal(400, { key: "The New Packages file {file} is marked uploaded.", vars: { file: marked.filename } });
   const outputs = await listCryoRunOutputs(db, run.id);
+  // PS1 gate fix: a shake package whose own file is marked uploaded already
+  // stands in METRC, so unfinishing the run (which voids every output) refuses.
+  for (const output of outputs) {
+    if (!isShakePackage(output.created_at, run.completed_at)) continue;
+    const shakeFile = await markedUpload(db, "new_packages_shake", output.id);
+    if (shakeFile) throw refusal(400, { key: "The shake file {file} is marked uploaded.", vars: { file: shakeFile.filename } });
+  }
   for (const output of outputs) {
     await assertOutputUntouched(db, output, null);
   }
@@ -3353,13 +3362,20 @@ export async function unfinishCryoOutput(
   await requireUnfinishPin(db, form, actor.id);
   const output = await db
     .prepare(
-      `SELECT id, package_code, status, weight_grams, cryo_run_id, source
+      `SELECT id, package_code, status, weight_grams, cryo_run_id, source, created_at
        FROM wip_packages WHERE id = ? AND deleted_at IS NULL`
     )
     .bind(outputId)
-    .first<CryoOutputGuard & { source: string | null }>();
+    .first<CryoOutputGuard & { source: string | null; created_at: string }>();
   if (!output || output.source !== WIP_SOURCE.cryo) throw new HttpError(404, "Unknown output.");
-  await assertOutputUntouched(db, output, output.cryo_run_id);
+  const run = output.cryo_run_id ? await getCryoRun(db, output.cryo_run_id) : null;
+  if (run && run.status === SCHEDULE_STATUS.complete && isShakePackage(output.created_at, run.completed_at)) {
+    const shakeFile = await markedUpload(db, "new_packages_shake", output.id);
+    if (shakeFile) throw refusal(400, { key: "The shake file {file} is marked uploaded.", vars: { file: shakeFile.filename } });
+    await assertOutputUntouched(db, output, null);
+  } else {
+    await assertOutputUntouched(db, output, output.cryo_run_id);
+  }
   const child = await wipChildItem(db, output.id);
   if (!child) throw refusal(400, { key: "The output {tag}'s ledger item was voided.", vars: { tag: output.package_code } });
   const ts = nowIso();
@@ -3485,6 +3501,107 @@ async function requireScheduledCryoRun(db: D1Database, runId: string) {
   return run;
 }
 
+async function assertCryoTagFree(db: D1Database, tag: string): Promise<void> {
+  const taken = await db
+    .prepare(
+      `SELECT id FROM wip_packages WHERE deleted_at IS NULL AND UPPER(package_code) = ?
+       UNION ALL
+       SELECT id FROM local_inventory_items WHERE deleted_at IS NULL AND metrc_tag = ?`
+    )
+    .bind(tag, tag)
+    .first<{ id: string }>();
+  if (taken) throw new HttpError(400, CRYO_REFUSAL.tagTaken);
+}
+
+/** The plus line and Add Shake write the same output: SHA or the picked
+ * category, the run's id, the Testing queue, and the cryo output change log. */
+async function insertCryoOutput(
+  db: D1Database,
+  run: { id: string; harvest_batch_id: string },
+  input: {
+    tag: string;
+    typeCode: string;
+    grams: number;
+    operator: string;
+    actorId: string;
+    ts: string;
+    effective: { date: string; today: string; overridden: boolean };
+  }
+): Promise<string> {
+  const inputs = await listCryoRunInputs(db, run.id);
+  const lotId = inputs.find((i) => i.wet_weight_entry_id)?.wet_weight_entry_id ?? null;
+  if (!lotId) throw new HttpError(400, "The run has no containers to draw on.");
+  const batch = await db
+    .prepare(`SELECT strain_id FROM harvest_batches WHERE id = ? AND deleted_at IS NULL`)
+    .bind(run.harvest_batch_id)
+    .first<{ strain_id: string | null }>();
+  const id = crypto.randomUUID();
+  const { tag, typeCode, grams, operator, actorId, ts, effective } = input;
+  const record = {
+    id,
+    wet_weight_entry_id: lotId,
+    harvest_batch_id: run.harvest_batch_id,
+    package_code: tag,
+    package_type_code: typeCode,
+    weight_grams: grams,
+    cryo_weight_grams: grams,
+    status: WIP_STATUS.testing_queue,
+    cryo_date: effective.date,
+    cryo_operator: operator,
+    cryo_run_id: run.id,
+    source: WIP_SOURCE.cryo,
+    created_at: ts,
+    created_by: actorId,
+    updated_at: ts,
+    updated_by: actorId,
+  };
+  const stmts: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO wip_packages (
+          id, wet_weight_entry_id, harvest_batch_id, package_code, package_type_code, weight_grams,
+          cryo_weight_grams, status, test_outcome, trim_date, trim_operator, cryo_date, cryo_operator,
+          cryo_run_id, source,
+          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+      )
+      .bind(id, lotId, run.harvest_batch_id, tag, typeCode, grams, grams, WIP_STATUS.testing_queue, effective.date, operator, run.id, WIP_SOURCE.cryo, ts, actorId, ts, actorId),
+    ...logsForInsert(db, "wip_packages", id, record, actorId, SYSTEM_REASON.cryo_output, ts),
+  ];
+  if (effective.overridden) stmts.push(effectiveOverrideLog(db, "wip_packages", id, effective, actorId, ts));
+  const itemId = crypto.randomUUID();
+  const item = {
+    id: itemId,
+    item_kind: ITEM_KIND_WIP,
+    package_code: tag,
+    metrc_tag: tag,
+    harvest_batch_id: run.harvest_batch_id,
+    wip_package_id: id,
+    strain_id: batch?.strain_id ?? null,
+    qty: grams,
+    uom: "g",
+    farm_code: LANDING_FARM,
+    license_value: LICENSE_AU_PROCESSOR,
+    location: LOC_CRYO_ROOM,
+    created_at: ts,
+    created_by: actorId,
+  };
+  stmts.push(
+    db
+      .prepare(
+        `INSERT INTO local_inventory_items (
+          id, item_kind, package_code, metrc_tag, harvest_batch_id, wet_weight_entry_id, wip_package_id,
+          strain_id, qty, uom, farm_code, license_value, location,
+          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
+        ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 'g', ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`
+      )
+      .bind(itemId, ITEM_KIND_WIP, tag, tag, run.harvest_batch_id, id, batch?.strain_id ?? null, grams, LANDING_FARM, LICENSE_AU_PROCESSOR, LOC_CRYO_ROOM, ts, actorId, ts, actorId),
+    ...logsForInsert(db, "local_inventory_items", itemId, item, actorId, SYSTEM_REASON.cryo_output, ts)
+  );
+  await db.batch(stmts);
+  return id;
+}
+
 /** THE CRYO RUN (canon 0.30.110; owner: "They scan a tag that attaches to the
  * weight and that weight is consumed from the sum of weight stored in the
  * HBN"): one line at Cryo Weight Entry is a new container. The tag is a true
@@ -3514,88 +3631,43 @@ export async function addCryoOutput(db: D1Database, runId: string, form: FormDat
   if (!Number.isFinite(grams) || grams <= 0) throw new HttpError(400, CRYO_REFUSAL.weight);
   const operator = String(form.get("cryo_operator") ?? "").trim();
   if (!operator) throw new HttpError(400, CRYO_REFUSAL.operator);
-  const taken = await db
-    .prepare(
-      `SELECT id FROM wip_packages WHERE deleted_at IS NULL AND UPPER(package_code) = ?
-       UNION ALL
-       SELECT id FROM local_inventory_items WHERE deleted_at IS NULL AND metrc_tag = ?`
-    )
-    .bind(tag, tag)
-    .first<{ id: string }>();
-  if (taken) throw new HttpError(400, CRYO_REFUSAL.tagTaken);
+  await assertCryoTagFree(db, tag);
   const ts = nowIso();
   const effective = await resolveEffectiveDate(db, form, ts);
-  const inputs = await listCryoRunInputs(db, runId);
-  const lotId = inputs.find((i) => i.wet_weight_entry_id)?.wet_weight_entry_id ?? null;
-  if (!lotId) throw new HttpError(400, "The run has no containers to draw on.");
-  const batch = await db
-    .prepare(`SELECT strain_id FROM harvest_batches WHERE id = ? AND deleted_at IS NULL`)
-    .bind(run.harvest_batch_id)
-    .first<{ strain_id: string | null }>();
-  const id = crypto.randomUUID();
-  const record = {
-    id,
-    wet_weight_entry_id: lotId,
-    harvest_batch_id: run.harvest_batch_id,
-    package_code: tag,
-    package_type_code: typeCode,
-    weight_grams: grams,
-    cryo_weight_grams: grams,
-    status: WIP_STATUS.testing_queue,
-    cryo_date: effective.date,
-    cryo_operator: operator,
-    cryo_run_id: runId,
-    source: WIP_SOURCE.cryo,
-    created_at: ts,
-    created_by: actor.id,
-    updated_at: ts,
-    updated_by: actor.id,
-  };
-  const stmts: D1PreparedStatement[] = [
-    db
-      .prepare(
-        `INSERT INTO wip_packages (
-          id, wet_weight_entry_id, harvest_batch_id, package_code, package_type_code, weight_grams,
-          cryo_weight_grams, status, test_outcome, trim_date, trim_operator, cryo_date, cryo_operator,
-          cryo_run_id, source,
-          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
-      )
-      .bind(id, lotId, run.harvest_batch_id, tag, typeCode, grams, grams, WIP_STATUS.testing_queue, effective.date, operator, runId, WIP_SOURCE.cryo, ts, actor.id, ts, actor.id),
-    ...logsForInsert(db, "wip_packages", id, record, actor.id, SYSTEM_REASON.cryo_output, ts),
-  ];
-  if (effective.overridden) stmts.push(effectiveOverrideLog(db, "wip_packages", id, effective, actor.id, ts));
-  const itemId = crypto.randomUUID();
-  const item = {
-    id: itemId,
-    item_kind: ITEM_KIND_WIP,
-    package_code: tag,
-    metrc_tag: tag,
-    harvest_batch_id: run.harvest_batch_id,
-    wip_package_id: id,
-    strain_id: batch?.strain_id ?? null,
-    qty: grams,
-    uom: "g",
-    farm_code: LANDING_FARM,
-    license_value: LICENSE_AU_PROCESSOR,
-    location: LOC_CRYO_ROOM,
-    created_at: ts,
-    created_by: actor.id,
-  };
-  stmts.push(
-    db
-      .prepare(
-        `INSERT INTO local_inventory_items (
-          id, item_kind, package_code, metrc_tag, harvest_batch_id, wet_weight_entry_id, wip_package_id,
-          strain_id, qty, uom, farm_code, license_value, location,
-          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
-        ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 'g', ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`
-      )
-      .bind(itemId, ITEM_KIND_WIP, tag, tag, run.harvest_batch_id, id, batch?.strain_id ?? null, grams, LANDING_FARM, LICENSE_AU_PROCESSOR, LOC_CRYO_ROOM, ts, actor.id, ts, actor.id),
-    ...logsForInsert(db, "local_inventory_items", itemId, item, actor.id, SYSTEM_REASON.cryo_output, ts)
-  );
-  await db.batch(stmts);
-  return { redirect: `${CRYO_STATION_PATH}?pick=${encodeURIComponent(runId)}&ok=plus` };
+  await insertCryoOutput(db, run, { tag, typeCode, grams, operator, actorId: actor.id, ts, effective });
+  return { redirect: `${CRYO_STATION_PATH}?pick=${encodeURIComponent(run.id)}&ok=plus` };
+}
+
+/** PS1: Add Shake writes one SHA package on a finished run. The run stays
+ * finished, and its own New Packages file is not touched. */
+export async function addShakeOutput(db: D1Database, runId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const run = await getCryoRun(db, runId);
+  if (!run) throw new HttpError(404, CRYO_REFUSAL.noRun);
+  if (run.status !== SCHEDULE_STATUS.complete) throw new HttpError(400, CRYO_REFUSAL.shakeWhileWorking);
+  const rawTag = String(form.get("package_code") ?? "").trim();
+  if (!rawTag) throw new HttpError(400, CRYO_REFUSAL.tag);
+  const tag = normalizeMetrcTag(rawTag);
+  if (!tag || !isMetrcTag(tag)) throw new HttpError(400, CRYO_REFUSAL.tagShape);
+  const categories = await listCryoCategories(db);
+  if (!categories.includes("SHA")) throw new HttpError(400, CRYO_REFUSAL.categoryOutsideList);
+  const grams = roundGrams(Number(String(form.get("weight_grams") ?? "").trim()));
+  if (!Number.isFinite(grams) || grams <= 0) throw new HttpError(400, CRYO_REFUSAL.weight);
+  const operator = String(form.get("cryo_operator") ?? "").trim();
+  if (!operator) throw new HttpError(400, CRYO_REFUSAL.operator);
+  await assertCryoTagFree(db, tag);
+  const pool = await listCryoRunPool(db, run.id);
+  // PS1 gate fix: shake is made from whatever the run has left, whatever its
+  // category, so the flag reads the run's total remaining, not SHA's alone
+  // (a finished run's SHA line is often 0 in).
+  const remaining = poolTotals(pool).totalRemaining;
+  const over = overIssuesPool(remaining, grams);
+  let ts = nowIso();
+  if (run.completed_at && !(ts > run.completed_at)) ts = new Date(Date.parse(run.completed_at) + 1).toISOString();
+  const effective = await resolveEffectiveDate(db, form, ts);
+  await insertCryoOutput(db, run, { tag, typeCode: "SHA", grams, operator, actorId: actor.id, ts, effective });
+  const flag = over ? "&over=1" : "";
+  return { redirect: `${CRYO_STATION_PATH}?pick=${encodeURIComponent(run.id)}&ok=shake${flag}` };
 }
 
 /** THE CRYO RUN (canon 0.30.110; owner: "The containers made in trim are
@@ -3649,7 +3721,7 @@ export async function buildNewPackagesXlsx(
 ): Promise<{ bytes: Uint8Array; filename: string; harvest_batch_id: string }> {
   const run = await getCryoRun(db, runId);
   if (!run) throw new HttpError(404, CRYO_REFUSAL.noRun);
-  const outputs = [...(await listCryoRunOutputs(db, runId))].reverse();
+  const outputs = [...(await listCryoRunOutputs(db, runId))].filter((row) => !isShakePackage(row.created_at, run.completed_at)).reverse();
   const inputs = await listCryoRunInputs(db, runId);
   const packages = await listHbnHarvestPackages(db, run.harvest_batch_id);
   const sources = packages.map((pkg) => ({
@@ -3667,6 +3739,43 @@ export async function buildNewPackagesXlsx(
     ingredients: allocation.get(o.id) ?? [],
   }));
   return { bytes: buildXlsx(newPackagesSheet(lines)), filename: newPackagesFilename(run.hbn), harvest_batch_id: run.harvest_batch_id };
+}
+
+/** One New Packages file for a single Add Shake line. The run's own file is not rebuilt. */
+export async function buildShakeNewPackagesXlsx(
+  db: D1Database,
+  outputId: string
+): Promise<{ bytes: Uint8Array; filename: string; harvest_batch_id: string }> {
+  const output = await db
+    .prepare(
+      `SELECT id, package_code, weight_grams, cryo_date, created_at, cryo_run_id
+       FROM wip_packages WHERE id = ? AND deleted_at IS NULL AND source = ?`
+    )
+    .bind(outputId, WIP_SOURCE.cryo)
+    .first<{ id: string; package_code: string; weight_grams: number; cryo_date: string | null; created_at: string; cryo_run_id: string | null }>();
+  if (!output?.cryo_run_id) throw new HttpError(404, "Unknown output.");
+  const run = await getCryoRun(db, output.cryo_run_id);
+  if (!run || !isShakePackage(output.created_at, run.completed_at)) throw new HttpError(404, "Unknown output.");
+  const inputs = await listCryoRunInputs(db, run.id);
+  const packages = await listHbnHarvestPackages(db, run.harvest_batch_id);
+  const sources = packages.map((pkg) => ({
+    label: metrcFacingTag({ metrc_tag: pkg.metrc_tag, package_code: pkg.package_code }),
+    capacity: sumGrams(inputs.filter((i) => i.wet_weight_entry_id === pkg.wet_weight_entry_id).map((i) => Number(i.weight_grams))),
+  }));
+  const allocation = allocateIngredients([{ id: output.id, grams: Number(output.weight_grams) }], sources);
+  const lines: NewPackagesLine[] = [
+    {
+      tag: output.package_code,
+      quantity: Number(output.weight_grams),
+      actualDate: output.cryo_date ?? output.created_at.slice(0, 10),
+      ingredients: allocation.get(output.id) ?? [],
+    },
+  ];
+  return {
+    bytes: buildXlsx(newPackagesSheet(lines)),
+    filename: shakePackagesFilename(run.hbn, output.package_code),
+    harvest_batch_id: run.harvest_batch_id,
+  };
 }
 
 export async function runQueueControl(
@@ -3974,6 +4083,8 @@ export async function markUploaded(
           ? (await locationChangeUploadCsv(db, refId)).filename
         : kind === "location_change"
           ? `location_change_${named}.csv`
+        : kind === "new_packages_shake" && refId
+          ? (await buildShakeNewPackagesXlsx(db, refId)).filename
         : kind === "new_packages"
           ? newPackagesFilename(batch.hbn)
         : kind === "test_sample"
@@ -4066,6 +4177,15 @@ async function planUploadMark(db: D1Database, kind: string, id: string, actorId:
   if (kind === "test_sample") {
     const built = await buildTestSampleCsv(db, id);
     return uploadMarkStmts(db, actorId, ts, { kind: METRC_UPLOAD_KINDS.test_sample, batchId: built.harvest_batch_id, filename: built.filename, refId: id });
+  }
+  if (kind === "new_packages_shake") {
+    const built = await buildShakeNewPackagesXlsx(db, id);
+    return uploadMarkStmts(db, actorId, ts, {
+      kind: METRC_UPLOAD_KINDS.new_packages_shake,
+      batchId: built.harvest_batch_id,
+      filename: built.filename,
+      refId: id,
+    });
   }
   if (kind === "new_packages" || kind === "package_finish") {
     const job = await getScheduleRow(db, id);
@@ -4187,7 +4307,14 @@ export async function clearAllUploads(db: D1Database, form: FormData): Promise<A
   for (const r of await listPendingLocationChangeUploads(db)) items.push({ kind: METRC_UPLOAD_KINDS.location_change, batch: r.harvest_batch_id, ref: r.id, name: r.hbn ?? r.id });
   for (const r of await listPendingLocationMoves(db)) items.push({ kind: METRC_UPLOAD_KINDS.location_move, batch: r.group_id, ref: r.group_id, name: r.to_location });
   // THE CRYO RUN (canon 0.30.110): the New Packages files clear with the rest.
-  for (const r of await listPendingNewPackagesUploads(db)) items.push({ kind: METRC_UPLOAD_KINDS.new_packages, batch: r.harvest_batch_id, ref: r.id, name: r.hbn });
+  for (const r of await listPendingNewPackagesUploads(db)) {
+    items.push({
+      kind: r.kind === "new_packages_shake" ? METRC_UPLOAD_KINDS.new_packages_shake : METRC_UPLOAD_KINDS.new_packages,
+      batch: r.harvest_batch_id,
+      ref: r.id,
+      name: r.filename,
+    });
+  }
   for (const r of await listPendingTestSamples(db)) items.push({ kind: METRC_UPLOAD_KINDS.test_sample, batch: r.harvest_batch_id, ref: r.id, name: r.hbn });
   if (items.length === 0) return { redirect: "/admin/uploads?ok=cleared&n=0" };
   const stmts: D1PreparedStatement[] = [];
