@@ -1541,7 +1541,11 @@ export const DICT: Record<string, { en: string; es: string }> = {
   },
   "Package entered.": { en: "Package entered.", es: "Paquete ingresado." },
   // PS1: the pasteurization run label, Add Shake, and its refusals.
-  "no tag": { en: "no tag", es: "sin etiqueta" },
+  "no code": { en: "no code", es: "sin codigo" },
+  "Not a METRC package from this harvest": {
+    en: "Not a METRC package from this harvest",
+    es: "No es un paquete METRC de esta cosecha",
+  },
   "Add Shake": { en: "Add Shake", es: "Agregar picadillo" },
   "Shake package added.": { en: "Shake package added.", es: "Paquete de picadillo agregado." },
   "Add Shake is for a finished run; use the plus line while it is working.": {

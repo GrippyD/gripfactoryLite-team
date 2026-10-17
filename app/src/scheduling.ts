@@ -90,8 +90,8 @@ function groupHeading(group: ScheduleHbnGroup): string {
   return esc(group.hbn);
 }
 
-/** PS1: the two-line pasteurization label. The full HBN is the hover title.
- * Scheduled and Complete keep the out line under it. */
+/** PS2: the two-line pasteurization label. The full HBN is the hover title.
+ * Line 1 is HTML. Scheduled and Complete keep the out line under it. */
 function cryoLabel(item: ScheduleItemRow, locale: Locale): string {
   const label = pasteurizationRunLabel(
     {
@@ -100,14 +100,14 @@ function cryoLabel(item: ScheduleItemRow, locale: Locale): string {
       in_grams: item.in_grams ?? 0,
       strain_name: item.strain_name,
     },
-    item.harvest_tags ?? [],
+    item.package_codes ?? [],
     locale
   );
   const out =
     item.out_count == null
       ? ""
       : `<span class="muted pasteur-out">${esc(`${Number(item.out_count)} out, ${formatGrams(item.out_grams ?? 0)} g`)}</span>`;
-  return `<span class="pasteur-lines" title="${esc(item.hbn)}"><span class="pasteur-line1">${esc(label.line1)}</span><span class="muted pasteur-line2">${esc(
+  return `<span class="pasteur-lines" title="${esc(item.hbn)}"><span class="pasteur-line1">${label.line1}</span><span class="muted pasteur-line2">${esc(
     label.line2
   )}</span>${out}</span>`;
 }

@@ -15,13 +15,13 @@ import {
   poolTotals,
   poolView,
 } from "../src/cryo";
-import { cryoRunIdentity, foldCryoPool, listPendingNewPackagesUploads, listScheduleAvailable, listScheduleComplete, listScheduleWorking, newPackagesFilename, shakePackagesFilename, type CryoRunRow } from "../src/db";
+import { cryoRunIdentity, foldCryoPool, getCryoRun, listCryoRunInputs, listCryoRuns, listPendingNewPackagesUploads, listScheduleAvailable, listScheduleComplete, listScheduleWorking, newPackagesFilename, shakePackagesFilename, type CryoRunRow } from "../src/db";
 import { refusalText } from "../src/i18n";
 import { stationByKey } from "../src/pipeline";
 import { schedulingPage } from "../src/scheduling";
 import { buildXlsx, xlsxHasParts } from "../src/xlsx";
 import { addCryoOutput, addShakeOutput, buildNewPackagesXlsx, buildShakeNewPackagesXlsx, finishCryoRun, markUploaded, unfinishCryoOutput, unfinishScheduleItem } from "../src/actions";
-import { formOf, migratedDb, seedBatch, seedLot, seedPerson } from "./migrated";
+import { formOf, migratedDb, seedBatch, seedLot, seedMirror, seedPerson } from "./migrated";
 
 /** THE CRYO RUN (canon 0.30.110). Owner rulings 2026-09-17, verbatim: "For
  * cryo, replicate the trim line surface in cryo production reporting.  Also,
@@ -178,7 +178,7 @@ describe("THE CRYO RUN: the Cryo Weight Entry page", () => {
   it("lists the runs by HBN in the pane, no containers, and prompts for a pick", () => {
     const html = cryoStationPage({ runs: [run], nowIso: "2026-09-17T12:00:00.000Z" });
     expect(html).toContain("<h1>Cryo Weight Entry</h1>");
-    expect(html).toContain('<a class="queue-pane-item" href="/station/cryo_weight?pick=run-1" title="26260-PNN-GH-027-0-NA-26011" data-cryo-run="run-1"><strong>26011 - no tag - 3 containers</strong> <span class="muted">22,679 g - 50.62 lb - Fruity Pebbles</span></a>');
+    expect(html).toContain('<a class="queue-pane-item" href="/station/cryo_weight?pick=run-1" title="26260-PNN-GH-027-0-NA-26011" data-cryo-run="run-1"><strong>26011 - no code - 3 containers</strong> <span class="muted">22,679 g - 50.62 lb - Fruity Pebbles</span></a>');
     expect(html).toContain('Pasteurization runs <span class="tile-count">1</span>');
     expect(html).toContain('data-cryo-finished');
     expect(html).toContain('Finished <span class="tile-count">0</span>');
@@ -196,7 +196,7 @@ describe("THE CRYO RUN: the Cryo Weight Entry page", () => {
   it("the picked run shows the pool, the trim-style line, the entered packages and Finish run", () => {
     const html = cryoStationPage({ runs: [run], picked: { run, pool, outputs, categories }, nowIso: "2026-09-17T12:00:00.000Z" });
     expect(html).toContain('<a class="queue-pane-item selected" href="/station/cryo_weight?pick=run-1"');
-    expect(html).toContain('<h2 class="working-pick">26011 - no tag - 3 containers</h2>');
+    expect(html).toContain('<h2 class="working-pick">26011 - no code - 3 containers</h2>');
     expect(html).toContain("22,679 g - 50.62 lb - Fruity Pebbles");
     expect(html).toContain("<p class=\"muted\">26260-PNN-GH-027-0-NA-26011</p>");
     // THE POOL BY CATEGORY (owner: "the available weight in each category, so
@@ -271,7 +271,7 @@ describe("THE CRYO RUN: the Cryo Weight Entry page", () => {
   it("speaks Spanish", () => {
     const html = cryoStationPage({ runs: [run], picked: { run, pool, outputs: [], categories }, nowIso: "2026-09-17T12:00:00.000Z", locale: "es" });
     expect(html).toContain("Corridas de pasteurizacion");
-    expect(html).toContain("26011 - sin etiqueta - 3 contenedores");
+    expect(html).toContain("26011 - sin codigo - 3 contenedores");
     expect(html).toContain("22,679 g - 50.62 lb - Fruity Pebbles");
     expect(html).toContain("<th>Categoria</th><th>Entrada (g)</th><th>Salida (g)</th><th>Restante (g)</th>");
     // THE DUPLICATE TAG warns "in the language selected at the pill".
@@ -306,7 +306,7 @@ describe("THE CRYO RUN: the Pasteurization panes collapse to the HBN", () => {
     in_grams: 22679,
     out_count: 1,
     out_grams: 22000,
-    harvest_tags: ["1A4050300000000000004F2A1"],
+    package_codes: [{ code: "56802", unmatched: false }],
     status,
     scheduled_at: run.scheduled_at,
     completed_at: status === "complete" ? "2026-09-17T13:00:00.000Z" : null,
@@ -319,14 +319,14 @@ describe("THE CRYO RUN: the Pasteurization panes collapse to the HBN", () => {
     farm_code: "ARL",
     strain_name: "Rainbow Candies",
     entry_date: "2026-09-16",
-    items: [{ id: "hb2", itemId: "hb2", harvest_batch_id: "hb2", hbn: "26261-ARL-GH-031-0-NA-26012", farm_code: "ARL", strain_name: "Rainbow Candies", entry_date: "2026-09-16", identity: cryoRunIdentity({ containers: 2, in_grams: 9000 }), containers: 2, in_grams: 9000, harvest_tags: ["1A4050300000000000004F2A1"] }],
+    items: [{ id: "hb2", itemId: "hb2", harvest_batch_id: "hb2", hbn: "26261-ARL-GH-031-0-NA-26012", farm_code: "ARL", strain_name: "Rainbow Candies", entry_date: "2026-09-16", identity: cryoRunIdentity({ containers: 2, in_grams: 9000 }), containers: 2, in_grams: 9000, package_codes: [{ code: "56802", unmatched: false }] }],
   };
 
   it("Available reads the HBN and its pool on one line with the >>, nothing to unfold and no container", () => {
     const html = schedulingPage("cryo", { available: [avail], working: [], complete: [] }, "en", "2026-09-17T12:00:00.000Z");
     expect(html).toContain('<div class="pane-group schedule-run" data-schedule-hbn="hb2">');
     expect(html).toContain('title="26261-ARL-GH-031-0-NA-26012"');
-    expect(html).toContain("26012 - 4F2A1 - 2 containers");
+    expect(html).toContain("26012 - 56802 - 2 containers");
     expect(html).toContain("9,000 g - 20.09 lb - Rainbow Candies");
     expect(html).toContain('name="hbn_id" value="hb2"');
     expect(html).not.toContain("schedule-item-readonly");
@@ -335,7 +335,7 @@ describe("THE CRYO RUN: the Pasteurization panes collapse to the HBN", () => {
 
   it("Scheduled reads the run's pool with Pasteurizing and the arrows; Complete carries Unfinish", () => {
     const html = schedulingPage("cryo", { available: [], working: [group("scheduled")], complete: [group("complete")] }, "en", "2026-09-17T12:00:00.000Z");
-    expect(html).toContain("26011 - 4F2A1 - 3 containers");
+    expect(html).toContain("26011 - 56802 - 3 containers");
     expect(html).toContain("22,679 g - 50.62 lb - Fruity Pebbles");
     expect(html).toContain("1 out, 22,000 g");
     expect(html).toContain('<span class="muted schedule-status">Pasteurizing</span>');
@@ -532,31 +532,50 @@ describe("PS1: pasteurization runs read by lot, and Add Shake", () => {
     return found;
   }
 
-  it("pasteurizationRunLabel: tags, one container, pounds at 448, no strain, no dash characters", () => {
-    const one = pasteurizationRunLabel(
-      { hbn: "26260-PNN-GH-027-0-NA-26072", containers: 23, in_grams: 180085, strain_name: "Gelato 41" },
-      ["1A4050300000000000004F2A1"]
-    );
-    expect(one.line1).toBe("26072 - 4F2A1 - 23 containers");
+  it("pasteurizationRunLabel: trim codes, one container, pounds at 448, no strain, no dash characters", () => {
+    const lot = { hbn: "26260-PNN-GH-027-0-NA-26011", containers: 36, in_grams: 180085, strain_name: "Gelato 41" };
+    const one = pasteurizationRunLabel(lot, [{ code: "56802", unmatched: false }]);
+    expect(one.line1).toBe("26011 - 56802 - 36 containers");
     expect(one.line2).toBe("180,085 g - 401.98 lb - Gelato 41");
-    const two = pasteurizationRunLabel(
-      { hbn: "26260-PNN-GH-027-0-NA-26072", containers: 23, in_grams: 180085, strain_name: "Gelato 41" },
-      ["1A4050300000000000004F2A1", "1A4050300000000000009B3C2"]
+    const two = pasteurizationRunLabel(lot, [
+      { code: "56834", unmatched: false },
+      { code: "56802", unmatched: false },
+      { code: "56802", unmatched: false },
+    ]);
+    expect(two.line1).toBe("26011 - 56802, 56834 - 36 containers");
+    const marked = pasteurizationRunLabel(
+      { hbn: "26260-PNN-GH-027-0-NA-26055", containers: 38, in_grams: 180085, strain_name: "Gelato 41" },
+      [
+        { code: "56834", unmatched: false },
+        { code: "56833", unmatched: true },
+      ]
     );
-    expect(two.line1).toBe("26072 - 4F2A1, 9B3C2 - 23 containers");
+    expect(marked.line1).toBe('26055 - <span title="Not a METRC package from this harvest">56833?</span>, 56834 - 38 containers');
+    const plain = pasteurizationRunLabel(lot, [{ code: "56802", unmatched: false }]);
+    expect(plain.line1).toBe("26011 - 56802 - 36 containers");
+    expect(plain.line1).not.toContain("?");
+    const legacy = pasteurizationRunLabel(lot, [{ code: "1A4050300000000000004F2A1", unmatched: false }]);
+    expect(legacy.line1).toBe("26011 - no code - 36 containers");
     const none = pasteurizationRunLabel({ hbn: "26260-PNN-GH-027-0-NA-26072", containers: 1, in_grams: 448, strain_name: "  " }, []);
-    expect(none.line1).toBe("26072 - no tag - 1 container");
+    expect(none.line1).toBe("26072 - no code - 1 container");
     expect(none.line2).toBe("448 g - 1.00 lb - no strain");
     const es = pasteurizationRunLabel({ hbn: "26260-PNN-GH-027-0-NA-26072", containers: 1, in_grams: 448, strain_name: null }, [], "es");
-    expect(es.line1).toBe("26072 - sin etiqueta - 1 contenedor");
+    expect(es.line1).toBe("26072 - sin codigo - 1 contenedor");
     expect(es.line2).toBe("448 g - 1.00 lb - sin variedad");
-    const text = `${one.line1} ${one.line2} ${two.line1} ${none.line1} ${none.line2} ${es.line1}`;
+    const esMarked = pasteurizationRunLabel(
+      { hbn: "26260-PNN-GH-027-0-NA-26055", containers: 1, in_grams: 448, strain_name: "Gelato 41" },
+      [{ code: "56833", unmatched: true }],
+      "es"
+    );
+    expect(esMarked.line1).toContain('title="No es un paquete METRC de esta cosecha"');
+    expect(esMarked.line1).toContain("56833?");
+    const text = `${one.line1} ${one.line2} ${two.line1} ${marked.line1} ${none.line1} ${none.line2} ${es.line1} ${esMarked.line1}`;
     expect(text).not.toMatch(/\u2013|\u2014/);
     expect(one.line1).toContain(" - ");
   });
 
   it("the left pane orders working runs by lot serial and parks finished runs under Finished", () => {
-    const base = { ...run, containers: 1, in_grams: 448, strain_name: "Gelato 41", harvest_tags: [] as string[] };
+    const base = { ...run, containers: 1, in_grams: 448, strain_name: "Gelato 41", package_codes: [] as { code: string; unmatched: boolean }[] };
     const low = { ...base, id: "low", hbn: "26244-ARL-GH-027-0-NA-26005", lot_serial: 5, scheduled_at: LATER };
     const later = { ...base, id: "later", hbn: low.hbn, lot_serial: 5, scheduled_at: "2026-10-17T14:00:00.000Z" };
     const high = { ...base, id: "high", hbn: "26244-ARL-GH-027-0-NA-26020", lot_serial: 20, scheduled_at: WHEN };
@@ -573,14 +592,33 @@ describe("PS1: pasteurization runs read by lot, and Add Shake", () => {
     const finished = html.slice(html.indexOf("data-cryo-finished"));
     expect(finished).toContain('Finished <span class="tile-count">2</span>');
     expect(finished.indexOf('data-cryo-run="done"')).toBeLessThan(finished.indexOf('data-cryo-run="done-old"'));
-    expect(finished).toContain("26001 - no tag - 1 container");
+    expect(finished).toContain("26001 - no code - 1 container");
     const picked = cryoStationPage({
       runs: [done],
-      picked: { run: done, pool, outputs, categories },
+      picked: {
+        run: done,
+        pool,
+        outputs,
+        categories,
+        inputs: [
+          {
+            id: "in-1",
+            wip_package_id: "c1",
+            package_type_code: "BUD",
+            weight_grams: 448,
+            wet_weight_entry_id: "lot-1",
+            package_code: "56802",
+            status: "pasteurized",
+          },
+        ],
+      },
       nowIso: LATER,
       shakeOpen: true,
     });
-    expect(picked).toContain('<h2 class="working-pick">26001 - no tag - 1 container</h2>');
+    expect(picked).toContain('<h2 class="working-pick">26001 - no code - 1 container</h2>');
+    expect(picked.indexOf("data-cryo-pool")).toBeLessThan(picked.indexOf("data-cryo-add-shake"));
+    expect(picked.indexOf("data-cryo-add-shake")).toBeLessThan(picked.indexOf("data-cryo-consumed"));
+    expect(picked.indexOf("data-cryo-consumed")).toBeLessThan(picked.indexOf("Entered packages"));
     expect(picked).toContain('data-cryo-add-shake open');
     expect(picked).toContain('action="/station/cryo_weight/run/done/add-shake"');
     expect(picked).toContain('data-pool-category="SHA"');
@@ -765,7 +803,7 @@ describe("PS1: pasteurization runs read by lot, and Add Shake", () => {
         `pkg-${id}`,
         `lot-${id}`,
         id,
-        `BUD-${id}`,
+        String(50000 + serial),
         grams,
         status === "complete" ? "pasteurized" : "cryo_queue",
         WHEN,
@@ -818,8 +856,11 @@ describe("PS1: pasteurization runs read by lot, and Add Shake", () => {
     expect(working.map((group) => group.hbn)).toEqual(["26244-ARL-GH-027-0-NA-26005", "26244-ARL-GH-027-0-NA-26020"]);
     expect(complete.map((group) => group.hbn)).toEqual(["26244-ARL-GH-027-0-NA-26011"]);
     const html = schedulingPage(SCHEDULE_STAGES.cryo, { available, working, complete }, "en", LATER);
-    expect(html.indexOf("26003 - 4F2A1 - 1 container")).toBeLessThan(html.indexOf("26040 - 4F2A1 - 1 container"));
-    expect(html.indexOf("26005 - 4F2A1 - 1 container")).toBeLessThan(html.indexOf("26020 - 4F2A1 - 1 container"));
+    expect(html.indexOf("26003 - 50003 - 1 container")).toBeLessThan(html.indexOf("26040 - 50040 - 1 container"));
+    expect(html.indexOf("26005 - 50005 - 1 container")).toBeLessThan(html.indexOf("26020 - 50020 - 1 container"));
+    expect(html).toContain("26011 - 50011 - 1 container");
+    expect(html).not.toContain("4F2A1");
+    expect(html).not.toContain("50003?");
     expect(html).toContain("448 g - 1.00 lb - Gelato 41");
     expect(html).toContain("896 g - 2.00 lb - Gelato 41");
     expect(html).toContain('title="26244-ARL-GH-027-0-NA-26005"');
@@ -831,5 +872,124 @@ describe("PS1: pasteurization runs read by lot, and Add Shake", () => {
     expect(html).toContain('name="unfinish_pin"');
     expect(html).toContain('name="effective_date"');
     expect(html).toContain('name="hbn_id" value="hb-free-low"');
+  });
+
+  it("the cryo station and the scheduling page read trim codes and check them against the mirror", async () => {
+    const m = await migratedDb();
+    const harvestTag = "1A4050300000000000009ZZZ1";
+    const plant = (
+      id: string,
+      serial: number,
+      opts: { codes: string[]; status?: "scheduled" | "complete" | "available"; scheduled?: string }
+    ) => {
+      const hbn = `26260-PNN-GH-027-0-NA-${serial}`;
+      seedBatch(m, { id, hbn, serial });
+      m.run(`UPDATE harvest_batches SET market_strain = 'Gelato 41' WHERE id = ?`, id);
+      seedLot(m, `lot-${id}`, id);
+      m.run(
+        `INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, harvest_batch_id, wet_weight_entry_id, qty, uom, farm_code, license_value, location, created_at, updated_at)
+         VALUES (?, 'WIP', ?, ?, ?, ?, 100, 'g', 'PNN', 'AU-G-C-000832', 'Cryo Room', ?, ?)`,
+        `hp-${id}`,
+        `H-${id}`,
+        harvestTag,
+        id,
+        `lot-${id}`,
+        WHEN,
+        WHEN
+      );
+      opts.codes.forEach((code, index) => {
+        const queued = opts.status === "available" || opts.status === undefined;
+        m.run(
+          `INSERT INTO wip_packages (id, wet_weight_entry_id, harvest_batch_id, package_code, package_type_code, weight_grams, status, source, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'BUD', 448, ?, 'trim', ?, ?)`,
+          `pkg-${id}-${index}`,
+          `lot-${id}`,
+          id,
+          code,
+          queued ? "cryo_queue" : opts.status === "complete" ? "pasteurized" : "cryo_queue",
+          WHEN,
+          WHEN
+        );
+      });
+      if (opts.status === "scheduled" || opts.status === "complete") {
+        m.run(
+          `INSERT INTO production_schedules (id, stage, harvest_batch_id, status, scheduled_at, completed_at, created_at, updated_at)
+           VALUES (?, 'cryo', ?, ?, ?, ?, ?, ?)`,
+          `run-${id}`,
+          id,
+          opts.status,
+          opts.scheduled ?? WHEN,
+          opts.status === "complete" ? LATER : null,
+          WHEN,
+          WHEN
+        );
+        opts.codes.forEach((_, index) => {
+          m.run(
+            `INSERT INTO cryo_run_inputs (id, run_id, wip_package_id, package_type_code, weight_grams, created_at) VALUES (?, ?, ?, 'BUD', 448, ?)`,
+            `in-${id}-${index}`,
+            `run-${id}`,
+            `pkg-${id}-${index}`,
+            WHEN
+          );
+        });
+      }
+      return hbn;
+    };
+    const matchHbn = plant("hb-match", 26011, { codes: ["56802"], status: "scheduled" });
+    const twoHbn = plant("hb-two", 26055, { codes: ["56834", "56833"], status: "complete" });
+    plant("hb-plain", 26010, { codes: ["56010"], status: "scheduled", scheduled: LATER });
+    plant("hb-none", 26072, { codes: ["BUD-1", "56801`"], status: "scheduled", scheduled: LATER });
+    const availHbn = plant("hb-avail", 26099, { codes: ["56099"], status: "available" });
+    const notWipHbn = plant("hb-bud", 26053, { codes: ["56101"], status: "available" });
+    const sprHbn = plant("hb-spr", 26027, { codes: ["58008"], status: "available" });
+    seedMirror(m, { tag: "1A40503000311FB000056802", harvest: matchHbn, item: "WIP - Bud" });
+    seedMirror(m, { tag: "1A40503000311FB000056834", harvest: twoHbn, item: "WIP - Trim" });
+    seedMirror(m, { tag: "1A40503000311FB000011111", harvest: twoHbn, item: "Flower" });
+    seedMirror(m, { tag: "1A40503000311FB000056101", harvest: notWipHbn, item: "Bud" });
+    seedMirror(m, { tag: "1A40503000311FB000058008", harvest: sprHbn, item: "SPR - Permanent Marker - ARL - G" });
+    seedMirror(m, { tag: "1A40503000311FB000099999", harvest: "26260-PNN-GH-027-0-NA-99999", item: "WIP - Other" });
+
+    const working = await listCryoRuns(m.db, "scheduled", "lot");
+    const finished = await listCryoRuns(m.db, "complete", "finished");
+    const picked = await getCryoRun(m.db, "run-hb-two");
+    expect(picked).toBeTruthy();
+    const inputs = await listCryoRunInputs(m.db, "run-hb-two");
+    const station = cryoStationPage({
+      runs: [...working, ...finished],
+      picked: { run: picked!, pool, outputs, categories, inputs },
+      nowIso: LATER,
+    });
+    expect(station).toContain("26011 - 56802 - 1 container");
+    expect(station).toContain('26055 - <span title="Not a METRC package from this harvest">56833?</span>, 56834 - 2 containers');
+    expect(station).toContain("26010 - 56010 - 1 container");
+    expect(station).not.toContain("56010?");
+    expect(station).toContain("26072 - no code - 2 containers");
+    expect(station).not.toContain("56801");
+    expect(station).not.toContain("9ZZZ1");
+    expect(station).not.toContain(harvestTag);
+    const poolAt = station.indexOf("data-cryo-pool");
+    const shakeAt = station.indexOf("data-cryo-add-shake");
+    const consumedAt = station.indexOf("data-cryo-consumed");
+    expect(poolAt).toBeGreaterThan(-1);
+    expect(poolAt).toBeLessThan(shakeAt);
+    expect(shakeAt).toBeLessThan(consumedAt);
+
+    const available = await listScheduleAvailable(m.db, SCHEDULE_STAGES.cryo);
+    const scheduleWorking = await listScheduleWorking(m.db, SCHEDULE_STAGES.cryo);
+    const scheduleComplete = await listScheduleComplete(m.db, SCHEDULE_STAGES.cryo);
+    const schedule = schedulingPage(SCHEDULE_STAGES.cryo, { available, working: scheduleWorking, complete: scheduleComplete }, "en", LATER);
+    expect(schedule).toContain("26011 - 56802 - 1 container");
+    expect(schedule).toContain('26055 - <span title="Not a METRC package from this harvest">56833?</span>, 56834 - 2 containers');
+    expect(schedule).toContain("26010 - 56010 - 1 container");
+    expect(schedule).not.toContain("56010?");
+    expect(schedule).toContain("26072 - no code - 2 containers");
+    expect(schedule).toContain("26099 - 56099 - 1 container");
+    expect(schedule).not.toContain("56099?");
+    expect(schedule).toContain('26053 - <span title="Not a METRC package from this harvest">56101?</span> - 1 container');
+    expect(schedule).not.toContain("9ZZZ1");
+    // PS2 gate fix: an SPR harvest package (ARL's kind) matches as a WIP one does.
+    expect(schedule).toContain("26027 - 58008 - 1 container");
+    expect(schedule).not.toContain("58008?");
+    expect(available.map((group) => group.hbn)).toEqual([sprHbn, notWipHbn, availHbn]);
   });
 });
