@@ -49,7 +49,7 @@
  * them without a database.
  */
 import { GRAMS_PER_LB, LOC_CRYO_ROOM, OVERISSUE_TOLERANCE_GRAMS, format2, formatGrams, isMetrcTag, metrcQuantity, round2, roundGrams, shortLotId } from "./config";
-import type { CryoOutputRow, CryoPool, CryoRunInputRow, CryoRunRow } from "./db";
+import type { CryoOutputRow, CryoPool, CryoRunInputRow, CryoRunRow, TrimPackageCode } from "./db";
 import { effectiveDateField } from "./effective";
 import { duplicateTagGuard, lockOnSubmitScript, localTimeScript } from "./html";
 import { t, type Locale } from "./i18n";
@@ -124,40 +124,56 @@ export function isShakePackage(createdAt: string, completedAt: string | null | u
   return !!completedAt && createdAt > completedAt;
 }
 
-/** PS1: one label for every pasteurization run. Line 1 is the lot, the harvest
- * tags' last 5, and the container count. Line 2 is grams, pounds at 448, and
- * the market strain. The separator is a spaced hyphen. */
+const FIVE_DIGIT_PACKAGE_CODE = /^\d{5}$/;
+
+/** Distinct 5 digit codes, ascending. A code the mirror does not list as a WIP
+ * package of this harvest is unmatched and renders with a trailing ?. */
+function labelCodes(codes: readonly TrimPackageCode[]): TrimPackageCode[] {
+  const marks = new Map<string, boolean>();
+  for (const raw of codes) {
+    const code = String(raw?.code ?? "").trim();
+    if (!FIVE_DIGIT_PACKAGE_CODE.test(code)) continue;
+    marks.set(code, (marks.get(code) ?? false) || raw.unmatched === true);
+  }
+  return [...marks.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([code, unmatched]) => ({ code, unmatched }));
+}
+
+function labelCodeHtml(code: TrimPackageCode, locale: Locale): string {
+  if (!code.unmatched) return esc(code.code);
+  const title = t(locale, "Not a METRC package from this harvest");
+  return `<span title="${esc(title)}">${esc(code.code)}?</span>`;
+}
+
+/** PS2: one label for every pasteurization run. Line 1 is the lot, the distinct
+ * 5 digit trim package codes, and the container count. Line 2 is grams, pounds
+ * at 448, and the market strain. The separator is a spaced hyphen. line1 is
+ * HTML; the lot, the codes, and the count are escaped. */
 export function pasteurizationRunLabel(
   run: PasteurizationLabelRun,
-  tags: readonly (string | null | undefined)[],
+  codes: readonly TrimPackageCode[],
   locale: Locale = "en"
 ): { line1: string; line2: string } {
-  const lot = shortLotId(run.hbn, null);
-  const tails: string[] = [];
-  for (const raw of tags) {
-    const tag = String(raw ?? "").trim();
-    if (!tag) continue;
-    tails.push(tag.slice(-5));
-  }
-  const tagText = tails.length ? tails.join(", ") : t(locale, "no tag");
+  const lot = esc(shortLotId(run.hbn, null));
+  const shown = labelCodes(codes);
+  const codeText = shown.length ? shown.map((code) => labelCodeHtml(code, locale)).join(", ") : esc(t(locale, "no code"));
   const countRaw = Number(run.containers);
   const count = Number.isFinite(countRaw) ? countRaw : 0;
-  const word = t(locale, count === 1 ? "container" : "containers");
+  const word = esc(t(locale, count === 1 ? "container" : "containers"));
   const gramsRaw = Number(run.in_grams ?? 0);
   const grams = Number.isFinite(gramsRaw) ? gramsRaw : 0;
   const strain = (run.strain_name ?? "").trim() || t(locale, "no strain");
   return {
-    line1: `${lot} - ${tagText} - ${count} ${word}`,
+    line1: `${lot} - ${codeText} - ${count} ${word}`,
     line2: `${formatGrams(grams)} g - ${format2(round2(grams / GRAMS_PER_LB))} lb - ${strain}`,
   };
 }
 
 function paneItem(run: CryoRunRow, picked: boolean, locale: Locale): string {
-  const label = pasteurizationRunLabel(run, run.harvest_tags ?? [], locale);
+  const label = pasteurizationRunLabel(run, run.package_codes ?? [], locale);
   const cls = picked ? "queue-pane-item selected" : "queue-pane-item";
-  return `<li><a class="${cls}" href="${CRYO_STATION_PATH}?pick=${esc(run.id)}" title="${esc(run.hbn)}" data-cryo-run="${esc(run.id)}"><strong>${esc(
+  return `<li><a class="${cls}" href="${CRYO_STATION_PATH}?pick=${esc(run.id)}" title="${esc(run.hbn)}" data-cryo-run="${esc(run.id)}"><strong>${
     label.line1
-  )}</strong> <span class="muted">${esc(label.line2)}</span></a></li>`;
+  }</strong> <span class="muted">${esc(label.line2)}</span></a></li>`;
 }
 
 function byLot(a: CryoRunRow, b: CryoRunRow): number {
@@ -321,7 +337,7 @@ function entryForm(run: CryoRunRow, categories: readonly string[], outputs: Cryo
     </form>`;
 }
 
-/** Add Shake sits under a finished run's packages. It does not reopen the run. */
+/** Add Shake sits under the pool on a finished run, above the consumed containers. It does not reopen the run. */
 function shakeForm(run: CryoRunRow, outputs: CryoOutputRow[], locale: Locale, open: boolean): string {
   const lastOperator = outputs[0]?.cryo_operator ?? "";
   return `<details class="cryo-add-shake" data-cryo-add-shake${open ? " open" : ""}>
@@ -423,7 +439,7 @@ export function cryoStationPage(input: CryoStationInput): string {
     const { run, pool, outputs, categories } = input.picked;
     const finished = run.status === "complete";
     const inputs = input.picked.inputs ?? [];
-    const label = pasteurizationRunLabel(run, run.harvest_tags ?? [], locale);
+    const label = pasteurizationRunLabel(run, run.package_codes ?? [], locale);
     const state = finished
       ? `<p class="muted" data-cryo-run-finished>${esc(t(locale, "Finished"))} ${
           run.completed_at ? `<time datetime="${esc(run.completed_at)}" data-local>${esc(run.completed_at)}</time>` : ""
@@ -432,17 +448,17 @@ export function cryoStationPage(input: CryoStationInput): string {
     const overFlag = input.over
       ? `<p class="banner overissue-banner" data-shake-over>${esc(t(locale, "This weight over issues the pool for its category. Record it anyway?"))}</p>`
       : "";
-    working = `<h2 class="working-pick">${esc(label.line1)}</h2>
+    working = `<h2 class="working-pick">${label.line1}</h2>
       <p class="muted">${esc(label.line2)}</p>
       <p class="muted">${esc(run.hbn)}</p>
       ${terpRunHeader(run, locale)}
       ${state}
       ${overFlag}
       ${poolTable(pool, locale)}
+      ${finished ? shakeForm(run, outputs, locale, input.shakeOpen === true) : ""}
       ${finished ? consumedList(run.id, inputs, locale) : ""}
       ${finished ? "" : entryForm(run, categories, outputs, locale)}
       ${outputsList(outputs, locale, finished ? run.id : undefined)}
-      ${finished ? shakeForm(run, outputs, locale, input.shakeOpen === true) : ""}
       ${finished ? "" : finishForm(run, outputs, locale)}`;
   }
   return `${heading}

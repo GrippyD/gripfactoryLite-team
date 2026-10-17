@@ -444,12 +444,12 @@ export type ScheduleItemRow = {
   terp_recipe_id?: string | null;
   terp_recipe_name?: string | null;
   terp_dose_pct?: number | null;
-  /** PS1: the pasteurization label's pool, harvest tags, and the run's out line. */
+  /** PS2: the pasteurization label's pool, trim package codes, and the run's out line. */
   containers?: number;
   in_grams?: number | null;
   out_count?: number | null;
   out_grams?: number | null;
-  harvest_tags?: string[];
+  package_codes?: TrimPackageCode[];
 };
 
 /** THE HBN ON THE SCHEDULING PANES (canon 0.30.102; owner, 2026-09-16,
@@ -567,7 +567,7 @@ type CryoPoolRow = {
   strain_name: string | null;
   containers: number;
   in_grams: number | null;
-  harvest_tags?: string[];
+  package_codes?: TrimPackageCode[];
 };
 
 /** A container is free for a run while it waits in the Cryo Queue and no live
@@ -600,7 +600,7 @@ async function listCryoAvailable(db: D1Database, hbnId?: string): Promise<CryoPo
     .bind(WIP_STATUS.cryo_queue, ...binds)
     .all<CryoPoolRow>();
   const rows = result.results ?? [];
-  await attachHarvestTags(db, rows);
+  await attachAvailablePackageCodes(db, rows);
   return rows;
 }
 
@@ -810,7 +810,7 @@ export async function listScheduleAvailable(db: D1Database, stage: ScheduleStage
       identity: cryoRunIdentity(row),
       containers: Number(row.containers),
       in_grams: row.in_grams == null ? 0 : Number(row.in_grams),
-      harvest_tags: row.harvest_tags ?? [],
+      package_codes: row.package_codes ?? [],
     }))
   );
 }
@@ -867,9 +867,9 @@ export type CryoRunRow = {
   terp_recipe_name?: string | null;
   terp_dose_pct?: number | null;
   terp_lines?: string | null;
-  /** PS1: lot order, and the HBN's METRC harvest package tags for the run label. */
+  /** PS2: lot order, and the trim containers' 5 digit package codes for the run label. */
   lot_serial?: number | null;
-  harvest_tags?: string[];
+  package_codes?: TrimPackageCode[];
 };
 
 const CRYO_RUN_SELECT = `SELECT ps.id, ps.status, ps.scheduled_at, ps.completed_at, ps.effective_date,
@@ -895,14 +895,14 @@ export async function listCryoRuns(db: D1Database, status?: string, order: "lot"
     ? await db.prepare(`${CRYO_RUN_SELECT} AND ps.status = ? ORDER BY ${orderSql}`).bind(status).all<CryoRunRow>()
     : await db.prepare(`${CRYO_RUN_SELECT} ORDER BY ${orderSql}`).all<CryoRunRow>();
   const rows = result.results ?? [];
-  await attachHarvestTags(db, rows);
+  await attachRunPackageCodes(db, rows);
   return rows;
 }
 
 export async function getCryoRun(db: D1Database, id: string): Promise<CryoRunRow | null> {
   const row = await db.prepare(`${CRYO_RUN_SELECT} AND ps.id = ?`).bind(id).first<CryoRunRow>();
   if (!row) return null;
-  await attachHarvestTags(db, [row]);
+  await attachRunPackageCodes(db, [row]);
   return row;
 }
 
@@ -1148,34 +1148,124 @@ export async function listHbnHarvestPackages(db: D1Database, harvestBatchId: str
   return result.results ?? [];
 }
 
-/** PS1: the METRC harvest package tags of every listed HBN, one grouped read
- * (at most 100 binds), in lot order. Never package_code. */
-const HARVEST_TAG_BINDS = 100;
+/** PS2: a trim container's package code on a pasteurization label, and whether
+ * the mirror marks it. unmatched is set only when the mirror knows the harvest
+ * and no WIP package of that harvest ends in the code. */
+export type TrimPackageCode = { code: string; unmatched: boolean };
 
-export async function attachHarvestTags<T extends { harvest_batch_id: string; harvest_tags?: string[] }>(
+const PACKAGE_CODE_BINDS = 100;
+const FIVE_DIGIT_PACKAGE_CODE = /^\d{5}$/;
+
+function fiveDigitCodes(raw: readonly (string | null | undefined)[]): string[] {
+  const seen = new Set<string>();
+  for (const value of raw) {
+    const code = String(value ?? "").trim();
+    if (FIVE_DIGIT_PACKAGE_CODE.test(code)) seen.add(code);
+  }
+  return [...seen].sort();
+}
+
+/** One grouped read of the mirror for every listed HBN (at most 100 binds).
+ * known means any package row names that harvest. tails are the last 5 of the
+ * rows whose item starts with WIP or SPR (the two harvest package kinds;
+ * PS2 gate fix: ARL's harvest packages are SPR). */
+async function mirrorWipTails(db: D1Database, hbns: readonly string[]): Promise<Map<string, { known: boolean; tails: Set<string> }>> {
+  const out = new Map<string, { known: boolean; tails: Set<string> }>();
+  const unique = [...new Set(hbns.filter((hbn) => hbn))];
+  for (const hbn of unique) out.set(hbn, { known: false, tails: new Set() });
+  for (let i = 0; i < unique.length; i += PACKAGE_CODE_BINDS) {
+    const chunk = unique.slice(i, i + PACKAGE_CODE_BINDS);
+    const result = await db
+      .prepare(
+        `SELECT source_harvests, tag, item
+         FROM metrc_packages
+         WHERE source_harvests IN (${chunk.map(() => "?").join(", ")})`
+      )
+      .bind(...chunk)
+      .all<{ source_harvests: string; tag: string; item: string | null }>();
+    for (const row of result.results ?? []) {
+      const slot = out.get(row.source_harvests);
+      if (!slot) continue;
+      slot.known = true;
+      const item = String(row.item ?? "");
+      if (item.startsWith("WIP") || item.startsWith("SPR")) slot.tails.add(String(row.tag ?? "").trim().slice(-5));
+    }
+  }
+  return out;
+}
+
+function markedCodes(codes: readonly string[], mirror: { known: boolean; tails: Set<string> } | undefined): TrimPackageCode[] {
+  if (!mirror?.known) return codes.map((code) => ({ code, unmatched: false }));
+  return codes.map((code) => ({ code, unmatched: !mirror.tails.has(code) }));
+}
+
+/** The distinct 5 digit codes on each run's trim containers, one grouped read
+ * (at most 100 binds), then one mirror read for those harvests. */
+async function attachRunPackageCodes<T extends { id: string; hbn: string; package_codes?: TrimPackageCode[] }>(db: D1Database, rows: T[]): Promise<void> {
+  const ids = [...new Set(rows.map((row) => row.id).filter((id) => id))];
+  const byRun = new Map<string, string[]>();
+  for (const id of ids) byRun.set(id, []);
+  for (let i = 0; i < ids.length; i += PACKAGE_CODE_BINDS) {
+    const chunk = ids.slice(i, i + PACKAGE_CODE_BINDS);
+    const result = await db
+      .prepare(
+        `SELECT i.run_id AS run_id, p.package_code AS package_code
+         FROM cryo_run_inputs i
+         JOIN wip_packages p ON p.id = i.wip_package_id
+         WHERE i.run_id IN (${chunk.map(() => "?").join(", ")})`
+      )
+      .bind(...chunk)
+      .all<{ run_id: string; package_code: string | null }>();
+    const grouped = new Map<string, Array<string | null>>();
+    for (const row of result.results ?? []) {
+      const list = grouped.get(row.run_id);
+      if (list) list.push(row.package_code);
+      else grouped.set(row.run_id, [row.package_code]);
+    }
+    for (const id of chunk) byRun.set(id, fiveDigitCodes(grouped.get(id) ?? []));
+  }
+  const mirror = await mirrorWipTails(
+    db,
+    rows.filter((row) => (byRun.get(row.id) ?? []).length > 0).map((row) => row.hbn)
+  );
+  for (const row of rows) row.package_codes = markedCodes(byRun.get(row.id) ?? [], mirror.get(row.hbn));
+}
+
+/** The distinct 5 digit codes on the free containers an Available group lists.
+ * The status bind plus the ids stays at most 100. */
+async function attachAvailablePackageCodes<T extends { harvest_batch_id: string; hbn: string; package_codes?: TrimPackageCode[] }>(
   db: D1Database,
   rows: T[]
 ): Promise<void> {
   const ids = [...new Set(rows.map((row) => row.harvest_batch_id).filter((id) => id))];
-  const tags = new Map<string, string[]>();
-  for (const id of ids) tags.set(id, []);
-  for (let i = 0; i < ids.length; i += HARVEST_TAG_BINDS) {
-    const chunk = ids.slice(i, i + HARVEST_TAG_BINDS);
+  const byBatch = new Map<string, string[]>();
+  for (const id of ids) byBatch.set(id, []);
+  const chunkSize = PACKAGE_CODE_BINDS - 1;
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
     const result = await db
       .prepare(
-        `SELECT w.harvest_batch_id AS harvest_batch_id, li.metrc_tag AS metrc_tag
-         FROM local_inventory_items li
-         JOIN wet_weight_entries w ON w.id = li.wet_weight_entry_id AND w.deleted_at IS NULL
-         WHERE li.deleted_at IS NULL AND li.wet_weight_entry_id IS NOT NULL
-           AND li.metrc_tag IS NOT NULL AND TRIM(li.metrc_tag) <> ''
-           AND w.harvest_batch_id IN (${chunk.map(() => "?").join(", ")})
-         ORDER BY w.created_at ASC, li.created_at ASC, li.id ASC`
+        `SELECT w.harvest_batch_id AS harvest_batch_id, p.package_code AS package_code
+         FROM wip_packages p
+         JOIN wet_weight_entries w ON w.id = p.wet_weight_entry_id AND w.deleted_at IS NULL
+         WHERE ${CRYO_FREE_CONTAINER_SQL}
+           AND w.harvest_batch_id IN (${chunk.map(() => "?").join(", ")})`
       )
-      .bind(...chunk)
-      .all<{ harvest_batch_id: string; metrc_tag: string }>();
-    for (const row of result.results ?? []) tags.get(row.harvest_batch_id)?.push(row.metrc_tag);
+      .bind(WIP_STATUS.cryo_queue, ...chunk)
+      .all<{ harvest_batch_id: string; package_code: string | null }>();
+    const grouped = new Map<string, Array<string | null>>();
+    for (const row of result.results ?? []) {
+      const list = grouped.get(row.harvest_batch_id);
+      if (list) list.push(row.package_code);
+      else grouped.set(row.harvest_batch_id, [row.package_code]);
+    }
+    for (const id of chunk) byBatch.set(id, fiveDigitCodes(grouped.get(id) ?? []));
   }
-  for (const row of rows) row.harvest_tags = tags.get(row.harvest_batch_id) ?? [];
+  const mirror = await mirrorWipTails(
+    db,
+    rows.filter((row) => (byBatch.get(row.harvest_batch_id) ?? []).length > 0).map((row) => row.hbn)
+  );
+  for (const row of rows) row.package_codes = markedCodes(byBatch.get(row.harvest_batch_id) ?? [], mirror.get(row.hbn));
 }
 
 export type PendingNewPackagesRow = {
@@ -1315,7 +1405,7 @@ async function listCryoScheduled(db: D1Database, status: string): Promise<Schedu
     in_grams: row.in_grams == null ? 0 : Number(row.in_grams),
     out_count: Number(row.outputs),
     out_grams: row.out_grams == null ? 0 : Number(row.out_grams),
-    harvest_tags: row.harvest_tags ?? [],
+    package_codes: row.package_codes ?? [],
   }));
 }
 

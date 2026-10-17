@@ -3010,7 +3010,7 @@ async function run() {
     assert(cryoSchedOpen.body.includes("<h1>Pasteurization</h1>"), "Pasteurization station missing its heading");
     assert(cryoSchedOpen.body.includes('title="Schedule pasteurization"'), "the >> control must title Schedule pasteurization");
     const cryoLot = pickedHbn.slice(-5);
-    const lotLine = (n, grams, lbs) => [`${cryoLot} - no tag - ${n} ${n === 1 ? "container" : "containers"}`, `${grams} g - ${lbs} lb - Fruity Pebbles`];
+    const lotLine = (n, grams, lbs) => [`${cryoLot} - no code - ${n} ${n === 1 ? "container" : "containers"}`, `${grams} g - ${lbs} lb - Fruity Pebbles`];
     const cryoAvail = schedPaneOf(cryoSchedOpen.body, "available");
     const cryoAvailLabel = lotLine(1, "100", "0.22");
     assert(cryoAvail.includes(`title="${pickedHbn}"`) && cryoAvail.includes(cryoAvailLabel[0]) && cryoAvail.includes(cryoAvailLabel[1]), `Available must read the lot label, got\n${cryoAvail.slice(0, 700)}`);
