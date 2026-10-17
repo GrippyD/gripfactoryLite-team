@@ -3009,8 +3009,11 @@ async function run() {
     const cryoSchedOpen = await text("/production/scheduling/cryo");
     assert(cryoSchedOpen.body.includes("<h1>Pasteurization</h1>"), "Pasteurization station missing its heading");
     assert(cryoSchedOpen.body.includes('title="Schedule pasteurization"'), "the >> control must title Schedule pasteurization");
+    const cryoLot = pickedHbn.slice(-5);
+    const lotLine = (n, grams, lbs) => [`${cryoLot} - no tag - ${n} ${n === 1 ? "container" : "containers"}`, `${grams} g - ${lbs} lb - Fruity Pebbles`];
     const cryoAvail = schedPaneOf(cryoSchedOpen.body, "available");
-    assert(cryoAvail.includes(pickedHbn) && cryoAvail.includes("1 container / 100 g in"), `Available must read the HBN's pool collapsed, got\n${cryoAvail.slice(0, 600)}`);
+    const cryoAvailLabel = lotLine(1, "100", "0.22");
+    assert(cryoAvail.includes(`title="${pickedHbn}"`) && cryoAvail.includes(cryoAvailLabel[0]) && cryoAvail.includes(cryoAvailLabel[1]), `Available must read the lot label, got\n${cryoAvail.slice(0, 700)}`);
     assert(!cryoAvail.includes("BUD-SMOKE-1"), "Available must expose no container");
     const cryoSched = await req("/production/scheduling/cryo/schedule", {
       method: "POST",
@@ -3026,7 +3029,8 @@ async function run() {
     assert(cryoCsb.includes(`data-cure-lot="${wetLotId}"`), "a cryo run leaves the lot on CSB until its trim row completes");
     const cryoWorking = await text("/production/scheduling/cryo");
     const cryoWorkPane = schedPaneOf(cryoWorking.body, "working");
-    assert(cryoWorkPane.includes("Pasteurizing") && cryoWorkPane.includes("1 container / 100 g in"), "the scheduled run must read Pasteurizing with its pool");
+    const cryoWorkLabel = lotLine(1, "100", "0.22");
+    assert(cryoWorkPane.includes("Pasteurizing") && cryoWorkPane.includes(cryoWorkLabel[0]) && cryoWorkPane.includes(cryoWorkLabel[1]) && cryoWorkPane.includes("0 out, 0 g"), "the scheduled run must read Pasteurizing with the lot label and its out line");
     assert(!cryoWorkPane.includes("BUD-SMOKE-1"), "the scheduled surface must expose no container");
     const runId = (cryoWorkPane.match(/data-schedule-id="([^"]+)"/) || [])[1];
     assert(runId, "the working pane must carry the run's id");
@@ -3044,7 +3048,8 @@ async function run() {
     // (canon 0.30.112): the line's category box lists WPR, BUD, SHA from
     // app_config (migration 0059), blank until picked.
     const cryoPage = await text("/station/cryo_weight");
-    assert(cryoPage.body.includes(`data-cryo-run="${runId}"`) && cryoPage.body.includes(`<strong>${pickedHbn}</strong>`), "the cryo pane must list the run by its HBN");
+    const cryoListLabel = lotLine(1, "100", "0.22");
+    assert(cryoPage.body.includes(`data-cryo-run="${runId}"`) && cryoPage.body.includes(`title="${pickedHbn}"`) && cryoPage.body.includes(`<strong>${cryoListLabel[0]}</strong>`) && cryoPage.body.includes(cryoListLabel[1]), "the cryo pane must list the working run by its lot label");
     assert(!cryoPage.body.includes("BUD-SMOKE-1"), "the cryo pane must expose no container");
     const cryoPicked = await text(`/station/cryo_weight?pick=${runId}`);
     if (cryoPicked.res.status !== 200) fail("GET cryo pick page", `status ${cryoPicked.res.status}`);
@@ -3144,7 +3149,12 @@ async function run() {
     const cryoFinish = await req(`/station/cryo_weight/run/${runId}/finish`, { method: "POST", body: form({}) });
     assert(cryoFinish.status === 303 && (cryoFinish.headers.get("location") || "").includes("ok=finished"), `Finish run expected 303 with ok=finished got ${cryoFinish.status} ${cryoFinish.headers.get("location")}`);
     const cryoFinished = await text(cryoFinish.headers.get("location") || "");
-    assert(cryoFinished.body.includes("data-cryo-run-finished") && cryoFinished.body.includes("Run finished."), "the finished run must open read-only with its flash");
+    const cryoFinishedAside = cryoFinished.body.slice(cryoFinished.body.indexOf("data-cryo-runs"), cryoFinished.body.indexOf("data-cryo-working"));
+    const cryoFinishedWorking = cryoFinishedAside.slice(0, cryoFinishedAside.indexOf("data-cryo-finished"));
+    assert(
+      cryoFinished.body.includes("data-cryo-run-finished") && cryoFinished.body.includes("Run finished.") && cryoFinished.body.includes("data-cryo-add-shake") && cryoFinished.body.includes(`<h2 class="working-pick">${lotLine(1, "100", "0.22")[0]}</h2>`) && !cryoFinishedWorking.includes(`data-cryo-run="${runId}"`) && cryoFinishedAside.includes(`data-cryo-run="${runId}"`),
+      "the finished run must leave the working list, stay picked, and offer Add Shake"
+    );
     assert(!cryoFinished.body.includes(`action="/station/cryo_weight/run/${runId}/add"`), "a finished run takes no more lines");
     // BRIEF V10, PASTEURIZATION ON THE CONSOLE (canon 0.30.334): the section replaces the stub,
     // open on a first visit, the Right now pane above the two shift panes. The Right now pane
@@ -3268,7 +3278,8 @@ async function run() {
     // The scheduling page: the run complete, reading its pool and outputs; demote refuses.
     const cryoAuto = await text("/production/scheduling/cryo");
     const cryoDonePane = schedPaneOf(cryoAuto.body, "complete");
-    assert(cryoDonePane.includes("1 container / 100 g in / 1 out, 88 g"), `the complete pane must read the run's pool and outputs, got\n${cryoDonePane.slice(0, 600)}`);
+    const cryoDoneLabel = lotLine(1, "100", "0.22");
+    assert(cryoDonePane.includes(cryoDoneLabel[0]) && cryoDonePane.includes(cryoDoneLabel[1]) && cryoDonePane.includes("1 out, 88 g") && cryoDonePane.includes(`title="${pickedHbn}"`), `the complete pane must read the lot label and the out line, got\n${cryoDonePane.slice(0, 700)}`);
     assert(!cryoDonePane.includes("BUD-SMOKE-1") && !cryoDonePane.includes(CRYO_TAG), "the complete pane exposes no container, in or out");
     assert(!schedPaneOf(cryoAuto.body, "working").includes("Pasteurizing"), "the working pane must not keep the finished run");
     assert(cryoDonePane.includes('name="unfinish_pin"'), "the finished run must offer Unfinish");
@@ -3378,7 +3389,8 @@ async function run() {
     assert(queueSectionHtml(countsSmalls.body, "cryo_queue").includes("SMALLS-SMOKE-1"), "the Cryo Queue must list the SMALLS container");
     assert(!queueSectionHtml(countsSmalls.body, "cryo_queue").includes("WASTE-SMOKE-1"), "WASTE never reaches the Cryo Queue");
     const availSmalls = schedPaneOf((await text("/production/scheduling/cryo")).body, "available");
-    assert(availSmalls.includes(pickedHbn) && availSmalls.includes("2 containers / 55 g in"), `Available must read the BUD and the SMALLS together, got\n${availSmalls.slice(0, 600)}`);
+    const cryoSmallsLabel = lotLine(2, "55", "0.12");
+    assert(availSmalls.includes(`title="${pickedHbn}"`) && availSmalls.includes(cryoSmallsLabel[0]) && availSmalls.includes(cryoSmallsLabel[1]), `Available must read the BUD and the SMALLS together, got\n${availSmalls.slice(0, 700)}`);
     const schedSmalls = await req("/production/scheduling/cryo/schedule", { method: "POST", body: form({ hbn_id: batchId }) });
     assert(schedSmalls.status === 303 && (schedSmalls.headers.get("location") || "").includes("ok=scheduled&n=2"), `the >> must take both containers in, got ${schedSmalls.status} ${schedSmalls.headers.get("location")}`);
     const workSmalls = schedPaneOf((await text("/production/scheduling/cryo")).body, "working");
@@ -3392,7 +3404,7 @@ async function run() {
     const unschedSmalls = await req(`/production/scheduling/cryo/unschedule/${runSmalls}`, { method: "POST", body: form({}) });
     assert(unschedSmalls.status === 303, `unscheduling the type-pool run expected 303 got ${unschedSmalls.status} ${await unschedSmalls.text()}`);
     const availAgain = schedPaneOf((await text("/production/scheduling/cryo")).body, "available");
-    assert(availAgain.includes("2 containers / 55 g in"), "the unscheduled containers must return to Available");
+    assert(availAgain.includes(cryoSmallsLabel[0]) && availAgain.includes(cryoSmallsLabel[1]), "the unscheduled containers must return to Available");
     const sheetExcl = await text("/inventory");
     assert(
       invGrams(sheetExcl.body, "waiting-extraction") === "21.00",
@@ -3522,6 +3534,40 @@ async function run() {
       `the restored codes must return the pool to 21.00, got ${invGrams(sheetRestored.body, "waiting-extraction")}`
     );
 
+    const shakeTag = "1A4050300000000000000C03";
+    const beforeShake = await homeCounts();
+    const shakePost = await req(`/station/cryo_weight/run/${runId}/add-shake`, { method: "POST", body: form({ package_code: shakeTag, weight_grams: "4", cryo_operator: "Austin" }) });
+    const shakeLoc = shakePost.headers.get("location") || "";
+    const shakeErr = shakePost.status === 303 ? "" : await shakePost.text();
+    const afterShake = await homeCounts();
+    const shakeQueue = queueSectionHtml(afterShake.body, "testing_queue");
+    const shakeUploads = await text("/admin/uploads");
+    const shakeId = (shakeUploads.body.match(/data-shake-packages="([a-f0-9-]{36})"/) || [])[1] || "";
+    const shakeMark = shakeId ? await req(`/admin/uploads/new_packages_shake/${shakeId}/uploaded`, { method: "POST", body: form({}) }) : null;
+    const shakeCleared = shakeMark ? await text("/admin/uploads") : { body: "" };
+    const shakeVoid = shakeId
+      ? await req(`/record/wip_packages/${shakeId}/void`, { method: "POST", body: form({ back: "/admin/queues", reason: "smoke: the shake line comes back out" }) })
+      : null;
+    if (shakeVoid && shakeVoid.status !== 303) await shakeVoid.text();
+    const afterShakeVoid = await homeCounts();
+    assert(
+      shakePost.status === 303 &&
+        shakeLoc.includes("ok=shake") &&
+        afterShake.testing === beforeShake.testing + 1 &&
+        shakeQueue.includes(shakeTag) &&
+        shakeQueue.includes(">SHA<") &&
+        shakeUploads.body.includes(`data-shake-packages="${shakeId}"`) &&
+        shakeUploads.body.includes(">Shake<") &&
+        shakeUploads.body.includes(`_shake_${shakeTag.slice(-5)}`) &&
+        !shakeUploads.body.includes(`data-new-packages="${runId}"`) &&
+        !!shakeMark &&
+        shakeMark.status === 303 &&
+        !shakeCleared.body.includes(`data-shake-packages="${shakeId}"`) &&
+        !!shakeVoid &&
+        shakeVoid.status === 303 &&
+        afterShakeVoid.testing === beforeShake.testing,
+      `Add Shake expected 303, one SHA package, one shake file, then a clear and a void, got status ${shakePost.status} loc ${shakeLoc} testing ${beforeShake.testing} to ${afterShake.testing} to ${afterShakeVoid.testing} id ${shakeId} mark ${shakeMark && shakeMark.status} void ${shakeVoid && shakeVoid.status} ${shakeErr.slice(0, 240)}`
+    );
     const testingPage = await text("/admin/queues");
     const testId = releaseFormId(testingPage.body);
     const release = await req("/queue/testing_queue/control", {

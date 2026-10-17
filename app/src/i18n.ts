@@ -1540,6 +1540,28 @@ export const DICT: Record<string, { en: string; es: string }> = {
     es: "Terminar la corrida? Los contenedores de poda quedan como archivo y el archivo de paquetes nuevos queda pendiente en la casa de exportacion.",
   },
   "Package entered.": { en: "Package entered.", es: "Paquete ingresado." },
+  // PS1: the pasteurization run label, Add Shake, and its refusals.
+  "no tag": { en: "no tag", es: "sin etiqueta" },
+  "Add Shake": { en: "Add Shake", es: "Agregar picadillo" },
+  "Shake package added.": { en: "Shake package added.", es: "Paquete de picadillo agregado." },
+  "Add Shake is for a finished run; use the plus line while it is working.": {
+    en: "Add Shake is for a finished run; use the plus line while it is working.",
+    es: "Agregar picadillo es para una corrida terminada; use la linea de mas mientras esta trabajando.",
+  },
+  "The package tag must be 1A plus 22 hex characters.": {
+    en: "The package tag must be 1A plus 22 hex characters.",
+    es: "La etiqueta del paquete debe ser 1A mas 22 caracteres hexadecimales.",
+  },
+  "That package tag is already in use.": { en: "That package tag is already in use.", es: "Esa etiqueta de paquete ya esta en uso." },
+  "Weight must be a number of grams above zero.": {
+    en: "Weight must be a number of grams above zero.",
+    es: "El peso debe ser un numero de gramos mayor que cero.",
+  },
+  "Operator is required.": { en: "Operator is required.", es: "El operador es obligatorio." },
+  "The shake file {file} is marked uploaded.": {
+    en: "The shake file {file} is marked uploaded.",
+    es: "El archivo de picadillo {file} esta marcado como subido.",
+  },
   "Run finished. The trim containers are archival; the New Packages file pends at the export home.": {
     en: "Run finished. The trim containers are archival; the New Packages file pends at the export home.",
     es: "Corrida terminada. Los contenedores de poda quedan como archivo; el archivo de paquetes nuevos queda pendiente en la casa de exportacion.",

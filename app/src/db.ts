@@ -444,6 +444,12 @@ export type ScheduleItemRow = {
   terp_recipe_id?: string | null;
   terp_recipe_name?: string | null;
   terp_dose_pct?: number | null;
+  /** PS1: the pasteurization label's pool, harvest tags, and the run's out line. */
+  containers?: number;
+  in_grams?: number | null;
+  out_count?: number | null;
+  out_grams?: number | null;
+  harvest_tags?: string[];
 };
 
 /** THE HBN ON THE SCHEDULING PANES (canon 0.30.102; owner, 2026-09-16,
@@ -561,6 +567,7 @@ type CryoPoolRow = {
   strain_name: string | null;
   containers: number;
   in_grams: number | null;
+  harvest_tags?: string[];
 };
 
 /** A container is free for a run while it waits in the Cryo Queue and no live
@@ -587,12 +594,14 @@ async function listCryoAvailable(db: D1Database, hbnId?: string): Promise<CryoPo
        JOIN wip_packages p ON p.wet_weight_entry_id = w.id
        LEFT JOIN strains s ON s.id = b.strain_id
        WHERE b.deleted_at IS NULL AND ${CRYO_FREE_CONTAINER_SQL} ${hbnClause}
-       GROUP BY b.id, b.hbn, b.entry_date, b.farm_code, b.market_strain, s.name, b.created_at
-       ORDER BY b.created_at DESC`
+       GROUP BY b.id, b.hbn, b.entry_date, b.farm_code, b.market_strain, s.name, b.lot_serial
+       ORDER BY b.lot_serial ASC, b.hbn ASC`
     )
     .bind(WIP_STATUS.cryo_queue, ...binds)
     .all<CryoPoolRow>();
-  return result.results ?? [];
+  const rows = result.results ?? [];
+  await attachHarvestTags(db, rows);
+  return rows;
 }
 
 export type CryoFreeContainer = { id: string; package_type_code: string; weight_grams: number; wet_weight_entry_id: string };
@@ -799,6 +808,9 @@ export async function listScheduleAvailable(db: D1Database, stage: ScheduleStage
       strain_name: row.strain_name ?? "",
       entry_date: row.entry_date,
       identity: cryoRunIdentity(row),
+      containers: Number(row.containers),
+      in_grams: row.in_grams == null ? 0 : Number(row.in_grams),
+      harvest_tags: row.harvest_tags ?? [],
     }))
   );
 }
@@ -855,11 +867,14 @@ export type CryoRunRow = {
   terp_recipe_name?: string | null;
   terp_dose_pct?: number | null;
   terp_lines?: string | null;
+  /** PS1: lot order, and the HBN's METRC harvest package tags for the run label. */
+  lot_serial?: number | null;
+  harvest_tags?: string[];
 };
 
 const CRYO_RUN_SELECT = `SELECT ps.id, ps.status, ps.scheduled_at, ps.completed_at, ps.effective_date,
               ps.terp_recipe_id, ps.terp_dose_pct, r.name AS terp_recipe_name,
-              b.id AS harvest_batch_id, b.hbn, b.entry_date, b.farm_code,
+              b.id AS harvest_batch_id, b.hbn, b.entry_date, b.farm_code, b.lot_serial,
               COALESCE(b.market_strain, s.name) AS strain_name,
               (SELECT COUNT(*) FROM cryo_run_inputs i WHERE i.run_id = ps.id) AS containers,
               (SELECT COALESCE(SUM(i.weight_grams), 0) FROM cryo_run_inputs i WHERE i.run_id = ps.id) AS in_grams,
@@ -871,16 +886,24 @@ const CRYO_RUN_SELECT = `SELECT ps.id, ps.status, ps.scheduled_at, ps.completed_
        LEFT JOIN terp_recipes r ON r.id = ps.terp_recipe_id AND r.deleted_at IS NULL
        WHERE ps.deleted_at IS NULL AND ps.stage = '${SCHEDULE_STAGES.cryo}' AND ps.wip_package_id IS NULL`;
 
-export async function listCryoRuns(db: D1Database, status?: string): Promise<CryoRunRow[]> {
-  const order = status === SCHEDULE_STATUS.complete ? "ps.completed_at DESC, ps.scheduled_at DESC" : "ps.scheduled_at DESC";
+export async function listCryoRuns(db: D1Database, status?: string, order: "lot" | "finished" = "lot"): Promise<CryoRunRow[]> {
+  const orderSql =
+    order === "finished"
+      ? "ps.completed_at DESC, ps.scheduled_at DESC, ps.id DESC"
+      : "b.lot_serial ASC, ps.scheduled_at ASC, ps.id ASC";
   const result = status
-    ? await db.prepare(`${CRYO_RUN_SELECT} AND ps.status = ? ORDER BY ${order}`).bind(status).all<CryoRunRow>()
-    : await db.prepare(`${CRYO_RUN_SELECT} ORDER BY ${order}`).all<CryoRunRow>();
-  return result.results ?? [];
+    ? await db.prepare(`${CRYO_RUN_SELECT} AND ps.status = ? ORDER BY ${orderSql}`).bind(status).all<CryoRunRow>()
+    : await db.prepare(`${CRYO_RUN_SELECT} ORDER BY ${orderSql}`).all<CryoRunRow>();
+  const rows = result.results ?? [];
+  await attachHarvestTags(db, rows);
+  return rows;
 }
 
 export async function getCryoRun(db: D1Database, id: string): Promise<CryoRunRow | null> {
-  return db.prepare(`${CRYO_RUN_SELECT} AND ps.id = ?`).bind(id).first<CryoRunRow>();
+  const row = await db.prepare(`${CRYO_RUN_SELECT} AND ps.id = ?`).bind(id).first<CryoRunRow>();
+  if (!row) return null;
+  await attachHarvestTags(db, [row]);
+  return row;
 }
 
 export type TerpRecipeLine = { id: string; recipe_id: string; position: number; terp_name: string; percent: number };
@@ -1125,6 +1148,36 @@ export async function listHbnHarvestPackages(db: D1Database, harvestBatchId: str
   return result.results ?? [];
 }
 
+/** PS1: the METRC harvest package tags of every listed HBN, one grouped read
+ * (at most 100 binds), in lot order. Never package_code. */
+const HARVEST_TAG_BINDS = 100;
+
+export async function attachHarvestTags<T extends { harvest_batch_id: string; harvest_tags?: string[] }>(
+  db: D1Database,
+  rows: T[]
+): Promise<void> {
+  const ids = [...new Set(rows.map((row) => row.harvest_batch_id).filter((id) => id))];
+  const tags = new Map<string, string[]>();
+  for (const id of ids) tags.set(id, []);
+  for (let i = 0; i < ids.length; i += HARVEST_TAG_BINDS) {
+    const chunk = ids.slice(i, i + HARVEST_TAG_BINDS);
+    const result = await db
+      .prepare(
+        `SELECT w.harvest_batch_id AS harvest_batch_id, li.metrc_tag AS metrc_tag
+         FROM local_inventory_items li
+         JOIN wet_weight_entries w ON w.id = li.wet_weight_entry_id AND w.deleted_at IS NULL
+         WHERE li.deleted_at IS NULL AND li.wet_weight_entry_id IS NOT NULL
+           AND li.metrc_tag IS NOT NULL AND TRIM(li.metrc_tag) <> ''
+           AND w.harvest_batch_id IN (${chunk.map(() => "?").join(", ")})
+         ORDER BY w.created_at ASC, li.created_at ASC, li.id ASC`
+      )
+      .bind(...chunk)
+      .all<{ harvest_batch_id: string; metrc_tag: string }>();
+    for (const row of result.results ?? []) tags.get(row.harvest_batch_id)?.push(row.metrc_tag);
+  }
+  for (const row of rows) row.harvest_tags = tags.get(row.harvest_batch_id) ?? [];
+}
+
 export type PendingNewPackagesRow = {
   id: string;
   harvest_batch_id: string;
@@ -1133,6 +1186,7 @@ export type PendingNewPackagesRow = {
   out_grams: number | null;
   newest_activity: string;
   filename: string;
+  kind: "new_packages" | "new_packages_shake";
 };
 
 /** The New Packages files waiting at the export home: finished runs with
@@ -1154,12 +1208,49 @@ export async function listPendingNewPackagesUploads(db: D1Database): Promise<Pen
          )
        ORDER BY newest_activity DESC`
     )
-    .all<Omit<PendingNewPackagesRow, "filename">>();
-  return (result.results ?? []).map((row) => ({ ...row, filename: newPackagesFilename(row.hbn) }));
+    .all<Omit<PendingNewPackagesRow, "filename" | "kind">>();
+  const runs = (result.results ?? []).map((row) => ({
+    ...row,
+    filename: newPackagesFilename(row.hbn),
+    kind: "new_packages" as const,
+  }));
+  const shakes = await db
+    .prepare(
+      `SELECT o.id, ps.harvest_batch_id, b.hbn, o.package_code, o.weight_grams AS out_grams, o.created_at AS newest_activity
+       FROM wip_packages o
+       JOIN production_schedules ps ON ps.id = o.cryo_run_id AND ps.deleted_at IS NULL
+       JOIN harvest_batches b ON b.id = ps.harvest_batch_id AND b.deleted_at IS NULL
+       WHERE o.deleted_at IS NULL AND o.source = 'cryo'
+         AND ps.stage = '${SCHEDULE_STAGES.cryo}' AND ps.status = '${SCHEDULE_STATUS.complete}'
+         AND ps.completed_at IS NOT NULL AND o.created_at > ps.completed_at
+         AND NOT EXISTS (
+           SELECT 1 FROM metrc_uploads u
+           WHERE u.ref_id = o.id AND u.kind = 'new_packages_shake' AND u.deleted_at IS NULL
+         )`
+    )
+    .all<{ id: string; harvest_batch_id: string; hbn: string; package_code: string; out_grams: number | null; newest_activity: string }>();
+  const shakeRows: PendingNewPackagesRow[] = (shakes.results ?? []).map((row) => ({
+    id: row.id,
+    harvest_batch_id: row.harvest_batch_id,
+    hbn: row.hbn,
+    outputs: 1,
+    out_grams: row.out_grams,
+    newest_activity: row.newest_activity,
+    filename: shakePackagesFilename(row.hbn, row.package_code),
+    kind: "new_packages_shake",
+  }));
+  return [...runs, ...shakeRows].sort((a, b) => String(b.newest_activity).localeCompare(String(a.newest_activity)) || a.id.localeCompare(b.id));
 }
 
 export function newPackagesFilename(hbn: string): string {
   return `new_packages_${String(hbn).replace(/[^A-Za-z0-9._-]+/g, "_")}.xlsx`;
+}
+
+/** The run file's name with _shake_ and the tag's last 5 before the extension. */
+export function shakePackagesFilename(hbn: string, tag: string): string {
+  const base = newPackagesFilename(hbn).slice(0, -".xlsx".length);
+  const tail = String(tag ?? "").trim().slice(-5).replace(/[^A-Za-z0-9._-]+/g, "_") || "notag";
+  return `${base}_shake_${tail}.xlsx`;
 }
 
 async function listTrimScheduled(db: D1Database, status: string): Promise<ScheduleItemRow[]> {
@@ -1204,7 +1295,7 @@ async function listTrimScheduled(db: D1Database, status: string): Promise<Schedu
 async function listCryoScheduled(db: D1Database, status: string): Promise<ScheduleItemRow[]> {
   // THE CRYO RUN (canon 0.30.110): one line per run, the pool in and out; the
   // containers never show. A run with outputs reads cryo weighed.
-  return (await listCryoRuns(db, status)).map((row) => ({
+  return (await listCryoRuns(db, status, "lot")).map((row) => ({
     id: row.id,
     itemId: row.id,
     harvest_batch_id: row.harvest_batch_id,
@@ -1220,6 +1311,11 @@ async function listCryoScheduled(db: D1Database, status: string): Promise<Schedu
     terp_recipe_id: row.terp_recipe_id ?? null,
     terp_recipe_name: row.terp_recipe_name ?? null,
     terp_dose_pct: row.terp_dose_pct == null ? null : Number(row.terp_dose_pct),
+    containers: Number(row.containers),
+    in_grams: row.in_grams == null ? 0 : Number(row.in_grams),
+    out_count: Number(row.outputs),
+    out_grams: row.out_grams == null ? 0 : Number(row.out_grams),
+    harvest_tags: row.harvest_tags ?? [],
   }));
 }
 

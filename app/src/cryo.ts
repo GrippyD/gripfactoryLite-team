@@ -48,7 +48,7 @@
  * Pure renderers and pure math: input in, HTML or rows out, so the tests pin
  * them without a database.
  */
-import { LOC_CRYO_ROOM, OVERISSUE_TOLERANCE_GRAMS, formatGrams, isMetrcTag, metrcQuantity, roundGrams } from "./config";
+import { GRAMS_PER_LB, LOC_CRYO_ROOM, OVERISSUE_TOLERANCE_GRAMS, format2, formatGrams, isMetrcTag, metrcQuantity, round2, roundGrams, shortLotId } from "./config";
 import type { CryoOutputRow, CryoPool, CryoRunInputRow, CryoRunRow } from "./db";
 import { effectiveDateField } from "./effective";
 import { duplicateTagGuard, lockOnSubmitScript, localTimeScript } from "./html";
@@ -73,6 +73,7 @@ export const CRYO_REFUSAL = {
   noOutputs: "Enter at least one package before finishing.",
   unscheduleWithOutputs: "A run with outputs cannot be unscheduled; finish it.",
   demoteFinished: "A finished run cannot be demoted; its outputs stand.",
+  shakeWhileWorking: "Add Shake is for a finished run; use the plus line while it is working.",
 } as const;
 
 export type CryoPoolTotals = { totalIn: number; totalOut: number; totalRemaining: number };
@@ -105,19 +106,67 @@ export type CryoStationInput = {
   locale?: Locale;
   ok?: string;
   err?: string;
+  /** Set when Add Shake recorded a weight past the SHA remaining. Flag, never a block. */
+  over?: boolean;
+  /** The Add Shake form starts open (the render gate). The page leaves it closed. */
+  shakeOpen?: boolean;
 };
 
-function runLabel(run: CryoRunRow, locale: Locale): string {
-  const n = Number(run.containers);
-  const word = t(locale, n === 1 ? "container" : "containers");
-  return `${n} ${word} / ${formatGrams(run.in_grams)} g`;
+export type PasteurizationLabelRun = {
+  hbn: string;
+  containers: number | string | null;
+  in_grams: number | string | null;
+  strain_name?: string | null;
+};
+
+/** A shake package is an output written after the run finished. The run stays complete. */
+export function isShakePackage(createdAt: string, completedAt: string | null | undefined): boolean {
+  return !!completedAt && createdAt > completedAt;
+}
+
+/** PS1: one label for every pasteurization run. Line 1 is the lot, the harvest
+ * tags' last 5, and the container count. Line 2 is grams, pounds at 448, and
+ * the market strain. The separator is a spaced hyphen. */
+export function pasteurizationRunLabel(
+  run: PasteurizationLabelRun,
+  tags: readonly (string | null | undefined)[],
+  locale: Locale = "en"
+): { line1: string; line2: string } {
+  const lot = shortLotId(run.hbn, null);
+  const tails: string[] = [];
+  for (const raw of tags) {
+    const tag = String(raw ?? "").trim();
+    if (!tag) continue;
+    tails.push(tag.slice(-5));
+  }
+  const tagText = tails.length ? tails.join(", ") : t(locale, "no tag");
+  const countRaw = Number(run.containers);
+  const count = Number.isFinite(countRaw) ? countRaw : 0;
+  const word = t(locale, count === 1 ? "container" : "containers");
+  const gramsRaw = Number(run.in_grams ?? 0);
+  const grams = Number.isFinite(gramsRaw) ? gramsRaw : 0;
+  const strain = (run.strain_name ?? "").trim() || t(locale, "no strain");
+  return {
+    line1: `${lot} - ${tagText} - ${count} ${word}`,
+    line2: `${formatGrams(grams)} g - ${format2(round2(grams / GRAMS_PER_LB))} lb - ${strain}`,
+  };
 }
 
 function paneItem(run: CryoRunRow, picked: boolean, locale: Locale): string {
+  const label = pasteurizationRunLabel(run, run.harvest_tags ?? [], locale);
   const cls = picked ? "queue-pane-item selected" : "queue-pane-item";
-  return `<li><a class="${cls}" href="${CRYO_STATION_PATH}?pick=${esc(run.id)}" data-cryo-run="${esc(run.id)}"><strong>${esc(run.hbn)}</strong> <span class="muted">${esc(
-    runLabel(run, locale)
-  )}</span></a></li>`;
+  return `<li><a class="${cls}" href="${CRYO_STATION_PATH}?pick=${esc(run.id)}" title="${esc(run.hbn)}" data-cryo-run="${esc(run.id)}"><strong>${esc(
+    label.line1
+  )}</strong> <span class="muted">${esc(label.line2)}</span></a></li>`;
+}
+
+function byLot(a: CryoRunRow, b: CryoRunRow): number {
+  const serialA = Number(a.lot_serial);
+  const serialB = Number(b.lot_serial);
+  const lot = (Number.isFinite(serialA) ? serialA : 0) - (Number.isFinite(serialB) ? serialB : 0);
+  if (lot !== 0) return lot;
+  const when = String(a.scheduled_at).localeCompare(String(b.scheduled_at));
+  return when !== 0 ? when : a.id.localeCompare(b.id);
 }
 
 /** THE POOL BY CATEGORY (canon 0.30.121; owner: "here is the surface that
@@ -272,6 +321,46 @@ function entryForm(run: CryoRunRow, categories: readonly string[], outputs: Cryo
     </form>`;
 }
 
+/** Add Shake sits under a finished run's packages. It does not reopen the run. */
+function shakeForm(run: CryoRunRow, outputs: CryoOutputRow[], locale: Locale, open: boolean): string {
+  const lastOperator = outputs[0]?.cryo_operator ?? "";
+  return `<details class="cryo-add-shake" data-cryo-add-shake${open ? " open" : ""}>
+      <summary>${esc(t(locale, "Add Shake"))}</summary>
+      <form class="stack" method="post" action="${CRYO_STATION_PATH}/run/${esc(run.id)}/add-shake" data-cryo-shake data-lock-on-submit>
+        <label class="field">${esc(t(locale, "Operator"))}
+          <input type="text" name="cryo_operator" required autocomplete="off" value="${esc(lastOperator)}">
+        </label>
+        <table class="data pkg-table" id="pkg-table">
+          <thead><tr><th>${esc(t(locale, "Package tag"))}</th><th>${esc(t(locale, "Weight (g)"))}</th></tr></thead>
+          <tbody id="pkg-rows">
+            <tr>
+              <td><input type="text" name="package_code" class="metrc-tag-input" placeholder="1A..." title="${esc(t(locale, "The METRC package tag: 1A plus 22 hex characters"))}" autocomplete="off" spellcheck="false" required data-metrc-tag></td>
+              <td><input type="number" name="weight_grams" step="0.01" min="0.01" required id="cryo-shake-weight"></td>
+            </tr>
+          </tbody>
+        </table>
+        ${duplicateTagGuard(locale)}
+        <p><button type="submit" id="add-pkg">${esc(t(locale, "Add"))}</button></p>
+        <script>
+          (function () {
+            var btn = document.getElementById("add-pkg");
+            if (!btn) return;
+            btn.addEventListener("click", function (e) {
+              if (e.defaultPrevented) return;
+              var w = parseFloat((document.getElementById("cryo-shake-weight") || {}).value || "");
+              if (!isFinite(w)) return;
+              var row = document.querySelector('[data-pool-category="SHA"]');
+              var remaining = row ? parseFloat(row.getAttribute("data-pool-remaining") || "") : 0;
+              if (isFinite(remaining) && w > remaining + ${OVERISSUE_TOLERANCE_GRAMS}) {
+                if (!confirm(${JSON.stringify(t(locale, "This weight over issues the pool for its category. Record it anyway?"))})) e.preventDefault();
+              }
+            });
+          })();
+        </script>
+      </form>
+    </details>`;
+}
+
 function finishForm(run: CryoRunRow, outputs: CryoOutputRow[], locale: Locale): string {
   const none = outputs.length === 0;
   const confirmMsg = t(locale, "Finish the run? The trim containers become archival and the New Packages file pends at the export home.");
@@ -293,6 +382,7 @@ function finishForm(run: CryoRunRow, outputs: CryoOutputRow[], locale: Locale): 
 function flashLine(ok: string | undefined, err: string | undefined, locale: Locale): string {
   if (err) return `<p class="banner err">${esc(err)}</p>`;
   if (ok === "plus") return `<p class="banner ok">${esc(t(locale, "Package entered."))}</p>`;
+  if (ok === "shake") return `<p class="banner ok">${esc(t(locale, "Shake package added."))}</p>`;
   if (ok === "finished") {
     return `<p class="banner ok">${esc(t(locale, "Run finished. The trim containers are archival; the New Packages file pends at the export home."))}</p>`;
   }
@@ -307,15 +397,24 @@ export function cryoStationPage(input: CryoStationInput): string {
   const locale = input.locale ?? "en";
   const heading = `<h1>${esc(t(locale, "Cryo Weight Entry"))}</h1>`;
   const pickedId = input.picked?.run.id ?? "";
+  const workingRuns = input.runs.filter((run) => run.status === "scheduled").sort(byLot);
+  const finishedRuns = input.runs
+    .filter((run) => run.status === "complete")
+    .sort((a, b) => String(b.completed_at ?? "").localeCompare(String(a.completed_at ?? "")) || String(b.scheduled_at).localeCompare(String(a.scheduled_at)));
   const paneBody =
-    input.runs.length === 0
+    workingRuns.length === 0
       ? `<p class="muted">${esc(t(locale, "No runs scheduled."))} <a href="/production/scheduling/cryo">${esc(
           t(locale, "Schedule an HBN for pasteurization first.")
         )}</a></p>`
-      : `<ul>${input.runs.map((run) => paneItem(run, run.id === pickedId, locale)).join("")}</ul>`;
+      : `<ul>${workingRuns.map((run) => paneItem(run, run.id === pickedId, locale)).join("")}</ul>`;
+  const finishedList = `<details class="cryo-finished" data-cryo-finished>
+      <summary>${esc(t(locale, "Finished"))} <span class="tile-count">${finishedRuns.length}</span></summary>
+      ${finishedRuns.length === 0 ? "" : `<ul>${finishedRuns.map((run) => paneItem(run, run.id === pickedId, locale)).join("")}</ul>`}
+    </details>`;
   const aside = `<aside class="queue-pane" data-cryo-runs>
-      <h2>${esc(t(locale, "Pasteurization runs"))} <span class="tile-count">${input.runs.length}</span></h2>
+      <h2>${esc(t(locale, "Pasteurization runs"))} <span class="tile-count">${workingRuns.length}</span></h2>
       ${paneBody}
+      ${finishedList}
     </aside>`;
   let working: string;
   if (!input.picked) {
@@ -324,20 +423,26 @@ export function cryoStationPage(input: CryoStationInput): string {
     const { run, pool, outputs, categories } = input.picked;
     const finished = run.status === "complete";
     const inputs = input.picked.inputs ?? [];
-    const meta = [run.farm_code, run.strain_name ?? "", run.entry_date].filter(Boolean).join(" / ");
+    const label = pasteurizationRunLabel(run, run.harvest_tags ?? [], locale);
     const state = finished
       ? `<p class="muted" data-cryo-run-finished>${esc(t(locale, "Finished"))} ${
           run.completed_at ? `<time datetime="${esc(run.completed_at)}" data-local>${esc(run.completed_at)}</time>` : ""
         }. <a href="/admin/uploads">${esc(t(locale, "The New Packages file pends at the export home."))}</a></p>`
       : "";
-    working = `<h2 class="working-pick">${esc(run.hbn)}</h2>
-      <p class="muted">${esc(meta)}</p>
+    const overFlag = input.over
+      ? `<p class="banner overissue-banner" data-shake-over>${esc(t(locale, "This weight over issues the pool for its category. Record it anyway?"))}</p>`
+      : "";
+    working = `<h2 class="working-pick">${esc(label.line1)}</h2>
+      <p class="muted">${esc(label.line2)}</p>
+      <p class="muted">${esc(run.hbn)}</p>
       ${terpRunHeader(run, locale)}
       ${state}
+      ${overFlag}
       ${poolTable(pool, locale)}
       ${finished ? consumedList(run.id, inputs, locale) : ""}
       ${finished ? "" : entryForm(run, categories, outputs, locale)}
       ${outputsList(outputs, locale, finished ? run.id : undefined)}
+      ${finished ? shakeForm(run, outputs, locale, input.shakeOpen === true) : ""}
       ${finished ? "" : finishForm(run, outputs, locale)}`;
   }
   return `${heading}
