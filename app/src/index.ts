@@ -511,7 +511,7 @@ import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadF
 import { loadFgInventory } from "./fginventory";
 import { harvestDashboardPage, loadHarvestDashboard } from "./harvestdashboard";
 import { DIRECTOR_PATH, DIRECTOR_RECOMPUTE_LBS_PATH, directorDetailPage, directorGridPage, directorHomePage, directorWallPage, isDdDeptKey, loadDirectorDetail, loadDirectorGrid, loadDirectorHome, loadDirectorWall, saveDirectorGrid } from "./director";
-import { refreshLbsHarvested } from "./ddsnapshot";
+import { refreshLbsHarvested, refreshLbsPerDlh } from "./ddsnapshot";
 import {
   commitDirectorImport,
   directorImportPage,
@@ -1706,7 +1706,9 @@ app.post(`${DIRECTOR_PATH}/:dept/enter`, async (c) => {
 app.post(DIRECTOR_RECOMPUTE_LBS_PATH, async (c) => {
   const now = nowIso();
   const harvested = await refreshLbsHarvested(c.env.DB, now);
+  const dlh = await refreshLbsPerDlh(c.env.DB, now);
   console.log(`[lbs harvested] wrote ${harvested.written} rows`);
+  console.log(`[lbs per dlh] wrote ${dlh.written} rows`);
   return c.redirect(`${DIRECTOR_PATH}/bizops`, 303);
 });
 
@@ -4729,6 +4731,12 @@ function scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext):
             console.log(`[lbs harvested] wrote ${harvested.written} rows`);
           } catch {
             console.log("[lbs harvested] refresh failed");
+          }
+          try {
+            const dlh = await refreshLbsPerDlh(env.DB, nowIso());
+            console.log(`[lbs per dlh] wrote ${dlh.written} rows`);
+          } catch {
+            console.log("[lbs per dlh] refresh failed");
           }
         }
       })();

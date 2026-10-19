@@ -506,6 +506,23 @@ main:has(.dd-wall), main:has(.dd-cards), main:has(.dd-grid), main:has(.dd-checki
 .dd-harvest-label { fill: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); font-size: 11px; }
 .dd-harvest-tip { margin: 0.25rem 0; padding: 0.35rem 0.5rem; font-size: 0.78rem; background: var(--panel, var(--surface, transparent)); color: var(--ink, var(--text, currentColor)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); }
 .dd-harvest-link { font-size: 0.85rem; }
+.dd-dlh { position: relative; min-width: 0; max-width: 100%; }
+.dd-dlh-period { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; margin: 0.15rem 0 0.35rem; font-size: 0.82rem; }
+.dd-dlh-period select { max-width: 100%; }
+.dd-dlh svg { display: block; width: 100%; height: auto; max-width: 100%; color: ${accent}; }
+.dd-dlh-area { fill: currentColor; fill-opacity: 0.18; }
+.dd-dlh-line { fill: none; stroke: currentColor; stroke-width: 1.75; vector-effect: non-scaling-stroke; }
+.dd-dlh-point { fill: currentColor; }
+.dd-dlh-point-today { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.dd-dlh-goal { fill: none; stroke: var(--ink, var(--text, currentColor)); stroke-width: 1.25; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.dd-dlh-grid { stroke: var(--line, var(--border, currentColor)); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.dd-dlh-label { fill: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); font-size: 11px; }
+.dd-dlh-goal-line { margin: 0.1rem 0 0.2rem; font-size: 0.85rem; }
+.dd-dlh-good { color: var(--ok, var(--accent, currentColor)); }
+.dd-dlh-warn { color: var(--danger, var(--alert, currentColor)); }
+.dd-dlh-note { margin: 0 0 0.25rem; font-size: 0.75rem; }
+.dd-dlh-tip { margin: 0.25rem 0; padding: 0.35rem 0.5rem; font-size: 0.78rem; background: var(--panel, var(--surface, transparent)); color: var(--ink, var(--text, currentColor)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); }
+.dd-dlh-help { margin: 0.35rem 0 0; font-size: 0.75rem; }
 @media (max-width: 820px) { .dd-tile-wide { grid-column: 1 / -1; } }
 .dd-tile { position: relative; display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; overflow: hidden; background: color-mix(in srgb, ${accent} 4%, var(--panel, var(--surface, transparent))); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); padding: 0.7rem 0.9rem 0.8rem; }
 .dd-tile-on_goal { border-left: 4px solid var(--ok, var(--accent, currentColor)); }

@@ -34,14 +34,23 @@ import {
   type DdSourceKind,
   type DdUnit,
 } from "./directorregistry";
-import { LBS_HARVESTED_KPI, lbsHarvestedBody, seriesFromRows, type LbsHarvestedSeries } from "./ddsnapshot";
+import {
+  LBS_HARVESTED_KPI,
+  LBS_PER_DLH_KPI,
+  dlhSeriesFromRows,
+  lbsHarvestedBody,
+  lbsPerDlhBody,
+  seriesFromRows,
+  type LbsHarvestedSeries,
+  type LbsPerDlhSeries,
+} from "./ddsnapshot";
 import { dayOffset, etWallClock, isCalendarDate, isoWeekOf, periodLabel, periodShift, periodStartFor, type PeriodKind } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
 import { esc, tabBar } from "./ui";
 
 export const DIRECTOR_PATH = "/admin/director";
 
-/** Admin PIN, already on /admin. Recomputes the Lbs Harvested series now. */
+/** Admin PIN, already on /admin. Recomputes the dashboard series now. */
 export const DIRECTOR_RECOMPUTE_LBS_PATH = `${DIRECTOR_PATH}/recompute-lbs-harvested`;
 
 /** The questions page. S1 links here; S2b serves it. */
@@ -192,6 +201,10 @@ export type DirectorTile = {
   companions: DirectorTile[];
   /** The stored Lbs Harvested days, on that one tile. Null on every other tile. */
   harvest: LbsHarvestedSeries | null;
+  /** The stored Lbs/Labor Hour days, on that one tile. Null on every other tile. */
+  dlh: LbsPerDlhSeries | null;
+  /** The dd_targets row in force on the farm today, for the Lbs/Labor Hour tile. */
+  dlhGoal: number | null;
 };
 
 export type DirectorWallGroup = { cadence: DdCadence; periodKind: DdPeriodKind; periodStart: string; tiles: DirectorTile[] };
@@ -279,6 +292,11 @@ const WALL_TARGETS_SQL = `SELECT id, kpi_key, dim_key, period_kind, effective_fr
 /** Every live app day of Lbs Harvested, farms and the total. The wall reads this; it does not compute it. */
 const HARVEST_SERIES_SQL = `SELECT period_start, dim_key, value, n FROM dd_kpi_values
   WHERE kpi_key = '${LBS_HARVESTED_KPI}' AND period_kind = 'day' AND source = 'app' AND superseded_at IS NULL
+  ORDER BY period_start, dim_key`;
+
+/** Every live app day of Lbs/Labor Hour: wet pounds, hours, and the ratio. The wall reads this. */
+const DLH_SERIES_SQL = `SELECT period_start, dim_key, value, n FROM dd_kpi_values
+  WHERE kpi_key = '${LBS_PER_DLH_KPI}' AND period_kind = 'day' AND source = 'app' AND superseded_at IS NULL
   ORDER BY period_start, dim_key`;
 
 const QUESTION_COUNTS_SQL = `SELECT status, COUNT(*) AS n FROM dd_kpi_questions GROUP BY status`;
@@ -470,7 +488,7 @@ function buildTile(
   }
   const snapshot = values.get(`${kpi.kpi_key}|${periodKind}|${periodStart}`) ?? null;
   const inSeason = ddInSeason(kpi, model.farmToday);
-  return { kpi, periodKind, periodStart, inSeason, status: ddTileStatus(kpi, snapshot, inSeason, model.nowIso), snapshot, history, companions: [], harvest };
+  return { kpi, periodKind, periodStart, inSeason, status: ddTileStatus(kpi, snapshot, inSeason, model.nowIso), snapshot, history, companions: [], harvest, dlh: null, dlhGoal: null };
 }
 
 /** A wall: one batch (registry, the wall's live rows over the widest history window, config); tiles grouped by
@@ -499,6 +517,7 @@ export async function loadDirectorWall(
     configStatement(db),
     db.prepare(WALL_TARGETS_SQL).bind(`%,${dept},%`),
     db.prepare(HARVEST_SERIES_SQL),
+    db.prepare(DLH_SERIES_SQL),
   ]);
   const registry = registryFromRows(resultsOf(results[0]));
   const values = new Map<string, DdSnapshot>();
@@ -527,6 +546,11 @@ export async function loadDirectorWall(
     if (headline && tile) headline.companions.push(tile);
   }
   const targets = resultsOf(results[3]).map(targetFromRow);
+  const dlhTile = tiles.get(LBS_PER_DLH_KPI);
+  if (dlhTile) {
+    dlhTile.dlh = dlhSeriesFromRows(resultsOf(results[5]), farmToday);
+    dlhTile.dlhGoal = targetInForce(targets, LBS_PER_DLH_KPI, "", "day", farmToday)?.target ?? null;
+  }
   for (const tile of tiles.values()) fillWallGoal(tile, targets, nowIso);
   const groups: DirectorWallGroup[] = [];
   for (const kind of DD_CADENCES) {
@@ -661,14 +685,18 @@ function tileHtml(tile: DirectorTile, group: DirectorWallGroup, locale: Locale, 
   const period = tile.periodStart !== group.periodStart ? `<span class="dd-tile-period">${esc(periodLabel(tile.periodKind, tile.periodStart, locale))}</span>` : "";
   const companions = tile.companions.length > 0 ? `<ul class="dd-companions">${tile.companions.map((row) => companionHtml(row, locale)).join("")}</ul>` : "";
   const harvest = tile.harvest && tile.harvest.days.length > 0 ? lbsHarvestedBody(tile.harvest, locale, lbGrams) : "";
+  const dlh = tile.dlh && tile.dlh.days.length > 0 ? lbsPerDlhBody(tile.dlh, tile.dlhGoal, locale) : "";
+  const wide = harvest || dlh;
   const body = harvest
     ? harvest
-    : `${valueHtml(tile, locale, lbGrams)}
+    : dlh
+      ? dlh
+      : `${valueHtml(tile, locale, lbGrams)}
       ${goalHtml(tile, locale)}
       <span class="dd-tile-meta">${badgeHtml(tile, locale)}${sourceHtml(tile, locale)}${period}</span>
       ${ddSparklineSvg(tile.history)}
       ${companions}`;
-  return `<article class="dd-tile dd-tile-${esc(tile.status)}${tile.inSeason ? "" : " dd-out"}${stale ? " dd-stale" : ""}${harvest ? " dd-tile-wide" : ""}" data-dd-kpi="${esc(kpi.kpi_key)}" data-dd-status="${esc(tile.status)}" data-dd-cadence="${esc(kpi.cadence)}" data-dd-period="${esc(tile.periodStart)}" data-dd-unit="${esc(kpi.unit)}">
+  return `<article class="dd-tile dd-tile-${esc(tile.status)}${tile.inSeason ? "" : " dd-out"}${stale ? " dd-stale" : ""}${wide ? " dd-tile-wide" : ""}" data-dd-kpi="${esc(kpi.kpi_key)}" data-dd-status="${esc(tile.status)}" data-dd-cadence="${esc(kpi.cadence)}" data-dd-period="${esc(tile.periodStart)}" data-dd-unit="${esc(kpi.unit)}">
       ${stale}
       <span class="dd-tile-head">
         <a class="dd-tile-title" href="${esc(directorKpiPath(kpi.kpi_key))}">${esc(kpiTitle(kpi, locale))}</a>
@@ -746,8 +774,8 @@ export function directorHomePage(model: DirectorHomeModel, locale: Locale = "en"
       <a href="${DIRECTOR_IMPORT_PATH}" data-dd-import>${esc(t(locale, "Import"))}</a>:
       ${esc(t(locale, "Open questions"))} ${esc(q.open)}. ${esc(t(locale, "Ruled"))} ${esc(q.ruled)}. ${esc(t(locale, "Parked"))} ${esc(q.parked)}.
     </p>
-    <form method="post" action="${esc(DIRECTOR_RECOMPUTE_LBS_PATH)}" data-dd-recompute="lbs-harvested">
-      <button type="submit">${esc(t(locale, "Recompute Lbs Harvested"))}</button>
+    <form method="post" action="${esc(DIRECTOR_RECOMPUTE_LBS_PATH)}" data-dd-recompute="dashboard-series">
+      <button type="submit">${esc(t(locale, "Recompute dashboard series"))}</button>
     </form>`;
 }
 
