@@ -629,10 +629,8 @@ export async function refreshLbsPerDlh(db: D1Database, nowIso: string): Promise<
   const yearStart = `${year}-01-01`;
   const bounds = farmDayBounds(yearStart, startHour);
   const end = farmDayBounds(today, startHour);
-  const [toteRows, hourRows] = await Promise.all([
-    db.prepare(DLH_TOTE_SQL).bind(bounds.startIso, end.endIso).all<ToteHour>(),
-    db.prepare(DLH_HOURS_SQL).bind(yearStart, today).all<LaborRow>(),
-  ]);
+  const toteRows = await db.prepare(DLH_TOTE_SQL).bind(bounds.startIso, end.endIso).all<ToteHour>();
+  const hourRows = await db.prepare(DLH_HOURS_SQL).bind(yearStart, today).all<LaborRow>();
   const wetByDay = foldToteDays(toteRows.results ?? [], startHour);
   const hoursByDay = hoursOf(hourRows.results ?? []);
   let first: string | null = null;
@@ -854,12 +852,12 @@ function dlhChart(series: LbsPerDlhSeries, period: HarvestPeriod, goal: number |
         <title>${esc(tip)}</title>
       </g>`;
   });
-  let goal = "";
+  let goalMark = "";
   if (goal != null && Number.isFinite(goal)) {
     const y = yOf(goal);
     const labelY = y < padT + 14 ? y + 12 : y - 4;
     const label = `${t(locale, "Goal")} ${formatPlain(goal)}`;
-    goal = `<g data-dd-dlh-goal="${esc(formatPlain(goal))}">
+    goalMark = `<g data-dd-dlh-goal="${esc(formatPlain(goal))}">
         <line class="dd-dlh-goal" x1="${padL}" y1="${px(y)}" x2="${W - padR}" y2="${px(y)}"></line>
         <text class="dd-dlh-label" x="${padL + 6}" y="${px(labelY)}">${esc(label)}</text>
       </g>`;
@@ -868,7 +866,7 @@ function dlhChart(series: LbsPerDlhSeries, period: HarvestPeriod, goal: number |
       <text class="dd-dlh-label" data-dd-dlh-axis="y" x="4" y="12">${esc(t(locale, "Lbs/DLH"))}</text>
       ${grids.join("")}
       ${areas}
-      ${goal}
+      ${goalMark}
       ${hits.join("")}
       ${labels.join("")}
     </svg>`;

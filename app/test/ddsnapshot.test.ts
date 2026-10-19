@@ -1,18 +1,26 @@
 import { describe, expect, it } from "vitest";
+import { format2 } from "../src/config";
+import { consoleBoxes, type HarvestConsoleInput } from "../src/console";
 import worker from "../src/index";
 import { directorWallPage, loadDirectorWall } from "../src/director";
+import { saveDirectorTarget } from "../src/directors2b";
 import {
+  dlhSeriesFromRows,
+  dlhWeighted,
   foldWetHours,
   harvestWindow,
   lbsHarvestedBody,
+  lbsPerDlhBody,
   leastSquares,
   leastSquaresAt,
   refreshLbsHarvested,
+  refreshLbsPerDlh,
   wetPounds,
+  type DlhDay,
   type HarvestDay,
 } from "../src/ddsnapshot";
 import { farmDay } from "../src/farmday";
-import { migratedDb, seedBatch } from "./migrated";
+import { formOf, migratedDb, seedBatch, seedPerson } from "./migrated";
 
 type Row = Record<string, unknown>;
 
@@ -319,5 +327,240 @@ describe("migration 0106", () => {
       ruling: "wet_harvested",
       reason: "owner 2026-10-19: Lbs processed means wet lbs harvested",
     });
+  });
+});
+
+function dlhRows(m: Awaited<ReturnType<typeof migratedDb>>): Row[] {
+  return m.all(
+    `SELECT period_start, dim_key, value, n FROM dd_kpi_values
+     WHERE kpi_key = 'bizops.lbs_per_dlh' AND superseded_at IS NULL
+     ORDER BY period_start, dim_key`
+  );
+}
+
+function consoleInput(over: Partial<HarvestConsoleInput>): HarvestConsoleInput {
+  return {
+    today: "2026-10-19",
+    day: "2026-10-17",
+    dayPicked: true,
+    year: 2026,
+    remaining: [],
+    seasonHarvested: [],
+    seasonLots: [],
+    dayWet: [],
+    hours: { PNN: null, ARL: null, PNS: null },
+    plantCounts: { PNN: null, ARL: null, PNS: null },
+    ...over,
+  };
+}
+
+function metric(boxes: ReturnType<typeof consoleBoxes>, key: string): string {
+  const total = boxes.find((box) => box.farm === "Total");
+  return total?.metrics.find((row) => row.key === key)?.value ?? "";
+}
+
+async function dlhFloor(): Promise<Awaited<ReturnType<typeof migratedDb>>> {
+  const m = await migratedDb();
+  m.run(`UPDATE app_config SET value = '6' WHERE key = 'farm_day_start_hour'`);
+  m.run(`INSERT INTO strains (id, name, hbn_code, created_at, updated_at) VALUES ('s-dlh', 'Strain', '098', ?, ?)`, TS, TS);
+  const own = seedBatch(m, { id: "b-dlh-own", hbn: "26101-PNN-GH-098", serial: 901, farm: "PNN", strainId: "s-dlh" });
+  const toll = seedBatch(m, { id: "b-dlh-toll", hbn: "26102-PNS-GH-098", serial: 902, farm: "PNS", strainId: "s-dlh" });
+  m.run(`UPDATE harvest_batches SET customer = 'GreenCo' WHERE id = 'b-dlh-toll'`);
+  entry(m, "e-dlh-own", own);
+  entry(m, "e-dlh-toll", toll);
+  tote(m, "w-dlh-own-17", "e-dlh-own", 4480, "2026-10-17T15:00:00.000Z");
+  tote(m, "w-dlh-toll-17", "e-dlh-toll", 4480, "2026-10-17T16:00:00.000Z");
+  tote(m, "w-dlh-gone-17", "e-dlh-own", 9000, "2026-10-17T17:00:00.000Z", TS);
+  tote(m, "w-dlh-own-18", "e-dlh-own", 2240, "2026-10-18T15:00:00.000Z");
+  tote(m, "w-dlh-own-19", "e-dlh-own", 4480, "2026-10-19T15:00:00.000Z");
+  const labor = (id: string, farm: string, day: string, hours: number) =>
+    m.run(
+      `INSERT INTO harvest_labor_hours (id, farm_code, work_date, hours, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      id,
+      farm,
+      day,
+      hours,
+      TS,
+      TS
+    );
+  labor("h-july", "ALL", "2026-07-15", 8);
+  labor("h-17-all", "ALL", "2026-10-17", 10);
+  labor("h-17-pnn", "PNN", "2026-10-17", 3);
+  labor("h-19-pnn", "PNN", "2026-10-19", 2);
+  labor("h-19-arl", "ARL", "2026-10-19", 2);
+  labor("h-19-xxx", "XXX", "2026-10-19", 99);
+  return m;
+}
+
+function tileOf(html: string, key: string): string {
+  const at = html.indexOf(`data-dd-kpi="${key}"`);
+  return html.slice(html.lastIndexOf("<article", at), html.indexOf("</article>", at));
+}
+
+function chartDlh(html: string, period: string): string {
+  const token = `data-dd-dlh-chart="${period}"`;
+  const start = html.indexOf(token);
+  const next = html.indexOf("data-dd-dlh-chart=", start + token.length);
+  return html.slice(start, next === -1 ? undefined : next);
+}
+
+describe("Lbs per DLH series", () => {
+  it("the ALL row wins, a day without hours stores wet only, pre-season hours are skipped, toll wet counts, and a second refresh writes nothing", async () => {
+    const m = await dlhFloor();
+    const first = await refreshLbsPerDlh(m.db, NOW);
+    expect(first.year).toBe(2026);
+    expect(first.written).toBe(7);
+    expect(dlhRows(m).some((row) => String(row.period_start).startsWith("2026-07"))).toBe(false);
+    expect(dlhRows(m).filter((row) => row.period_start === "2026-10-17")).toEqual([
+      { period_start: "2026-10-17", dim_key: "", value: 2, n: 2 },
+      { period_start: "2026-10-17", dim_key: "hours", value: 10, n: 1 },
+      { period_start: "2026-10-17", dim_key: "wet_lb", value: 20, n: 2 },
+    ]);
+    expect(dlhRows(m).filter((row) => row.period_start === "2026-10-18")).toEqual([
+      { period_start: "2026-10-18", dim_key: "wet_lb", value: 5, n: 1 },
+    ]);
+    expect(dlhRows(m).filter((row) => row.period_start === "2026-10-19")).toEqual([
+      { period_start: "2026-10-19", dim_key: "", value: 2.5, n: 1 },
+      { period_start: "2026-10-19", dim_key: "hours", value: 4, n: 2 },
+      { period_start: "2026-10-19", dim_key: "wet_lb", value: 10, n: 1 },
+    ]);
+    expect(wetPounds(4480)).toBe(10);
+    const ids = m.all(`SELECT id FROM dd_kpi_values WHERE kpi_key = 'bizops.lbs_per_dlh' AND superseded_at IS NULL ORDER BY id`);
+    const second = await refreshLbsPerDlh(m.db, NOW);
+    expect(second.written).toBe(0);
+    expect(m.all(`SELECT id FROM dd_kpi_values WHERE kpi_key = 'bizops.lbs_per_dlh' AND superseded_at IS NULL ORDER BY id`)).toEqual(ids);
+  });
+
+  it("the stored day equals the console Total box", async () => {
+    const m = await dlhFloor();
+    await refreshLbsPerDlh(m.db, NOW);
+    const stored = (day: string) => {
+      const rows = dlhRows(m).filter((row) => row.period_start === day);
+      return {
+        wet: Number(rows.find((row) => row.dim_key === "wet_lb")?.value),
+        hours: Number(rows.find((row) => row.dim_key === "hours")?.value),
+        ratio: Number(rows.find((row) => row.dim_key === "")?.value),
+      };
+    };
+    const seventeenth = consoleBoxes(
+      consoleInput({
+        day: "2026-10-17",
+        dayWet: [
+          { farm: "PNN", wet_grams: 4480 },
+          { farm: "PNS", wet_grams: 4480 },
+        ],
+        hours: { PNN: 3, ARL: null, PNS: null },
+        harvestHoursAll: 10,
+      })
+    );
+    const day17 = stored("2026-10-17");
+    expect(metric(seventeenth, "weight_harvested")).toBe(`${format2(day17.wet)} lb`);
+    expect(Number(metric(seventeenth, "hours"))).toBe(day17.hours);
+    expect(metric(seventeenth, "weight_per_dlh")).toBe(`${format2(day17.ratio)} lb/h`);
+    const nineteenth = consoleBoxes(
+      consoleInput({
+        day: "2026-10-19",
+        dayWet: [{ farm: "PNN", wet_grams: 4480 }],
+        hours: { PNN: 2, ARL: 2, PNS: null },
+        harvestHoursAll: null,
+      })
+    );
+    const day19 = stored("2026-10-19");
+    expect(metric(nineteenth, "weight_harvested")).toBe(`${format2(day19.wet)} lb`);
+    expect(Number(metric(nineteenth, "hours"))).toBe(day19.hours);
+    expect(metric(nineteenth, "weight_per_dlh")).toBe(`${format2(day19.ratio)} lb/h`);
+  });
+});
+
+function dlhDay(day: string, wetLb: number | null, hours: number | null, ratio: number | null, n = 1): DlhDay {
+  return { day, wetLb, hours, ratio, n };
+}
+
+describe("Lbs per DLH tile", () => {
+  const days: DlhDay[] = [
+    dlhDay("2026-09-01", 50, 10, 5),
+    dlhDay("2026-10-01", 100, 10, 10),
+    dlhDay("2026-10-08", 40, 4, 10),
+    dlhDay("2026-10-13", 10, 1, 10),
+    dlhDay("2026-10-14", 10, 4, 2.5),
+    dlhDay("2026-10-15", 10, 4, 2.5),
+    dlhDay("2026-10-16", 8, null, null),
+    dlhDay("2026-10-17", 6, null, null),
+    dlhDay("2026-10-18", 20, 2, 10),
+    dlhDay("2026-10-19", 20, 2, 10),
+  ];
+
+  it("the four periods use summed wet over summed hours, a gap day has no point, and the goal line and hover are present", () => {
+    const html = lbsPerDlhBody({ today: "2026-10-19", days }, 26, "en");
+    expect(html).toContain('value="7"');
+    expect(html).toContain('value="14" selected');
+    expect(html).toContain('value="30"');
+    expect(html).toContain('value="htd"');
+    expect(chartDlh(html, "7")).toContain('data-dd-dlh-headline="6.5"');
+    expect(chartDlh(html, "7")).toContain('data-dd-dlh-wet="84"');
+    expect(chartDlh(html, "7")).toContain('data-dd-dlh-hours="13"');
+    expect(chartDlh(html, "14")).toContain('data-dd-dlh-headline="7.3"');
+    expect(chartDlh(html, "30")).toContain('data-dd-dlh-headline="8.3"');
+    expect(chartDlh(html, "htd")).toContain('data-dd-dlh-headline="7.4"');
+    const mean = (10 + 2.5 + 2.5 + 10 + 10) / 5;
+    expect(mean).toBe(7);
+    expect(dlhWeighted(days, harvestWindow("7", "2026-10-19", "2026-09-01")).ratio).toBeCloseTo(84 / 13, 8);
+    expect(chartDlh(html, "7")).toContain("2 days without hours");
+    expect(chartDlh(html, "7")).toContain('data-dd-dlh-segments="2"');
+    expect(chartDlh(html, "7")).toContain('data-dd-dlh-day="2026-10-16" data-dd-dlh-tip="Friday, Oct 16. no hours typed" data-dd-dlh-gap="1"');
+    expect(chartDlh(html, "7")).not.toContain('data-dd-dlh-day="2026-10-16" data-dd-dlh-tip="Friday, Oct 16. no hours typed" data-dd-dlh-gap="1" data-dd-dlh-point');
+    expect(chartDlh(html, "7")).toContain("Monday, Oct 19. 10.00 lb/DLH. 20.00 lb. 2 h. so far");
+    expect(chartDlh(html, "7")).toContain('data-dd-dlh-today="1"');
+    expect(chartDlh(html, "7")).toContain('data-dd-dlh-goal="26"');
+    expect(chartDlh(html, "7")).toContain("Goal 26");
+    expect(chartDlh(html, "7")).toContain("19.5 under");
+    expect(chartDlh(html, "7")).toContain('data-dd-dlh-tone="warn"');
+    expect(html).toContain("toll lots");
+    expect(DASH.test(html)).toBe(false);
+    const bare = lbsPerDlhBody(
+      { today: "2026-10-19", days: [dlhDay("2026-10-18", 4, null, null), dlhDay("2026-10-19", 4, null, null)] },
+      26,
+      "en"
+    );
+    expect(chartDlh(bare, "7")).toContain("No hours typed");
+    expect(chartDlh(bare, "7")).toContain("2 days without hours");
+    expect(chartDlh(bare, "7")).not.toContain("data-dd-dlh-point");
+    expect(DASH.test(bare)).toBe(false);
+    const es = lbsPerDlhBody({ today: "2026-10-19", days }, 26, "es");
+    expect(chartDlh(es, "7")).toContain("Meta 26");
+    expect(chartDlh(es, "7")).toContain("19.5 por debajo");
+    expect(chartDlh(es, "7")).toContain("2 dias sin horas");
+    expect(chartDlh(es, "7")).toContain("no hay horas escritas");
+    expect(es).toContain("lotes de cliente");
+    expect(DASH.test(es)).toBe(false);
+    expect(dlhSeriesFromRows([], "2026-10-19").days).toEqual([]);
+  });
+
+  it("the seeded goal is 26, and a newer target from the targets form takes over on its date", async () => {
+    const m = await dlhFloor();
+    await refreshLbsPerDlh(m.db, NOW);
+    const early = tileOf(directorWallPage(await loadDirectorWall(m.db, "bizops", "2026-10-01", null, null, NOW), "en"), "bizops.lbs_per_dlh");
+    expect(early).toContain("Goal 26");
+    expect(early).not.toContain("Goal 30");
+    seedPerson(m, "dd-actor");
+    await saveDirectorTarget(
+      m.db,
+      "bizops.lbs_per_dlh",
+      formOf({
+        person_id: "dd-actor",
+        dim_key: "",
+        period_kind: "day",
+        effective_from: "2026-10-19",
+        target: "30",
+        reason: "raise the goal",
+      }),
+      NOW
+    );
+    const later = tileOf(directorWallPage(await loadDirectorWall(m.db, "bizops", "2026-10-19", null, null, NOW), "en"), "bizops.lbs_per_dlh");
+    expect(later).toContain("Goal 30");
+    const still = tileOf(directorWallPage(await loadDirectorWall(m.db, "bizops", "2026-10-18", null, null, NOW), "en"), "bizops.lbs_per_dlh");
+    expect(still).toContain("Goal 26");
+    expect(still).not.toContain("Goal 30");
+    expect(DASH.test(later)).toBe(false);
   });
 });

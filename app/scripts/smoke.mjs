@@ -535,8 +535,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 105 migration(s)")) {
-      throw new Error(`from-zero apply must say 105 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 106 migration(s)")) {
+      throw new Error(`from-zero apply must say 106 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -10815,8 +10815,8 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     for (const status of ddStatuses) ddTally[status] = (ddTally[status] ?? 0) + 1;
     const ddTallyText = Object.entries(ddTally).map(([status, n]) => `${status} ${n}`).join(", ");
     assert(
-      ddWall.res.status === 200 && ddWall.body.includes('data-dd-wall="bizops"') && ddKpis.length >= 20 && ddStatuses.length === ddKpis.length,
-      `bizops wall expected 200 with at least 20 tiles each carrying a status, got ${ddWall.res.status} with ${ddKpis.length} tiles and ${ddStatuses.length} statuses (${ddTallyText})`
+      ddWall.res.status === 200 && ddWall.body.includes('data-dd-wall="bizops"') && ddKpis.length >= 20 && ddStatuses.length === ddKpis.length && !ddKpis.includes("bizops.lbs_shipped"),
+      `bizops wall expected 200 with at least 20 tiles each carrying a status, and Lbs shipped gone, got ${ddWall.res.status} with ${ddKpis.length} tiles and ${ddStatuses.length} statuses (${ddTallyText})`
     );
     assert(
       ddKpis.every((key, i) => {
@@ -10826,9 +10826,21 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
       }),
       `a from-zero wall reads no_data, out_of_season or parked, and Lbs Harvested may already be stored by the hourly cron, got ${ddTallyText}`
     );
-    assert(ddHome.body.includes('data-dd-recompute="lbs-harvested"'), "the director home must offer Recompute Lbs Harvested");
+    assert(ddHome.body.includes('data-dd-recompute="dashboard-series"'), "the director home must offer Recompute dashboard series");
+    const dlhNow = new Date().toISOString();
+    const dlhParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit" }).formatToParts(new Date(dlhNow));
+    const dlhPick = (type) => (dlhParts.find((part) => part.type === type) || {}).value || "";
+    let dlhDay = `${dlhPick("year")}-${dlhPick("month")}-${dlhPick("day")}`;
+    const dlhStart = Number((localD1All("SELECT value FROM app_config WHERE key = 'farm_day_start_hour' AND deleted_at IS NULL")[0] || {}).value || 6);
+    if (Number(dlhPick("hour")) < dlhStart) dlhDay = new Date(Date.parse(`${dlhDay}T00:00:00.000Z`) - 86400000).toISOString().slice(0, 10);
+    const dlhEntry = localD1All("SELECT id FROM wet_weight_entries WHERE deleted_at IS NULL LIMIT 1");
+    assert(dlhEntry.length === 1, "the smoke floor needs a wet entry before the DLH seed");
+    localD1(`INSERT INTO wet_weights (id, wet_weight_entry_id, weight_grams, created_at, updated_at) VALUES ('smoke-dlh-tote', '${dlhEntry[0].id}', 4480, '${dlhNow}', '${dlhNow}')`);
+    const dlhHours = localD1All(`SELECT id FROM harvest_labor_hours WHERE farm_code = 'ALL' AND work_date = '${dlhDay}'`);
+    if (dlhHours.length === 0) localD1(`INSERT INTO harvest_labor_hours (id, farm_code, work_date, hours, created_at, updated_at) VALUES ('smoke-dlh-hours', 'ALL', '${dlhDay}', 8, '${dlhNow}', '${dlhNow}')`);
+    else localD1(`UPDATE harvest_labor_hours SET hours = 8, updated_at = '${dlhNow}' WHERE id = '${dlhHours[0].id}'`);
     const ddRecompute = await req("/admin/director/recompute-lbs-harvested", { method: "POST", body: form({}) });
-    assert(ddRecompute.status === 303, `recompute Lbs Harvested expected 303 got ${ddRecompute.status}`);
+    assert(ddRecompute.status === 303, `recompute dashboard series expected 303 got ${ddRecompute.status}`);
     const ddHarvest = await text("/admin/director/bizops");
     const ddAt = ddHarvest.body.indexOf('data-dd-kpi="bizops.lbs_processed"');
     const ddTile = ddHarvest.body.slice(ddAt, ddHarvest.body.indexOf("</article>", ddAt));
@@ -10841,6 +10853,19 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
         ddTile.includes('href="/harvest#strain-performance"') &&
         !ddTile.includes("data-dd-question"),
       `Lbs Harvested tile expected a headline and bars after recompute, got ${ddTile.slice(0, 500)}`
+    );
+    const ddDlhAt = ddHarvest.body.indexOf('data-dd-kpi="bizops.lbs_per_dlh"');
+    const ddDlh = ddHarvest.body.slice(ddDlhAt, ddHarvest.body.indexOf("</article>", ddDlhAt));
+    assert(
+      ddDlhAt > 0 &&
+        ddDlh.includes("Lbs/Labor Hour vs Goal") &&
+        ddDlh.includes('data-dd-version="1"') &&
+        ddDlh.includes("data-dd-dlh-headline") &&
+        ddDlh.includes("Goal 26") &&
+        ddDlh.includes("data-dd-dlh-goal") &&
+        ddDlh.includes("lb/DLH") &&
+        !ddHarvest.body.includes('data-dd-kpi="bizops.lbs_shipped"'),
+      `Lbs/Labor Hour tile expected a headline, the goal and a chart, got ${ddDlh.slice(0, 500)}`
     );
     const ddNope = await text("/admin/director/nope");
     assert(ddNope.res.status === 404, `an unknown department expected 404 got ${ddNope.res.status}`);

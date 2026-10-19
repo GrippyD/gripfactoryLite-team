@@ -4979,6 +4979,18 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "{n} totes": { en: "{n} totes", es: "{n} totes" },
   "Recompute Lbs Harvested": { en: "Recompute Lbs Harvested", es: "Recalcular libras cosechadas" },
   "Lbs Harvested": { en: "Lbs Harvested", es: "Libras cosechadas" },
+  "Recompute dashboard series": { en: "Recompute dashboard series", es: "Recalcular series del tablero" },
+  "lb/DLH": { en: "lb/DLH", es: "lb/DLH" },
+  "No hours typed": { en: "No hours typed", es: "No hay horas escritas" },
+  "no hours typed": { en: "no hours typed", es: "no hay horas escritas" },
+  "{n} days without hours": { en: "{n} days without hours", es: "{n} dias sin horas" },
+  "{n} day without hours": { en: "{n} day without hours", es: "{n} dia sin horas" },
+  "{n} under": { en: "{n} under", es: "{n} por debajo" },
+  "{n} over": { en: "{n} over", es: "{n} por encima" },
+  "Wet pounds include toll lots, because crew hours cover them. Lbs Harvested counts own lots only.": {
+    en: "Wet pounds include toll lots, because crew hours cover them. Lbs Harvested counts own lots only.",
+    es: "Las libras humedas incluyen lotes de cliente, porque las horas de la cuadrilla los cubren. Libras cosechadas cuenta solo lotes propios.",
+  },
 };
 
 const FORMULA_ERRORS: Array<[string, string]> = [
