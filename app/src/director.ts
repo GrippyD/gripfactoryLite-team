@@ -34,11 +34,15 @@ import {
   type DdSourceKind,
   type DdUnit,
 } from "./directorregistry";
+import { LBS_HARVESTED_KPI, lbsHarvestedBody, seriesFromRows, type LbsHarvestedSeries } from "./ddsnapshot";
 import { dayOffset, etWallClock, isCalendarDate, isoWeekOf, periodLabel, periodShift, periodStartFor, type PeriodKind } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
 import { esc, tabBar } from "./ui";
 
 export const DIRECTOR_PATH = "/admin/director";
+
+/** Admin PIN, already on /admin. Recomputes the Lbs Harvested series now. */
+export const DIRECTOR_RECOMPUTE_LBS_PATH = `${DIRECTOR_PATH}/recompute-lbs-harvested`;
 
 /** The questions page. S1 links here; S2b serves it. */
 export const DIRECTOR_QUESTIONS_PATH = `${DIRECTOR_PATH}/questions`;
@@ -186,6 +190,8 @@ export type DirectorTile = {
   /** The periods of the sparkline window that have a live row, oldest first, the shown period last. */
   history: DdHistoryPoint[];
   companions: DirectorTile[];
+  /** The stored Lbs Harvested days, on that one tile. Null on every other tile. */
+  harvest: LbsHarvestedSeries | null;
 };
 
 export type DirectorWallGroup = { cadence: DdCadence; periodKind: DdPeriodKind; periodStart: string; tiles: DirectorTile[] };
@@ -269,6 +275,11 @@ const WALL_TARGETS_SQL = `SELECT id, kpi_key, dim_key, period_kind, effective_fr
   FROM dd_targets
   WHERE deleted_at IS NULL
     AND kpi_key IN (SELECT kpi_key FROM dd_kpis WHERE active = 1 AND (',' || wall_keys || ',') LIKE ?)`;
+
+/** Every live app day of Lbs Harvested, farms and the total. The wall reads this; it does not compute it. */
+const HARVEST_SERIES_SQL = `SELECT period_start, dim_key, value, n FROM dd_kpi_values
+  WHERE kpi_key = '${LBS_HARVESTED_KPI}' AND period_kind = 'day' AND source = 'app' AND superseded_at IS NULL
+  ORDER BY period_start, dim_key`;
 
 const QUESTION_COUNTS_SQL = `SELECT status, COUNT(*) AS n FROM dd_kpi_questions GROUP BY status`;
 
@@ -442,7 +453,12 @@ function dayForCadence(cadence: DdCadence, farmToday: string, tab: DdCadence | n
   return tab === cadence && periodDay ? periodDay : farmToday;
 }
 
-function buildTile(kpi: DdKpi, model: Pick<DirectorWallModel, "farmToday" | "nowIso" | "cadence" | "periodDay" | "config">, values: Map<string, DdSnapshot>): DirectorTile {
+function buildTile(
+  kpi: DdKpi,
+  model: Pick<DirectorWallModel, "farmToday" | "nowIso" | "cadence" | "periodDay" | "config">,
+  values: Map<string, DdSnapshot>,
+  harvest: LbsHarvestedSeries | null
+): DirectorTile {
   const periodKind = ddPeriodKindOf(kpi.cadence);
   const day = dayForCadence(kpi.cadence, model.farmToday, model.cadence, model.periodDay);
   const periodStart = periodStartFor(periodKind, day, { seasonStartDate: model.config.seasonStartDate, seasonStartMd: kpi.season_start_md });
@@ -454,7 +470,7 @@ function buildTile(kpi: DdKpi, model: Pick<DirectorWallModel, "farmToday" | "now
   }
   const snapshot = values.get(`${kpi.kpi_key}|${periodKind}|${periodStart}`) ?? null;
   const inSeason = ddInSeason(kpi, model.farmToday);
-  return { kpi, periodKind, periodStart, inSeason, status: ddTileStatus(kpi, snapshot, inSeason, model.nowIso), snapshot, history, companions: [] };
+  return { kpi, periodKind, periodStart, inSeason, status: ddTileStatus(kpi, snapshot, inSeason, model.nowIso), snapshot, history, companions: [], harvest };
 }
 
 /** A wall: one batch (registry, the wall's live rows over the widest history window, config); tiles grouped by
@@ -482,6 +498,7 @@ export async function loadDirectorWall(
     db.prepare(WALL_VALUES_SQL).bind(`%,${dept},%`, ...bounds),
     configStatement(db),
     db.prepare(WALL_TARGETS_SQL).bind(`%,${dept},%`),
+    db.prepare(HARVEST_SERIES_SQL),
   ]);
   const registry = registryFromRows(resultsOf(results[0]));
   const values = new Map<string, DdSnapshot>();
@@ -494,11 +511,12 @@ export async function loadDirectorWall(
   const title = DD_DEPARTMENTS.find((row) => row.dept_key === dept)?.title_en ?? dept;
   const base = { farmToday, nowIso, cadence: tab, periodDay, config };
   const rows = ddKpisForWall(registry, dept);
+  const harvestSeries = seriesFromRows(resultsOf(results[4]), farmToday);
   const onWall = new Set(rows.map((row) => row.kpi_key));
   const tiles = new Map<string, DirectorTile>();
   const headlines: DirectorTile[] = [];
   for (const kpi of rows) {
-    const tile = buildTile(kpi, base, values);
+    const tile = buildTile(kpi, base, values, kpi.kpi_key === LBS_HARVESTED_KPI ? harvestSeries : null);
     tiles.set(kpi.kpi_key, tile);
     if (!(kpi.companion_of && onWall.has(kpi.companion_of))) headlines.push(tile);
   }
@@ -642,17 +660,21 @@ function tileHtml(tile: DirectorTile, group: DirectorWallGroup, locale: Locale, 
     : "";
   const period = tile.periodStart !== group.periodStart ? `<span class="dd-tile-period">${esc(periodLabel(tile.periodKind, tile.periodStart, locale))}</span>` : "";
   const companions = tile.companions.length > 0 ? `<ul class="dd-companions">${tile.companions.map((row) => companionHtml(row, locale)).join("")}</ul>` : "";
-  return `<article class="dd-tile dd-tile-${esc(tile.status)}${tile.inSeason ? "" : " dd-out"}${stale ? " dd-stale" : ""}" data-dd-kpi="${esc(kpi.kpi_key)}" data-dd-status="${esc(tile.status)}" data-dd-cadence="${esc(kpi.cadence)}" data-dd-period="${esc(tile.periodStart)}" data-dd-unit="${esc(kpi.unit)}">
+  const harvest = tile.harvest && tile.harvest.days.length > 0 ? lbsHarvestedBody(tile.harvest, locale, lbGrams) : "";
+  const body = harvest
+    ? harvest
+    : `${valueHtml(tile, locale, lbGrams)}
+      ${goalHtml(tile, locale)}
+      <span class="dd-tile-meta">${badgeHtml(tile, locale)}${sourceHtml(tile, locale)}${period}</span>
+      ${ddSparklineSvg(tile.history)}
+      ${companions}`;
+  return `<article class="dd-tile dd-tile-${esc(tile.status)}${tile.inSeason ? "" : " dd-out"}${stale ? " dd-stale" : ""}${harvest ? " dd-tile-wide" : ""}" data-dd-kpi="${esc(kpi.kpi_key)}" data-dd-status="${esc(tile.status)}" data-dd-cadence="${esc(kpi.cadence)}" data-dd-period="${esc(tile.periodStart)}" data-dd-unit="${esc(kpi.unit)}">
       ${stale}
       <span class="dd-tile-head">
         <a class="dd-tile-title" href="${esc(directorKpiPath(kpi.kpi_key))}">${esc(kpiTitle(kpi, locale))}</a>
         <span class="dd-tile-flags">${question}<span class="dd-version" title="${esc(t(locale, "Definition version"))}" data-dd-version="${esc(kpi.def_version)}">v${esc(kpi.def_version)}</span></span>
       </span>
-      ${valueHtml(tile, locale, lbGrams)}
-      ${goalHtml(tile, locale)}
-      <span class="dd-tile-meta">${badgeHtml(tile, locale)}${sourceHtml(tile, locale)}${period}</span>
-      ${ddSparklineSvg(tile.history)}
-      ${companions}
+      ${body}
     </article>`;
 }
 
@@ -723,7 +745,10 @@ export function directorHomePage(model: DirectorHomeModel, locale: Locale = "en"
       <a href="${DIRECTOR_QUESTIONS_PATH}">${esc(t(locale, "Questions"))}</a>
       <a href="${DIRECTOR_IMPORT_PATH}" data-dd-import>${esc(t(locale, "Import"))}</a>:
       ${esc(t(locale, "Open questions"))} ${esc(q.open)}. ${esc(t(locale, "Ruled"))} ${esc(q.ruled)}. ${esc(t(locale, "Parked"))} ${esc(q.parked)}.
-    </p>`;
+    </p>
+    <form method="post" action="${esc(DIRECTOR_RECOMPUTE_LBS_PATH)}" data-dd-recompute="lbs-harvested">
+      <button type="submit">${esc(t(locale, "Recompute Lbs Harvested"))}</button>
+    </form>`;
 }
 
 /* ----------------------------------------------------- DD S2a: hand entry */

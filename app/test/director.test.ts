@@ -159,10 +159,22 @@ describe("DD S1 migration 0105: the registry seed", () => {
       expect(walls.includes(String(row.dept_key)), `${key} shows on its own wall`).toBe(true);
       if (row.companion_of != null) expect(keys.has(String(row.companion_of)), `${key} companion_of`).toBe(true);
       if (row.config_key != null) expect((DD_CONFIG_KEYS as readonly string[]).includes(String(row.config_key)), `${key} config_key`).toBe(true);
-      expect(Number(row.def_version)).toBe(1);
+      if (key === "bizops.lbs_processed") {
+        expect(Number(row.def_version)).toBe(2);
+        expect(row.updated_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(row.title_en).toBe("Lbs Harvested");
+        expect(row.title_es).toBe("Libras cosechadas");
+        expect(row.dims).toBe("farm");
+        expect(row.open_question_en).toBeNull();
+        expect(row.open_question_es).toBeNull();
+        expect(row.config_key).toBeNull();
+        expect(String(row.compute_key)).toContain("yearWet");
+      } else {
+        expect(Number(row.def_version)).toBe(1);
+        expect(row.updated_at).toBe(DD_SEED_AT);
+      }
       expect(Number(row.active)).toBe(1);
       expect(row.created_at).toBe(DD_SEED_AT);
-      expect(row.updated_at).toBe(DD_SEED_AT);
       // The season window is a pair of MM-DD or nothing.
       expect((row.season_start_md == null) === (row.season_end_md == null), `${key} season window`).toBe(true);
       if (row.season_start_md != null) expect(String(row.season_start_md)).toMatch(/^\d{2}-\d{2}$/);
@@ -264,10 +276,16 @@ describe("DD S1 migration 0105: the registry seed", () => {
       expect((DD_CONFIG_KEYS as readonly string[]).includes(String(row.config_key)), `${q.question_key} config_key`).toBe(true);
       expect(row.ruled_by).toBeNull();
       if (row.status === "ruled") {
-        expect(row.ruling).toBe(q.default_value);
-        expect(row.ruled_at).toBe(DD_SEED_AT);
-        expect(row.reason).toBe(DD_QUESTIONS_REASON);
-        // The ruling is the seeded config value.
+        if (q.question_key === "processed_lbs") {
+          expect(row.ruling).toBe("wet_harvested");
+          expect(row.ruled_at).toBe("2026-10-19T00:00:00.000Z");
+          expect(row.reason).toBe("owner 2026-10-19: Lbs processed means wet lbs harvested");
+        } else {
+          expect(row.ruling).toBe(q.default_value);
+          expect(row.ruled_at).toBe(DD_SEED_AT);
+          expect(row.reason).toBe(DD_QUESTIONS_REASON);
+        }
+        // The seeded config value stays the recommendation. The 0106 ruling on processed_lbs is wet_harvested.
         expect(DD_CONFIG_DEFAULTS[q.config_key as keyof typeof DD_CONFIG_DEFAULTS]).toBe(q.default_value);
       } else {
         expect(row.ruling).toBeNull();
@@ -649,17 +667,20 @@ describe("DD S1 pages: the home and the walls", () => {
     const headlineTiles = model.groups.flatMap((group) => group.tiles);
     const headlines = headlineTiles.length;
     const textHeadlines = headlineTiles.filter((tile) => tile.kpi.unit === "text").length;
+    const harvestTiles = headlineTiles.filter((tile) => tile.harvest && tile.harvest.days.length > 0).length;
     const eight = [...html.matchAll(/data-dd-spark-points="(\d+)"/g)].map((x) => Number(x[1]));
-    expect(eight).toHaveLength(headlines);
-    expect(eight.filter((n) => n === 8)).toHaveLength(headlines - textHeadlines);
+    expect(eight).toHaveLength(headlines - harvestTiles);
+    expect(eight.filter((n) => n === 8)).toHaveLength(headlines - textHeadlines - harvestTiles);
     expect(eight.filter((n) => n === 0)).toHaveLength(textHeadlines);
     for (const tile of headlineTiles) expect(tile.history, tile.kpi.kpi_key).toHaveLength(8);
     m.run(`UPDATE app_config SET value = '6' WHERE key = 'dd_history_periods'`);
     const sixModel = await loadDirectorWall(m.db, "bizops", DAY, null, null, NOW);
     expect(sixModel.config.historyPeriods).toBe(6);
+    const sixHeadlines = sixModel.groups.flatMap((group) => group.tiles);
+    const sixHarvest = sixHeadlines.filter((tile) => tile.harvest && tile.harvest.days.length > 0).length;
     const six = [...directorWallPage(sixModel, "en").matchAll(/data-dd-spark-points="(\d+)"/g)].map((x) => Number(x[1]));
-    expect(six).toHaveLength(headlines);
-    expect(six.filter((n) => n === 6)).toHaveLength(headlines - textHeadlines);
+    expect(six).toHaveLength(sixHeadlines.length - sixHarvest);
+    expect(six.filter((n) => n === 6)).toHaveLength(sixHeadlines.length - sixHeadlines.filter((tile) => tile.kpi.unit === "text").length - sixHarvest);
     for (const tile of sixModel.groups.flatMap((group) => group.tiles)) {
       expect(tile.history).toHaveLength(6);
       expect(tile.history[5]?.period_start).toBe(tile.periodStart);
@@ -711,7 +732,7 @@ describe("DD S1 pages: the home and the walls", () => {
   it("a snapshot older than stale_after_hours renders stale with the stripe; a fresh one without a goal has no verdict", async () => {
     const m = await migratedDb();
     const wallRows = ddKpisForWall(DD_KPIS, "bizops");
-    const kpi = wallRows.find((row) => row.stale_after_hours != null && row.companion_of == null && ddInSeason(row, DAY) && row.status === "live") as DdKpi;
+    const kpi = wallRows.find((row) => row.kpi_key !== "bizops.lbs_processed" && row.stale_after_hours != null && row.companion_of == null && ddInSeason(row, DAY) && row.status === "live") as DdKpi;
     expect(kpi).toBeTruthy();
     const other = wallRows.find((row) => row.kpi_key !== kpi.kpi_key && row.companion_of == null && ddInSeason(row, DAY) && row.status === "live") as DdKpi;
     const kind = ddPeriodKindOf(kpi.cadence);
@@ -1375,23 +1396,24 @@ describe("DD S2b: targets, questions, and CSV import", () => {
     expect(html).toContain('data-dd-target-form');
     m.run(
       `INSERT INTO dd_kpi_values (id, kpi_key, period_kind, period_start, dim_key, value, goal, source, computed_at, def_version, created_at)
-       VALUES ('g1', 'bizops.lbs_processed', 'day', ?, '', 10, NULL, 'app', ?, 1, ?)`,
+       VALUES ('g1', 'harvest.wet_weight_lb', 'day', ?, '', 10, NULL, 'app', ?, 1, ?)`,
       DAY,
       NOW,
       NOW
     );
     m.run(
       `INSERT INTO dd_targets (id, kpi_key, dim_key, period_kind, effective_from, target, created_at, updated_at)
-       VALUES ('tg1', 'bizops.lbs_processed', '', 'day', '2026-01-01', 40, ?, ?)`,
+       VALUES ('tg1', 'harvest.wet_weight_lb', '', 'day', '2026-01-01', 40, ?, ?)`,
       NOW,
       NOW
     );
     const wall = await loadDirectorWall(m.db, "bizops", DAY, null, null, NOW);
-    const tile = wall.groups.flatMap((group) => group.tiles.concat(group.tiles.flatMap((item) => item.companions))).find((item) => item.kpi.kpi_key === "bizops.lbs_processed");
+    const tile = wall.groups.flatMap((group) => group.tiles.concat(group.tiles.flatMap((item) => item.companions))).find((item) => item.kpi.kpi_key === "harvest.wet_weight_lb");
     expect(tile?.snapshot?.goal).toBe(40);
     expect(directorWallPage(wall, "en")).toContain('data-dd-goal="40"');
     const home = directorHomePage(await loadDirectorHome(m.db, DAY, NOW), "en");
     expect(home).toContain('data-dd-import');
+    expect(home).toContain('data-dd-recompute="lbs-harvested"');
     expect(home).toContain('href="/admin/director/import"');
     expect(home).toContain('href="/admin/director/questions"');
   });
@@ -1430,7 +1452,7 @@ describe("DD S2b: targets, questions, and CSV import", () => {
     person(weekDb);
     expect(DD_KPIS.filter((row) => row.cadence === "weekly")).toHaveLength(33);
     await ruleDirectorQuestion(weekDb.db, "week_definition", form({ value: "harvest", reason: "label" }), DAY, NOW);
-    expect(weekDb.get(`SELECT COUNT(*) AS n FROM dd_kpis WHERE def_version = 2`)?.n).toBe(33);
+    expect(weekDb.get(`SELECT COUNT(*) AS n FROM dd_kpis WHERE def_version = 2`)?.n).toBe(34);
     expect(weekDb.get(`SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'dd_kpis' AND field = 'def_version' AND new_value = '2'`)?.n).toBe(33);
     const m = await migratedDb();
     person(m);

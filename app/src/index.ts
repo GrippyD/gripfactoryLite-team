@@ -510,7 +510,8 @@ import { loadStrainPerformance } from "./strainperformance";
 import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { loadFgInventory } from "./fginventory";
 import { harvestDashboardPage, loadHarvestDashboard } from "./harvestdashboard";
-import { DIRECTOR_PATH, directorDetailPage, directorGridPage, directorHomePage, directorWallPage, isDdDeptKey, loadDirectorDetail, loadDirectorGrid, loadDirectorHome, loadDirectorWall, saveDirectorGrid } from "./director";
+import { DIRECTOR_PATH, DIRECTOR_RECOMPUTE_LBS_PATH, directorDetailPage, directorGridPage, directorHomePage, directorWallPage, isDdDeptKey, loadDirectorDetail, loadDirectorGrid, loadDirectorHome, loadDirectorWall, saveDirectorGrid } from "./director";
+import { refreshLbsHarvested } from "./ddsnapshot";
 import {
   commitDirectorImport,
   directorImportPage,
@@ -1700,6 +1701,13 @@ app.post(`${DIRECTOR_PATH}/:dept/enter`, async (c) => {
     now
   );
   return c.redirect(result.redirect, 303);
+});
+
+app.post(DIRECTOR_RECOMPUTE_LBS_PATH, async (c) => {
+  const now = nowIso();
+  const harvested = await refreshLbsHarvested(c.env.DB, now);
+  console.log(`[lbs harvested] wrote ${harvested.written} rows`);
+  return c.redirect(`${DIRECTOR_PATH}/bizops`, 303);
 });
 
 app.get(`${DIRECTOR_PATH}/:dept`, async (c) => {
@@ -4714,6 +4722,14 @@ function scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext):
           console.log(`[sensors] rolled ${rolled.hours} hours, ${rolled.readings} readings, through ${rolled.through}, purged ${rolled.purged}`);
         } catch {
           console.log("[sensors] rollup failed");
+        }
+        if (cron === "15 * * * *") {
+          try {
+            const harvested = await refreshLbsHarvested(env.DB, nowIso());
+            console.log(`[lbs harvested] wrote ${harvested.written} rows`);
+          } catch {
+            console.log("[lbs harvested] refresh failed");
+          }
         }
       })();
   ctx.waitUntil(run);

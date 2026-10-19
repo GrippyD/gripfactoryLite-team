@@ -535,8 +535,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 104 migration(s)")) {
-      throw new Error(`from-zero apply must say 104 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 105 migration(s)")) {
+      throw new Error(`from-zero apply must say 105 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -10798,8 +10798,8 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     // DIRECTOR DASHBOARD (S1, 2026-10-15): the Admin tile, the home with its five
     // department cards, the bizops wall with every tile carrying a status, an
     // unknown department answering 404, and the farmops wall on its weekly tab.
-    // Nothing is computed on load, so every tile reads no_data or out_of_season
-    // here; the statuses print in the assert message.
+    // Nothing is computed on load. The hourly cron earlier in this smoke may
+    // already have stored Lbs Harvested, so that one tile can read no_goal.
     const ddAdmin = await text("/admin");
     assert(ddAdmin.res.status === 200 && ddAdmin.body.includes('data-admin-group="director"'), `Admin must carry the Director Dashboard tile, got ${ddAdmin.res.status}`);
     const ddHome = await text("/admin/director");
@@ -10818,7 +10818,30 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
       ddWall.res.status === 200 && ddWall.body.includes('data-dd-wall="bizops"') && ddKpis.length >= 20 && ddStatuses.length === ddKpis.length,
       `bizops wall expected 200 with at least 20 tiles each carrying a status, got ${ddWall.res.status} with ${ddKpis.length} tiles and ${ddStatuses.length} statuses (${ddTallyText})`
     );
-    assert(ddStatuses.every((status) => status === "no_data" || status === "out_of_season" || status === "parked"), `a from-zero wall reads no_data, out_of_season or parked only, got ${ddTallyText}`);
+    assert(
+      ddKpis.every((key, i) => {
+        const status = ddStatuses[i];
+        if (key === "bizops.lbs_processed") return status === "no_goal" || status === "no_data";
+        return status === "no_data" || status === "out_of_season" || status === "parked";
+      }),
+      `a from-zero wall reads no_data, out_of_season or parked, and Lbs Harvested may already be stored by the hourly cron, got ${ddTallyText}`
+    );
+    assert(ddHome.body.includes('data-dd-recompute="lbs-harvested"'), "the director home must offer Recompute Lbs Harvested");
+    const ddRecompute = await req("/admin/director/recompute-lbs-harvested", { method: "POST", body: form({}) });
+    assert(ddRecompute.status === 303, `recompute Lbs Harvested expected 303 got ${ddRecompute.status}`);
+    const ddHarvest = await text("/admin/director/bizops");
+    const ddAt = ddHarvest.body.indexOf('data-dd-kpi="bizops.lbs_processed"');
+    const ddTile = ddHarvest.body.slice(ddAt, ddHarvest.body.indexOf("</article>", ddAt));
+    assert(
+      ddHarvest.res.status === 200 &&
+        ddTile.includes("Lbs Harvested") &&
+        ddTile.includes('data-dd-version="2"') &&
+        ddTile.includes("data-dd-harvest-headline") &&
+        ddTile.includes("data-dd-bar") &&
+        ddTile.includes('href="/harvest#strain-performance"') &&
+        !ddTile.includes("data-dd-question"),
+      `Lbs Harvested tile expected a headline and bars after recompute, got ${ddTile.slice(0, 500)}`
+    );
     const ddNope = await text("/admin/director/nope");
     assert(ddNope.res.status === 404, `an unknown department expected 404 got ${ddNope.res.status}`);
     const ddWeekly = await text("/admin/director/farmops?cadence=weekly");

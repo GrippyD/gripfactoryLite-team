@@ -4970,6 +4970,15 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Thursday": { en: "Thursday", es: "jueves" },
   "Friday": { en: "Friday", es: "viernes" },
   "Saturday": { en: "Saturday", es: "sabado" },
+  "7 days": { en: "7 days", es: "7 dias" },
+  "14 days": { en: "14 days", es: "14 dias" },
+  "30 days": { en: "30 days", es: "30 dias" },
+  HTD: { en: "HTD", es: "HTD" },
+  "HTD, {start} to {end}": { en: "HTD, {start} to {end}", es: "HTD, {start} a {end}" },
+  "so far": { en: "so far", es: "hasta ahora" },
+  "{n} totes": { en: "{n} totes", es: "{n} totes" },
+  "Recompute Lbs Harvested": { en: "Recompute Lbs Harvested", es: "Recalcular libras cosechadas" },
+  "Lbs Harvested": { en: "Lbs Harvested", es: "Libras cosechadas" },
 };
 
 const FORMULA_ERRORS: Array<[string, string]> = [

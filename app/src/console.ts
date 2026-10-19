@@ -1181,6 +1181,11 @@ function foldScript(): string {
       else if (stored[name] === "0") el.removeAttribute("open");
     });
   }
+  var hash = (location.hash || "").replace(/^#/, "");
+  if (hash) {
+    var named = document.getElementById(hash);
+    if (named && named.tagName === "DETAILS") named.setAttribute("open", "");
+  }
   function write() {
     var next = { pasteurization_built: "1" };
     sections.forEach(function (el) {
