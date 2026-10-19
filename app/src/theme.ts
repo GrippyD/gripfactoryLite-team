@@ -493,6 +493,20 @@ main:has(.dd-wall), main:has(.dd-cards), main:has(.dd-grid), main:has(.dd-checki
 .dd-period { font-weight: 600; }
 .dd-stepper { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
 .dd-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 0.8rem; }
+.dd-tile-wide { grid-column: span 2; min-width: 0; }
+.dd-harvest { position: relative; min-width: 0; max-width: 100%; }
+.dd-harvest-range { margin: 0; font-size: 0.78rem; }
+.dd-harvest-period { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; margin: 0.15rem 0 0.35rem; font-size: 0.82rem; }
+.dd-harvest-period select { max-width: 100%; }
+.dd-harvest svg { display: block; width: 100%; height: auto; max-width: 100%; color: ${accent}; }
+.dd-harvest-bar { fill: currentColor; }
+.dd-harvest-bar-today { fill: none; stroke: currentColor; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.dd-harvest-trend { fill: none; stroke: var(--ink, var(--text, currentColor)); stroke-width: 1.25; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.dd-harvest-grid { stroke: var(--line, var(--border, currentColor)); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.dd-harvest-label { fill: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); font-size: 11px; }
+.dd-harvest-tip { margin: 0.25rem 0; padding: 0.35rem 0.5rem; font-size: 0.78rem; background: var(--panel, var(--surface, transparent)); color: var(--ink, var(--text, currentColor)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); }
+.dd-harvest-link { font-size: 0.85rem; }
+@media (max-width: 820px) { .dd-tile-wide { grid-column: 1 / -1; } }
 .dd-tile { position: relative; display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; overflow: hidden; background: color-mix(in srgb, ${accent} 4%, var(--panel, var(--surface, transparent))); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); padding: 0.7rem 0.9rem 0.8rem; }
 .dd-tile-on_goal { border-left: 4px solid var(--ok, var(--accent, currentColor)); }
 .dd-tile-off_goal { border-left: 4px solid var(--danger, var(--alert, currentColor)); }
@@ -563,6 +577,7 @@ body.device-phone .dd-checkin-save button { width: 100%; }
 .dd-def dd { margin: 0; overflow-wrap: anywhere; }
 .dd-hist-val { display: inline-block; margin-right: 0.4rem; }
 body.device-phone .dd-cards, body.device-phone .dd-tiles { grid-template-columns: 1fr; }
+body.device-phone .dd-tile-wide { grid-column: 1 / -1; width: 100%; max-width: 100%; }
 body.device-phone .dd-grid-table, body.device-phone .dd-detail-table, body.device-phone .dd-grid-table tbody, body.device-phone .dd-detail-table tbody, body.device-phone .dd-grid-table tr, body.device-phone .dd-detail-table tr, body.device-phone .dd-grid-table th, body.device-phone .dd-detail-table th, body.device-phone .dd-grid-table td, body.device-phone .dd-detail-table td { display: block; width: 100%; }
 body.device-phone .dd-grid-table thead, body.device-phone .dd-detail-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 body.device-phone .dd-grid-table td::before, body.device-phone .dd-detail-table td::before { content: attr(data-label); display: block; font-weight: 600; font-size: 0.78rem; }

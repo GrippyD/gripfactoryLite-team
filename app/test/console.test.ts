@@ -181,7 +181,8 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(html).toContain("<h1>Harvest Console</h1>");
     expect(html).toContain('<details class="hc-section" data-hc-section="plants" open>');
     expect(html).toContain('<summary>Plants <span class="muted hc-year">Harvest year 2026</span></summary>');
-    expect(html).toContain('<details class="hc-section" data-hc-section="strain_performance">');
+    expect(html).toContain('<details class="hc-section" id="strain-performance" data-hc-section="strain_performance">');
+    expect(html).toContain("document.getElementById(hash)");
     expect(html).toContain('<summary>Strain performance <span class="muted hc-year">Harvest year 2026</span></summary>');
     expect(html).not.toContain('data-hc-section="strain_performance" open');
     expect(html).toContain('<details class="hc-section" data-hc-section="drying">');

@@ -550,7 +550,7 @@ export function strainPerformanceSection(model: StrainPerformanceModel, year: nu
           })
         )}</p>`
       : "";
-  return `<details class="hc-section" data-hc-section="strain_performance">
+  return `<details class="hc-section" id="strain-performance" data-hc-section="strain_performance">
       <summary>${esc(t(locale, "Strain performance"))} <span class="muted hc-year">${esc(t(locale, "Harvest year"))} ${esc(String(year))}</span></summary>
       <div class="report-scroll" data-sp-scroll>
         <table class="data" data-sp-table>

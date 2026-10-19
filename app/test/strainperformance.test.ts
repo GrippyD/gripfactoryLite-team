@@ -246,7 +246,7 @@ describe("SP1 strain performance", () => {
       estimates: [],
     });
     const html = strainPerformanceSection(model, 2026, "en");
-    expect(html.startsWith('<details class="hc-section" data-hc-section="strain_performance">')).toBe(true);
+    expect(html.startsWith('<details class="hc-section" id="strain-performance" data-hc-section="strain_performance">')).toBe(true);
     expect(html).not.toContain('data-hc-section="strain_performance" open');
     expect(html).toContain('<summary>Strain performance <span class="muted hc-year">Harvest year 2026</span></summary>');
     expect(html).toContain('class="report-scroll" data-sp-scroll');

@@ -308,6 +308,8 @@ type KpiInput = Omit<
   companion_of?: string | null;
   status?: DdStatus;
   open_question_es: string | null;
+  def_version?: number;
+  active?: number;
 };
 
 const K = (row: KpiInput): Omit<DdKpi, "sort"> => {
@@ -331,13 +333,13 @@ const K = (row: KpiInput): Omit<DdKpi, "sort"> => {
     source_kind: row.source_kind,
     stale_after_hours: row.stale_after_hours,
     status: row.status ?? "live",
-    def_version: 1,
+    def_version: row.def_version ?? 1,
     open_question_en: row.open_question_en,
     open_question_es: row.open_question_es,
     config_key: row.config_key ?? null,
     companion_of: row.companion_of ?? null,
     workbook_rows: row.workbook_rows,
-    active: 1,
+    active: row.active ?? 1,
   };
 };
 
@@ -347,26 +349,52 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
     kpi_key: "bizops.lbs_processed",
     dept_key: "bizops",
     wall_keys: "bizops",
-    title_en: "Lbs processed",
-    title_es: "Libras procesadas",
+    title_en: "Lbs Harvested",
+    title_es: "Libras cosechadas",
     unit: "lb448",
     cadence: "daily",
     season: "10-01 to 12-31",
-    dims: "bucket",
+    dims: "farm",
     compute_key:
-      "console.trimFigures over the trim day SQL (src/console.ts:2884-2892, :465-559) for the trim bucket; pasteurizationFigures for cryo; loadPrepackSection for prepack; buckets side by side, never summed; rad is not a bucket",
+      "wet_weights of own lots of the harvest year (the console yearWet law, src/console.ts yearWet) summed by the tote's farm day; grams over 448; HTD is the harvest year's sum",
     source_kind: "app",
     stale_after_hours: 30,
-    open_question_en: "Trim line only, or every line (debate processed_lbs)",
-    open_question_es: "Solo la línea de recorte, o todas las líneas (debate processed_lbs)",
-    config_key: "dd_processed_lbs_buckets",
+    status: "live",
+    def_version: 2,
+    open_question_en: null,
+    open_question_es: null,
+    config_key: null,
     workbook_rows: "14",
+  }),
+  K({
+    kpi_key: "bizops.lbs_per_dlh",
+    dept_key: "bizops",
+    wall_keys: "bizops",
+    title_en: "Lbs/Labor Hour vs Goal",
+    title_es: "Libras por hora de mano de obra vs meta",
+    unit: "ratio",
+    cadence: "daily",
+    dims: "",
+    goal_kind: "targets",
+    goal_ref: "dd_targets",
+    goal_direction: "at_least",
+    compute_key:
+      "consoleBoxes perDlh law (src/console.ts, the Total box): the farm day's wet grams over 448, every lot (the day SQL, no own lot filter), over the day's harvest hours (the ALL row of harvest_labor_hours, else the sum of the farm rows); the period figure is the window's wet lb over the window's hours",
+    source_kind: "app",
+    stale_after_hours: 30,
+    status: "live",
+    def_version: 1,
+    open_question_en: null,
+    open_question_es: null,
+    config_key: null,
+    workbook_rows: null,
   }),
   K({
     kpi_key: "bizops.lbs_shipped",
     dept_key: "bizops",
     wall_keys: "bizops",
     title_en: "Lbs shipped",
+    active: 0,
     title_es: "Libras enviadas",
     unit: "lb448",
     cadence: "daily",
@@ -1677,7 +1705,7 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
   }),
 ];
 
-/** The 73 registry rows, sort 10, 20, ... in the order above (bizops, the harvest family, sales, finance, farmops, culttech). */
+/** The 74 registry rows, sort 10, 20, ... in the order above (bizops, the harvest family, sales, finance, farmops, culttech). bizops.lbs_shipped stays and is inactive. */
 export const DD_KPIS: readonly DdKpi[] = ROWS.map((row, i) => ({ ...row, sort: (i + 1) * 10 }));
 
 export function ddKpi(key: string): DdKpi | undefined {
@@ -2045,9 +2073,30 @@ function insertBlocks<T>(table: string, columns: string, rows: readonly T[], val
     .join("\n");
 }
 
+/** The 0105 seed shape of bizops.lbs_processed. Migration 0106 restates the live row; the seed text stays the original so 0105 still carries ddSeedSql() verbatim. */
+const LBS_PROCESSED_0105: Pick<DdKpi, "title_en" | "title_es" | "dims" | "compute_key" | "def_version" | "open_question_en" | "open_question_es" | "config_key"> = {
+  title_en: "Lbs processed",
+  title_es: "Libras procesadas",
+  dims: "bucket",
+  compute_key:
+    "console.trimFigures over the trim day SQL (src/console.ts:2884-2892, :465-559) for the trim bucket; pasteurizationFigures for cryo; loadPrepackSection for prepack; buckets side by side, never summed; rad is not a bucket",
+  def_version: 1,
+  open_question_en: "Trim line only, or every line (debate processed_lbs)",
+  open_question_es: "Solo la línea de recorte, o todas las líneas (debate processed_lbs)",
+  config_key: "dd_processed_lbs_buckets",
+};
+
+/** 0105's rows: the later Lbs/Labor Hour key is omitted, Lbs shipped is still active, and the sorts are the original 10, 20, ... so the seed text stays byte for byte. */
+function seedKpiList(): DdKpi[] {
+  return DD_KPIS.filter((row) => row.kpi_key !== "bizops.lbs_per_dlh").map((row, i) => {
+    const base = row.kpi_key === "bizops.lbs_processed" ? { ...row, ...LBS_PROCESSED_0105 } : { ...row };
+    return { ...base, active: row.kpi_key === "bizops.lbs_shipped" ? 1 : base.active, sort: (i + 1) * 10 };
+  });
+}
+
 /** The dd_kpis and dd_kpi_questions INSERT blocks migration 0105 carries verbatim (nine rows per statement). */
 export function ddSeedSql(): string {
-  return `${insertBlocks("dd_kpis", DD_KPIS_COLUMNS, DD_KPIS, kpiValues)}\n${insertBlocks("dd_kpi_questions", DD_QUESTIONS_COLUMNS, DD_QUESTIONS, questionValues)}`;
+  return `${insertBlocks("dd_kpis", DD_KPIS_COLUMNS, seedKpiList(), kpiValues)}\n${insertBlocks("dd_kpi_questions", DD_QUESTIONS_COLUMNS, DD_QUESTIONS, questionValues)}`;
 }
 
 /** The app_config INSERT block migration 0105 carries verbatim (NULL actors, as 0104 seeds). */
