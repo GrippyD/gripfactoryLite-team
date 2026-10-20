@@ -294,6 +294,14 @@ import {
   parseTrimWeighsQuery,
   trimWeighsFeed,
 } from "./feeds";
+import {
+  LAB_SAMPLES_FEED_PATH,
+  LAB_SAMPLES_PATH,
+  feedLabSamples,
+  labSamplesPage,
+  loadLabSamplesPage,
+  uploadLabSamples,
+} from "./labsamples";
 import { handleLab, LAB_FEED_PATHS, listLabComplianceSurface } from "./lab";
 import { changeLocationPage } from "./locationpane";
 import {
@@ -511,7 +519,7 @@ import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadF
 import { loadFgInventory } from "./fginventory";
 import { harvestDashboardPage, loadHarvestDashboard } from "./harvestdashboard";
 import { DIRECTOR_PATH, DIRECTOR_RECOMPUTE_LBS_PATH, directorDetailPage, directorGridPage, directorHomePage, directorWallPage, isDdDeptKey, loadDirectorDetail, loadDirectorGrid, loadDirectorHome, loadDirectorWall, saveDirectorGrid } from "./director";
-import { refreshLbsHarvested, refreshLbsPerDlh } from "./ddsnapshot";
+import { refreshLbsHarvested, refreshLbsPerDlh, refreshPctFinished, refreshTrimThroughput } from "./ddsnapshot";
 import {
   commitDirectorImport,
   directorImportPage,
@@ -1707,8 +1715,12 @@ app.post(DIRECTOR_RECOMPUTE_LBS_PATH, async (c) => {
   const now = nowIso();
   const harvested = await refreshLbsHarvested(c.env.DB, now);
   const dlh = await refreshLbsPerDlh(c.env.DB, now);
+  const pct = await refreshPctFinished(c.env.DB, now);
+  const trim = await refreshTrimThroughput(c.env.DB, now);
   console.log(`[lbs harvested] wrote ${harvested.written} rows`);
   console.log(`[lbs per dlh] wrote ${dlh.written} rows`);
+  console.log(`[pct finished] wrote ${pct.written} rows`);
+  console.log(`[trim throughput] wrote ${trim.written} rows`);
   return c.redirect(`${DIRECTOR_PATH}/bizops`, 303);
 });
 
@@ -2123,6 +2135,27 @@ app.get(HARVEST_BATCHES_PATH, async (c) => {
     });
     const page = await listHarvestBatches(c.env.DB, query);
     return c.json(harvestBatchesFeed(page, query, nowIso()), 200, { "cache-control": "no-store" });
+  } catch (err) {
+    if (err instanceof HttpError) return c.json({ ok: false, error: err.message }, err.status as 400, { "cache-control": "no-store" });
+    throw err;
+  }
+});
+
+// TL1: the lab samples door. Same /feeds prefix as the trim weighs feed, so
+// Cloudflare Access fronts it. The worker holds no token. A service actor
+// (no login email) may POST this path and nothing else under /feeds.
+app.post(LAB_SAMPLES_FEED_PATH, async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ ok: false, error: "The body must be JSON with a rows array." }, 400, { "cache-control": "no-store" });
+  }
+  const actor = c.get("actor");
+  const actorId = actor.id === SERVICE_IDENTITY.id ? null : actor.id;
+  try {
+    const result = await feedLabSamples(c.env.DB, body, actorId, nowIso());
+    return c.json({ ok: true, ...result }, 200, { "cache-control": "no-store" });
   } catch (err) {
     if (err instanceof HttpError) return c.json({ ok: false, error: err.message }, err.status as 400, { "cache-control": "no-store" });
     throw err;
@@ -3639,6 +3672,28 @@ app.post("/admin/field_estimates/:id/delete", async (c) => {
   return c.redirect(result.redirect, 303);
 });
 
+// TL1: Admin, Lab Samples. The PIN on /admin/* already fronts these routes.
+app.get(LAB_SAMPLES_PATH, async (c) => {
+  const s = await shell(c);
+  const page = await loadLabSamplesPage(c.env.DB);
+  const banner = c.req.query("loaded") === "1" ? page.last : null;
+  return html(c, s, "Lab Samples", labSamplesPage(page, s.locale, { banner, error: c.req.query("err") }));
+});
+app.post(LAB_SAMPLES_PATH, async (c) => {
+  const form = await c.req.formData();
+  const file = form.get("file");
+  try {
+    if (!(file instanceof File) || file.size === 0 || !file.name.toLowerCase().endsWith(".xlsx")) {
+      throw new HttpError(400, "Upload the TagLeaf export workbook.");
+    }
+    await uploadLabSamples(c.env.DB, new Uint8Array(await file.arrayBuffer()), c.get("actor").id, nowIso());
+    return c.redirect(`${LAB_SAMPLES_PATH}?loaded=1`, 303);
+  } catch (err) {
+    if (err instanceof HttpError) return c.redirect(`${LAB_SAMPLES_PATH}?err=${encodeURIComponent(err.message)}`, 303);
+    throw err;
+  }
+});
+
 // Fork 6 (canon 0.30.1): the Admin-buried manual HBN fallback; Acquire stays
 // the default. PIN rides /admin* as everywhere.
 app.get("/admin/manual-hbn", async (c) => {
@@ -4737,6 +4792,18 @@ function scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext):
             console.log(`[lbs per dlh] wrote ${dlh.written} rows`);
           } catch {
             console.log("[lbs per dlh] refresh failed");
+          }
+          try {
+            const pct = await refreshPctFinished(env.DB, nowIso());
+            console.log(`[pct finished] wrote ${pct.written} rows`);
+          } catch {
+            console.log("[pct finished] refresh failed");
+          }
+          try {
+            const trim = await refreshTrimThroughput(env.DB, nowIso());
+            console.log(`[trim throughput] wrote ${trim.written} rows`);
+          } catch {
+            console.log("[trim throughput] refresh failed");
           }
         }
       })();

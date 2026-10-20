@@ -64,6 +64,8 @@ export type DoorAverage = {
   readAt: string;
   source: string;
   units: number;
+  /** The sensor ids that joined the mean. Empty when a row had no sensor id. */
+  sensorIds: string[];
 };
 
 /** One unit per sensor id. Rows with no sensor id are one unit for the room.
@@ -100,14 +102,21 @@ export function averageDoorRows(rows: readonly DoorSample[]): Omit<DoorAverage, 
     readAt: newest.read_at,
     source: String(newest.source ?? "").trim(),
     units: units.length,
+    sensorIds: units.map((row) => String(row.sensor_id ?? "").trim()).filter((id) => id.length > 0),
   };
 }
 
+/** A door reading: role empty, and not a stored test row. Alias is blank on the table itself. */
+export function doorReadingWhere(alias = ""): string {
+  const col = (name: string) => (alias ? `${alias}.${name}` : name);
+  return `${col("role")} IS NULL AND lower(trim(coalesce(${col("source")}, ''))) <> 'test'`;
+}
+
 const DOOR_MAX_SQL = `SELECT MAX(read_at) AS read_at FROM sensor_readings
-  WHERE room = ? AND role IS NULL AND lower(trim(coalesce(source, ''))) <> 'test'`;
-const DOOR_WINDOW_SQL = `SELECT sensor_id, temperature_f, humidity_pct, read_at, source
+  WHERE room = ? AND ${doorReadingWhere()}`;
+export const DOOR_WINDOW_SQL = `SELECT sensor_id, temperature_f, humidity_pct, read_at, source
   FROM sensor_readings
-  WHERE room = ? AND role IS NULL AND lower(trim(coalesce(source, ''))) <> 'test' AND read_at >= ?`;
+  WHERE room = ? AND ${doorReadingWhere()} AND read_at >= ?`;
 
 /** The room's door readings (role empty: the push door, not a SensorPush pull row), averaged. */
 export async function readDoorAverage(db: D1Database, room: string): Promise<DoorAverage | null> {
@@ -293,10 +302,13 @@ type RangeRow = {
   humidity_high: number | null;
 };
 
-export async function staleMinutes(db: D1Database): Promise<number> {
-  const raw = await getConfigValue(db, CONFIG_KEYS.environment_stale_minutes);
+export function staleMinutesOf(raw: string | null | undefined): number {
   const n = Number(String(raw ?? "").trim());
   return Number.isFinite(n) && n > 0 ? n : 60;
+}
+
+export async function staleMinutes(db: D1Database): Promise<number> {
+  return staleMinutesOf(await getConfigValue(db, CONFIG_KEYS.environment_stale_minutes));
 }
 
 export async function listEnvironmentFlags(db: D1Database, now: string, locale: Locale = "en"): Promise<Record<string, string[]>> {

@@ -9,7 +9,7 @@ His picks (2026-10-19):
 
 For the build session (Cursor, one plain session, no sub-agents): open in `C:\Users\DennisWallace\Documents\Claude\Projects\gripfactory Practical\branches\GFLiteMetrcAPI` (its `app\` is the app). If your working folder is not under `branches\GFLiteMetrcAPI`, stop and say so. Under THE DISPATCH RULE (canon 0.30.155).
 
-RUN AFTER S3b. It builds on `src/ddsnapshot.ts`, its hourly refresh and its Recompute button. Pin: the S3b gated tree; the Scribe gives its hash at dispatch. Verify with canon's hash command in `app/` (`(find src test scripts migrations -type f; echo wrangler.toml; echo tsconfig.json; echo package.json) | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-16`, `wrangler.toml` read as LF) and stop if it differs. No git; nothing committed, pushed or deployed. One migration, `0108`. LF only. Read big files by search and line range.
+RUN AFTER S3b. It builds on `src/ddsnapshot.ts`, its hourly refresh and its Recompute button. Pin: the S3b gated tree `14b04627b5cc68e6` (S3a and S3b, gated 2026-10-19). Verify with canon's hash command in `app/` (`(find src test scripts migrations -type f; echo wrangler.toml; echo tsconfig.json; echo package.json) | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-16`, `wrangler.toml` read as LF) and stop if it differs. No git; nothing committed, pushed or deployed. One migration, `0108`. LF only. Read big files by search and line range.
 
 ## 1. The registry (migration 0108 and src/directorregistry.ts together)
 - `bizops.shipments_count`: wall_keys from "bizops,sales" to "sales". Nothing else changes on it.
@@ -55,7 +55,7 @@ On the bizops wall, in Shipments' place:
   - no dash characters in any output.
 
 ## Smoke and gates
-Smoke: the migration count goes up one from S3b's (107 if S3b's smoke read 106). Seed a typed plant total, a few live plants with one GH location and two lots, press Recompute, check the wall shows the tile with a percentage and Shipments is gone from bizops but present on sales; keep every other check. Gates: typecheck 0; vitest under TZ=UTC and TZ=America/New_York with counts; `node --check scripts/smoke.mjs`; the from zero smoke (SMOKE PASS, no 500); renders of the bizops wall in Lite, CO and Cerberus at 1920 and 820 and the phone, each select used once; dash, CR and name scans of every touched file.
+Smoke: `About to apply 107 migration(s)` (S3b's read 106; this tree has no 0101). Seed a typed plant total, a few live plants with one GH location and two lots, press Recompute, check the wall shows the tile with a percentage and Shipments is gone from bizops but present on sales; keep every other check. Gates: typecheck 0; vitest under TZ=UTC and TZ=America/New_York with counts; `node --check scripts/smoke.mjs`; the from zero smoke (SMOKE PASS, no 500); renders of the bizops wall in Lite, CO and Cerberus at 1920 and 820 and the phone, each select used once; dash, CR and name scans of every touched file.
 
 ## Hand back
 Report `SESSION_REPORTS/2026-10-19_dd_s3c_pct_finished.md`, short: the tree received and left, files touched, gate results, anything declined and why. Close with the tree hash and that nothing is committed, pushed or deployed. The Scribe gates; the owner merges (it carries migration 0108, so the merge block takes a snapshot first).

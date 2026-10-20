@@ -7,6 +7,13 @@
  * DD S3b: Lbs/Labor Hour vs Goal (bizops.lbs_per_dlh) beside it. The day's
  * wet pounds are the console's day wet law, every lot, toll lots included.
  * The day's hours are the ALL row, else the sum of the farm rows.
+ *
+ * DD S3c: % Complete by plant count (bizops.pct_finished_plants). Today's
+ * farm day only. All grow methods follow the console Total box. One grow
+ * method counts own lots of that code plus the mirror's live plants.
+ *
+ * DD S3f: Trim Throughput (bizops.trim_throughput) is refreshTrimThroughput,
+ * re-exported from src/trimthroughput.ts. The wall reads the stored rows.
  */
 import { CONFIG_KEYS } from "./config";
 import { getConfigValue } from "./db";
@@ -14,6 +21,8 @@ import { dayOffset, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHou
 import { t, tFill, type Locale } from "./i18n";
 import { ownLotSql } from "./toll";
 import { esc } from "./ui";
+
+export { refreshTrimThroughput } from "./trimthroughput";
 
 export const LBS_HARVESTED_KPI = "bizops.lbs_processed";
 export const LBS_HARVESTED_VERSION = 2;
@@ -973,5 +982,352 @@ export function lbsPerDlhBody(series: LbsPerDlhSeries, goal: number | null, loca
       <p class="dd-dlh-tip" data-dd-dlh-tip hidden></p>
       <p class="muted dd-dlh-help">${esc(t(locale, DLH_HELP))}</p>
       ${DLH_SCRIPT}
+    </div>`;
+}
+
+/* ------------------------------------ DD S3c: percent finished */
+
+export const PCT_FINISHED_KPI = "bizops.pct_finished_plants";
+export const PCT_FINISHED_VERSION = 1;
+
+/** The console Total box's three farms. */
+const PCT_FARMS = ["PNN", "ARL", "PNS"] as const;
+type PctFarm = (typeof PCT_FARMS)[number];
+
+export type PctFinishedDim = { dim: string; pct: number; finished: number; total: number };
+
+export type PctFinishedParts = {
+  /** A typed Admin total, present only when the farm has a row. */
+  typed: Partial<Record<PctFarm, number>>;
+  lotsByFarm: Partial<Record<PctFarm, number>>;
+  liveByFarm: Partial<Record<PctFarm, number>>;
+  lotsByGrow: Readonly<Record<string, number>>;
+  liveByGrow: Readonly<Record<string, number>>;
+  growCodes: readonly string[];
+};
+
+function whole(value: number): number {
+  return Math.round(Number.isFinite(value) ? value : 0);
+}
+
+/** One decimal percent, the same tenth the console prints with toFixed. */
+function percentOf(finished: number, total: number): number {
+  return Number(((finished / total) * 100).toFixed(1));
+}
+
+/**
+ * All is the console Total box: a typed farm total less live plants, over that
+ * total; a farm with no typed total uses its lots plus its live plants.
+ * One grow method is own-lot plants of that code over those plus live plants.
+ * A dim whose total is zero is omitted.
+ */
+export function pctFinishedDims(input: PctFinishedParts): PctFinishedDim[] {
+  let finished = 0;
+  let total = 0;
+  for (const farm of PCT_FARMS) {
+    const lots = whole(input.lotsByFarm[farm] ?? 0);
+    const live = whole(input.liveByFarm[farm] ?? 0);
+    const typed = input.typed[farm];
+    const farmTotal = typed == null ? lots + live : whole(typed);
+    const farmFinished = typed == null ? lots : Math.max(0, whole(typed) - live);
+    finished += farmFinished;
+    total += farmTotal;
+  }
+  const out: PctFinishedDim[] = [];
+  if (total > 0) out.push({ dim: "", pct: percentOf(finished, total), finished, total });
+  for (const code of input.growCodes) {
+    const done = whole(input.lotsByGrow[code] ?? 0);
+    const live = whole(input.liveByGrow[code] ?? 0);
+    const sum = done + live;
+    if (!(sum > 0)) continue;
+    out.push({ dim: code, pct: percentOf(done, sum), finished: done, total: sum });
+  }
+  return out;
+}
+
+const PCT_LOTS_SQL = `SELECT b.farm_code AS farm, b.grow_method_code AS grow, COALESCE(SUM(w.plant_count), 0) AS plants
+     FROM wet_weight_entries w
+     JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
+     WHERE w.deleted_at IS NULL AND w.status <> 'weighing' AND w.plant_count IS NOT NULL
+       AND b.harvest_year = ? AND ${ownLotSql("b")}
+     GROUP BY b.farm_code, b.grow_method_code`;
+
+const PCT_LIVE_SQL = `SELECT lv.farm_code AS farm,
+            CASE WHEN TRIM(COALESCE(p.location, '')) LIKE 'GH%' THEN 'GH' ELSE 'OD' END AS grow,
+            COUNT(*) AS plants
+     FROM metrc_plants p
+     LEFT JOIN lookup_values lv ON lv.category = 'license' AND lv.value = p.license_value AND lv.deleted_at IS NULL
+     WHERE p.gone_at IS NULL
+     GROUP BY lv.farm_code, CASE WHEN TRIM(COALESCE(p.location, '')) LIKE 'GH%' THEN 'GH' ELSE 'OD' END`;
+
+const PCT_TOTALS_SQL = `SELECT farm_code, plant_count FROM farm_plant_counts WHERE harvest_year = ? AND deleted_at IS NULL`;
+
+const PCT_GROW_SQL = `SELECT code FROM grow_methods WHERE deleted_at IS NULL ORDER BY code`;
+
+const PCT_LIVE_ROWS_SQL = `SELECT id, dim_key, value, n, value_text
+     FROM dd_kpi_values
+     WHERE kpi_key = '${PCT_FINISHED_KPI}' AND period_kind = 'day' AND source = 'app'
+       AND superseded_at IS NULL AND period_start = ?`;
+
+type PctLotRow = { farm: string | null; grow: string | null; plants: number };
+type PctLiveRow = { farm: string | null; grow: string | null; plants: number };
+type PctTotalRow = { farm_code: string; plant_count: number };
+type PctCodeRow = { code: string };
+
+function addCount(map: Record<string, number>, key: string, plants: number): void {
+  if (!key) return;
+  map[key] = (map[key] ?? 0) + whole(plants);
+}
+
+export type PctFinishedRefresh = { written: number; year: number };
+
+/**
+ * Store today's farm day only. The mirror has no yesterday, so an earlier day
+ * stays as it was written. An unchanged value, n, and text is left alone.
+ */
+export async function refreshPctFinished(db: D1Database, nowIso: string): Promise<PctFinishedRefresh> {
+  const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour));
+  const today = farmDay(nowIso, startHour);
+  const year = Number(today.slice(0, 4));
+  if (!isCalendarDate(today) || !Number.isFinite(year)) return { written: 0, year: 0 };
+  const lotRows = await db.prepare(PCT_LOTS_SQL).bind(year).all<PctLotRow>();
+  const liveRows = await db.prepare(PCT_LIVE_SQL).all<PctLiveRow>();
+  const totalRows = await db.prepare(PCT_TOTALS_SQL).bind(year).all<PctTotalRow>();
+  const growRows = await db.prepare(PCT_GROW_SQL).all<PctCodeRow>();
+  const lotsByFarm: Partial<Record<PctFarm, number>> = {};
+  const lotsByGrow: Record<string, number> = {};
+  for (const row of lotRows.results ?? []) {
+    const plants = Number(row.plants ?? 0);
+    const farm = String(row.farm ?? "");
+    if ((PCT_FARMS as readonly string[]).includes(farm)) lotsByFarm[farm as PctFarm] = whole((lotsByFarm[farm as PctFarm] ?? 0) + plants);
+    addCount(lotsByGrow, String(row.grow ?? ""), plants);
+  }
+  const liveByFarm: Partial<Record<PctFarm, number>> = {};
+  const liveByGrow: Record<string, number> = {};
+  for (const row of liveRows.results ?? []) {
+    const plants = Number(row.plants ?? 0);
+    const farm = String(row.farm ?? "");
+    if ((PCT_FARMS as readonly string[]).includes(farm)) liveByFarm[farm as PctFarm] = whole((liveByFarm[farm as PctFarm] ?? 0) + plants);
+    addCount(liveByGrow, String(row.grow ?? ""), plants);
+  }
+  const typed: Partial<Record<PctFarm, number>> = {};
+  for (const row of totalRows.results ?? []) {
+    const farm = String(row.farm_code ?? "");
+    if ((PCT_FARMS as readonly string[]).includes(farm)) typed[farm as PctFarm] = whole(Number(row.plant_count ?? 0));
+  }
+  const growCodes = (growRows.results ?? []).map((row) => String(row.code ?? "")).filter((code) => code !== "");
+  const wanted = new Map<string, PctFinishedDim>();
+  for (const dim of pctFinishedDims({ typed, lotsByFarm, liveByFarm, lotsByGrow, liveByGrow, growCodes })) wanted.set(dim.dim, dim);
+  const stored = await db.prepare(PCT_LIVE_ROWS_SQL).bind(today).all<Record<string, unknown>>();
+  type Write = { supersede: string | null; dim: string; pct: number; finished: number; text: string } | { supersede: string; drop: true };
+  const writes: Write[] = [];
+  for (const raw of stored.results ?? []) {
+    const id = String(raw.id);
+    const dim = String(raw.dim_key ?? "");
+    const next = wanted.get(dim);
+    if (!next) {
+      writes.push({ supersede: id, drop: true });
+      continue;
+    }
+    wanted.delete(dim);
+    const text = `${next.finished}/${next.total}`;
+    const value = Number(raw.value ?? 0);
+    const n = Number(raw.n ?? 0);
+    const same = Math.round(value * 10) === Math.round(next.pct * 10) && n === next.finished && String(raw.value_text ?? "") === text;
+    if (same) continue;
+    writes.push({ supersede: id, dim: next.dim, pct: next.pct, finished: next.finished, text });
+  }
+  for (const next of wanted.values()) {
+    writes.push({ supersede: null, dim: next.dim, pct: next.pct, finished: next.finished, text: `${next.finished}/${next.total}` });
+  }
+  const stmts: D1PreparedStatement[] = [];
+  for (const write of writes) {
+    if (write.supersede) {
+      stmts.push(db.prepare(`UPDATE dd_kpi_values SET superseded_at = ? WHERE id = ? AND superseded_at IS NULL`).bind(nowIso, write.supersede));
+    }
+    if ("drop" in write) continue;
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO dd_kpi_values (
+             id, kpi_key, period_kind, period_start, dim_key, value, value_text, n, source, source_as_of, computed_at, def_version, created_at
+           ) VALUES (?, '${PCT_FINISHED_KPI}', 'day', ?, ?, ?, ?, ?, 'app', ?, ?, ${PCT_FINISHED_VERSION}, ?)`
+        )
+        .bind(crypto.randomUUID(), today, write.dim, write.pct, write.text, write.finished, nowIso, nowIso, nowIso)
+    );
+  }
+  for (let i = 0; i < stmts.length; i += 40) {
+    await db.batch(stmts.slice(i, i + 40));
+  }
+  return { written: writes.length, year };
+}
+
+export type PctFinishedPoint = { day: string; dim: string; label: string; value: number; n: number; text: string };
+
+export type PctFinishedSeries = { today: string; rows: PctFinishedPoint[] };
+
+export function pctSeriesFromRows(
+  rows: readonly { period_start?: unknown; dim_key?: unknown; value?: unknown; n?: unknown; value_text?: unknown; display_name?: unknown }[],
+  today: string
+): PctFinishedSeries {
+  const out: PctFinishedPoint[] = [];
+  for (const row of rows) {
+    const day = String(row.period_start ?? "");
+    if (!isCalendarDate(day)) continue;
+    const value = Number(row.value ?? 0);
+    if (!Number.isFinite(value)) continue;
+    const dim = String(row.dim_key ?? "");
+    const label = row.display_name == null || String(row.display_name) === "" ? dim : String(row.display_name);
+    out.push({
+      day,
+      dim,
+      label,
+      value,
+      n: whole(Number(row.n ?? 0)),
+      text: row.value_text == null ? "" : String(row.value_text),
+    });
+  }
+  out.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.dim < b.dim ? -1 : a.dim > b.dim ? 1 : 0));
+  return { today, rows: out };
+}
+
+const PCT_ALL_NOTE = "Uses the Admin plant totals.";
+const PCT_ONE_NOTE = "Counts lots and the mirror's live plants.";
+
+function formatPct(value: number): string {
+  return `${value.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+}
+
+function formatInt(value: number): string {
+  return Math.round(value).toLocaleString("en-US");
+}
+
+function dated(day: string, locale: Locale): string {
+  const month = t(locale, MONTHS[Number(day.slice(5, 7)) - 1] ?? "Jan");
+  const n = String(Number(day.slice(8, 10)));
+  const year = day.slice(0, 4);
+  return locale === "es" ? `${n} ${month} ${year}` : `${month} ${n}, ${year}`;
+}
+
+function pairCounts(text: string): { finished: number; total: number } | null {
+  const match = /^(\d+)\/(\d+)$/.exec(text);
+  if (!match) return null;
+  return { finished: Number(match[1]), total: Number(match[2]) };
+}
+
+function pointForPair(rows: readonly PctFinishedPoint[], dim: string, year: string, today: string): PctFinishedPoint | null {
+  const inYear = rows.filter((row) => row.dim === dim && row.day.startsWith(`${year}-`));
+  if (year === today.slice(0, 4)) return inYear.find((row) => row.day === today) ?? null;
+  let best: PctFinishedPoint | null = null;
+  for (const row of inYear) if (!best || row.day > best.day) best = row;
+  return best;
+}
+
+const PCT_SCRIPT = `<script>
+(function () {
+  var root = document.currentScript && document.currentScript.parentElement;
+  if (!root) return;
+  var method = root.querySelector("[data-dd-pct-method]");
+  var year = root.querySelector("[data-dd-pct-year]");
+  if (!method || !year) return;
+  var methodKey = "dd.pct_finished.method";
+  var yearKey = "dd.pct_finished.year";
+  function show() {
+    var faces = root.querySelectorAll("[data-dd-pct-face]");
+    for (var i = 0; i < faces.length; i++) {
+      var on = faces[i].getAttribute("data-dd-pct-method") === method.value && faces[i].getAttribute("data-dd-pct-year") === year.value;
+      if (on) faces[i].removeAttribute("hidden");
+      else faces[i].setAttribute("hidden", "");
+    }
+  }
+  function hasOption(select, value) {
+    for (var i = 0; i < select.options.length; i++) if (select.options[i].value === value) return true;
+    return false;
+  }
+  try {
+    var savedMethod = localStorage.getItem(methodKey);
+    var savedYear = localStorage.getItem(yearKey);
+    if (savedMethod != null && hasOption(method, savedMethod)) method.value = savedMethod;
+    if (savedYear != null && hasOption(year, savedYear)) year.value = savedYear;
+  } catch (e) {}
+  show();
+  method.addEventListener("change", function () {
+    try { localStorage.setItem(methodKey, method.value); } catch (e) {}
+    show();
+  });
+  year.addEventListener("change", function () {
+    try { localStorage.setItem(yearKey, year.value); } catch (e) {}
+    show();
+  });
+  var numbers = root.querySelectorAll("[data-dd-pct-number]");
+  for (var n = 0; n < numbers.length; n++) {
+    numbers[n].addEventListener("click", function () {
+      var note = this.parentElement && this.parentElement.querySelector("[data-dd-pct-note]");
+      if (!note) return;
+      if (note.hasAttribute("hidden")) note.removeAttribute("hidden");
+      else note.setAttribute("hidden", "");
+    });
+  }
+})();
+</script>`;
+
+/** The two picks and one percentage. Today for this year, the last stored day for a past year. */
+export function pctFinishedBody(series: PctFinishedSeries, locale: Locale): string {
+  const today = isCalendarDate(series.today) ? series.today : "";
+  const farmYear = today.slice(0, 4);
+  const labels = new Map<string, string>();
+  const years = new Set<string>();
+  if (farmYear) years.add(farmYear);
+  for (const row of series.rows) {
+    years.add(row.day.slice(0, 4));
+    if (row.dim !== "" && !labels.has(row.dim)) labels.set(row.dim, row.label || row.dim);
+  }
+  const rank: Record<string, number> = { OD: 0, GH: 1, ID: 2 };
+  const methods = [...labels.entries()].sort((a, b) => {
+    const ra = rank[a[0]] ?? 9;
+    const rb = rank[b[0]] ?? 9;
+    if (ra !== rb) return ra - rb;
+    return a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0;
+  });
+  const yearList = [...years].filter((year) => /^\d{4}$/.test(year)).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+  const methodOptions = [`<option value="" selected>${esc(t(locale, "All"))}</option>`]
+    .concat(methods.map(([code, label]) => `<option value="${esc(code)}">${esc(label)}</option>`))
+    .join("");
+  const yearOptions = yearList
+    .map((year) => `<option value="${esc(year)}"${year === farmYear ? " selected" : ""}>${esc(year)}</option>`)
+    .join("");
+  const dims = ["", ...methods.map(([code]) => code)];
+  const faces = yearList.flatMap((year) =>
+    dims.map((dim) => {
+      const point = today ? pointForPair(series.rows, dim, year, today) : null;
+      const hidden = dim === "" && year === farmYear ? "" : " hidden";
+      if (!point) {
+        return `<div data-dd-pct-face data-dd-pct-method="${esc(dim)}" data-dd-pct-year="${esc(year)}"${hidden}><p class="dd-pct-empty">${esc(t(locale, "No data"))}</p></div>`;
+      }
+      const counts = pairCounts(point.text);
+      const countLine = counts
+        ? `<p class="dd-pct-counts">${esc(tFill(locale, "{finished} of {total} plants", { finished: formatInt(counts.finished), total: formatInt(counts.total) }))}</p>`
+        : "";
+      const asOf = year === farmYear ? "" : `<p class="dd-pct-asof">${esc(tFill(locale, "as of {date}", { date: dated(point.day, locale) }))}</p>`;
+      const note = `${point.day}. ${t(locale, dim === "" ? PCT_ALL_NOTE : PCT_ONE_NOTE)}`;
+      return `<div data-dd-pct-face data-dd-pct-method="${esc(dim)}" data-dd-pct-year="${esc(year)}"${hidden}>
+          <button type="button" class="dd-pct-value" data-dd-pct-number title="${esc(note)}">${esc(formatPct(point.value))}</button>
+          ${countLine}
+          ${asOf}
+          <p class="dd-pct-note" data-dd-pct-note hidden>${esc(note)}</p>
+        </div>`;
+    })
+  );
+  return `<div class="dd-pct" data-dd-pct data-dd-pct-today="${esc(today)}">
+      <div class="dd-pct-picks">
+        <label>${esc(t(locale, "Grow Method"))}
+          <select data-dd-pct-method aria-label="${esc(t(locale, "Grow Method"))}">${methodOptions}</select>
+        </label>
+        <label>${esc(t(locale, "Harvest Year"))}
+          <select data-dd-pct-year aria-label="${esc(t(locale, "Harvest Year"))}">${yearOptions}</select>
+        </label>
+      </div>
+      ${faces.join("")}
+      ${PCT_SCRIPT}
     </div>`;
 }

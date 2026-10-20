@@ -15,6 +15,7 @@ import {
   leastSquaresAt,
   refreshLbsHarvested,
   refreshLbsPerDlh,
+  refreshPctFinished,
   wetPounds,
   type DlhDay,
   type HarvestDay,
@@ -562,5 +563,253 @@ describe("Lbs per DLH tile", () => {
     expect(still).toContain("Goal 26");
     expect(still).not.toContain("Goal 30");
     expect(DASH.test(later)).toBe(false);
+  });
+});
+
+const PCT_NOW = "2026-10-19T18:00:00.000Z";
+const PCT_NEXT = "2026-10-20T18:00:00.000Z";
+const PCT_TS = "2026-09-01T00:00:00.000Z";
+
+function pctEntry(m: Awaited<ReturnType<typeof migratedDb>>, id: string, batchId: string, plants: number, status = "drying", deletedAt: string | null = null): void {
+  m.run(
+    `INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, plant_count, created_at, updated_at, deleted_at)
+     VALUES (?, ?, 0, 'silo', ?, ?, ?, ?, ?)`,
+    id,
+    batchId,
+    status,
+    plants,
+    PCT_TS,
+    PCT_TS,
+    deletedAt
+  );
+}
+
+function pctPlant(m: Awaited<ReturnType<typeof migratedDb>>, tag: string, license: string, location: string, goneAt: string | null = null): void {
+  m.run(
+    `INSERT INTO metrc_plants (tag, license_value, phase, location, hold, harvested, mount_id, first_seen_at, changed_at, gone_at)
+     VALUES (?, ?, 'flowering', ?, 0, 0, 'pct', ?, ?, ?)`,
+    tag,
+    license,
+    location,
+    PCT_TS,
+    PCT_TS,
+    goneAt
+  );
+}
+
+function consolePct(input: HarvestConsoleInput): string {
+  const box = consoleBoxes(input).find((row) => row.farm === "Total");
+  return box?.metrics.find((metric) => metric.key === "pct")?.value ?? "";
+}
+
+function pctTile(html: string, key: string): string {
+  const at = html.indexOf(`data-dd-kpi="${key}"`);
+  return html.slice(html.lastIndexOf("<article", at), html.indexOf("</article>", at));
+}
+
+function storedPct(m: Awaited<ReturnType<typeof migratedDb>>, day: string, dim: string): Row {
+  const row = m.get(
+    `SELECT id, value, n, value_text FROM dd_kpi_values
+     WHERE kpi_key = 'bizops.pct_finished_plants' AND period_kind = 'day' AND dim_key = ? AND period_start = ? AND superseded_at IS NULL`,
+    dim,
+    day
+  );
+  return row ?? {};
+}
+
+describe("DD S3c percent finished", () => {
+  it("All matches the console Total box, lots split by grow method, toll and test lots out, and a second refresh writes nothing", async () => {
+    const m = await migratedDb();
+    m.run(`UPDATE app_config SET value = '6' WHERE key = 'farm_day_start_hour'`);
+    m.run(`INSERT INTO strains (id, name, hbn_code, created_at, updated_at) VALUES ('s-pct', 'Strain', '099', ?, ?)`, PCT_TS, PCT_TS);
+    m.run(
+      `INSERT INTO farm_plant_counts (id, farm_code, harvest_year, plant_count, created_at, updated_at) VALUES ('pc-arl', 'ARL', 2026, 1000, ?, ?)`,
+      PCT_TS,
+      PCT_TS
+    );
+    seedBatch(m, { id: "b-od", hbn: "PCT-OD", serial: 9101, farm: "PNS", strainId: "s-pct" });
+    seedBatch(m, { id: "b-gh", hbn: "PCT-GH", serial: 9102, farm: "PNS", strainId: "s-pct" });
+    seedBatch(m, { id: "b-arl", hbn: "PCT-ARL", serial: 9103, farm: "ARL", strainId: "s-pct" });
+    seedBatch(m, { id: "b-weigh", hbn: "PCT-W", serial: 9104, farm: "PNS", strainId: "s-pct" });
+    seedBatch(m, { id: "b-toll", hbn: "PCT-TOLL", serial: 9105, farm: "PNS", strainId: "s-pct" });
+    seedBatch(m, { id: "b-test", hbn: "PCT-TEST", serial: 9106, farm: "PNS", strainId: "s-pct" });
+    seedBatch(m, { id: "b-del", hbn: "PCT-DEL", serial: 9107, farm: "PNS", strainId: "s-pct" });
+    m.run(`UPDATE harvest_batches SET grow_method_code = 'OD' WHERE id IN ('b-od', 'b-arl', 'b-toll')`);
+    m.run(`UPDATE harvest_batches SET customer = 'GreenCo' WHERE id = 'b-toll'`);
+    m.run(`UPDATE harvest_batches SET is_test = 1 WHERE id = 'b-test'`);
+    pctEntry(m, "e-od", "b-od", 20);
+    pctEntry(m, "e-gh", "b-gh", 10);
+    pctEntry(m, "e-arl", "b-arl", 400);
+    pctEntry(m, "e-weigh", "b-weigh", 99, "weighing");
+    pctEntry(m, "e-toll", "b-toll", 50);
+    pctEntry(m, "e-test", "b-test", 70);
+    pctEntry(m, "e-del", "b-del", 80, "drying", PCT_TS);
+    pctPlant(m, "p-gh-1", "AU-G-C-001397", "GH 7");
+    pctPlant(m, "p-gh-2", "AU-G-C-001397", "GH 7");
+    pctPlant(m, "p-gh-3", "AU-G-C-001397", "GH 7");
+    pctPlant(m, "p-od-1", "AU-G-C-001397", "Field 4");
+    pctPlant(m, "p-od-2", "AU-G-C-001397", "South 1");
+    pctPlant(m, "p-gone", "AU-G-C-001397", "GH 7", PCT_TS);
+    const first = await refreshPctFinished(m.db, PCT_NOW);
+    expect(first.written).toBe(3);
+    expect(first.year).toBe(2026);
+    const shown = consolePct({
+      today: "2026-10-19",
+      day: "2026-10-19",
+      dayPicked: false,
+      year: 2026,
+      remaining: [{ farm: "PNS", plants: 5 }],
+      seasonHarvested: [
+        { farm: "PNS", plants: 30 },
+        { farm: "ARL", plants: 400 },
+      ],
+      seasonLots: [],
+      dayWet: [],
+      hours: { PNN: null, ARL: null, PNS: null },
+      plantCounts: { PNN: null, ARL: 1000, PNS: null },
+    });
+    const all = storedPct(m, "2026-10-19", "");
+    expect(`${Number(all.value).toFixed(1)}%`).toBe(shown);
+    expect(all.value_text).toBe("1030/1035");
+    expect(all.n).toBe(1030);
+    const gh = storedPct(m, "2026-10-19", "GH");
+    expect(gh.value_text).toBe("10/13");
+    expect(Number(gh.value).toFixed(1)).toBe("76.9");
+    expect(gh.n).toBe(10);
+    const od = storedPct(m, "2026-10-19", "OD");
+    expect(od.value_text).toBe("420/422");
+    expect(Number(od.value).toFixed(1)).toBe("99.5");
+    expect(od.n).toBe(420);
+    expect(m.get(`SELECT id FROM dd_kpi_values WHERE kpi_key = 'bizops.pct_finished_plants' AND dim_key = 'ID' AND superseded_at IS NULL`)).toBeUndefined();
+    const dims = m.all(
+      `SELECT dim_key, COUNT(*) AS n FROM dd_kpi_values WHERE kpi_key = 'bizops.pct_finished_plants' AND superseded_at IS NULL GROUP BY dim_key ORDER BY dim_key`
+    );
+    expect(dims).toEqual([
+      { dim_key: "", n: 1 },
+      { dim_key: "GH", n: 1 },
+      { dim_key: "OD", n: 1 },
+    ]);
+    const ids = m.all(`SELECT id FROM dd_kpi_values WHERE kpi_key = 'bizops.pct_finished_plants' AND superseded_at IS NULL ORDER BY dim_key`);
+    const second = await refreshPctFinished(m.db, PCT_NOW);
+    expect(second.written).toBe(0);
+    expect(m.all(`SELECT id FROM dd_kpi_values WHERE kpi_key = 'bizops.pct_finished_plants' AND superseded_at IS NULL ORDER BY dim_key`)).toEqual(ids);
+    pctPlant(m, "p-od-3", "AU-G-C-001397", "Field 9");
+    const next = await refreshPctFinished(m.db, PCT_NEXT);
+    expect(next.written).toBe(3);
+    expect(storedPct(m, "2026-10-19", "")).toMatchObject({ id: all.id, value_text: "1030/1035" });
+    expect(storedPct(m, "2026-10-20", "").value_text).toBe("1030/1036");
+    expect(DASH.test(JSON.stringify(m.all(`SELECT value_text FROM dd_kpi_values WHERE kpi_key = 'bizops.pct_finished_plants'`)))).toBe(false);
+  });
+
+  it("ARL with a typed total and no live plants reads 100, and a farm with no typed total uses lots plus live plants", async () => {
+    const typed = await migratedDb();
+    typed.run(`UPDATE app_config SET value = '6' WHERE key = 'farm_day_start_hour'`);
+    typed.run(
+      `INSERT INTO farm_plant_counts (id, farm_code, harvest_year, plant_count, created_at, updated_at) VALUES ('pc-only', 'ARL', 2026, 250, ?, ?)`,
+      PCT_TS,
+      PCT_TS
+    );
+    await refreshPctFinished(typed.db, PCT_NOW);
+    const arl = storedPct(typed, "2026-10-19", "");
+    expect(Number(arl.value).toFixed(1)).toBe("100.0");
+    expect(arl.value_text).toBe("250/250");
+    expect(`${Number(arl.value).toFixed(1)}%`).toBe(
+      consolePct({
+        today: "2026-10-19",
+        day: "2026-10-19",
+        dayPicked: false,
+        year: 2026,
+        remaining: [],
+        seasonHarvested: [],
+        seasonLots: [],
+        dayWet: [],
+        hours: { PNN: null, ARL: null, PNS: null },
+        plantCounts: { PNN: null, ARL: 250, PNS: null },
+      })
+    );
+    const open = await migratedDb();
+    open.run(`UPDATE app_config SET value = '6' WHERE key = 'farm_day_start_hour'`);
+    open.run(`INSERT INTO strains (id, name, hbn_code, created_at, updated_at) VALUES ('s-open', 'Strain', '099', ?, ?)`, PCT_TS, PCT_TS);
+    seedBatch(open, { id: "b-open", hbn: "PCT-OPEN", serial: 9201, farm: "PNS", strainId: "s-open" });
+    open.run(`UPDATE harvest_batches SET grow_method_code = 'OD' WHERE id = 'b-open'`);
+    pctEntry(open, "e-open", "b-open", 40);
+    pctPlant(open, "p-open", "AU-G-C-001397", "Field 2");
+    for (let i = 0; i < 9; i += 1) pctPlant(open, `p-open-${i}`, "AU-G-C-001397", "Field 2");
+    await refreshPctFinished(open.db, PCT_NOW);
+    const fallback = storedPct(open, "2026-10-19", "");
+    expect(fallback.value_text).toBe("40/50");
+    expect(Number(fallback.value).toFixed(1)).toBe("80.0");
+    expect(`${Number(fallback.value).toFixed(1)}%`).toBe(
+      consolePct({
+        today: "2026-10-19",
+        day: "2026-10-19",
+        dayPicked: false,
+        year: 2026,
+        remaining: [{ farm: "PNS", plants: 10 }],
+        seasonHarvested: [{ farm: "PNS", plants: 40 }],
+        seasonLots: [],
+        dayWet: [],
+        hours: { PNN: null, ARL: null, PNS: null },
+        plantCounts: { PNN: null, ARL: null, PNS: null },
+      })
+    );
+  });
+
+  it("the tile offers Grow Method and Harvest Year, defaults to All and this year, and a past year reads its last day", async () => {
+    const m = await migratedDb();
+    const rows: Array<[string, string, string, number, string, number]> = [
+      ["pct-now", "2026-10-19", "", 61, "61177/100367", 61177],
+      ["pct-od", "2026-10-19", "OD", 80, "80/100", 80],
+      ["pct-year", "2025-10-31", "", 100, "50/50", 50],
+      ["pct-early", "2025-09-01", "", 10, "5/50", 5],
+      ["pct-id", "2025-10-31", "ID", 40, "4/10", 4],
+    ];
+    for (const [id, day, dim, value, text, n] of rows) {
+      m.run(
+        `INSERT INTO dd_kpi_values (id, kpi_key, period_kind, period_start, dim_key, value, value_text, n, source, computed_at, def_version, created_at)
+         VALUES (?, 'bizops.pct_finished_plants', 'day', ?, ?, ?, ?, ?, 'app', ?, 1, ?)`,
+        id,
+        day,
+        dim,
+        value,
+        text,
+        n,
+        PCT_NOW,
+        PCT_NOW
+      );
+    }
+    const html = directorWallPage(await loadDirectorWall(m.db, "bizops", "2026-10-19", null, null, PCT_NOW), "en");
+    const tile = pctTile(html, "bizops.pct_finished_plants");
+    expect(tile).toContain("% Complete (By Plant Count)");
+    expect(tile).toContain('data-dd-version="1"');
+    expect(tile).toContain('data-dd-pct-method');
+    expect(tile).toContain('data-dd-pct-year');
+    expect(tile).toContain('<option value="" selected>All</option>');
+    expect(tile).toContain('<option value="2026" selected>2026</option>');
+    expect(tile.indexOf('value="2026"')).toBeLessThan(tile.indexOf('value="2025"'));
+    expect(tile).toContain(">Indoor<");
+    expect(tile).toContain(">Outdoor<");
+    expect(tile).not.toContain(">Greenhouse<");
+    expect(tile.indexOf(">Outdoor<")).toBeLessThan(tile.indexOf(">Indoor<"));
+    expect(tile).toContain('data-dd-pct-face data-dd-pct-method="" data-dd-pct-year="2026">');
+    expect(tile).toContain("61.0%");
+    expect(tile).toContain("61,177 of 100,367 plants");
+    expect(tile).toContain("2026-10-19. Uses the Admin plant totals.");
+    const past = tile.slice(tile.indexOf('data-dd-pct-year="2025"'));
+    expect(tile).toContain('data-dd-pct-face data-dd-pct-method="" data-dd-pct-year="2025" hidden');
+    expect(past).toContain("as of Oct 31, 2025");
+    expect(past).toContain("50 of 50 plants");
+    expect(past).not.toContain("5 of 50 plants");
+    const empty = tile.slice(tile.indexOf('data-dd-pct-method="ID" data-dd-pct-year="2026"'));
+    expect(empty.startsWith('data-dd-pct-method="ID" data-dd-pct-year="2026" hidden')).toBe(true);
+    expect(empty.slice(0, empty.indexOf("</div>"))).toContain("No data");
+    expect(tile).toContain("2026-10-19. Counts lots and the mirror's live plants.");
+    expect(DASH.test(tile)).toBe(false);
+    const es = pctTile(directorWallPage(await loadDirectorWall(m.db, "bizops", "2026-10-19", null, null, PCT_NOW), "es"), "bizops.pct_finished_plants");
+    expect(es).toContain("% Completo (por conteo de plantas)");
+    expect(es).toContain("Sin datos");
+    expect(es).toContain("61,177 de 100,367 plantas");
+    expect(es).toContain("al 31 oct 2025");
+    expect(DASH.test(es)).toBe(false);
   });
 });

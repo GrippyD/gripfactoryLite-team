@@ -30,17 +30,18 @@ export const SERVICE_IDENTITY: Identity = {
 };
 
 /** The doors a service token may use: the Drying Operations menu (Silo Ops
- * watches it hourly), the machine feeds (the trim weighs puller), the silo
- * strip's live JSON (GET and HEAD), and the cure-room sensor push
- * (POST /sensors/readings alone). */
+ * watches it hourly), the machine feeds (the trim weighs puller, GET), the
+ * silo strip's live JSON (GET and HEAD), the cure-room sensor push
+ * (POST /sensors/readings), and the lab samples door
+ * (POST /feeds/lab-samples.json, the tagleaf-pusher token). */
 export const SERVICE_ROUTES = {
   exact: ["/ops/drying_ops", "/silos/live.json"],
   prefixes: ["/feeds/"],
-  post: ["/sensors/readings"],
+  post: ["/sensors/readings", "/feeds/lab-samples.json"],
 } as const;
 
 export const SERVICE_REFUSAL =
-  "This service token reads /ops/drying_ops, /feeds and /silos/live.json, and may POST /sensors/readings; nothing else answers it.";
+  "This service token reads /ops/drying_ops, /feeds and /silos/live.json, and may POST /sensors/readings and /feeds/lab-samples.json; nothing else answers it.";
 
 /** True on the Access-fronted worker (env.grip carries ACCESS_FRONTED = "1"). */
 export function isAccessFronted(env: unknown): boolean {

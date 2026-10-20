@@ -153,6 +153,70 @@ function buildPlantsXlsx(rows) {
   return new Uint8Array([...locals, ...centrals, ...eocd]);
 }
 
+/** TL1: a small Samples workbook plus a Notes sheet the door must ignore. */
+function buildLabSamplesXlsx(headers, records) {
+  const colLetter = (index) => {
+    let n = index + 1;
+    let s = "";
+    while (n > 0) {
+      const rem = (n - 1) % 26;
+      s = String.fromCharCode(65 + rem) + s;
+      n = Math.floor((n - 1) / 26);
+    }
+    return s;
+  };
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const cell = (value, ref) => {
+    if (value == null || value === "") return "";
+    if (typeof value === "number") return `<c r="${ref}" t="n"><v>${value}</v></c>`;
+    return `<c r="${ref}" t="inlineStr"><is><t>${esc(value)}</t></is></c>`;
+  };
+  const headerXml = `<row r="1">${headers.map((h, i) => cell(h, `${colLetter(i)}1`)).join("")}</row>`;
+  const body = records
+    .map((record, r) => {
+      const n = r + 2;
+      return `<row r="${n}">${headers.map((h, i) => cell(record[h], `${colLetter(i)}${n}`)).join("")}</row>`;
+    })
+    .join("");
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${headerXml}${body}</sheetData></worksheet>`;
+  const notes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Lab Code</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>RAS-NOT-IN-SAMPLES</t></is></c></row></sheetData></worksheet>`;
+  const book = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Samples" sheetId="1" r:id="rId1"/><sheet name="Notes" sheetId="2" r:id="rId2"/></sheets></workbook>`;
+  const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>`;
+  const files = {
+    "xl/workbook.xml": book,
+    "xl/_rels/workbook.xml.rels": rels,
+    "xl/worksheets/sheet1.xml": sheet,
+    "xl/worksheets/sheet2.xml": notes,
+  };
+  const le16 = (n) => [n & 0xff, (n >>> 8) & 0xff];
+  const le32 = (n) => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff];
+  const enc = new TextEncoder();
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const [name, textBody] of Object.entries(files)) {
+    const nameBytes = enc.encode(name);
+    const raw = enc.encode(textBody);
+    const data = deflateRawSync(raw);
+    const crc = crc32(raw);
+    const local = [
+      ...le32(0x04034b50), ...le16(20), ...le16(0), ...le16(8), ...le16(0), ...le16(0),
+      ...le32(crc), ...le32(data.length), ...le32(raw.length), ...le16(nameBytes.length), ...le16(0),
+      ...nameBytes, ...data,
+    ];
+    centrals.push(
+      ...le32(0x02014b50), ...le16(20), ...le16(20), ...le16(0), ...le16(8), ...le16(0), ...le16(0),
+      ...le32(crc), ...le32(data.length), ...le32(raw.length), ...le16(nameBytes.length), ...le16(0), ...le16(0),
+      ...le16(0), ...le16(0), ...le32(0), ...le32(offset), ...nameBytes
+    );
+    locals.push(...local);
+    offset += local.length;
+  }
+  const count = Object.keys(files).length;
+  const eocd = [...le32(0x06054b50), ...le16(0), ...le16(0), ...le16(count), ...le16(count), ...le32(centrals.length), ...le32(locals.length), ...le16(0)];
+  return new Uint8Array([...locals, ...centrals, ...eocd]);
+}
+
 function countFor(html, key) {
   const re = new RegExp(`data-pipeline-key="${key}"[^>]*data-count="(\\d+)"`);
   const m = html.match(re);
@@ -535,8 +599,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 106 migration(s)")) {
-      throw new Error(`from-zero apply must say 106 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 111 migration(s)")) {
+      throw new Error(`from-zero apply must say 111 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -10558,6 +10622,7 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     assert(reconcileCsv.res.status === 200 && reconcileCsv.body.includes("Wet total"), `harvest reconciliation CSV expected 200, got ${reconcileCsv.res.status} ${reconcileCsv.body.slice(0, 300)}`);
     const settings = await text("/admin/settings");
     assert(settings.res.status === 200 && settings.body.includes('href="/admin/field_estimates"'), `Admin Settings must list field estimates, got ${settings.res.status}`);
+    assert(settings.body.includes('href="/admin/lab-samples"'), "Admin Settings must list lab samples");
     const estimates = await text("/admin/field_estimates");
     assert(
       estimates.res.status === 200 && estimates.body.includes("Field estimates") && estimates.body.includes("dry lb per plant (448 g)") && estimates.body.includes('name="effective_date"'),
@@ -10595,6 +10660,46 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
       estimateRows.length === 1 && Number(estimateRows[0].est_dry_weight) === 2.5 && estimateRows[0].reason === "smoke memo" && estimateRows[0].deleted_at == null,
       `the stored field estimate must be 2.5 lb as typed, got ${JSON.stringify(estimateRows)}`
     );
+    // TL1: three lab samples from a workbook, then the same rows on the feed write nothing.
+    const labHeaders = ["Lab Code", "Intake Date", "Status", "Test Type", "Result", "COA Posted (ET)", "Batch Qty (g)", "Strain", "Farm"];
+    const labRows = [
+      { "Lab Code": "RAS-SMOKE-001", "Intake Date": "2026-09-21", Status: "Completed", "Test Type": "First-time", Result: "Pass", "COA Posted (ET)": "2026-09-25 14:35", "Batch Qty (g)": 1000, Strain: "Smoke Alpha", Farm: "PNS" },
+      { "Lab Code": "RAS-SMOKE-002", "Intake Date": "2026-10-01", Status: "Completed", "Test Type": "Retest", Result: "Fail", "COA Posted (ET)": "2026-10-04 09:00", "Batch Qty (g)": 500, Strain: "Smoke Beta", Farm: "PNN" },
+      { "Lab Code": "RAS-SMOKE-003", "Intake Date": "2026-10-19", Status: "In Process", "Test Type": "Internal QA", Strain: "Smoke Gamma", Farm: "ARL" },
+    ];
+    const labForm = new FormData();
+    labForm.append("file", new File([buildLabSamplesXlsx(labHeaders, labRows)], "lab-samples.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    const labPost = await req("/admin/lab-samples", { method: "POST", body: labForm });
+    const labDetail = labPost.status === 303 ? "" : await labPost.text();
+    assert(labPost.status === 303 && (labPost.headers.get("location") || "").includes("/admin/lab-samples?loaded=1"), `lab samples upload expected 303, got ${labPost.status} ${labDetail.slice(0, 300)}`);
+    const labPage = await text("/admin/lab-samples?loaded=1");
+    assert(
+      labPage.res.status === 200 &&
+        labPage.body.includes("Inserted 3.") &&
+        labPage.body.includes('data-samples="3"') &&
+        labPage.body.includes('data-completed="2"') &&
+        labPage.body.includes('data-in-process="1"') &&
+        labPage.body.includes("2026-10-19") &&
+        labPage.body.includes("2026-10-04 09:00"),
+      `lab samples page expected the three row counts, got ${labPage.res.status} ${labPage.body.slice(0, 500)}`
+    );
+    const labStored = localD1All("SELECT lab_code, status FROM lab_samples ORDER BY lab_code");
+    assert(
+      labStored.length === 3 && labStored.every((row) => row.lab_code !== "RAS-NOT-IN-SAMPLES"),
+      `lab samples must be the three workbook rows, got ${JSON.stringify(labStored)}`
+    );
+    const labFeed = await req("/feeds/lab-samples.json", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rows: labRows }),
+    });
+    const labFeedBody = await labFeed.json();
+    assert(
+      labFeed.status === 200 && labFeedBody.inserted === 0 && labFeedBody.updated === 0 && labFeedBody.unchanged === 3 && labFeedBody.refused === 0,
+      `the lab samples feed of the same rows expected 0 written, got ${labFeed.status} ${JSON.stringify(labFeedBody)}`
+    );
+    const labAfter = localD1All("SELECT lab_code FROM lab_samples");
+    assert(labAfter.length === 3, `the feed must not add rows, got ${JSON.stringify(labAfter)}`);
     // SP1: live plants under PNN's license, times the estimate in force, is Remaining dry lb.
     // A harvested plant and a gone plant stay out of the count.
     const seen = "2026-10-13T12:00:00.000Z";
@@ -10798,8 +10903,9 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     // DIRECTOR DASHBOARD (S1, 2026-10-15): the Admin tile, the home with its five
     // department cards, the bizops wall with every tile carrying a status, an
     // unknown department answering 404, and the farmops wall on its weekly tab.
-    // Nothing is computed on load. The hourly cron earlier in this smoke may
-    // already have stored Lbs Harvested, so that one tile can read no_goal.
+    // Stored tiles are not computed on load. Plant Weight is. The hourly cron
+    // earlier in this smoke may already have stored Lbs Harvested, so that one
+    // tile can read no_goal.
     const ddAdmin = await text("/admin");
     assert(ddAdmin.res.status === 200 && ddAdmin.body.includes('data-admin-group="director"'), `Admin must carry the Director Dashboard tile, got ${ddAdmin.res.status}`);
     const ddHome = await text("/admin/director");
@@ -10815,13 +10921,13 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     for (const status of ddStatuses) ddTally[status] = (ddTally[status] ?? 0) + 1;
     const ddTallyText = Object.entries(ddTally).map(([status, n]) => `${status} ${n}`).join(", ");
     assert(
-      ddWall.res.status === 200 && ddWall.body.includes('data-dd-wall="bizops"') && ddKpis.length >= 20 && ddStatuses.length === ddKpis.length && !ddKpis.includes("bizops.lbs_shipped"),
-      `bizops wall expected 200 with at least 20 tiles each carrying a status, and Lbs shipped gone, got ${ddWall.res.status} with ${ddKpis.length} tiles and ${ddStatuses.length} statuses (${ddTallyText})`
+      ddWall.res.status === 200 && ddWall.body.includes('data-dd-wall="bizops"') && ddKpis.length >= 20 && ddStatuses.length === ddKpis.length && !ddKpis.includes("bizops.lbs_shipped") && !ddKpis.includes("bizops.shipments_count") && !ddKpis.includes("bizops.lab_turnaround_days") && !ddKpis.includes("harvest.wet_weight_lb") && ddKpis.includes("bizops.plant_weight") && ddKpis.includes("bizops.storage_capacity") && !ddWall.body.includes("Testing turnaround") && !ddWall.body.includes("Harvest wet weight"),
+      `bizops wall expected 200 with at least 20 tiles each carrying a status, Lbs shipped gone, and Shipments gone, got ${ddWall.res.status} with ${ddKpis.length} tiles and ${ddStatuses.length} statuses (${ddTallyText})`
     );
     assert(
       ddKpis.every((key, i) => {
         const status = ddStatuses[i];
-        if (key === "bizops.lbs_processed") return status === "no_goal" || status === "no_data";
+        if (key === "bizops.lbs_processed" || key === "bizops.pct_finished_plants") return status === "no_goal" || status === "no_data";
         return status === "no_data" || status === "out_of_season" || status === "parked";
       }),
       `a from-zero wall reads no_data, out_of_season or parked, and Lbs Harvested may already be stored by the hourly cron, got ${ddTallyText}`
@@ -10839,8 +10945,64 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     const dlhHours = localD1All(`SELECT id FROM harvest_labor_hours WHERE farm_code = 'ALL' AND work_date = '${dlhDay}'`);
     if (dlhHours.length === 0) localD1(`INSERT INTO harvest_labor_hours (id, farm_code, work_date, hours, created_at, updated_at) VALUES ('smoke-dlh-hours', 'ALL', '${dlhDay}', 8, '${dlhNow}', '${dlhNow}')`);
     else localD1(`UPDATE harvest_labor_hours SET hours = 8, updated_at = '${dlhNow}' WHERE id = '${dlhHours[0].id}'`);
+    const pctYear = Number(dlhDay.slice(0, 4));
+    const pctStrain = (localD1All("SELECT id FROM strains WHERE deleted_at IS NULL LIMIT 1")[0] || {}).id;
+    assert(pctStrain, "the smoke floor needs a strain before the percent finished seed");
+    localD1(`INSERT INTO farm_plant_counts (id, farm_code, harvest_year, plant_count, created_at, updated_at) VALUES ('smoke-pct-arl', 'ARL', ${pctYear}, 1000, '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO harvest_batches (id, entry_date, farm_code, grow_method_code, strain_id, manicure, hbn, lot_serial, harvest_year, status, license_value, born_from, material_form, created_at, updated_at) VALUES ('smoke-pct-od', '${dlhDay}', 'PNS', 'OD', '${pctStrain}', 0, 'SMOKE-PCT-OD', 9901, ${pctYear}, 'open', 'AU-G-C-001397', 'app', 'bucked', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO harvest_batches (id, entry_date, farm_code, grow_method_code, strain_id, manicure, hbn, lot_serial, harvest_year, status, license_value, born_from, material_form, created_at, updated_at) VALUES ('smoke-pct-gh', '${dlhDay}', 'PNS', 'GH', '${pctStrain}', 0, 'SMOKE-PCT-GH', 9902, ${pctYear}, 'open', 'AU-G-C-001397', 'app', 'bucked', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, plant_count, created_at, updated_at) VALUES ('smoke-pct-e-od', 'smoke-pct-od', 0, 'silo', 'drying', 20, '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, plant_count, created_at, updated_at) VALUES ('smoke-pct-e-gh', 'smoke-pct-gh', 0, 'silo', 'drying', 10, '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO metrc_plants (tag, license_value, phase, location, hold, harvested, mount_id, first_seen_at, changed_at) VALUES ('SMOKEPCT1', 'AU-G-C-001397', 'flowering', 'GH 7', 0, 0, 'smoke-pct', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO metrc_plants (tag, license_value, phase, location, hold, harvested, mount_id, first_seen_at, changed_at) VALUES ('SMOKEPCT2', 'AU-G-C-001397', 'flowering', 'Field 1', 0, 0, 'smoke-pct', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO metrc_plants (tag, license_value, phase, location, hold, harvested, mount_id, first_seen_at, changed_at) VALUES ('SMOKEPCT3', 'AU-G-C-001397', 'flowering', 'Field 2', 0, 0, 'smoke-pct', '${dlhNow}', '${dlhNow}')`);
+    const tpSpaces = localD1All("SELECT id, name FROM dry_spaces WHERE deleted_at IS NULL");
+    const tpId = (name) => (tpSpaces.find((row) => row.name === name) || {}).id || "";
+    const tpSilo = tpId("Silo 1");
+    const tpHang = tpId("Hang in Place");
+    localD1(`UPDATE app_config SET value = 'Olga' WHERE key = 'trim_shift_day_operators' AND deleted_at IS NULL`);
+    localD1(`UPDATE app_config SET value = 'Victor' WHERE key = 'trim_shift_second_operators' AND deleted_at IS NULL`);
+    localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-tp-a', 'Tp Alpha', 'TPA', '911', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-tp-b', 'Tp Beta', 'TPB', '912', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO harvest_batches (id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, hbn, lot_serial, harvest_year, status, license_value, born_from, material_form, created_at, updated_at) VALUES ('smoke-tp-a', '${dlhDay}', 'PNN', 'GH', 'smoke-tp-a', 'Tp Alpha', 0, 'SMOKE-TP-A', 9921, ${pctYear}, 'open', 'AU-G-C-000832', 'app', 'bucked', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO harvest_batches (id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, hbn, lot_serial, harvest_year, status, license_value, born_from, material_form, created_at, updated_at) VALUES ('smoke-tp-b', '${dlhDay}', 'PNN', 'GH', 'smoke-tp-b', 'Tp Beta', 0, 'SMOKE-TP-B', 9922, ${pctYear}, 'open', 'AU-G-C-000832', 'app', 'bucked', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, created_at, updated_at) VALUES ('smoke-tp-e-a', 'smoke-tp-a', 1000, '${tpSilo}', 'trimmed', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, created_at, updated_at) VALUES ('smoke-tp-e-b', 'smoke-tp-b', 1000, '${tpHang}', 'trimmed', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wip_packages (id, wet_weight_entry_id, package_code, package_type_code, weight_grams, status, source, trim_date, trim_operator, created_at, updated_at) VALUES ('smoke-tp-day-a', 'smoke-tp-e-a', 'SMOKE-TP-A', 'BUD', 4480, 'created', 'trim', '${dlhDay}', 'Olga', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wip_packages (id, wet_weight_entry_id, package_code, package_type_code, weight_grams, status, source, trim_date, trim_operator, created_at, updated_at) VALUES ('smoke-tp-day-b', 'smoke-tp-e-b', 'SMOKE-TP-B', 'BUD', 2240, 'created', 'trim', '${dlhDay}', 'Olga', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wip_packages (id, wet_weight_entry_id, package_code, package_type_code, weight_grams, status, source, trim_date, trim_operator, created_at, updated_at) VALUES ('smoke-tp-night', 'smoke-tp-e-a', 'SMOKE-TP-N', 'BUD', 8960, 'created', 'trim', '${dlhDay}', 'Victor', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO trim_labor_hours (id, work_date, shift, hours, created_at, updated_at) VALUES ('smoke-tp-day', '${dlhDay}', 'day', 8, '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO trim_labor_hours (id, work_date, shift, hours, created_at, updated_at) VALUES ('smoke-tp-night', '${dlhDay}', 'second', 10, '${dlhNow}', '${dlhNow}')`);
     const ddRecompute = await req("/admin/director/recompute-lbs-harvested", { method: "POST", body: form({}) });
     assert(ddRecompute.status === 303, `recompute dashboard series expected 303 got ${ddRecompute.status}`);
+    localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-pw-a', 'Pw Gelato', 'PWG', '901', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-pw-b', 'Pw Sherb', 'PWS', '902', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO harvest_batches (id, entry_date, farm_code, grow_method_code, strain_id, manicure, hbn, lot_serial, harvest_year, status, license_value, born_from, material_form, created_at, updated_at) VALUES ('smoke-pw-od', '${dlhDay}', 'PNN', 'OD', 'smoke-pw-a', 0, 'SMOKE-PW-OD', 9911, ${pctYear}, 'open', 'AU-G-C-000832', 'app', 'bucked', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO harvest_batches (id, entry_date, farm_code, grow_method_code, strain_id, manicure, hbn, lot_serial, harvest_year, status, license_value, born_from, material_form, created_at, updated_at) VALUES ('smoke-pw-gh', '${dlhDay}', 'PNS', 'GH', 'smoke-pw-b', 0, 'SMOKE-PW-GH', 9912, ${pctYear}, 'open', 'AU-G-C-001397', 'app', 'bucked', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, dry_weight_grams, actual_dryspc, status, plant_count, created_at, updated_at) VALUES ('smoke-pw-e-a', 'smoke-pw-od', 20000, 4480, 'silo', 'trimmed', 10, '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, dry_weight_grams, actual_dryspc, status, plant_count, created_at, updated_at) VALUES ('smoke-pw-e-b', 'smoke-pw-gh', 20000, 8960, 'silo', 'trimmed', 8, '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO unload_sessions (id, wet_weight_entry_id, finished_at, effective_date, created_at, updated_at) VALUES ('smoke-pw-u-a', 'smoke-pw-e-a', '${dlhNow}', '${dlhDay}', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO unload_sessions (id, wet_weight_entry_id, finished_at, effective_date, created_at, updated_at) VALUES ('smoke-pw-u-b', 'smoke-pw-e-b', '${dlhNow}', '${dlhDay}', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO field_estimates (id, strain_id, farm_code, effective_date, est_dry_weight, created_at) VALUES ('smoke-pw-est', 'smoke-pw-a', 'PNN', '${dlhDay}', 4.5, '${dlhNow}')`);
+    localD1(`INSERT INTO metrc_plants (tag, license_value, phase, strain, location, hold, harvested, mount_id, first_seen_at, changed_at) VALUES ('SMOKEPW1', 'AU-G-C-000832', 'flowering', 'Pw Gelato', 'Field 1', 0, 0, 'smoke-pw', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO metrc_plants (tag, license_value, phase, strain, location, hold, harvested, mount_id, first_seen_at, changed_at) VALUES ('SMOKEPW2', 'AU-G-C-000832', 'flowering', 'Pw Gelato', 'Field 1', 0, 0, 'smoke-pw', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO metrc_plants (tag, license_value, phase, strain, location, hold, harvested, mount_id, first_seen_at, changed_at) VALUES ('SMOKEPW3', 'AU-G-C-000832', 'flowering', 'Pw Gelato', 'GH 1', 0, 0, 'smoke-pw', '${dlhNow}', '${dlhNow}')`);
+    const capSpaces = localD1All("SELECT id, name FROM dry_spaces WHERE deleted_at IS NULL");
+    const capId = (name) => (capSpaces.find((row) => row.name === name) || {}).id || "";
+    const capAt = new Date(Date.parse(dlhNow) + 5000).toISOString();
+    const capSilo1 = capId("Silo 1");
+    const capSilo2 = capId("Silo 2");
+    const capSilo3 = capId("Silo 3");
+    localD1(`UPDATE silo_loads SET ended_at = '${capAt}', updated_at = '${capAt}' WHERE dry_space_id IN ('${capSilo1}', '${capSilo2}', '${capSilo3}') AND ended_at IS NULL AND deleted_at IS NULL`);
+    localD1(`UPDATE wet_weight_entries SET actual_dryspc = '${capId("Truck")}', updated_at = '${capAt}' WHERE actual_dryspc IN ('${capSilo1}', '${capSilo3}') AND status IN ('weighing', 'drying') AND deleted_at IS NULL`);
+    const capFillG = Math.round(15000 * 448 * 0.72);
+    const capDryG = Math.round(15000 * 448 * 0.5);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, dry_weight_grams, actual_dryspc, status, created_at, updated_at) VALUES ('smoke-cap-fill', 'smoke-pw-od', ${capFillG}, NULL, '${capSilo1}', 'weighing', '${capAt}', '${capAt}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, dry_weight_grams, actual_dryspc, status, created_at, updated_at) VALUES ('smoke-cap-dry', 'smoke-pw-od', ${capDryG}, NULL, '${capSilo2}', 'drying', '${capAt}', '${capAt}')`);
+    localD1(`INSERT INTO silo_loads (id, dry_space_id, wet_weight_entry_id, loaded_at, paused_seconds, created_at, updated_at) VALUES ('smoke-cap-load', '${capSilo2}', 'smoke-cap-dry', '${capAt}', 0, '${capAt}', '${capAt}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, dry_weight_grams, actual_dryspc, status, created_at, updated_at) VALUES ('smoke-cap-csa', 'smoke-pw-od', 1000, 800, '${capSilo3}', 'unloaded', '${capAt}', '${capAt}')`);
+    localD1(`INSERT INTO sensor_readings (id, room, temperature_f, humidity_pct, source, read_at, received_at, sensor_id, role) VALUES ('smoke-cap-a', 'CSA', 62, 46, 'silo-ops', '${capAt}', '${capAt}', 'smoke-csa-a', NULL)`);
+    localD1(`INSERT INTO sensor_readings (id, room, temperature_f, humidity_pct, source, read_at, received_at, sensor_id, role) VALUES ('smoke-cap-b', 'CSA', 64, 48, 'silo-ops', '${capAt}', '${capAt}', 'smoke-csa-b', NULL)`);
     const ddHarvest = await text("/admin/director/bizops");
     const ddAt = ddHarvest.body.indexOf('data-dd-kpi="bizops.lbs_processed"');
     const ddTile = ddHarvest.body.slice(ddAt, ddHarvest.body.indexOf("</article>", ddAt));
@@ -10866,6 +11028,102 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
         ddDlh.includes("lb/DLH") &&
         !ddHarvest.body.includes('data-dd-kpi="bizops.lbs_shipped"'),
       `Lbs/Labor Hour tile expected a headline, the goal and a chart, got ${ddDlh.slice(0, 500)}`
+    );
+    const ddPctAt = ddHarvest.body.indexOf('data-dd-kpi="bizops.pct_finished_plants"');
+    const ddPct = ddHarvest.body.slice(ddPctAt, ddHarvest.body.indexOf("</article>", ddPctAt));
+    const ddSales = await text("/admin/director/sales");
+    assert(
+      ddPctAt > 0 &&
+        ddPct.includes("% Complete (By Plant Count)") &&
+        ddPct.includes('data-dd-version="1"') &&
+        ddPct.includes("data-dd-pct-method") &&
+        ddPct.includes("data-dd-pct-year") &&
+        /\d+\.\d%/.test(ddPct) &&
+        !ddHarvest.body.includes('data-dd-kpi="bizops.shipments_count"') &&
+        ddSales.res.status === 200 &&
+        ddSales.body.includes('data-dd-kpi="bizops.shipments_count"'),
+      `percent finished tile expected a percentage on bizops and Shipments on sales, got ${ddPct.slice(0, 500)}`
+    );
+    const ddPwAt = ddHarvest.body.indexOf('data-dd-kpi="bizops.plant_weight"');
+    const ddPw = ddHarvest.body.slice(ddPwAt, ddHarvest.body.indexOf("</article>", ddPwAt));
+    const ddPwNumber = (name) => {
+      const hit = ddPw.match(new RegExp('data-dd-pw-value="' + name + '"[^>]*>\\s*([0-9][0-9,]*\\.[0-9]{2})\\s*<'));
+      return hit ? hit[1] : "";
+    };
+    assert(
+      ddPwAt > 0 &&
+        ddPw.includes("Plant Weight") &&
+        ddPw.includes('data-dd-version="1"') &&
+        ddPw.includes("Pw Gelato") &&
+        ddPw.includes("Pw Sherb") &&
+        ddPwNumber("period") !== "" &&
+        ddPwNumber("avg") !== "" &&
+        ddPwNumber("projected") !== "" &&
+        !ddHarvest.body.includes("Testing turnaround") &&
+        !ddHarvest.body.includes('data-dd-kpi="bizops.lab_turnaround_days"'),
+      `plant weight tile expected three numbers and no Testing turnaround, got ${ddPw.slice(0, 700)}`
+    );
+    const capLiveRes = await req("/silos/live.json");
+    const capLive = await capLiveRes.json();
+    const capHarvest = await text("/harvest");
+    const capPctOf = (body, name) => {
+      const at = body.indexOf(`data-cure-pane="${name}"`);
+      const hit = body.slice(at, at + 4000).match(/data-cure-pct="(\d+)"/);
+      return hit ? hit[1] : "";
+    };
+    const capBars = capLive.silos.every((silo) => {
+      const pct = Math.round(Math.min(1, Math.max(0, Number(silo.level))) * 100);
+      const marker = `data-dd-cap-room="${silo.name}"`;
+      if (silo.spaceType === "freezer") return !ddHarvest.body.includes(marker);
+      return ddHarvest.body.includes(`${marker} data-dd-cap-pct="${pct}"`);
+    });
+    const capTileAt = ddHarvest.body.indexOf('data-dd-kpi="bizops.storage_capacity"');
+    const capTile = ddHarvest.body.slice(capTileAt, ddHarvest.body.indexOf("</article>", capTileAt));
+    const capCsa = capPctOf(capHarvest.body, "CSA");
+    const capCsb = capPctOf(capHarvest.body, "CSB");
+    assert(capLiveRes.status === 200 && capBars, `storage bars must match the silo tiles, live ${capLiveRes.status}`);
+    assert(capTile.includes("Storage Capacity Utilization") && capTile.includes('data-dd-version="1"'), "storage tile heading");
+    assert(capTile.includes('data-dd-cap-room="Silo 1" data-dd-cap-pct="72"') && capTile.includes("Filling") && capTile.includes("10,800 of 15,000 wet lb"), "Silo 1 fill");
+    assert(capTile.includes('data-dd-cap-room="Silo 2"') && capTile.includes("Drying"), "Silo 2 drying");
+    assert(capTile.includes('data-dd-cap-room="Silo 3" data-dd-cap-pct="0"') && capTile.includes("Empty"), "Silo 3 empty");
+    assert(capCsa !== "" && capTile.includes(`data-dd-cap-room="CSA" data-dd-cap-pct="${capCsa}"`), `CSA percent ${capCsa}`);
+    assert(capCsb !== "" && capTile.includes(`data-dd-cap-room="CSB" data-dd-cap-pct="${capCsb}"`), `CSB percent ${capCsb}`);
+    assert(capTile.includes("data-dd-cap-env=") && capTile.includes("Live as of"), "cure room reading and live clock");
+    assert(
+      !ddHarvest.body.includes('data-dd-cap-room="Blast Freezer(s)"') &&
+        !ddHarvest.body.includes('data-dd-cap-room="Hang in Place"') &&
+        !ddHarvest.body.includes('data-dd-cap-room="Truck"') &&
+        !ddHarvest.body.includes('data-dd-kpi="harvest.wet_weight_lb"') &&
+        !capTile.includes("Harvest wet weight"),
+      "freezer, hang, truck, and Harvest wet weight stay off the bars"
+    );
+    const ddTpAt = ddHarvest.body.indexOf('data-dd-kpi="bizops.trim_throughput"');
+    const ddTp = ddHarvest.body.slice(ddTpAt, ddHarvest.body.indexOf("</article>", ddTpAt));
+    const ddTpDayAt = ddTp.indexOf('data-dd-tp-box="day"');
+    const ddTpNightAt = ddTp.indexOf('data-dd-tp-box="second"');
+    const ddTpWeightedAt = ddTp.indexOf('data-dd-tp-box="weighted"');
+    const ddTpDay = ddTp.slice(ddTpDayAt, ddTpNightAt);
+    const ddTpNight = ddTp.slice(ddTpNightAt, ddTpWeightedAt);
+    const ddTpWeighted = ddTp.slice(ddTpWeightedAt, ddTp.indexOf("</div>", ddTpWeightedAt));
+    const ddFarm = await text("/admin/director/farmops");
+    assert(
+      ddTpAt > 0 &&
+        ddTp.includes("Trim Throughput") &&
+        ddTp.includes('data-dd-version="1"') &&
+        ddTp.includes("Tp Alpha") &&
+        ddTp.includes("Tp Beta") &&
+        ddTp.includes("Hang in Place") &&
+        ddTpDay.includes("1.88") &&
+        ddTpNight.includes("2.00") &&
+        ddTpWeighted.includes("1.94") &&
+        !ddTpDay.includes("hours shared by lbs") &&
+        !ddHarvest.body.includes("Percent finished (plants)") &&
+        !ddHarvest.body.includes('data-dd-kpi="harvest.pct_complete"') &&
+        ddHarvest.body.includes('data-dd-kpi="harvest.trim_lb_per_dlh"') &&
+        ddFarm.res.status === 200 &&
+        ddFarm.body.includes('data-dd-kpi="bizops.trim_throughput"') &&
+        !ddFarm.body.includes("Percent finished (plants)"),
+      `trim throughput expected the three boxes and Percent finished gone, got ${ddTp.slice(0, 700)}`
     );
     const ddNope = await text("/admin/director/nope");
     assert(ddNope.res.status === 404, `an unknown department expected 404 got ${ddNope.res.status}`);

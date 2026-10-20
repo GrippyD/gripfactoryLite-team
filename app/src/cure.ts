@@ -150,6 +150,11 @@ export function formatCureClock(ms: number): string {
   return `${d}d ${hh}:${mm}:${ss}`;
 }
 
+/** The trim status the cure panes read: the newest live trim row on the lot. Shared so a count cannot drift from the pane. */
+export const CURE_TRIM_STATUS_SQL = `(SELECT ps.status FROM production_schedules ps
+              WHERE ps.wet_weight_entry_id = w.id AND ps.stage = 'trim' AND ps.deleted_at IS NULL
+              ORDER BY ps.scheduled_at DESC, ps.id DESC LIMIT 1)`;
+
 const LOTS_SQL = `SELECT w.id, w.status, w.dry_weight_grams, b.hbn, b.metrc_harvest_tag,
             (SELECT s.finished_at FROM unload_sessions s
               WHERE s.wet_weight_entry_id = w.id AND s.deleted_at IS NULL AND s.finished_at IS NOT NULL
@@ -161,15 +166,36 @@ const LOTS_SQL = `SELECT w.id, w.status, w.dry_weight_grams, b.hbn, b.metrc_harv
             (SELECT ps.scheduled_at FROM production_schedules ps
               WHERE ps.wet_weight_entry_id = w.id AND ps.stage = 'trim' AND ps.deleted_at IS NULL
               ORDER BY ps.scheduled_at DESC, ps.id DESC LIMIT 1) AS trim_scheduled_at,
-            (SELECT ps.status FROM production_schedules ps
-              WHERE ps.wet_weight_entry_id = w.id AND ps.stage = 'trim' AND ps.deleted_at IS NULL
-              ORDER BY ps.scheduled_at DESC, ps.id DESC LIMIT 1) AS trim_status,
+            ${CURE_TRIM_STATUS_SQL} AS trim_status,
             (SELECT li.qty FROM local_inventory_items li
               WHERE li.wet_weight_entry_id = w.id AND li.deleted_at IS NULL
               ORDER BY li.created_at ASC LIMIT 1) AS live_grams
      FROM wet_weight_entries w
      JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
      WHERE w.deleted_at IS NULL AND w.status IN ('unloaded', 'trimmed')`;
+
+/** The stored ea cap for a cure pane. A missing or non ea capacity is the pane's default, the same number the tile prints. */
+export function cureCapFromSpace(room: "CSA" | "CSB", capacity: number | string | null | undefined, uom: string | null | undefined): number {
+  const fallback = room === "CSA" ? CSA_LOT_CAP_DEFAULT : CSB_LOT_CAP_DEFAULT;
+  const unit = String(uom ?? "").trim().toLowerCase();
+  if (unit !== "ea" || capacity == null || String(capacity).trim() === "") return fallback;
+  return parseLotCap(String(capacity), fallback);
+}
+
+/** Lots in place over the cap, the percent the cure tile prints (whole, half up). Zero when either side is empty. */
+export function cureFullnessPct(lots: number, cap: number): number {
+  const n = Number(lots);
+  const c = Number(cap);
+  if (!(n > 0) || !(c > 0)) return 0;
+  return Math.round((n / c) * 100);
+}
+
+/** Lots the cure panes would place, without the moisture reads. status unloaded only: a trimmed lot sits on neither pane. */
+export const CURE_OCCUPANCY_SQL = `SELECT w.id, w.status, b.hbn, b.metrc_harvest_tag,
+            ${CURE_TRIM_STATUS_SQL} AS trim_status
+     FROM wet_weight_entries w
+     JOIN harvest_batches b ON b.id = w.harvest_batch_id AND b.deleted_at IS NULL
+     WHERE w.deleted_at IS NULL AND w.status = 'unloaded'`;
 
 /** THE CAP LIVES ON THE SPACE (canon 0.30.383): the pane reads the cure space's capacity (uom ea). */
 export async function cureSpaceCap(db: D1Database, room: "CSA" | "CSB"): Promise<{ value: number; stored: boolean }> {
@@ -178,9 +204,9 @@ export async function cureSpaceCap(db: D1Database, room: "CSA" | "CSB"): Promise
     .prepare(`SELECT capacity, capacity_uom FROM dry_spaces WHERE name = ? AND kind = 'cure' AND deleted_at IS NULL`)
     .bind(room)
     .first<{ capacity: number | null; capacity_uom: string | null }>();
-  const uom = String(row?.capacity_uom ?? "").trim().toLowerCase();
-  if (!row || uom !== "ea" || row.capacity == null || String(row.capacity).trim() === "") return { value: fallback, stored: false };
-  return { value: parseLotCap(String(row.capacity), fallback), stored: true };
+  const stored = Boolean(row) && String(row?.capacity_uom ?? "").trim().toLowerCase() === "ea" && row?.capacity != null && String(row.capacity).trim() !== "";
+  const value = cureCapFromSpace(room, row?.capacity, row?.capacity_uom);
+  return { value: stored ? value : fallback, stored };
 }
 
 export async function listCurePanes(db: D1Database, nowIso: string, locale: Locale = "en"): Promise<CurePanesData> {
@@ -463,8 +489,7 @@ function paneCard(
   const alert = flags.length > 0;
   const text = alert ? `${cond.text} · ${flags.join(" ")}` : cond.text;
   const n = lots.length;
-  const pct = cap > 0 ? n / cap : 0;
-  const pctShown = Math.round(pct * 100);
+  const pctShown = cureFullnessPct(n, cap);
   const over = n > cap;
   const fill = cureShadeFill(n, cap);
   // THE FULLNESS LINE FOLDS THE LOTS (owner, 2026-10-02: "Collapse all the lots into the text containing the
