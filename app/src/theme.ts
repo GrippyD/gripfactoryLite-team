@@ -523,6 +523,55 @@ main:has(.dd-wall), main:has(.dd-cards), main:has(.dd-grid), main:has(.dd-checki
 .dd-dlh-note { margin: 0 0 0.25rem; font-size: 0.75rem; }
 .dd-dlh-tip { margin: 0.25rem 0; padding: 0.35rem 0.5rem; font-size: 0.78rem; background: var(--panel, var(--surface, transparent)); color: var(--ink, var(--text, currentColor)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); }
 .dd-dlh-help { margin: 0.35rem 0 0; font-size: 0.75rem; }
+.dd-pct { min-width: 0; max-width: 100%; }
+.dd-pct-picks { display: flex; flex-wrap: nowrap; gap: 0.45rem; margin: 0.1rem 0 0.35rem; }
+.dd-pct-picks label { display: flex; flex-direction: column; gap: 0.12rem; flex: 1 1 0; min-width: 0; font-size: 0.78rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.dd-pct-picks select { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+.dd-pct-value { display: block; width: auto; max-width: 100%; margin: 0; padding: 0; border: 0; background: transparent; color: var(--ink, var(--text, currentColor)); font: inherit; font-size: 1.8rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+body.device-phone main button.dd-pct-value { width: auto; min-height: 0; }
+.dd-pct-counts, .dd-pct-asof, .dd-pct-empty, .dd-pct-note { margin: 0.15rem 0 0; font-size: 0.78rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); overflow-wrap: anywhere; }
+.dd-pct-note { padding: 0.35rem 0.5rem; background: var(--panel, var(--surface, transparent)); color: var(--ink, var(--text, currentColor)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); }
+.dd-pw { min-width: 0; max-width: 100%; }
+.dd-pw-picks { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0.1rem 0 0.45rem; }
+.dd-pw-picks label { display: flex; flex-direction: column; gap: 0.12rem; flex: 1 1 6.25rem; min-width: 0; font-size: 0.78rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.dd-pw-picks select { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+.dd-pw-boxes { display: flex; flex-wrap: wrap; gap: 0.55rem; min-width: 0; }
+.dd-pw-box { flex: 1 1 7.5rem; min-width: 0; }
+.dd-pw-label { display: block; font-size: 0.75rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); overflow-wrap: anywhere; }
+.dd-pw-value { display: block; width: auto; max-width: 100%; margin: 0; padding: 0; border: 0; background: transparent; color: var(--ink, var(--text, currentColor)); font: inherit; font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; text-align: left; cursor: pointer; overflow-wrap: anywhere; min-height: 0; }
+.dd-pw-value:hover, .dd-pw-value:focus { background: transparent; color: var(--ink, var(--text, currentColor)); border-color: transparent; transform: none; box-shadow: none; }
+body.device-phone main button.dd-pw-value { width: auto; min-height: 0; }
+.dd-pw-sub, .dd-pw-note { margin: 0.15rem 0 0; font-size: 0.78rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); overflow-wrap: anywhere; }
+.dd-pw-note { padding: 0.35rem 0.5rem; background: var(--panel, var(--surface, transparent)); color: var(--ink, var(--text, currentColor)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); }
+body.device-phone .dd-pw-box { flex-basis: 100%; }
+@media (max-width: 480px) { .dd-pw-box { flex-basis: 100%; } }
+.dd-cap { min-width: 0; max-width: 100%; overflow: hidden; }
+.dd-cap svg { display: block; width: 100%; height: auto; max-width: 100%; color: ${accent}; }
+.dd-cap-fill { fill: currentColor; }
+.dd-cap-warn { fill: var(--danger, var(--alert, currentColor)); stroke: var(--danger, var(--alert, currentColor)); }
+.dd-cap-axis { stroke: var(--line, var(--border, currentColor)); stroke-width: 1; }
+.dd-cap-pct, .dd-cap-name { fill: var(--ink, var(--text, currentColor)); font-size: 11px; }
+.dd-cap-env { fill: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); font-size: 8px; }
+.dd-cap-env-warn { fill: var(--danger, var(--alert, currentColor)); }
+.dd-cap-tip { margin: 0.25rem 0; padding: 0.35rem 0.5rem; font-size: 0.78rem; background: var(--panel, var(--surface, transparent)); color: var(--ink, var(--text, currentColor)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); }
+.dd-cap-asof { margin: 0.2rem 0 0; font-size: 0.75rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.dd-tp { min-width: 0; max-width: 100%; overflow: hidden; }
+.dd-tp-picks { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0.1rem 0 0.45rem; }
+.dd-tp-picks label { display: flex; flex-direction: column; gap: 0.12rem; flex: 1 1 6.25rem; min-width: 0; font-size: 0.78rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.dd-tp-picks select { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+.dd-tp-boxes { display: flex; flex-wrap: wrap; gap: 0.55rem; min-width: 0; }
+/* Scribe gate fix (S3f): the flex rule above would defeat the UA [hidden], so an empty pick showed No data over the old boxes. */
+.dd-tp-boxes[hidden] { display: none; }
+.dd-tp-box { flex: 1 1 7.5rem; min-width: 0; }
+.dd-tp-label { display: block; font-size: 0.75rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); overflow-wrap: anywhere; }
+.dd-tp-value { display: block; width: auto; max-width: 100%; margin: 0; padding: 0; border: 0; background: transparent; color: var(--ink, var(--text, currentColor)); font: inherit; font-size: 1.45rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; text-align: left; cursor: pointer; overflow-wrap: anywhere; min-height: 0; }
+.dd-tp-value:hover, .dd-tp-value:focus { background: transparent; color: var(--ink, var(--text, currentColor)); border-color: transparent; transform: none; box-shadow: none; }
+.dd-tp-unit { font-size: 0.75rem; font-weight: 400; margin-left: 0.25rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.dd-tp-sub, .dd-tp-note, .dd-tp-empty { margin: 0.15rem 0 0; font-size: 0.78rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); overflow-wrap: anywhere; }
+.dd-tp-detail { margin: 0.35rem 0 0; padding: 0.35rem 0.5rem; font-size: 0.78rem; background: var(--panel, var(--surface, transparent)); color: var(--ink, var(--text, currentColor)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); overflow-wrap: anywhere; }
+body.device-phone main button.dd-tp-value { width: auto; min-height: 0; }
+body.device-phone .dd-tp-box { flex-basis: 100%; }
+@media (max-width: 480px) { .dd-tp-box { flex-basis: 100%; } }
 @media (max-width: 820px) { .dd-tile-wide { grid-column: 1 / -1; } }
 .dd-tile { position: relative; display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; overflow: hidden; background: color-mix(in srgb, ${accent} 4%, var(--panel, var(--surface, transparent))); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); padding: 0.7rem 0.9rem 0.8rem; }
 .dd-tile-on_goal { border-left: 4px solid var(--ok, var(--accent, currentColor)); }
@@ -613,6 +662,10 @@ body.device-phone .dd-card, body.device-phone .dd-tile { width: auto; max-width:
 body.device-phone .dd-spark { width: 100%; }
 body.device-phone .dd-group-head { flex-direction: column; align-items: flex-start; }
 @media (max-width: 480px) { .dd-cards, .dd-tiles { grid-template-columns: 1fr; } }
+/* TL1: the lab samples door. The upload and the counts stay inside the page. */
+.lab-samples { max-width: 40rem; min-width: 0; }
+.lab-samples p, .lab-samples li, .lab-samples label, .lab-samples .banner { overflow-wrap: anywhere; }
+.lab-samples input[type="file"] { max-width: 100%; }
 ${tones}
 `;
 }

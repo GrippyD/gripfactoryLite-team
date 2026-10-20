@@ -87,9 +87,9 @@ describe("THE SERVICE ACTOR (canon 0.30.140; Corey's agent: \"read only. A GET r
     expect(SERVICE_IDENTITY).toEqual({ id: "service-token", display_name: "Service token", email: "service@access" });
     expect(SERVICE_ROUTES.exact).toEqual(["/ops/drying_ops", "/silos/live.json"]);
     expect(SERVICE_ROUTES.prefixes).toEqual(["/feeds/"]);
-    expect(SERVICE_ROUTES.post).toEqual(["/sensors/readings"]);
+    expect(SERVICE_ROUTES.post).toEqual(["/sensors/readings", "/feeds/lab-samples.json"]);
     expect(SERVICE_REFUSAL).toBe(
-      "This service token reads /ops/drying_ops, /feeds and /silos/live.json, and may POST /sensors/readings; nothing else answers it."
+      "This service token reads /ops/drying_ops, /feeds and /silos/live.json, and may POST /sensors/readings and /feeds/lab-samples.json; nothing else answers it."
     );
     expect(isAccessFronted({ ACCESS_FRONTED: "1" })).toBe(true);
     expect(isAccessFronted({ ACCESS_FRONTED: "true" })).toBe(true);
@@ -109,6 +109,9 @@ describe("THE SERVICE ACTOR (canon 0.30.140; Corey's agent: \"read only. A GET r
     expect(isServiceRoute("GET", "/feeds/trim-weighs.json")).toBe(true);
     expect(isServiceRoute("get", "/silos/live.json")).toBe(true);
     expect(isServiceRoute("POST", "/feeds/trim-weighs.json")).toBe(false);
+    expect(isServiceRoute("POST", "/feeds/lab-samples.json")).toBe(true);
+    expect(isServiceRoute("POST", "/feeds/lab-samples.json/")).toBe(true);
+    expect(isServiceRoute("GET", "/feeds/lab-samples.json")).toBe(true);
     expect(isServiceRoute("POST", "/sensors/readings")).toBe(true);
     expect(isServiceRoute("GET", "/sensors/readings")).toBe(false);
     expect(isServiceRoute("GET", "/feeds")).toBe(false);

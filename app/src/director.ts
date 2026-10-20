@@ -1,11 +1,15 @@
 /**
  * DD S1: the Director Dashboard. An Admin home of five department cards and
  * one wall per department, every tile a snapshot row in dd_kpi_values that the
- * crons write from S3 on. A GET reads in ONE db.batch and computes nothing:
- * the registry (dd_kpis, DD_KPIS when the table has no rows), the live values
- * for the periods on show, the question counts and the dd_* config the pages
- * read. KPI titles come from the registry rows (title_en, title_es); every
- * other word goes through t(). Raw values only through esc().
+ * crons write from S3 on. A GET reads in ONE db.batch: the registry
+ * (dd_kpis, DD_KPIS when the table has no rows), the live values for the
+ * periods on show, the question counts and the dd_* config the pages read.
+ * Plant Weight is computed from the lots and strain performance rows in that
+ * same batch. Storage Capacity Utilization reads the rooms in that batch too,
+ * then one more batch only for rooms that already have a door reading.
+ * Trim Throughput reads its stored series in that same batch.
+ * KPI titles come from the registry rows (title_en, title_es);
+ * every other word goes through t(). Raw values only through esc().
  */
 import { HttpError, requireReason, textOrNull } from "./audit";
 import { insertLog, requireActor } from "./db";
@@ -37,14 +41,21 @@ import {
 import {
   LBS_HARVESTED_KPI,
   LBS_PER_DLH_KPI,
+  PCT_FINISHED_KPI,
   dlhSeriesFromRows,
   lbsHarvestedBody,
   lbsPerDlhBody,
+  pctFinishedBody,
+  pctSeriesFromRows,
   seriesFromRows,
   type LbsHarvestedSeries,
   type LbsPerDlhSeries,
+  type PctFinishedSeries,
 } from "./ddsnapshot";
 import { dayOffset, etWallClock, isCalendarDate, isoWeekOf, periodLabel, periodShift, periodStartFor, type PeriodKind } from "./farmday";
+import { emptyPlantWeight, PLANT_WEIGHT_KPI, plantWeightBody, plantWeightFromResults, plantWeightStatements, type PlantWeightModel } from "./plantweight";
+import { emptyStorage, loadStorageModel, STORAGE_CAPACITY_KPI, storageBody, storageCapacityStatements, type StorageModel } from "./storagecapacity";
+import { emptyTrim, TRIM_THROUGHPUT_KPI, trimModelFromRows, trimSeriesStatement, trimThroughputBody, type TrimThroughputModel } from "./trimthroughput";
 import { t, tFill, type Locale } from "./i18n";
 import { esc, tabBar } from "./ui";
 
@@ -205,6 +216,14 @@ export type DirectorTile = {
   dlh: LbsPerDlhSeries | null;
   /** The dd_targets row in force on the farm today, for the Lbs/Labor Hour tile. */
   dlhGoal: number | null;
+  /** The stored % Complete days, on that one tile. Null on every other tile. */
+  pct: PctFinishedSeries | null;
+  /** The Plant Weight rows, on that one tile. Null on every other tile. */
+  plant: PlantWeightModel | null;
+  /** The live storage bars, on that one tile. Null on every other tile. */
+  storage: StorageModel | null;
+  /** The stored trim pounds and hours, on that one tile. Null on every other tile. */
+  trim: TrimThroughputModel | null;
 };
 
 export type DirectorWallGroup = { cadence: DdCadence; periodKind: DdPeriodKind; periodStart: string; tiles: DirectorTile[] };
@@ -298,6 +317,13 @@ const HARVEST_SERIES_SQL = `SELECT period_start, dim_key, value, n FROM dd_kpi_v
 const DLH_SERIES_SQL = `SELECT period_start, dim_key, value, n FROM dd_kpi_values
   WHERE kpi_key = '${LBS_PER_DLH_KPI}' AND period_kind = 'day' AND source = 'app' AND superseded_at IS NULL
   ORDER BY period_start, dim_key`;
+
+/** Every live app day of % Complete, each grow method and the total. The wall reads this. */
+const PCT_SERIES_SQL = `SELECT v.period_start, v.dim_key, v.value, v.n, v.value_text, g.display_name
+  FROM dd_kpi_values v
+  LEFT JOIN grow_methods g ON g.code = v.dim_key AND g.deleted_at IS NULL
+  WHERE v.kpi_key = '${PCT_FINISHED_KPI}' AND v.period_kind = 'day' AND v.source = 'app' AND v.superseded_at IS NULL
+  ORDER BY v.period_start, v.dim_key`;
 
 const QUESTION_COUNTS_SQL = `SELECT status, COUNT(*) AS n FROM dd_kpi_questions GROUP BY status`;
 
@@ -488,7 +514,7 @@ function buildTile(
   }
   const snapshot = values.get(`${kpi.kpi_key}|${periodKind}|${periodStart}`) ?? null;
   const inSeason = ddInSeason(kpi, model.farmToday);
-  return { kpi, periodKind, periodStart, inSeason, status: ddTileStatus(kpi, snapshot, inSeason, model.nowIso), snapshot, history, companions: [], harvest, dlh: null, dlhGoal: null };
+  return { kpi, periodKind, periodStart, inSeason, status: ddTileStatus(kpi, snapshot, inSeason, model.nowIso), snapshot, history, companions: [], harvest, dlh: null, dlhGoal: null, pct: null, plant: null, storage: null, trim: null };
 }
 
 /** A wall: one batch (registry, the wall's live rows over the widest history window, config); tiles grouped by
@@ -511,14 +537,26 @@ export async function loadDirectorWall(
     const newest = periodStartFor(periodKind, day, {});
     bounds.push(periodShift(periodKind, newest, -(DD_HISTORY_PERIODS_MAX - 1)), day);
   }
-  const results = await db.batch([
+  const plantYear = Number(farmToday.slice(0, 4));
+  const withPlants = dept === "bizops" && Number.isInteger(plantYear) && plantYear > 0;
+  const reads: D1PreparedStatement[] = [
     db.prepare(REGISTRY_SQL),
     db.prepare(WALL_VALUES_SQL).bind(`%,${dept},%`, ...bounds),
     configStatement(db),
     db.prepare(WALL_TARGETS_SQL).bind(`%,${dept},%`),
     db.prepare(HARVEST_SERIES_SQL),
     db.prepare(DLH_SERIES_SQL),
-  ]);
+    db.prepare(PCT_SERIES_SQL),
+  ];
+  if (withPlants) {
+    reads.push(...plantWeightStatements(db, plantYear, farmToday));
+    reads.push(...storageCapacityStatements(db));
+  }
+  const trimYear = Number(farmToday.slice(0, 4));
+  const withTrim = (dept === "bizops" || dept === "farmops") && Number.isInteger(trimYear) && trimYear > 0;
+  const trimAt = reads.length;
+  if (withTrim) reads.push(trimSeriesStatement(db, `${trimYear}-01-01`, `${trimYear}-12-31`));
+  const results = await db.batch(reads);
   const registry = registryFromRows(resultsOf(results[0]));
   const values = new Map<string, DdSnapshot>();
   // The statement orders the winning source of a period last (DD_SOURCE_PRECEDENCE), so the last write wins.
@@ -551,6 +589,14 @@ export async function loadDirectorWall(
     dlhTile.dlh = dlhSeriesFromRows(resultsOf(results[5]), farmToday);
     dlhTile.dlhGoal = targetInForce(targets, LBS_PER_DLH_KPI, "", "day", farmToday)?.target ?? null;
   }
+  const pctTile = tiles.get(PCT_FINISHED_KPI);
+  if (pctTile) pctTile.pct = pctSeriesFromRows(resultsOf(results[6]), farmToday);
+  const plantTile = tiles.get(PLANT_WEIGHT_KPI);
+  if (plantTile) plantTile.plant = withPlants ? plantWeightFromResults(results.slice(7, 12), farmToday, plantYear) : emptyPlantWeight(farmToday, plantYear);
+  const storageTile = tiles.get(STORAGE_CAPACITY_KPI);
+  if (storageTile) storageTile.storage = withPlants ? await loadStorageModel(db, results.slice(12), nowIso) : emptyStorage(nowIso);
+  const trimTile = tiles.get(TRIM_THROUGHPUT_KPI);
+  if (trimTile) trimTile.trim = withTrim ? trimModelFromRows(resultsOf(results[trimAt]), farmToday) : emptyTrim(farmToday);
   for (const tile of tiles.values()) fillWallGoal(tile, targets, nowIso);
   const groups: DirectorWallGroup[] = [];
   for (const kind of DD_CADENCES) {
@@ -686,12 +732,24 @@ function tileHtml(tile: DirectorTile, group: DirectorWallGroup, locale: Locale, 
   const companions = tile.companions.length > 0 ? `<ul class="dd-companions">${tile.companions.map((row) => companionHtml(row, locale)).join("")}</ul>` : "";
   const harvest = tile.harvest && tile.harvest.days.length > 0 ? lbsHarvestedBody(tile.harvest, locale, lbGrams) : "";
   const dlh = tile.dlh && tile.dlh.days.length > 0 ? lbsPerDlhBody(tile.dlh, tile.dlhGoal, locale) : "";
-  const wide = harvest || dlh;
+  const pct = tile.pct ? pctFinishedBody(tile.pct, locale) : "";
+  const plant = tile.plant ? plantWeightBody(tile.plant, locale) : "";
+  const storage = tile.storage ? storageBody(tile.storage, locale) : "";
+  const trim = tile.trim ? trimThroughputBody(tile.trim, locale) : "";
+  const wide = harvest || dlh || plant || storage || trim;
   const body = harvest
     ? harvest
     : dlh
       ? dlh
-      : `${valueHtml(tile, locale, lbGrams)}
+      : pct
+        ? pct
+        : plant
+          ? plant
+          : storage
+            ? storage
+            : trim
+              ? trim
+              : `${valueHtml(tile, locale, lbGrams)}
       ${goalHtml(tile, locale)}
       <span class="dd-tile-meta">${badgeHtml(tile, locale)}${sourceHtml(tile, locale)}${period}</span>
       ${ddSparklineSvg(tile.history)}
@@ -743,7 +801,7 @@ export function directorWallPage(model: DirectorWallModel, locale: Locale = "en"
   const groups = shown.map((group) => groupHtml(group, model, locale)).join("");
   return `<div class="dd-wall" data-dd-wall="${esc(model.dept)}" data-dd-day="${esc(model.farmToday)}" data-dd-tiles="${esc(model.tileCount)}">
     <h1>${esc(t(locale, model.title_en))}</h1>
-    <p class="muted">${esc(t(locale, "Each tile reads its latest snapshot. Nothing is computed when the page loads."))}</p>
+    <p class="muted">${esc(t(locale, "Each tile reads its latest snapshot. Plant Weight is computed from this year's lots when the page loads. Storage Capacity Utilization reads the rooms live."))}</p>
     ${tabBar(locale, tabs, tab ?? "all")}
     ${groups || `<p class="muted" data-dd-empty>${esc(t(locale, "No tiles on this wall."))}</p>`}
   </div>`;

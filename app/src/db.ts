@@ -4915,12 +4915,12 @@ const SILO_LOAD_SELECT = `SELECT l.id, l.dry_space_id, d.name AS silo_name, l.we
 /** Open loads (not ended, not voided), newest first: what the circles show.
  * THE VOIDED LOT LEAVES ITS SILO (canon 0.30.116): a load whose lot was voided
  * is no load; the tiles never show one, whatever the load row says. */
-export async function listOpenSiloLoads(db: D1Database): Promise<SiloLoadRow[]> {
-  const result = await db
-    .prepare(`${SILO_LOAD_SELECT}
+export const SILO_OPEN_LOADS_SQL = `${SILO_LOAD_SELECT}
        WHERE l.deleted_at IS NULL AND l.ended_at IS NULL AND w.deleted_at IS NULL
-       ORDER BY l.loaded_at DESC`)
-    .all<SiloLoadRow>();
+       ORDER BY l.loaded_at DESC`;
+
+export async function listOpenSiloLoads(db: D1Database): Promise<SiloLoadRow[]> {
+  const result = await db.prepare(SILO_OPEN_LOADS_SQL).all<SiloLoadRow>();
   return result.results ?? [];
 }
 
@@ -4928,17 +4928,15 @@ export async function listOpenSiloLoads(db: D1Database): Promise<SiloLoadRow[]> 
  * The unload finish's press is ended_at. A load that left by its lot's void
  * has no ended_at, so the moment is deleted_at. The newer of the two wins.
  * An open load is not a departure. effective_date is not this moment. */
-export async function listSiloEmptySince(db: D1Database): Promise<{ dry_space_id: string; left_at: string }[]> {
-  const result = await db
-    .prepare(
-      `SELECT dry_space_id,
+export const SILO_EMPTY_SINCE_SQL = `SELECT dry_space_id,
               MAX(CASE WHEN ended_at IS NOT NULL AND TRIM(ended_at) <> '' THEN ended_at ELSE deleted_at END) AS left_at
        FROM silo_loads
        WHERE (ended_at IS NOT NULL AND TRIM(ended_at) <> '')
           OR (deleted_at IS NOT NULL AND TRIM(deleted_at) <> '')
-       GROUP BY dry_space_id`
-    )
-    .all<{ dry_space_id: string; left_at: string }>();
+       GROUP BY dry_space_id`;
+
+export async function listSiloEmptySince(db: D1Database): Promise<{ dry_space_id: string; left_at: string }[]> {
+  const result = await db.prepare(SILO_EMPTY_SINCE_SQL).all<{ dry_space_id: string; left_at: string }>();
   return (result.results ?? []).filter((row) => Boolean(row.left_at));
 }
 
@@ -4970,10 +4968,7 @@ export type SiloLotGramsRow = {
   strain_label?: string | null;
 };
 
-export async function listSiloLotGrams(db: D1Database): Promise<SiloLotGramsRow[]> {
-  const result = await db
-    .prepare(
-      `SELECT CASE WHEN d.kind = 'silo' THEN d.id ELSE p.id END AS dry_space_id, w.status AS status,
+export const SILO_LOT_GRAMS_SQL = `SELECT CASE WHEN d.kind = 'silo' THEN d.id ELSE p.id END AS dry_space_id, w.status AS status,
               COALESCE(w.weight_grams, 0) AS weight_grams, 1 AS lots,
               w.id AS lot_id, b.hbn, b.metrc_harvest_tag,
               CASE WHEN d.kind = 'silo' THEN 0 ELSE 1 END AS planned,
@@ -4992,9 +4987,10 @@ export async function listSiloLotGrams(db: D1Database): Promise<SiloLotGramsRow[
              )
              AND (d.kind = 'silo' OR p.id IS NOT NULL))
          )
-       ORDER BY w.updated_at DESC`
-    )
-    .all<SiloLotGramsRow>();
+       ORDER BY w.updated_at DESC`;
+
+export async function listSiloLotGrams(db: D1Database): Promise<SiloLotGramsRow[]> {
+  const result = await db.prepare(SILO_LOT_GRAMS_SQL).all<SiloLotGramsRow>();
   return (result.results ?? []).filter((r) => r.dry_space_id != null);
 }
 

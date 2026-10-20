@@ -410,9 +410,30 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
     workbook_rows: "14,62",
   }),
   K({
+    kpi_key: "bizops.pct_finished_plants",
+    dept_key: "bizops",
+    wall_keys: "bizops",
+    title_en: "% Complete (By Plant Count)",
+    title_es: "% Completo (por conteo de plantas)",
+    unit: "pct",
+    cadence: "daily",
+    dims: "grow_method",
+    goal_kind: "none",
+    compute_key:
+      "All grow methods: consoleBoxes pct (src/console.ts, the Total box), the Admin plant total less the mirror's live plants over the Admin total, a farm with no total using its lots plus its live plants. One grow method: plants on own lots of the year with that grow_method_code (the console's season lots, status not weighing) over those plus the live mirror plants of that grow method (location starting GH is GH, else OD)",
+    source_kind: "app",
+    stale_after_hours: 30,
+    status: "live",
+    def_version: 1,
+    open_question_en: null,
+    open_question_es: null,
+    config_key: null,
+    workbook_rows: null,
+  }),
+  K({
     kpi_key: "bizops.shipments_count",
     dept_key: "bizops",
-    wall_keys: "bizops,sales",
+    wall_keys: "sales",
     title_en: "Shipments",
     title_es: "Envíos",
     unit: "count",
@@ -559,6 +580,27 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
     workbook_rows: "19,55",
   }),
   K({
+    kpi_key: "bizops.plant_weight",
+    dept_key: "bizops",
+    wall_keys: "bizops",
+    title_en: "Plant Weight",
+    title_es: "Peso por planta",
+    unit: "lb448",
+    cadence: "daily",
+    dims: "farm,strain,grow_method",
+    goal_kind: "none",
+    compute_key:
+      "dry grams over plants of own dried lots of the harvest year (consoleBoxes dryPerPlant: plant_count at least 1, dry grams above 0, status not weighing, ownLotSql), dated by the lot's unload day; projected = buildStrainPerformance seasonLb over plantsHarvested plus plantsRemaining for the rows in the selection",
+    source_kind: "app",
+    stale_after_hours: 30,
+    status: "live",
+    def_version: 1,
+    open_question_en: null,
+    open_question_es: null,
+    config_key: null,
+    workbook_rows: null,
+  }),
+  K({
     kpi_key: "bizops.lab_turnaround_days",
     dept_key: "bizops",
     wall_keys: "bizops",
@@ -569,6 +611,7 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
     goal_kind: "targets",
     goal_ref: "testing_labs.turnaround_days",
     goal_direction: "at_most",
+    active: 0,
     compute_key:
       "labrules.turnaroundDays per sample (src/labrules.ts:612-618) averaged over rows finished on the day; goal = testing_labs.turnaround_days (promised, src/testing.ts:55); parity reference src/lab.ts:1095 without julianday and with the program clause",
     source_kind: "app",
@@ -740,9 +783,31 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
     open_question_es: "Si el corte y el desgrane cuentan como poscosecha; tarifas cargadas por operación",
     workbook_rows: "20",
   }),
+  K({
+    kpi_key: "bizops.storage_capacity",
+    dept_key: "bizops",
+    wall_keys: "bizops",
+    title_en: "Storage Capacity Utilization",
+    title_es: "Uso de capacidad de almacenamiento",
+    unit: "pct",
+    cadence: "daily",
+    dims: "space",
+    goal_kind: "none",
+    compute_key:
+      "silo.ts assembleSiloVisuals fill level per silo kind space (the silo tiles' own number: loaded wet over the space's capacityGrams, unloading scaled by dry out); cure spaces by the cure page's lots in place over the space's capacity in ea; spaces with a capacity only, the freezer out",
+    source_kind: "app",
+    stale_after_hours: 30,
+    status: "live",
+    def_version: 1,
+    open_question_en: null,
+    open_question_es: null,
+    config_key: null,
+    workbook_rows: null,
+  }),
   // harvest (shared tiles, parity with /harvest): one key set shown on bizops and farmops
   K({
     kpi_key: "harvest.wet_weight_lb",
+    active: 0,
     dept_key: "bizops",
     wall_keys: "bizops,farmops",
     title_en: "Harvest wet weight, day and season to date",
@@ -760,7 +825,29 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
     workbook_rows: "47",
   }),
   K({
+    kpi_key: "bizops.trim_throughput",
+    dept_key: "bizops",
+    wall_keys: "bizops,farmops",
+    title_en: "Trim Throughput",
+    title_es: "Rendimiento de recorte",
+    unit: "ratio",
+    cadence: "daily",
+    dims: "shift,strain,dry_method",
+    goal_kind: "none",
+    compute_key:
+      "console trimFigures per shift (src/console.ts): the shift's weighed trim output grams over 448 over trim_labor_hours for that work_date and shift; weighted = both shifts' lbs over both shifts' hours; with a strain or dry method picked, each shift's hours are shared by the selection's share of that shift's lbs",
+    source_kind: "app",
+    stale_after_hours: 30,
+    status: "live",
+    def_version: 1,
+    open_question_en: null,
+    open_question_es: null,
+    config_key: null,
+    workbook_rows: null,
+  }),
+  K({
     kpi_key: "harvest.pct_complete",
+    active: 0,
     dept_key: "bizops",
     wall_keys: "bizops,farmops",
     title_en: "Percent finished (plants)",
@@ -1705,7 +1792,7 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
   }),
 ];
 
-/** The 74 registry rows, sort 10, 20, ... in the order above (bizops, the harvest family, sales, finance, farmops, culttech). bizops.lbs_shipped stays and is inactive. */
+/** The 78 registry rows, sort 10, 20, ... in the order above (bizops, the harvest family, sales, finance, farmops, culttech). bizops.lbs_shipped, bizops.lab_turnaround_days, harvest.wet_weight_lb, and harvest.pct_complete stay and are inactive. */
 export const DD_KPIS: readonly DdKpi[] = ROWS.map((row, i) => ({ ...row, sort: (i + 1) * 10 }));
 
 export function ddKpi(key: string): DdKpi | undefined {
@@ -2086,11 +2173,13 @@ const LBS_PROCESSED_0105: Pick<DdKpi, "title_en" | "title_es" | "dims" | "comput
   config_key: "dd_processed_lbs_buckets",
 };
 
-/** 0105's rows: the later Lbs/Labor Hour key is omitted, Lbs shipped is still active, and the sorts are the original 10, 20, ... so the seed text stays byte for byte. */
+/** 0105's rows: the later Lbs/Labor Hour, % Complete, Plant Weight, Storage Capacity, and Trim Throughput keys are omitted, Lbs shipped, Testing turnaround, Harvest wet weight, and Percent finished (plants) are still active, and the sorts are the original 10, 20, ... so the seed text stays byte for byte. */
 function seedKpiList(): DdKpi[] {
-  return DD_KPIS.filter((row) => row.kpi_key !== "bizops.lbs_per_dlh").map((row, i) => {
+  return DD_KPIS.filter((row) => row.kpi_key !== "bizops.lbs_per_dlh" && row.kpi_key !== "bizops.pct_finished_plants" && row.kpi_key !== "bizops.plant_weight" && row.kpi_key !== "bizops.storage_capacity" && row.kpi_key !== "bizops.trim_throughput").map((row, i) => {
     const base = row.kpi_key === "bizops.lbs_processed" ? { ...row, ...LBS_PROCESSED_0105 } : { ...row };
-    return { ...base, active: row.kpi_key === "bizops.lbs_shipped" ? 1 : base.active, sort: (i + 1) * 10 };
+    const seeded = row.kpi_key === "bizops.shipments_count" ? { ...base, wall_keys: "bizops,sales" } : base;
+    const active = row.kpi_key === "bizops.lbs_shipped" || row.kpi_key === "bizops.lab_turnaround_days" || row.kpi_key === "harvest.wet_weight_lb" || row.kpi_key === "harvest.pct_complete" ? 1 : seeded.active;
+    return { ...seeded, active, sort: (i + 1) * 10 };
   });
 }
 

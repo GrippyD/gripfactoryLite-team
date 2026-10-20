@@ -125,13 +125,13 @@ describe("DD S1 migration 0105: the registry seed", () => {
     expect(m.all(`SELECT id FROM dd_department_people`)).toEqual([]);
   });
 
-  it("seeds 74 dd_kpis rows with every field inside its list, no dash characters, and DD_KPIS equal to the rows", async () => {
+  it("seeds 78 dd_kpis rows with every field inside its list, no dash characters, and DD_KPIS equal to the rows", async () => {
     const m = await migratedDb();
     const rows = m.all(`SELECT * FROM dd_kpis ORDER BY sort`);
-    expect(rows).toHaveLength(74);
-    expect(DD_KPIS).toHaveLength(74);
+    expect(rows).toHaveLength(78);
+    expect(DD_KPIS).toHaveLength(78);
     const keys = new Set(rows.map((r) => String(r.kpi_key)));
-    expect(keys.size).toBe(74);
+    expect(keys.size).toBe(78);
     const units = new Set<string>(DD_UNITS);
     const cadences = new Set<string>(DD_CADENCES);
     const statuses = new Set<string>(DD_STATUSES);
@@ -156,7 +156,8 @@ describe("DD S1 migration 0105: the registry seed", () => {
       const walls = String(row.wall_keys).split(",");
       expect(walls.length, `${key} wall_keys`).toBeGreaterThan(0);
       for (const wall of walls) expect(depts.has(wall), `${key} wall ${wall}`).toBe(true);
-      expect(walls.includes(String(row.dept_key)), `${key} shows on its own wall`).toBe(true);
+      if (key === "bizops.shipments_count") expect(row.wall_keys).toBe("sales");
+      else expect(walls.includes(String(row.dept_key)), `${key} shows on its own wall`).toBe(true);
       if (row.companion_of != null) expect(keys.has(String(row.companion_of)), `${key} companion_of`).toBe(true);
       if (row.config_key != null) expect((DD_CONFIG_KEYS as readonly string[]).includes(String(row.config_key)), `${key} config_key`).toBe(true);
       if (key === "bizops.lbs_processed") {
@@ -196,6 +197,106 @@ describe("DD S1 migration 0105: the registry seed", () => {
         expect(row.created_at).toBe("2026-10-19T00:00:00.000Z");
         expect(row.updated_at).toBe("2026-10-19T00:00:00.000Z");
         expect(String(row.compute_key)).toContain("perDlh");
+      } else if (key === "bizops.pct_finished_plants") {
+        expect(Number(row.active)).toBe(1);
+        expect(Number(row.def_version)).toBe(1);
+        expect(row.title_en).toBe("% Complete (By Plant Count)");
+        expect(row.title_es).toBe("% Completo (por conteo de plantas)");
+        expect(row.unit).toBe("pct");
+        expect(row.cadence).toBe("daily");
+        expect(row.goal_kind).toBe("none");
+        expect(row.wall_keys).toBe("bizops");
+        expect(row.dept_key).toBe("bizops");
+        expect(row.dims).toBe("grow_method");
+        expect(row.open_question_en).toBeNull();
+        expect(row.open_question_es).toBeNull();
+        expect(row.config_key).toBeNull();
+        expect(Number(row.sort)).toBe(40);
+        expect(Number(row.stale_after_hours)).toBe(30);
+        expect(row.created_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(row.updated_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(String(row.compute_key)).toContain("consoleBoxes");
+        expect(String(row.compute_key)).toContain("grow_method_code");
+      } else if (key === "bizops.plant_weight") {
+        expect(Number(row.active)).toBe(1);
+        expect(Number(row.def_version)).toBe(1);
+        expect(row.title_en).toBe("Plant Weight");
+        expect(row.title_es).toBe("Peso por planta");
+        expect(row.unit).toBe("lb448");
+        expect(row.cadence).toBe("daily");
+        expect(row.goal_kind).toBe("none");
+        expect(row.wall_keys).toBe("bizops");
+        expect(row.dept_key).toBe("bizops");
+        expect(row.dims).toBe("farm,strain,grow_method");
+        expect(row.open_question_en).toBeNull();
+        expect(row.open_question_es).toBeNull();
+        expect(row.config_key).toBeNull();
+        expect(Number(row.sort)).toBe(130);
+        expect(Number(row.stale_after_hours)).toBe(30);
+        expect(row.created_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(row.updated_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(String(row.compute_key)).toContain("dryPerPlant");
+        expect(String(row.compute_key)).toContain("seasonLb");
+      } else if (key === "bizops.storage_capacity") {
+        expect(Number(row.active)).toBe(1);
+        expect(Number(row.def_version)).toBe(1);
+        expect(row.title_en).toBe("Storage Capacity Utilization");
+        expect(row.title_es).toBe("Uso de capacidad de almacenamiento");
+        expect(row.unit).toBe("pct");
+        expect(row.cadence).toBe("daily");
+        expect(row.goal_kind).toBe("none");
+        expect(row.wall_keys).toBe("bizops");
+        expect(row.dept_key).toBe("bizops");
+        expect(row.dims).toBe("space");
+        expect(row.open_question_en).toBeNull();
+        expect(row.open_question_es).toBeNull();
+        expect(row.config_key).toBeNull();
+        expect(Number(row.sort)).toBe(240);
+        expect(Number(row.stale_after_hours)).toBe(30);
+        expect(row.created_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(row.updated_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(String(row.compute_key)).toContain("assembleSiloVisuals");
+        expect(String(row.compute_key)).toContain("capacityGrams");
+      } else if (key === "bizops.trim_throughput") {
+        expect(Number(row.active)).toBe(1);
+        expect(Number(row.def_version)).toBe(1);
+        expect(row.title_en).toBe("Trim Throughput");
+        expect(row.title_es).toBe("Rendimiento de recorte");
+        expect(row.unit).toBe("ratio");
+        expect(row.cadence).toBe("daily");
+        expect(row.goal_kind).toBe("none");
+        expect(row.wall_keys).toBe("bizops,farmops");
+        expect(row.dept_key).toBe("bizops");
+        expect(row.dims).toBe("shift,strain,dry_method");
+        expect(row.open_question_en).toBeNull();
+        expect(row.open_question_es).toBeNull();
+        expect(row.config_key).toBeNull();
+        expect(Number(row.sort)).toBe(260);
+        expect(Number(row.stale_after_hours)).toBe(30);
+        expect(row.created_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(row.updated_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(String(row.compute_key)).toContain("trimFigures");
+        expect(String(row.compute_key)).toContain("trim_labor_hours");
+      } else if (key === "harvest.pct_complete") {
+        expect(Number(row.active)).toBe(0);
+        expect(row.title_en).toBe("Percent finished (plants)");
+        expect(row.wall_keys).toBe("bizops,farmops");
+        expect(row.updated_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(row.created_at).toBe(DD_SEED_AT);
+        expect(Number(row.sort)).toBe(270);
+      } else if (key === "harvest.wet_weight_lb") {
+        expect(Number(row.active)).toBe(0);
+        expect(row.wall_keys).toBe("bizops,farmops");
+        expect(row.updated_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(row.created_at).toBe(DD_SEED_AT);
+        expect(Number(row.sort)).toBe(250);
+      } else if (key === "bizops.lab_turnaround_days") {
+        expect(Number(row.active)).toBe(0);
+        expect(Number(row.def_version)).toBe(1);
+        expect(row.title_en).toBe("Testing turnaround");
+        expect(row.updated_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(row.created_at).toBe(DD_SEED_AT);
+        expect(row.goal_direction).toBe("at_most");
       } else {
         expect(Number(row.def_version)).toBe(1);
         expect(row.updated_at).toBe(DD_SEED_AT);
@@ -248,12 +349,27 @@ describe("DD S1 migration 0105: the registry seed", () => {
     for (const dept of DD_DEPT_KEYS) expect(ddKpisForWall(DD_KPIS, dept).length, dept).toBeGreaterThan(0);
     expect(ddKpisForWall(DD_KPIS, "bizops").length).toBeGreaterThanOrEqual(20);
     expect(ddKpisForWall(DD_KPIS, "bizops").map((r) => r.kpi_key)).toContain("bizops.lbs_per_dlh");
+    expect(ddKpisForWall(DD_KPIS, "bizops").map((r) => r.kpi_key)).toContain("bizops.pct_finished_plants");
+    expect(ddKpisForWall(DD_KPIS, "bizops").map((r) => r.kpi_key)).toContain("bizops.plant_weight");
+    expect(ddKpisForWall(DD_KPIS, "bizops").map((r) => r.kpi_key)).toContain("bizops.storage_capacity");
+    expect(ddKpisForWall(DD_KPIS, "bizops").map((r) => r.kpi_key)).toContain("bizops.trim_throughput");
+    expect(ddKpisForWall(DD_KPIS, "bizops").map((r) => r.kpi_key)).not.toContain("bizops.lab_turnaround_days");
+    expect(ddKpisForWall(DD_KPIS, "bizops").map((r) => r.kpi_key)).not.toContain("harvest.wet_weight_lb");
+    expect(ddKpisForWall(DD_KPIS, "bizops").map((r) => r.kpi_key)).not.toContain("harvest.pct_complete");
+    expect(ddKpisForWall(DD_KPIS, "bizops").map((r) => r.kpi_key)).not.toContain("bizops.shipments_count");
+    expect(ddKpisForWall(DD_KPIS, "sales").map((r) => r.kpi_key)).toContain("bizops.shipments_count");
+    expect(ddKpi("harvest.pct_complete")?.title_en).toBe("Percent finished (plants)");
+    expect(ddKpi("harvest.pct_complete")?.wall_keys).toBe("bizops,farmops");
+    expect(ddKpi("harvest.pct_complete")?.active).toBe(0);
+    expect(ddKpi("bizops.trim_throughput")?.wall_keys).toBe("bizops,farmops");
+    expect(ddKpisForWall(DD_KPIS, "farmops").map((r) => r.kpi_key)).toContain("bizops.trim_throughput");
+    expect(ddKpisForWall(DD_KPIS, "farmops").map((r) => r.kpi_key)).not.toContain("harvest.pct_complete");
     for (const dept of DD_DEPT_KEYS) expect(ddKpisForWall(DD_KPIS, dept).map((r) => r.kpi_key)).not.toContain("bizops.lbs_shipped");
     expect(ddKpi("harvest.wet_lb_per_dlh")?.active).toBe(1);
     expect(ddKpi("harvest.wet_lb_per_dlh")?.wall_keys).toBe("bizops,farmops");
     const goal = m.get(`SELECT target, effective_from, period_kind, dim_key, note FROM dd_targets WHERE kpi_key = 'bizops.lbs_per_dlh' AND deleted_at IS NULL`);
     expect(goal).toMatchObject({ target: 26, effective_from: "2026-09-01", period_kind: "day", dim_key: "", note: "owner 2026-10-19" });
-    expect(ddKpisForWall(DD_KPIS, "farmops").map((r) => r.kpi_key)).toContain("harvest.wet_weight_lb");
+    expect(ddKpisForWall(DD_KPIS, "farmops").map((r) => r.kpi_key)).not.toContain("harvest.wet_weight_lb");
     expect(ddKpisForWall(DD_KPIS, "culttech").map((r) => r.kpi_key)).toContain("harvest.btr_pct");
     expect(ddKpisForWall(DD_KPIS, "sales").map((r) => r.kpi_key)).toContain("finance.ar_ap_aging_usd");
     const fs = (await import("node:" + "fs")) as { readFileSync(path: URL, encoding: "utf8"): string };
@@ -293,6 +409,147 @@ describe("DD S1 migration 0105: the registry seed", () => {
     for (const part of parts) m.run(part);
     expect(m.all(`SELECT kpi_key, sort, active FROM dd_kpis ORDER BY sort`)).toEqual(shape);
     expect(m.get(`SELECT COUNT(*) AS n FROM dd_targets WHERE kpi_key = 'bizops.lbs_per_dlh' AND deleted_at IS NULL`)?.n).toBe(1);
+    const pctSql = fs.readFileSync(new URL("../migrations/0108_dd_pct_finished.sql", import.meta.url), "utf8");
+    expect(pctSql.includes("\r")).toBe(false);
+    expect(pctSql.includes('"')).toBe(false);
+    expect(DASH.test(pctSql)).toBe(false);
+    const pctParts: string[] = [];
+    current = "";
+    quote = false;
+    for (let i = 0; i < pctSql.length; i += 1) {
+      const ch = pctSql[i] ?? "";
+      if (ch === "'") {
+        current += ch;
+        if (quote && pctSql[i + 1] === "'") {
+          current += "'";
+          i += 1;
+          continue;
+        }
+        quote = !quote;
+        continue;
+      }
+      if (ch === ";" && !quote) {
+        const statement = current
+          .split("\n")
+          .filter((line) => !line.trim().startsWith("--"))
+          .join("\n")
+          .trim();
+        if (statement) pctParts.push(statement);
+        current = "";
+        continue;
+      }
+      current += ch;
+    }
+    for (const part of pctParts) m.run(part);
+    expect(m.all(`SELECT kpi_key, sort, active FROM dd_kpis ORDER BY sort`)).toEqual(shape);
+    expect(m.get(`SELECT wall_keys AS w FROM dd_kpis WHERE kpi_key = 'bizops.shipments_count'`)?.w).toBe("sales");
+    const plantSql = fs.readFileSync(new URL("../migrations/0109_dd_plant_weight.sql", import.meta.url), "utf8");
+    expect(plantSql.includes("\r")).toBe(false);
+    expect(plantSql.includes('"')).toBe(false);
+    expect(DASH.test(plantSql)).toBe(false);
+    const plantParts: string[] = [];
+    current = "";
+    quote = false;
+    for (let i = 0; i < plantSql.length; i += 1) {
+      const ch = plantSql[i] ?? "";
+      if (ch === "'") {
+        current += ch;
+        if (quote && plantSql[i + 1] === "'") {
+          current += "'";
+          i += 1;
+          continue;
+        }
+        quote = !quote;
+        continue;
+      }
+      if (ch === ";" && !quote) {
+        const statement = current
+          .split("\n")
+          .filter((line) => !line.trim().startsWith("--"))
+          .join("\n")
+          .trim();
+        if (statement) plantParts.push(statement);
+        current = "";
+        continue;
+      }
+      current += ch;
+    }
+    for (const part of plantParts) m.run(part);
+    expect(m.all(`SELECT kpi_key, sort, active FROM dd_kpis ORDER BY sort`)).toEqual(shape);
+    expect(m.get(`SELECT active AS a FROM dd_kpis WHERE kpi_key = 'bizops.lab_turnaround_days'`)?.a).toBe(0);
+    expect(m.get(`SELECT active AS a FROM dd_kpis WHERE kpi_key = 'bizops.plant_weight'`)?.a).toBe(1);
+    const capSql = fs.readFileSync(new URL("../migrations/0110_dd_storage_capacity.sql", import.meta.url), "utf8");
+    expect(capSql.includes("\r")).toBe(false);
+    expect(capSql.includes('"')).toBe(false);
+    expect(capSql.includes("%")).toBe(false);
+    expect(DASH.test(capSql)).toBe(false);
+    const capParts: string[] = [];
+    current = "";
+    quote = false;
+    for (let i = 0; i < capSql.length; i += 1) {
+      const ch = capSql[i] ?? "";
+      if (ch === "'") {
+        current += ch;
+        if (quote && capSql[i + 1] === "'") {
+          current += "'";
+          i += 1;
+          continue;
+        }
+        quote = !quote;
+        continue;
+      }
+      if (ch === ";" && !quote) {
+        const statement = current
+          .split("\n")
+          .filter((line) => !line.trim().startsWith("--"))
+          .join("\n")
+          .trim();
+        if (statement) capParts.push(statement);
+        current = "";
+        continue;
+      }
+      current += ch;
+    }
+    for (const part of capParts) m.run(part);
+    expect(m.all(`SELECT kpi_key, sort, active FROM dd_kpis ORDER BY sort`)).toEqual(shape);
+    expect(m.get(`SELECT active AS a FROM dd_kpis WHERE kpi_key = 'harvest.wet_weight_lb'`)?.a).toBe(0);
+    expect(m.get(`SELECT active AS a FROM dd_kpis WHERE kpi_key = 'bizops.storage_capacity'`)?.a).toBe(1);
+    const trimSql = fs.readFileSync(new URL("../migrations/0111_dd_trim_throughput.sql", import.meta.url), "utf8");
+    expect(trimSql.includes("\r")).toBe(false);
+    expect(trimSql.includes('"')).toBe(false);
+    expect(trimSql.includes("%")).toBe(false);
+    expect(DASH.test(trimSql)).toBe(false);
+    const trimParts: string[] = [];
+    current = "";
+    quote = false;
+    for (let i = 0; i < trimSql.length; i += 1) {
+      const ch = trimSql[i] ?? "";
+      if (ch === "'") {
+        current += ch;
+        if (quote && trimSql[i + 1] === "'") {
+          current += "'";
+          i += 1;
+          continue;
+        }
+        quote = !quote;
+        continue;
+      }
+      if (ch === ";" && !quote) {
+        const statement = current
+          .split("\n")
+          .filter((line) => !line.trim().startsWith("--"))
+          .join("\n")
+          .trim();
+        if (statement) trimParts.push(statement);
+        current = "";
+        continue;
+      }
+      current += ch;
+    }
+    for (const part of trimParts) m.run(part);
+    expect(m.all(`SELECT kpi_key, sort, active FROM dd_kpis ORDER BY sort`)).toEqual(shape);
+    expect(m.get(`SELECT active AS a FROM dd_kpis WHERE kpi_key = 'harvest.pct_complete'`)?.a).toBe(0);
+    expect(m.get(`SELECT active AS a, wall_keys AS w FROM dd_kpis WHERE kpi_key = 'bizops.trim_throughput'`)).toMatchObject({ a: 1, w: "bizops,farmops" });
   });
 
   it("the migration carries ddSeedSql() and ddConfigSeedSql() verbatim, nine rows per INSERT at most", async () => {
@@ -313,7 +570,7 @@ describe("DD S1 migration 0105: the registry seed", () => {
     // The seed is idempotent: applying it again changes nothing.
     const m = await migratedDb();
     for (const statement of seed.split(";\n").map((s) => s.trim()).filter((s) => s.length > 0)) m.run(statement);
-    expect(m.get(`SELECT COUNT(*) AS n FROM dd_kpis`)?.n).toBe(74);
+    expect(m.get(`SELECT COUNT(*) AS n FROM dd_kpis`)?.n).toBe(78);
     expect(m.get(`SELECT COUNT(*) AS n FROM dd_kpi_questions`)?.n).toBe(17);
   });
 
@@ -569,7 +826,7 @@ function tileMarkers(html: string): Array<{ key: string; status: string; cadence
   }));
 }
 
-/** 73 keys times 52 periods of the row's own kind, newest at the farm day, nine rows per INSERT. */
+/** 74 keys times 52 periods of the row's own kind, newest at the farm day, nine rows per INSERT. */
 function seedFixture(m: Awaited<ReturnType<typeof migratedDb>>, computedAt: string): number {
   const rows: Array<Array<string | number | null>> = [];
   DD_KPIS.filter((kpi) => kpi.active === 1).forEach((kpi, index) => {
@@ -593,19 +850,19 @@ function seedFixture(m: Awaited<ReturnType<typeof migratedDb>>, computedAt: stri
     m.run(sql, ...chunk.flat());
     statements += 1;
   }
-  expect(rows).toHaveLength(3796);
+  expect(rows).toHaveLength(3848);
   return statements;
 }
 
 describe("DD S1 pages: the home and the walls", () => {
-  it("the home loads in one batch with no direct reads and spreads the 73 tiles over the five departments", async () => {
+  it("the home loads in one batch with no direct reads and spreads the 74 tiles over the five departments", async () => {
     const m = await migratedDb();
     const { db, counts } = countedDb(m.db);
     const model = await loadDirectorHome(db, DAY, NOW);
     expect(counts).toEqual({ batches: 1, direct: 0 });
     expect(model.departments.map((d) => d.dept_key)).toEqual([...DD_DEPT_KEYS]);
-    expect(model.totalTiles).toBe(73);
-    expect(model.departments.reduce((n, d) => n + d.tiles, 0)).toBe(73);
+    expect(model.totalTiles).toBe(74);
+    expect(model.departments.reduce((n, d) => n + d.tiles, 0)).toBe(74);
     for (const d of model.departments) {
       expect(d.tiles, d.dept_key).toBe(DD_KPIS.filter((row) => row.dept_key === d.dept_key && row.active === 1).length);
       expect(DD_TILE_STATUSES.reduce((n, s) => n + d.counts[s], 0)).toBe(d.tiles);
@@ -682,7 +939,8 @@ describe("DD S1 pages: the home and the walls", () => {
     }
     expect(markers.some((x) => x.status === "no_data")).toBe(true);
     const headlines = model.groups.reduce((n, group) => n + group.tiles.length, 0);
-    expect(html.match(/data-dd-spark-points="0"/g)).toHaveLength(headlines);
+    const sparkHeadlines = headlines - model.groups.flatMap((group) => group.tiles).filter((tile) => tile.kpi.kpi_key === "bizops.pct_finished_plants" || tile.kpi.kpi_key === "bizops.plant_weight" || tile.kpi.kpi_key === "bizops.storage_capacity" || tile.kpi.kpi_key === "bizops.trim_throughput").length;
+    expect(html.match(/data-dd-spark-points="0"/g)).toHaveLength(sparkHeadlines);
     expect(html).toContain(">No data yet<");
     expect(html).not.toContain("data-dd-value=");
     // The cadence tabs: All plus every cadence on the wall, in the registry's order.
@@ -690,8 +948,11 @@ describe("DD S1 pages: the home and the walls", () => {
     expect(model.cadences).toEqual(DD_CADENCES.filter((c) => wallRows.some((row) => row.cadence === c)));
     for (const cadence of model.cadences) expect(html).toContain(`data-tab="${cadence}"`);
     // The companion sits inside its headline tile.
-    const headlineAt = html.indexOf('data-dd-kpi="bizops.shipments_count"');
-    const companionAt = html.indexOf('data-dd-kpi="bizops.moved_count"');
+    expect(html).not.toContain('data-dd-kpi="bizops.shipments_count"');
+    const salesHtml = directorWallPage(await loadDirectorWall(m.db, "sales", DAY, null, null, NOW), "en");
+    expect(salesHtml).toContain('data-dd-kpi="bizops.shipments_count"');
+    const headlineAt = html.indexOf('data-dd-kpi="harvest.ppp_dry_lb"');
+    const companionAt = html.indexOf('data-dd-kpi="harvest.ppp_wet_lb"');
     expect(headlineAt).toBeGreaterThan(-1);
     expect(companionAt).toBeGreaterThan(headlineAt);
     expect(html.slice(headlineAt, companionAt)).toContain('<ul class="dd-companions">');
@@ -709,11 +970,11 @@ describe("DD S1 pages: the home and the walls", () => {
     expect(es).not.toContain("Out of season");
   });
 
-  it("73 keys times 52 periods: one batch, values with goals and sparklines, under a second", async () => {
+  it("74 keys times 52 periods: one batch, values with goals and sparklines, under a second", async () => {
     const m = await migratedDb();
     const statements = seedFixture(m, NOW);
-    expect(statements).toBe(Math.ceil(3796 / 9));
-    expect(m.get(`SELECT COUNT(*) AS n FROM dd_kpi_values WHERE superseded_at IS NULL`)?.n).toBe(3796);
+    expect(statements).toBe(Math.ceil(3848 / 9));
+    expect(m.get(`SELECT COUNT(*) AS n FROM dd_kpi_values WHERE superseded_at IS NULL`)?.n).toBe(3848);
     const { db, counts } = countedDb(m.db);
     const started = performance.now();
     const model = await loadDirectorWall(db, "bizops", DAY, null, null, NOW);
@@ -738,7 +999,7 @@ describe("DD S1 pages: the home and the walls", () => {
     const headlineTiles = model.groups.flatMap((group) => group.tiles);
     const headlines = headlineTiles.length;
     const textHeadlines = headlineTiles.filter((tile) => tile.kpi.unit === "text").length;
-    const chartTiles = headlineTiles.filter((tile) => (tile.harvest && tile.harvest.days.length > 0) || (tile.dlh && tile.dlh.days.length > 0)).length;
+    const chartTiles = headlineTiles.filter((tile) => (tile.harvest && tile.harvest.days.length > 0) || (tile.dlh && tile.dlh.days.length > 0) || tile.kpi.kpi_key === "bizops.pct_finished_plants" || tile.kpi.kpi_key === "bizops.plant_weight" || tile.kpi.kpi_key === "bizops.storage_capacity" || tile.kpi.kpi_key === "bizops.trim_throughput").length;
     const eight = [...html.matchAll(/data-dd-spark-points="(\d+)"/g)].map((x) => Number(x[1]));
     expect(eight).toHaveLength(headlines - chartTiles);
     expect(eight.filter((n) => n === 8)).toHaveLength(headlines - textHeadlines - chartTiles);
@@ -748,7 +1009,7 @@ describe("DD S1 pages: the home and the walls", () => {
     const sixModel = await loadDirectorWall(m.db, "bizops", DAY, null, null, NOW);
     expect(sixModel.config.historyPeriods).toBe(6);
     const sixHeadlines = sixModel.groups.flatMap((group) => group.tiles);
-    const sixChart = sixHeadlines.filter((tile) => (tile.harvest && tile.harvest.days.length > 0) || (tile.dlh && tile.dlh.days.length > 0)).length;
+    const sixChart = sixHeadlines.filter((tile) => (tile.harvest && tile.harvest.days.length > 0) || (tile.dlh && tile.dlh.days.length > 0) || tile.kpi.kpi_key === "bizops.pct_finished_plants" || tile.kpi.kpi_key === "bizops.plant_weight" || tile.kpi.kpi_key === "bizops.storage_capacity" || tile.kpi.kpi_key === "bizops.trim_throughput").length;
     const six = [...directorWallPage(sixModel, "en").matchAll(/data-dd-spark-points="(\d+)"/g)].map((x) => Number(x[1]));
     expect(six).toHaveLength(sixHeadlines.length - sixChart);
     expect(six.filter((n) => n === 6)).toHaveLength(sixHeadlines.length - sixHeadlines.filter((tile) => tile.kpi.unit === "text").length - sixChart);
@@ -803,7 +1064,7 @@ describe("DD S1 pages: the home and the walls", () => {
   it("a snapshot older than stale_after_hours renders stale with the stripe; a fresh one without a goal has no verdict", async () => {
     const m = await migratedDb();
     const wallRows = ddKpisForWall(DD_KPIS, "bizops");
-    const kpi = wallRows.find((row) => row.kpi_key !== "bizops.lbs_processed" && row.kpi_key !== "bizops.lbs_per_dlh" && row.stale_after_hours != null && row.companion_of == null && ddInSeason(row, DAY) && row.status === "live") as DdKpi;
+    const kpi = wallRows.find((row) => row.kpi_key !== "bizops.lbs_processed" && row.kpi_key !== "bizops.lbs_per_dlh" && row.kpi_key !== "bizops.pct_finished_plants" && row.kpi_key !== "bizops.plant_weight" && row.kpi_key !== "bizops.trim_throughput" && row.stale_after_hours != null && row.companion_of == null && ddInSeason(row, DAY) && row.status === "live") as DdKpi;
     expect(kpi).toBeTruthy();
     const other = wallRows.find((row) => row.kpi_key !== kpi.kpi_key && row.companion_of == null && ddInSeason(row, DAY) && row.status === "live") as DdKpi;
     const kind = ddPeriodKindOf(kpi.cadence);
@@ -857,31 +1118,33 @@ describe("DD S1 pages: the home and the walls", () => {
     expect(ddGoalDelta("at_most", 5, 3)).toBe(-2);
     expect(ddGoalDelta("at_most", 3, 3)).toBe(0);
     const m = await migratedDb();
-    const kpi = ddKpi("bizops.lab_turnaround_days") as DdKpi;
+    const kpi = ddKpi("finance.close_days_late") as DdKpi;
     expect(kpi.goal_direction).toBe("at_most");
     expect(kpi.unit).toBe("days");
+    expect(kpi.active).toBe(1);
     expect(ddInSeason(kpi, DAY)).toBe(true);
+    const month = periodStartFor("month", DAY);
     m.run(
       `INSERT INTO dd_kpi_values (id, kpi_key, period_kind, period_start, dim_key, value, goal, source, computed_at, def_version, created_at)
-       VALUES ('days-1', ?, 'day', ?, '', 5, 3, 'app', ?, 1, ?)`,
+       VALUES ('days-1', ?, 'month', ?, '', 5, 3, 'app', ?, 1, ?)`,
       kpi.kpi_key,
-      DAY,
+      month,
       NOW,
       NOW
     );
-    const slow = directorWallPage(await loadDirectorWall(m.db, "bizops", DAY, null, null, NOW), "en");
+    const slow = directorWallPage(await loadDirectorWall(m.db, "finance", DAY, null, null, NOW), "en");
     expect(slow).toContain(`data-dd-kpi="${kpi.kpi_key}" data-dd-status="off_goal"`);
     expect(slow).toContain('data-dd-goal="3" data-dd-goal-direction="at_most"');
     expect(slow).toContain("Goal at most 3.0 days");
     expect(slow).toContain("Variance -2.0 (-66.7%)");
     m.run(`UPDATE dd_kpi_values SET value = 2 WHERE id = 'days-1'`);
-    const quick = await loadDirectorWall(m.db, "bizops", DAY, null, null, NOW);
+    const quick = await loadDirectorWall(m.db, "finance", DAY, null, null, NOW);
     const quickHtml = directorWallPage(quick, "en");
     expect(quickHtml).toContain(`data-dd-kpi="${kpi.kpi_key}" data-dd-status="on_goal"`);
     expect(quickHtml).toContain("Variance +1.0 (+33.3%)");
     expect(directorWallPage(quick, "es")).toContain("Meta como maximo 3.0 dias");
     m.run(`UPDATE dd_kpi_values SET value = 3 WHERE id = 'days-1'`);
-    expect(directorWallPage(await loadDirectorWall(m.db, "bizops", DAY, null, null, NOW), "en")).toContain(`data-dd-kpi="${kpi.kpi_key}" data-dd-status="on_goal"`);
+    expect(directorWallPage(await loadDirectorWall(m.db, "finance", DAY, null, null, NOW), "en")).toContain(`data-dd-kpi="${kpi.kpi_key}" data-dd-status="on_goal"`);
     // An at least row keeps the plain goal line and the arithmetic sign.
     const up = ddKpi("harvest.wet_lb_per_dlh") as DdKpi;
     expect(up.goal_direction).toBe("at_least");
@@ -901,14 +1164,14 @@ describe("DD S1 pages: the home and the walls", () => {
     expect(html).not.toContain("Goal at most 12.00");
     // The home counts the same verdicts.
     const home = await loadDirectorHome(m.db, DAY, NOW);
-    expect(home.departments.find((d) => d.dept_key === "bizops")?.counts.on_goal).toBe(1);
     expect(home.departments.find((d) => d.dept_key === "bizops")?.counts.off_goal).toBe(1);
+    expect(home.departments.find((d) => d.dept_key === "finance")?.counts.on_goal).toBe(1);
   });
 
   it("two live sources on one period: the computed row wins the tile and the home, whatever was computed last", async () => {
     expect(DD_SOURCE_PRECEDENCE.indexOf("app")).toBeLessThan(DD_SOURCE_PRECEDENCE.indexOf("hand"));
     const m = await migratedDb();
-    const kpi = ddKpi("harvest.wet_weight_lb") as DdKpi;
+    const kpi = ddKpi("harvest.wet_lb_per_dlh") as DdKpi;
     expect(ddInSeason(kpi, DAY)).toBe(true);
     const earlier = "2026-10-15T06:30:00.000Z";
     const insert = (id: string, source: string, value: number, goal: number | null, computedAt: string) =>
@@ -968,7 +1231,7 @@ describe("DD S1 pages: the home and the walls", () => {
 
   it("the home reads each key's newest period, not its newest computation, and an old latest period reads stale", async () => {
     const m = await migratedDb();
-    const kpi = ddKpi("bizops.lab_turnaround_days") as DdKpi;
+    const kpi = ddKpi("finance.close_days_late") as DdKpi;
     const weekly = ddKpi("farmops.labor_scheduled_hours") as DdKpi;
     expect(weekly.cadence).toBe("weekly");
     expect(ddInSeason(weekly, DAY)).toBe(true);
@@ -985,25 +1248,26 @@ describe("DD S1 pages: the home and the walls", () => {
         computedAt,
         computedAt
       );
-    // Yesterday's row was computed after today's; today's row is the latest period and it misses its goal.
-    insert("p-today", kpi.kpi_key, "day", DAY, 5, 3, "2026-10-15T07:00:00.000Z");
-    insert("p-yesterday", kpi.kpi_key, "day", "2026-10-14", 2, 3, NOW);
+    // Last month's row was computed after this month's; this month is the latest period and it misses its goal.
+    const month = periodStartFor("month", DAY);
+    insert("p-today", kpi.kpi_key, "month", month, 5, 3, "2026-10-15T07:00:00.000Z");
+    insert("p-yesterday", kpi.kpi_key, "month", periodShift("month", month, -1), 2, 3, NOW);
     // The weekly row's only period is two weeks back, computed then: the latest period, and stale by now.
     const old = "2026-09-28T12:00:00.000Z";
     insert("p-old", weekly.kpi_key, "week", "2026-09-28", 40, null, old);
     const home = await loadDirectorHome(m.db, DAY, NOW);
-    const bizops = home.departments.find((d) => d.dept_key === "bizops");
-    expect(bizops?.counts.off_goal).toBe(1);
-    expect(bizops?.counts.on_goal).toBe(0);
+    const finance = home.departments.find((d) => d.dept_key === "finance");
+    expect(finance?.counts.off_goal).toBe(1);
+    expect(finance?.counts.on_goal).toBe(0);
     // The card's last computed time is the latest period's row, not the later computation of an older period.
-    expect(bizops?.lastComputedAt).toBe("2026-10-15T07:00:00.000Z");
+    expect(finance?.lastComputedAt).toBe("2026-10-15T07:00:00.000Z");
     const farmops = home.departments.find((d) => d.dept_key === "farmops");
     expect(farmops?.counts.stale).toBe(1);
     expect(farmops?.counts.no_data).toBe(farmops ? farmops.tiles - 1 - farmops.counts.out_of_season : -1);
     expect(farmops?.lastComputedAt).toBe(old);
     // A superseded newer period makes room for the one before it.
     m.run(`UPDATE dd_kpi_values SET superseded_at = ? WHERE id = 'p-today'`, NOW);
-    expect((await loadDirectorHome(m.db, DAY, NOW)).departments.find((d) => d.dept_key === "bizops")?.counts.on_goal).toBe(1);
+    expect((await loadDirectorHome(m.db, DAY, NOW)).departments.find((d) => d.dept_key === "finance")?.counts.on_goal).toBe(1);
   });
 
   it("out of season rows render dimmed with the label, in both locales", async () => {
@@ -1467,19 +1731,19 @@ describe("DD S2b: targets, questions, and CSV import", () => {
     expect(html).toContain('data-dd-target-form');
     m.run(
       `INSERT INTO dd_kpi_values (id, kpi_key, period_kind, period_start, dim_key, value, goal, source, computed_at, def_version, created_at)
-       VALUES ('g1', 'harvest.wet_weight_lb', 'day', ?, '', 10, NULL, 'app', ?, 1, ?)`,
+       VALUES ('g1', 'harvest.wet_lb_per_dlh', 'day', ?, '', 10, NULL, 'app', ?, 1, ?)`,
       DAY,
       NOW,
       NOW
     );
     m.run(
       `INSERT INTO dd_targets (id, kpi_key, dim_key, period_kind, effective_from, target, created_at, updated_at)
-       VALUES ('tg1', 'harvest.wet_weight_lb', '', 'day', '2026-01-01', 40, ?, ?)`,
+       VALUES ('tg1', 'harvest.wet_lb_per_dlh', '', 'day', '2026-01-01', 40, ?, ?)`,
       NOW,
       NOW
     );
     const wall = await loadDirectorWall(m.db, "bizops", DAY, null, null, NOW);
-    const tile = wall.groups.flatMap((group) => group.tiles.concat(group.tiles.flatMap((item) => item.companions))).find((item) => item.kpi.kpi_key === "harvest.wet_weight_lb");
+    const tile = wall.groups.flatMap((group) => group.tiles.concat(group.tiles.flatMap((item) => item.companions))).find((item) => item.kpi.kpi_key === "harvest.wet_lb_per_dlh");
     expect(tile?.snapshot?.goal).toBe(40);
     expect(directorWallPage(wall, "en")).toContain('data-dd-goal="40"');
     const home = directorHomePage(await loadDirectorHome(m.db, DAY, NOW), "en");
