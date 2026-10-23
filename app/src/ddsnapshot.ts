@@ -14,11 +14,16 @@
  *
  * DD S3f: Trim Throughput (bizops.trim_throughput) is refreshTrimThroughput,
  * re-exported from src/trimthroughput.ts. The wall reads the stored rows.
+ *
+ * DD L1: Silo Utilization (harvest.dry_space_utilization_pct) is
+ * refreshSiloUtilization. One read of silo_loads, then a row per farm day
+ * and silo from the first load of the harvest year through today.
  */
 import { CONFIG_KEYS } from "./config";
 import { getConfigValue } from "./db";
 import { dayOffset, farmDay, farmDayBounds, isCalendarDate, parseFarmDayStartHour } from "./farmday";
 import { t, tFill, type Locale } from "./i18n";
+import { SILO_LIVE_SQL, SILO_LOADS_SQL, SILO_UTILIZATION_KPI, SILO_UTILIZATION_VERSION, planSiloRows, type SiloLoadFact, type SiloSpace } from "./siloutilization";
 import { ownLotSql } from "./toll";
 import { esc } from "./ui";
 
@@ -1330,4 +1335,98 @@ export function pctFinishedBody(series: PctFinishedSeries, locale: Locale): stri
       ${faces.join("")}
       ${PCT_SCRIPT}
     </div>`;
+}
+
+export type SiloUtilizationRefresh = { written: number; year: number; days: number };
+
+/**
+ * Rewrite the harvest year's live rows. An unchanged 1 or 0 is left alone.
+ * A day that drops out of the window is restated as 0. At most 8 binds on
+ * an insert and 2 on a supersede. silo_loads is read once.
+ */
+export async function refreshSiloUtilization(db: D1Database, nowIso: string): Promise<SiloUtilizationRefresh> {
+  const startHour = parseFarmDayStartHour(await getConfigValue(db, CONFIG_KEYS.farm_day_start_hour));
+  const today = farmDay(nowIso, startHour);
+  const year = Number(today.slice(0, 4));
+  if (!Number.isFinite(year) || !isCalendarDate(today)) return { written: 0, year: 0, days: 0 };
+  const start = `${year}-01-01`;
+  const [loadRows, liveRows] = await Promise.all([
+    db.prepare(SILO_LOADS_SQL).all<Record<string, unknown>>(),
+    db.prepare(SILO_LIVE_SQL).bind(start, `${year}-12-31`).all<Record<string, unknown>>(),
+  ]);
+  const spaces: SiloSpace[] = [];
+  const seen = new Set<string>();
+  const loads: SiloLoadFact[] = [];
+  for (const row of loadRows.results ?? []) {
+    if (Number(row.is_test ?? 0) === 1) continue;
+    const id = String(row.dry_space_id ?? "");
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      spaces.push({
+        id,
+        name: String(row.name ?? ""),
+        kind: String(row.kind ?? ""),
+        spaceType: String(row.space_type ?? "silo"),
+      });
+    }
+    loads.push({
+      spaceId: id,
+      loadedAt: String(row.loaded_at ?? ""),
+      endedAt: row.ended_at == null || String(row.ended_at).trim() === "" ? null : String(row.ended_at),
+      deletedAt: row.deleted_at == null || String(row.deleted_at).trim() === "" ? null : String(row.deleted_at),
+    });
+  }
+  const desired = planSiloRows(loads, spaces, startHour, today);
+  const wanted = new Map<string, { day: string; dim: string; value: number; n: number }>();
+  const days = new Set<string>();
+  for (const row of desired) {
+    wanted.set(`${row.day}|${row.dim}`, row);
+    days.add(row.day);
+  }
+  type Live = { id: string; day: string; dim: string; value: number; n: number; source_as_of: string | null };
+  const live: Live[] = (liveRows.results ?? []).map((row) => ({
+    id: String(row.id),
+    day: String(row.period_start),
+    dim: String(row.dim_key ?? ""),
+    value: Number(row.value ?? 0),
+    n: Number(row.n ?? 0),
+    source_as_of: row.source_as_of == null ? null : String(row.source_as_of),
+  }));
+  const yearPrefix = `${year}-`;
+  type Write = { supersede: string | null; day: string; dim: string; value: number; n: number };
+  const writes: Write[] = [];
+  for (const row of live) {
+    if (!row.day.startsWith(yearPrefix)) continue;
+    const next = wanted.get(`${row.day}|${row.dim}`);
+    if (next) {
+      wanted.delete(`${row.day}|${row.dim}`);
+      if (Math.round(row.value) === next.value && row.n === next.n) continue;
+      writes.push({ supersede: row.id, day: next.day, dim: next.dim, value: next.value, n: next.n });
+      continue;
+    }
+    if (Math.round(row.value) === 0 && row.n === 0) continue;
+    writes.push({ supersede: row.id, day: row.day, dim: row.dim, value: 0, n: 0 });
+  }
+  for (const next of wanted.values()) {
+    writes.push({ supersede: null, day: next.day, dim: next.dim, value: next.value, n: next.n });
+  }
+  const stmts: D1PreparedStatement[] = [];
+  for (const write of writes) {
+    if (write.supersede) {
+      stmts.push(db.prepare(`UPDATE dd_kpi_values SET superseded_at = ? WHERE id = ? AND superseded_at IS NULL`).bind(nowIso, write.supersede));
+    }
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO dd_kpi_values (
+             id, kpi_key, period_kind, period_start, dim_key, value, n, source, source_as_of, computed_at, def_version, created_at
+           ) VALUES (?, '${SILO_UTILIZATION_KPI}', 'day', ?, ?, ?, ?, 'app', ?, ?, ${SILO_UTILIZATION_VERSION}, ?)`
+        )
+        .bind(crypto.randomUUID(), write.day, write.dim, write.value, write.n, nowIso, nowIso, nowIso)
+    );
+  }
+  for (let i = 0; i < stmts.length; i += 40) {
+    await db.batch(stmts.slice(i, i + 40));
+  }
+  return { written: writes.length, year, days: days.size };
 }

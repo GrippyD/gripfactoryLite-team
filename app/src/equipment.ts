@@ -28,7 +28,15 @@ export type EquipmentAssetRow = {
   farm_code: string;
   notes: string | null;
   open_tickets: number;
+  sale_status?: string | null;
+  sale_condition?: string | null;
+  asking_price_usd?: number | null;
+  sale_note?: string | null;
 };
+
+export const ASSET_FOR_SALE_REASON = "asset for sale";
+export const ASSETS_FOR_SALE_SQL = `SELECT COUNT(*) AS n FROM equipment_assets
+     WHERE deleted_at IS NULL AND sale_status IN ('listed', 'under_offer')`;
 
 export type EquipmentScheduleRow = {
   id: string;
@@ -81,7 +89,7 @@ export function dueLabel(nextDue: string, todayIso: string): string {
 export async function listEquipmentAssets(db: D1Database): Promise<EquipmentAssetRow[]> {
   const result = await db
     .prepare(
-      `SELECT a.id, a.serial, a.name, a.farm_code, a.notes,
+      `SELECT a.id, a.serial, a.name, a.farm_code, a.notes, a.sale_status, a.sale_condition, a.asking_price_usd, a.sale_note,
               (SELECT COUNT(*) FROM equipment_tickets tk
                 WHERE tk.asset_id = a.id AND tk.deleted_at IS NULL AND tk.status = 'open') AS open_tickets
        FROM equipment_assets a
@@ -105,7 +113,7 @@ export async function listAllSchedules(db: D1Database): Promise<EquipmentSchedul
 export async function getEquipmentAsset(db: D1Database, id: string): Promise<EquipmentAssetRow | null> {
   return db
     .prepare(
-      `SELECT a.id, a.serial, a.name, a.farm_code, a.notes,
+      `SELECT a.id, a.serial, a.name, a.farm_code, a.notes, a.sale_status, a.sale_condition, a.asking_price_usd, a.sale_note,
               (SELECT COUNT(*) FROM equipment_tickets tk
                 WHERE tk.asset_id = a.id AND tk.deleted_at IS NULL AND tk.status = 'open') AS open_tickets
        FROM equipment_assets a
@@ -148,6 +156,32 @@ export async function listAssetTickets(db: D1Database, assetId: string): Promise
     .bind(assetId)
     .all<EquipmentTicketRow>();
   return result.results ?? [];
+}
+
+export type OpenTicketRow = {
+  id: string;
+  asset_id: string;
+  asset_name: string;
+  title: string;
+  created_at: string;
+};
+
+export async function listOpenTickets(db: D1Database): Promise<OpenTicketRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT t.id, t.asset_id, a.name AS asset_name, t.title, t.created_at
+       FROM equipment_tickets t
+       JOIN equipment_assets a ON a.id = t.asset_id
+       WHERE t.deleted_at IS NULL AND a.deleted_at IS NULL AND t.status = 'open'
+       ORDER BY t.created_at, t.id`
+    )
+    .all<OpenTicketRow>();
+  return result.results ?? [];
+}
+
+export async function countAssetsForSale(db: D1Database): Promise<number> {
+  const row = await db.prepare(ASSETS_FOR_SALE_SQL).first<{ n: number }>();
+  return Number(row?.n ?? 0);
 }
 
 /* --------------------------------------------------------------- actions */
@@ -293,6 +327,78 @@ export async function equipmentTicketClose(db: D1Database, ticketId: string, for
   return { redirect: `/equipment/${ticket.asset_id}?ok=closed` };
 }
 
+const SALE_STATUSES = ["listed", "under_offer", "sold"] as const;
+
+function saleStatusOf(raw: unknown): string | null {
+  const text = textOrNull(raw);
+  if (!text) return null;
+  if ((SALE_STATUSES as readonly string[]).includes(text)) return text;
+  throw new HttpError(400, "Sale status must be not for sale, listed, under offer, or sold.");
+}
+
+function saleMoney(raw: unknown): number | null {
+  const text = textOrNull(raw);
+  if (!text) return null;
+  if (!/^\d+(\.\d{1,2})?$/.test(text)) throw new HttpError(400, "Asking price must be a number of dollars.");
+  return Math.round(Number(text) * 100) / 100;
+}
+
+function sameSaleMoney(a: number | null, b: number | null): boolean {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return Math.round(a * 100) === Math.round(b * 100);
+}
+
+/** One save for the For sale block. The log reason is always "asset for sale". */
+export async function saveEquipmentForSale(db: D1Database, assetId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const asset = await getEquipmentAsset(db, assetId);
+  if (!asset) throw new HttpError(404, "Unknown asset.");
+  const status = saleStatusOf(form.get("sale_status"));
+  const condition = textOrNull(form.get("sale_condition"));
+  if (condition && condition.length > 80) throw new HttpError(400, "Condition must be 80 characters or fewer.");
+  const price = saleMoney(form.get("asking_price_usd"));
+  const note = textOrNull(form.get("sale_note"));
+  if (note && note.length > 240) throw new HttpError(400, "Note must be 240 characters or fewer.");
+  const ts = nowIso();
+  const oldStatus = asset.sale_status ?? null;
+  const oldCondition = asset.sale_condition ?? null;
+  const oldPrice = asset.asking_price_usd == null ? null : Number(asset.asking_price_usd);
+  const oldNote = asset.sale_note ?? null;
+  const logs: D1PreparedStatement[] = [];
+  const change = (field: string, oldValue: string | null, newValue: string | null) => {
+    if (oldValue === newValue) return;
+    logs.push(
+      insertLog(db, {
+        record_table: "equipment_assets",
+        record_id: asset.id,
+        field,
+        old_value: oldValue,
+        new_value: newValue,
+        actor_person_id: actor.id,
+        reason: ASSET_FOR_SALE_REASON,
+        changed_at: ts,
+      })
+    );
+  };
+  change("sale_status", oldStatus, status);
+  change("sale_condition", oldCondition, condition);
+  if (!sameSaleMoney(oldPrice, price)) change("asking_price_usd", oldPrice == null ? null : String(oldPrice), price == null ? null : String(price));
+  change("sale_note", oldNote, note);
+  if (logs.length === 0) return { redirect: `/equipment/${asset.id}?ok=sale` };
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE equipment_assets
+         SET sale_status = ?, sale_condition = ?, asking_price_usd = ?, sale_note = ?, updated_at = ?, updated_by = ?
+         WHERE id = ? AND deleted_at IS NULL`
+      )
+      .bind(status, condition, price, note, ts, actor.id, asset.id),
+    ...logs,
+  ]);
+  return { redirect: `/equipment/${asset.id}?ok=sale` };
+}
+
 /* ---------------------------------------------------------- C10 shell */
 
 function escapeHtml(s: string): string {
@@ -384,6 +490,7 @@ form.inline { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; 
 form.inline input[type=text], form.inline select { border: 1px solid var(--border); border-radius: 8px; padding: 0.45rem 0.6rem; font: inherit; background: var(--surface); color: var(--text); min-width: 14rem; }
 form.inline button { border: 1px solid var(--primary); background: var(--primary); color: var(--bg); border-radius: 999px; padding: 0.45rem 1.05rem; font: inherit; font-weight: 600; cursor: pointer; }
 form.inline button:hover { background: var(--primary-strong); border-color: var(--primary-strong); }
+form.inline.sale input[type=text], form.inline.sale select { min-width: 0; flex: 1 1 8rem; max-width: 100%; }
 .muted { color: var(--muted); }
 .ok-flash { background: var(--ok-soft); color: var(--ok); border-radius: 8px; padding: 0.5rem 0.8rem; display: inline-block; margin: 0.8rem 0 0; }
 .vendor-logo-slot { min-height: 60px; display: flex; align-items: center; margin: 0 0 0.7rem; }
@@ -679,9 +786,10 @@ export function equipmentHomePage(
       const overdue = due !== "" && isOverdue(due, todayIso);
       const dueCell = due === "" ? `<span class="muted">no schedule</span>` : overdue ? `<span class="chip due" title="It has been counting the days.">${esc(dueLabel(due, todayIso))}</span>` : esc(due);
       const tickets = a.open_tickets > 0 ? `<span class="chip due">${a.open_tickets} open</span>` : `<span class="chip zero">0</span>`;
+      const sale = saleListWord(a.sale_status);
       return `<tr>
         <td>${esc(a.serial)}</td>
-        <td><a href="/equipment/${esc(a.id)}">${esc(a.name)}</a></td>
+        <td><a href="/equipment/${esc(a.id)}">${esc(a.name)}</a>${sale}</td>
         <td>${esc(a.farm_code)}</td>
         <td>${tickets}</td>
         <td>${dueCell}</td>
@@ -705,6 +813,38 @@ export function equipmentHomePage(
   </table>
   <p class="muted" style="margin-top:0.9rem">Every completion is hand signed with a typed name. No dropdowns. A dropdown never turned a wrench.</p>`;
   return c10Shell("Preventive Maintenance", body);
+}
+
+function saleListWord(status: string | null | undefined): string {
+  if (status === "listed") return ` <span class="chip ok" data-eq-sale="listed">listed</span>`;
+  if (status === "under_offer") return ` <span class="chip due" data-eq-sale="under_offer">under offer</span>`;
+  if (status === "sold") return ` <span class="chip zero" data-eq-sale="sold">sold</span>`;
+  return "";
+}
+
+function saleOptions(selected: string | null | undefined): string {
+  const current = selected ?? "";
+  const options: Array<[string, string]> = [
+    ["", "not for sale"],
+    ["listed", "listed"],
+    ["under_offer", "under offer"],
+    ["sold", "sold"],
+  ];
+  return options
+    .map(([value, label]) => `<option value="${esc(value)}"${current === value ? " selected" : ""}>${esc(label)}</option>`)
+    .join("");
+}
+
+function forSaleBlock(asset: EquipmentAssetRow): string {
+  const price = asset.asking_price_usd == null ? "" : String(asset.asking_price_usd);
+  return `<h2>For sale</h2>
+  <form class="inline sale" method="post" action="/equipment/${esc(asset.id)}/for-sale" data-eq-sale-form>
+    <select name="sale_status" aria-label="Sale status">${saleOptions(asset.sale_status)}</select>
+    <input type="text" name="sale_condition" maxlength="80" placeholder="Condition" value="${esc(asset.sale_condition ?? "")}">
+    <input type="text" name="asking_price_usd" inputmode="decimal" placeholder="Asking price USD" value="${esc(price)}">
+    <input type="text" name="sale_note" maxlength="240" placeholder="Note" value="${esc(asset.sale_note ?? "")}">
+    <button type="submit">Save</button>
+  </form>`;
 }
 
 export function equipmentAssetPage(
@@ -762,7 +902,9 @@ export function equipmentAssetPage(
         ? `<p class="ok-flash">Ticket opened. It has been acknowledged, which is half the battle.</p>`
         : ok === "closed"
           ? `<p class="ok-flash">Ticket closed. Somewhere, a wrench rests.</p>`
-          : "";
+          : ok === "sale"
+            ? `<p class="ok-flash">Saved.</p>`
+            : "";
   const body = `
   <a class="crumb" href="/equipment">&#8592; Preventive Maintenance</a>
   <div class="masthead">
@@ -774,6 +916,7 @@ export function equipmentAssetPage(
   </div>
   ${okFlash}
   <hr class="rule">
+  ${forSaleBlock(asset)}
 
   <h2>Recurring PM</h2>
   <table class="eq">
