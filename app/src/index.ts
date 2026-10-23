@@ -176,6 +176,7 @@ import {
   equipmentHomePage,
   equipmentPmDone,
   equipmentTicketClose,
+  saveEquipmentForSale,
   HARVEST_CONSOLE_LEGACY_APP_PATH,
   HARVEST_CONSOLE_PATH,
   skinHarvestConsole,
@@ -519,7 +520,11 @@ import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadF
 import { loadFgInventory } from "./fginventory";
 import { harvestDashboardPage, loadHarvestDashboard } from "./harvestdashboard";
 import { DIRECTOR_PATH, DIRECTOR_RECOMPUTE_LBS_PATH, directorDetailPage, directorGridPage, directorHomePage, directorWallPage, isDdDeptKey, loadDirectorDetail, loadDirectorGrid, loadDirectorHome, loadDirectorWall, saveDirectorGrid } from "./director";
-import { refreshLbsHarvested, refreshLbsPerDlh, refreshPctFinished, refreshTrimThroughput } from "./ddsnapshot";
+import { refreshLbsHarvested, refreshLbsPerDlh, refreshPctFinished, refreshSiloUtilization, refreshTrimThroughput } from "./ddsnapshot";
+import { addHarvestPlan, deleteHarvestPlan, doneHarvestPlan, HARVEST_PLAN_PATH, harvestPlanPage, loadHarvestPlanPage, updateHarvestPlan } from "./harvestschedule";
+import { addLaborTask, closeLaborTask, deleteLaborTask, LABOR_TASKS_PATH, laborTasksPage, loadLaborTasksPage, refreshLaborShare, saveLaborPercent } from "./labortasks";
+import { commitSeasonUpload, deleteSeasonYield, fileBytes, loadPastSeasonsPage, PAST_SEASONS_PATH, pastSeasonsPage, previewSeasonYields, refreshYieldSeasons, withPastSeasonsQuery } from "./yieldseasons";
+import { addProject, loadMaintenancePage, loadProjectsPage, MAINTENANCE_PATH as DIRECTOR_MAINTENANCE_PATH, maintenancePage, PROJECTS_PATH, projectsPage, updateProject } from "./maintenance";
 import {
   commitDirectorImport,
   directorImportPage,
@@ -1307,6 +1312,11 @@ app.post("/equipment/ticket/:id/close", async (c) => {
   return c.redirect(result.redirect, 303);
 });
 
+app.post("/equipment/:id/for-sale", async (c) => {
+  const result = await saveEquipmentForSale(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
 app.get("/virtual-move", (c) => c.redirect("/interco", 302));
 app.post("/virtual-move/to-processor", (c) => c.redirect("/interco", 303));
 app.post("/virtual-move/to-grow", (c) => c.redirect("/interco", 303));
@@ -1686,6 +1696,110 @@ app.post(`${DIRECTOR_PATH}/import/commit`, async (c) => {
   return c.redirect(result.redirect, 303);
 });
 
+app.get(HARVEST_PLAN_PATH, async (c) => {
+  const s = await shell(c);
+  const model = await loadHarvestPlanPage(c.env.DB, nowIso(), c.req.query("done") === "1");
+  return html(c, s, "Harvest Schedule", harvestPlanPage(model, s.locale));
+});
+
+app.post(HARVEST_PLAN_PATH, async (c) => {
+  const result = await addHarvestPlan(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post(`${HARVEST_PLAN_PATH}/:id/done`, async (c) => {
+  const result = await doneHarvestPlan(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post(`${HARVEST_PLAN_PATH}/:id/delete`, async (c) => {
+  const result = await deleteHarvestPlan(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post(`${HARVEST_PLAN_PATH}/:id`, async (c) => {
+  const result = await updateHarvestPlan(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.get(LABOR_TASKS_PATH, async (c) => {
+  const s = await shell(c);
+  const model = await loadLaborTasksPage(c.env.DB, nowIso(), c.req.query("closed") === "1");
+  return html(c, s, "Labor tasks", laborTasksPage(model, s.locale));
+});
+
+app.post(LABOR_TASKS_PATH, async (c) => {
+  const result = await addLaborTask(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post(`${LABOR_TASKS_PATH}/:id/percent`, async (c) => {
+  const result = await saveLaborPercent(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post(`${LABOR_TASKS_PATH}/:id/close`, async (c) => {
+  const result = await closeLaborTask(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post(`${LABOR_TASKS_PATH}/:id/delete`, async (c) => {
+  const result = await deleteLaborTask(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.get(PAST_SEASONS_PATH, async (c) => {
+  const s = await shell(c);
+  const model = withPastSeasonsQuery(await loadPastSeasonsPage(c.env.DB), {
+    ok: c.req.query("ok"),
+    added: c.req.query("added"),
+    updated: c.req.query("updated"),
+    unchanged: c.req.query("unchanged"),
+    refused: c.req.query("refused"),
+  });
+  return html(c, s, "Past Seasons", pastSeasonsPage(model, s.locale));
+});
+
+app.post(`${PAST_SEASONS_PATH}/preview`, async (c) => {
+  const s = await shell(c);
+  const form = await c.req.formData();
+  const preview = await previewSeasonYields(c.env.DB, await fileBytes(form));
+  const model = await loadPastSeasonsPage(c.env.DB);
+  return html(c, s, "Past Seasons", pastSeasonsPage({ ...model, preview }, s.locale));
+});
+
+app.post(`${PAST_SEASONS_PATH}/commit`, async (c) => {
+  const result = await commitSeasonUpload(c.env.DB, actorForm(c, await c.req.formData()), nowIso());
+  return c.redirect(result.redirect, 303);
+});
+
+app.post(`${PAST_SEASONS_PATH}/:id/delete`, async (c) => {
+  const result = await deleteSeasonYield(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()), nowIso());
+  return c.redirect(result.redirect, 303);
+});
+
+app.get(PROJECTS_PATH, async (c) => {
+  const s = await shell(c);
+  const model = await loadProjectsPage(c.env.DB, nowIso(), c.req.query("done") === "1");
+  return html(c, s, "Projects", projectsPage(model, s.locale));
+});
+
+app.post(PROJECTS_PATH, async (c) => {
+  const result = await addProject(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.post(`${PROJECTS_PATH}/:id`, async (c) => {
+  const result = await updateProject(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+app.get(DIRECTOR_MAINTENANCE_PATH, async (c) => {
+  const s = await shell(c);
+  const model = await loadMaintenancePage(c.env.DB, nowIso());
+  return html(c, s, "Maintenance", maintenancePage(model, s.locale));
+});
+
 app.get(`${DIRECTOR_PATH}/:dept/enter`, async (c) => {
   const dept = c.req.param("dept");
   if (!isDdDeptKey(dept)) throw new HttpError(404, "Unknown department.");
@@ -1717,10 +1831,16 @@ app.post(DIRECTOR_RECOMPUTE_LBS_PATH, async (c) => {
   const dlh = await refreshLbsPerDlh(c.env.DB, now);
   const pct = await refreshPctFinished(c.env.DB, now);
   const trim = await refreshTrimThroughput(c.env.DB, now);
+  const silo = await refreshSiloUtilization(c.env.DB, now);
+  const labor = await refreshLaborShare(c.env.DB, now);
+  const yields = await refreshYieldSeasons(c.env.DB, now);
   console.log(`[lbs harvested] wrote ${harvested.written} rows`);
   console.log(`[lbs per dlh] wrote ${dlh.written} rows`);
   console.log(`[pct finished] wrote ${pct.written} rows`);
   console.log(`[trim throughput] wrote ${trim.written} rows`);
+  console.log(`[silo utilization] wrote ${silo.written} rows`);
+  console.log(`[labor tasks] wrote ${labor.written} rows`);
+  console.log(`[yield seasons] wrote ${yields.written} rows`);
   return c.redirect(`${DIRECTOR_PATH}/bizops`, 303);
 });
 
@@ -4804,6 +4924,24 @@ function scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext):
             console.log(`[trim throughput] wrote ${trim.written} rows`);
           } catch {
             console.log("[trim throughput] refresh failed");
+          }
+          try {
+            const silo = await refreshSiloUtilization(env.DB, nowIso());
+            console.log(`[silo utilization] wrote ${silo.written} rows`);
+          } catch {
+            console.log("[silo utilization] refresh failed");
+          }
+          try {
+            const labor = await refreshLaborShare(env.DB, nowIso());
+            console.log(`[labor tasks] wrote ${labor.written} rows`);
+          } catch {
+            console.log("[labor tasks] refresh failed");
+          }
+          try {
+            const yields = await refreshYieldSeasons(env.DB, nowIso());
+            console.log(`[yield seasons] wrote ${yields.written} rows`);
+          } catch {
+            console.log("[yield seasons] refresh failed");
           }
         }
       })();

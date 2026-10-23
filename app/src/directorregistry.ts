@@ -343,6 +343,14 @@ const K = (row: KpiInput): Omit<DdKpi, "sort"> => {
   };
 };
 
+/** The live compute for farmops.assets_for_sale_count. Migration 0116 writes the same words. */
+export const ASSETS_FOR_SALE_COMPUTE =
+  "count of live equipment_assets whose sale_status is listed or under_offer. Sold and blank stay out of the count";
+
+/** The live compute for harvest.dry_lb_per_plant_vs_plan_pct. Migration 0115 writes the same words. */
+export const YIELD_SEASONS_COMPUTE =
+  "per strain and farm wide: dry lb per plant for the two prior seasons from dd_season_yields (dry_lb over plants), their average over the seasons the strain was grown, this year to date (strainperformance dryLbPerPlant over dried lots with plant counts, the console's dried filter), and this year projected (dried dry lb plus the field estimate in force per plant times the plants of lots cut but not yet dried, over all plants cut)";
+
 const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
   // bizops (Business Operations)
   K({
@@ -827,7 +835,7 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
   K({
     kpi_key: "bizops.trim_throughput",
     dept_key: "bizops",
-    wall_keys: "bizops,farmops",
+    wall_keys: "bizops",
     title_en: "Trim Throughput",
     title_es: "Rendimiento de recorte",
     unit: "ratio",
@@ -907,7 +915,7 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
   K({
     kpi_key: "harvest.btr_pct",
     dept_key: "bizops",
-    wall_keys: "bizops,farmops,culttech",
+    wall_keys: "bizops,culttech",
     title_en: "BTR: yesterday, weighted average to date, projected",
     title_es: "BTR: ayer, promedio ponderado a la fecha, proyectado",
     unit: "pct",
@@ -928,7 +936,7 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
   K({
     kpi_key: "harvest.trim_lb_per_dlh",
     dept_key: "bizops",
-    wall_keys: "bizops,farmops",
+    wall_keys: "bizops",
     title_en: "Trim throughput and lbs per DLH",
     title_es: "Rendimiento de recorte y libras por hora directa",
     unit: "ratio",
@@ -967,39 +975,44 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
   K({
     kpi_key: "harvest.dry_space_utilization_pct",
     dept_key: "bizops",
-    wall_keys: "bizops,farmops",
-    title_en: "Capacity utilization (silo and dry space)",
-    title_es: "Utilización de capacidad (silo y espacio de secado)",
-    unit: "pct",
+    wall_keys: "farmops",
+    title_en: "Silo Utilization",
+    title_es: "Uso de silos",
+    unit: "count",
     cadence: "daily",
-    dims: "space",
+    dims: "silo",
+    goal_kind: "none",
     compute_key:
-      "silo.siloVisual level over assembleSiloVisuals (src/silo.ts:195-231, :706-767); facility = loaded over capacity for silo kind spaces; hang rooms from dryingRowFigures (src/db.ts:4598-4611); unloading state scales by dry out",
+      "silos active per day (his pick, 2026-10-20): a silo (dry_spaces kind silo, space_type silo; Silo 1 to 5) counts on a farm day when a silo_loads row of it, not deleted, has loaded_at on or before the end of that day and ended_at null or after the start of it; the day's value is the count of such silos; per silo rows carry 1 or 0; test batches (harvest_batches.is_test) out",
     source_kind: "app",
     stale_after_hours: 30,
-    open_question_en: "End of day snapshot or time weighted average; the freezer (800 lb on the space, 4,800 lb in the unread key) and the cure lot caps in or out",
-    open_question_es: "Foto de fin de día o promedio ponderado por tiempo; el congelador (800 lb en el espacio, 4,800 lb en la clave no leída) y los topes de lotes de curado dentro o fuera",
+    status: "live",
+    def_version: 2,
+    open_question_en: null,
+    open_question_es: null,
+    config_key: null,
     workbook_rows: "51",
   }),
   K({
     kpi_key: "harvest.dry_lb_per_plant_vs_plan_pct",
     dept_key: "bizops",
     wall_keys: "bizops,farmops",
-    title_en: "Yield per plant vs plan",
-    title_es: "Rendimiento por planta vs plan",
-    unit: "pct",
+    title_en: "Yield per Plant: seasons",
+    title_es: "Rendimiento por planta: temporadas",
+    unit: "lb448",
     cadence: "daily",
     season: "09-01 to 10-31",
     dims: "strain,farm",
-    goal_kind: "field_estimates",
-    goal_ref: "estimateInForce",
-    compute_key:
-      "buildStrainPerformance dryLbPerPlant and estimatePerPlant (src/strainperformance.ts:264-268, :284-287, :312, :332); variance and percent are new columns; unloaded lots with no dry grams excluded; farm grain = HTD dry PPP over dried lots against the estimate in force weighted by those lots' plant counts per strain",
+    goal_kind: "none",
+    goal_ref: null,
+    compute_key: YIELD_SEASONS_COMPUTE,
     source_kind: "app",
     stale_after_hours: 30,
-    open_question_en: "Plan source (debate plan_source); wet or dry",
-    open_question_es: "Fuente del plan (debate plan_source); húmedo o seco",
-    config_key: "dd_plan_source",
+    status: "live",
+    def_version: 2,
+    open_question_en: null,
+    open_question_es: null,
+    config_key: null,
     workbook_rows: "15",
   }),
   K({
@@ -1027,8 +1040,8 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
     kpi_key: "harvest.harvest_schedule",
     dept_key: "farmops",
     wall_keys: "bizops,farmops",
-    title_en: "Harvest schedule (plan rows)",
-    title_es: "Calendario de cosecha (filas del plan)",
+    title_en: "Harvest Schedule",
+    title_es: "Calendario de cosecha",
     unit: "text",
     cadence: "daily",
     season: "09-01 to 10-31",
@@ -1036,9 +1049,11 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
     goal_kind: "targets",
     goal_ref: "dd_field_plans",
     compute_key:
-      "dd_field_plans (kind harvest, S9) beside locations.listPlantLocationsForLicense remaining plants per block (src/locations.ts:209-219) and field_loads per day",
+      "dd_harvest_plan rows by planned date; a row is done by its Done button or when a harvest batch of its strain and farm is cut on or after the date",
     source_kind: "hand",
     stale_after_hours: 30,
+    status: "live",
+    def_version: 2,
     open_question_en: "The plan grain (strain per farm per day, or block and row) and who types it each evening",
     open_question_es: "El grano del plan (variedad por granja por día, o bloque y fila) y quién lo escribe cada tarde",
     workbook_rows: "68",
@@ -1503,9 +1518,12 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
     unit: "pct",
     cadence: "daily",
     dims: "farm",
-    compute_key: "dd_labor_tasks (hand, S9): done over planned per day per farm",
+    compute_key:
+      "dd_labor_tasks: percent complete typed per task against the time elapsed to its expected date; the row's value is the share of open tasks on track",
     source_kind: "hand",
     stale_after_hours: 30,
+    status: "live",
+    def_version: 2,
     open_question_en: "The task lookup codes; whether a task row carries actual hours so it feeds hours and productivity",
     open_question_es: "Los códigos de catálogo de tareas; si una fila de tarea lleva horas reales para alimentar horas y productividad",
     workbook_rows: "67",
@@ -1626,9 +1644,11 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
     unit: "count",
     cadence: "quarterly",
     dims: "farm",
-    compute_key: "equipment_assets (frozen seed data; no create or edit route and absent from ALLOWED_TABLES) plus status and value columns (S8)",
+    compute_key: ASSETS_FOR_SALE_COMPUTE,
     source_kind: "mixed",
     stale_after_hours: 2200,
+    status: "live",
+    def_version: 2,
     open_question_en: "The asset register of record (the app table or the accounting register) and which fields the app holds",
     open_question_es: "El registro oficial de activos (la tabla de la app o el registro contable) y qué campos guarda la app",
     workbook_rows: "76",
@@ -1792,8 +1812,21 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
   }),
 ];
 
-/** The 78 registry rows, sort 10, 20, ... in the order above (bizops, the harvest family, sales, finance, farmops, culttech). bizops.lbs_shipped, bizops.lab_turnaround_days, harvest.wet_weight_lb, and harvest.pct_complete stay and are inactive. */
-export const DD_KPIS: readonly DdKpi[] = ROWS.map((row, i) => ({ ...row, sort: (i + 1) * 10 }));
+/** Original row order and sorts (10, 20, ...). The 0105 seed is built from this, so a later sort move does not rewrite that file. */
+const INDEXED: readonly DdKpi[] = ROWS.map((row, i) => ({ ...row, sort: (i + 1) * 10 }));
+
+const TASK_UNITS_KPI = "farmops.task_units_per_dlh";
+
+/** Field Task Productivity sits last on the farmops wall: its sort is past every other row, which is also past every other farmops tile. */
+function withTaskLast(rows: readonly DdKpi[]): DdKpi[] {
+  const maxOther = rows.reduce((n, row) => (row.kpi_key === TASK_UNITS_KPI ? n : Math.max(n, row.sort)), 0);
+  return rows
+    .map((row) => ({ ...row, sort: row.kpi_key === TASK_UNITS_KPI ? maxOther + 10 : row.sort }))
+    .sort((a, b) => a.sort - b.sort || a.kpi_key.localeCompare(b.kpi_key));
+}
+
+/** The 78 registry rows. Sorts are 10, 20, ... in registry order, except farmops.task_units_per_dlh, which sorts last. bizops.lbs_shipped, bizops.lab_turnaround_days, harvest.wet_weight_lb, and harvest.pct_complete stay and are inactive. */
+export const DD_KPIS: readonly DdKpi[] = withTaskLast(INDEXED);
 
 export function ddKpi(key: string): DdKpi | undefined {
   return DD_KPIS.find((row) => row.kpi_key === key);
@@ -2173,10 +2206,57 @@ const LBS_PROCESSED_0105: Pick<DdKpi, "title_en" | "title_es" | "dims" | "comput
   config_key: "dd_processed_lbs_buckets",
 };
 
+/** Fields migration 0113 changes on rows that 0105 already seeded. The seed text stays the 0105 wording. */
+const SEED_0105: Readonly<Record<string, Partial<DdKpi>>> = {
+  "harvest.btr_pct": { wall_keys: "bizops,farmops,culttech" },
+  "harvest.trim_lb_per_dlh": { wall_keys: "bizops,farmops" },
+  "harvest.dry_space_utilization_pct": {
+    title_en: "Capacity utilization (silo and dry space)",
+    title_es: "Utilización de capacidad (silo y espacio de secado)",
+    wall_keys: "bizops,farmops",
+    unit: "pct",
+    dims: "space",
+    def_version: 1,
+    open_question_en: "End of day snapshot or time weighted average; the freezer (800 lb on the space, 4,800 lb in the unread key) and the cure lot caps in or out",
+    open_question_es: "Foto de fin de día o promedio ponderado por tiempo; el congelador (800 lb en el espacio, 4,800 lb en la clave no leída) y los topes de lotes de curado dentro o fuera",
+    compute_key:
+      "silo.siloVisual level over assembleSiloVisuals (src/silo.ts:195-231, :706-767); facility = loaded over capacity for silo kind spaces; hang rooms from dryingRowFigures (src/db.ts:4598-4611); unloading state scales by dry out",
+  },
+  "harvest.harvest_schedule": {
+    title_en: "Harvest schedule (plan rows)",
+    title_es: "Calendario de cosecha (filas del plan)",
+    compute_key:
+      "dd_field_plans (kind harvest, S9) beside locations.listPlantLocationsForLicense remaining plants per block (src/locations.ts:209-219) and field_loads per day",
+    def_version: 1,
+  },
+  "farmops.labor_tasks_done_pct": {
+    compute_key: "dd_labor_tasks (hand, S9): done over planned per day per farm",
+    def_version: 1,
+  },
+  "farmops.assets_for_sale_count": {
+    compute_key: "equipment_assets (frozen seed data; no create or edit route and absent from ALLOWED_TABLES) plus status and value columns (S8)",
+    def_version: 1,
+  },
+  "harvest.dry_lb_per_plant_vs_plan_pct": {
+    title_en: "Yield per plant vs plan",
+    title_es: "Rendimiento por planta vs plan",
+    unit: "pct",
+    goal_kind: "field_estimates",
+    goal_ref: "estimateInForce",
+    compute_key:
+      "buildStrainPerformance dryLbPerPlant and estimatePerPlant (src/strainperformance.ts:264-268, :284-287, :312, :332); variance and percent are new columns; unloaded lots with no dry grams excluded; farm grain = HTD dry PPP over dried lots against the estimate in force weighted by those lots' plant counts per strain",
+    def_version: 1,
+    open_question_en: "Plan source (debate plan_source); wet or dry",
+    open_question_es: "Fuente del plan (debate plan_source); húmedo o seco",
+    config_key: "dd_plan_source",
+  },
+};
+
 /** 0105's rows: the later Lbs/Labor Hour, % Complete, Plant Weight, Storage Capacity, and Trim Throughput keys are omitted, Lbs shipped, Testing turnaround, Harvest wet weight, and Percent finished (plants) are still active, and the sorts are the original 10, 20, ... so the seed text stays byte for byte. */
 function seedKpiList(): DdKpi[] {
-  return DD_KPIS.filter((row) => row.kpi_key !== "bizops.lbs_per_dlh" && row.kpi_key !== "bizops.pct_finished_plants" && row.kpi_key !== "bizops.plant_weight" && row.kpi_key !== "bizops.storage_capacity" && row.kpi_key !== "bizops.trim_throughput").map((row, i) => {
-    const base = row.kpi_key === "bizops.lbs_processed" ? { ...row, ...LBS_PROCESSED_0105 } : { ...row };
+  return INDEXED.filter((row) => row.kpi_key !== "bizops.lbs_per_dlh" && row.kpi_key !== "bizops.pct_finished_plants" && row.kpi_key !== "bizops.plant_weight" && row.kpi_key !== "bizops.storage_capacity" && row.kpi_key !== "bizops.trim_throughput").map((row, i) => {
+    const restored = SEED_0105[row.kpi_key] ? { ...row, ...SEED_0105[row.kpi_key] } : row;
+    const base = row.kpi_key === "bizops.lbs_processed" ? { ...restored, ...LBS_PROCESSED_0105 } : restored;
     const seeded = row.kpi_key === "bizops.shipments_count" ? { ...base, wall_keys: "bizops,sales" } : base;
     const active = row.kpi_key === "bizops.lbs_shipped" || row.kpi_key === "bizops.lab_turnaround_days" || row.kpi_key === "harvest.wet_weight_lb" || row.kpi_key === "harvest.pct_complete" ? 1 : seeded.active;
     return { ...seeded, active, sort: (i + 1) * 10 };

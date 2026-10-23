@@ -1,0 +1,19 @@
+{
+  "name": "gf-tagleaf-pull",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GripFactory Lite TL2: the daily TagLeaf pull into the lab samples feed",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "login": "node pull.mjs --login",
+    "pull": "node pull.mjs",
+    "dry": "node pull.mjs --dry",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "playwright": "1.56.0"
+  }
+}

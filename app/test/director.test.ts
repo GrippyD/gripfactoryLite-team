@@ -157,6 +157,7 @@ describe("DD S1 migration 0105: the registry seed", () => {
       expect(walls.length, `${key} wall_keys`).toBeGreaterThan(0);
       for (const wall of walls) expect(depts.has(wall), `${key} wall ${wall}`).toBe(true);
       if (key === "bizops.shipments_count") expect(row.wall_keys).toBe("sales");
+      else if (key === "harvest.dry_space_utilization_pct") expect(row.wall_keys).toBe("farmops");
       else expect(walls.includes(String(row.dept_key)), `${key} shows on its own wall`).toBe(true);
       if (row.companion_of != null) expect(keys.has(String(row.companion_of)), `${key} companion_of`).toBe(true);
       if (row.config_key != null) expect((DD_CONFIG_KEYS as readonly string[]).includes(String(row.config_key)), `${key} config_key`).toBe(true);
@@ -265,7 +266,7 @@ describe("DD S1 migration 0105: the registry seed", () => {
         expect(row.unit).toBe("ratio");
         expect(row.cadence).toBe("daily");
         expect(row.goal_kind).toBe("none");
-        expect(row.wall_keys).toBe("bizops,farmops");
+        expect(row.wall_keys).toBe("bizops");
         expect(row.dept_key).toBe("bizops");
         expect(row.dims).toBe("shift,strain,dry_method");
         expect(row.open_question_en).toBeNull();
@@ -274,7 +275,7 @@ describe("DD S1 migration 0105: the registry seed", () => {
         expect(Number(row.sort)).toBe(260);
         expect(Number(row.stale_after_hours)).toBe(30);
         expect(row.created_at).toBe("2026-10-19T00:00:00.000Z");
-        expect(row.updated_at).toBe("2026-10-19T00:00:00.000Z");
+        expect(row.updated_at).toBe("2026-10-20T00:00:00.000Z");
         expect(String(row.compute_key)).toContain("trimFigures");
         expect(String(row.compute_key)).toContain("trim_labor_hours");
       } else if (key === "harvest.pct_complete") {
@@ -290,6 +291,73 @@ describe("DD S1 migration 0105: the registry seed", () => {
         expect(row.updated_at).toBe("2026-10-19T00:00:00.000Z");
         expect(row.created_at).toBe(DD_SEED_AT);
         expect(Number(row.sort)).toBe(250);
+      } else if (key === "harvest.btr_pct" || key === "harvest.trim_lb_per_dlh" || key === "farmops.task_units_per_dlh") {
+        expect(Number(row.def_version)).toBe(1);
+        expect(row.updated_at).toBe("2026-10-20T00:00:00.000Z");
+        expect(Number(row.active)).toBe(1);
+        expect(row.created_at).toBe(DD_SEED_AT);
+      } else if (key === "harvest.harvest_schedule") {
+        expect(Number(row.active)).toBe(1);
+        expect(Number(row.def_version)).toBe(2);
+        expect(row.status).toBe("live");
+        expect(row.source_kind).toBe("hand");
+        expect(row.updated_at).toBe("2026-10-21T00:00:00.000Z");
+        expect(row.created_at).toBe(DD_SEED_AT);
+        expect(String(row.compute_key)).toContain("dd_harvest_plan");
+        expect(String(row.compute_key)).toContain("Done button");
+      } else if (key === "farmops.labor_tasks_done_pct") {
+        expect(Number(row.active)).toBe(1);
+        expect(Number(row.def_version)).toBe(2);
+        expect(row.status).toBe("live");
+        expect(row.source_kind).toBe("hand");
+        expect(row.updated_at).toBe("2026-10-21T00:00:00.000Z");
+        expect(row.created_at).toBe(DD_SEED_AT);
+        expect(String(row.compute_key)).toContain("share of open tasks on track");
+      } else if (key === "harvest.dry_lb_per_plant_vs_plan_pct") {
+        expect(Number(row.active)).toBe(1);
+        expect(Number(row.def_version)).toBe(2);
+        expect(row.title_en).toBe("Yield per Plant: seasons");
+        expect(row.title_es).toBe("Rendimiento por planta: temporadas");
+        expect(row.unit).toBe("lb448");
+        expect(row.cadence).toBe("daily");
+        expect(row.dims).toBe("strain,farm");
+        expect(row.goal_kind).toBe("none");
+        expect(row.goal_ref).toBeNull();
+        expect(row.status).toBe("live");
+        expect(row.open_question_en).toBeNull();
+        expect(row.open_question_es).toBeNull();
+        expect(row.config_key).toBeNull();
+        expect(row.wall_keys).toBe("bizops,farmops");
+        expect(String(row.compute_key)).toContain("dd_season_yields");
+        expect(String(row.compute_key)).toContain("dryLbPerPlant");
+        expect(row.updated_at).toBe("2026-10-21T00:00:00.000Z");
+        expect(row.created_at).toBe(DD_SEED_AT);
+      } else if (key === "harvest.dry_space_utilization_pct") {
+        expect(Number(row.active)).toBe(1);
+        expect(Number(row.def_version)).toBe(2);
+        expect(row.title_en).toBe("Silo Utilization");
+        expect(row.title_es).toBe("Uso de silos");
+        expect(row.unit).toBe("count");
+        expect(row.cadence).toBe("daily");
+        expect(row.goal_kind).toBe("none");
+        expect(row.wall_keys).toBe("farmops");
+        expect(row.dims).toBe("silo");
+        expect(row.source_kind).toBe("app");
+        expect(row.status).toBe("live");
+        expect(row.open_question_en).toBeNull();
+        expect(row.open_question_es).toBeNull();
+        expect(String(row.compute_key)).toContain("silos active per day");
+        expect(String(row.compute_key)).toContain("Silo 1 to 5");
+        expect(String(row.compute_key)).toContain("test batches (harvest_batches.is_test) out");
+        expect(row.updated_at).toBe("2026-10-21T00:00:00.000Z");
+        expect(row.created_at).toBe(DD_SEED_AT);
+      } else if (key === "farmops.assets_for_sale_count") {
+        expect(Number(row.active)).toBe(1);
+        expect(Number(row.def_version)).toBe(2);
+        expect(row.status).toBe("live");
+        expect(row.compute_key).toBe("count of live equipment_assets whose sale_status is listed or under_offer. Sold and blank stay out of the count");
+        expect(row.updated_at).toBe("2026-10-23T00:00:00.000Z");
+        expect(row.created_at).toBe(DD_SEED_AT);
       } else if (key === "bizops.lab_turnaround_days") {
         expect(Number(row.active)).toBe(0);
         expect(Number(row.def_version)).toBe(1);
@@ -361,8 +429,21 @@ describe("DD S1 migration 0105: the registry seed", () => {
     expect(ddKpi("harvest.pct_complete")?.title_en).toBe("Percent finished (plants)");
     expect(ddKpi("harvest.pct_complete")?.wall_keys).toBe("bizops,farmops");
     expect(ddKpi("harvest.pct_complete")?.active).toBe(0);
-    expect(ddKpi("bizops.trim_throughput")?.wall_keys).toBe("bizops,farmops");
-    expect(ddKpisForWall(DD_KPIS, "farmops").map((r) => r.kpi_key)).toContain("bizops.trim_throughput");
+    expect(ddKpi("bizops.trim_throughput")?.wall_keys).toBe("bizops");
+    expect(ddKpisForWall(DD_KPIS, "farmops").map((r) => r.kpi_key)).not.toContain("bizops.trim_throughput");
+    expect(ddKpisForWall(DD_KPIS, "farmops").map((r) => r.kpi_key)).not.toContain("harvest.btr_pct");
+    expect(ddKpisForWall(DD_KPIS, "farmops").map((r) => r.kpi_key)).not.toContain("harvest.trim_lb_per_dlh");
+    expect(ddKpisForWall(DD_KPIS, "bizops").map((r) => r.kpi_key)).toContain("harvest.btr_pct");
+    expect(ddKpisForWall(DD_KPIS, "bizops").map((r) => r.kpi_key)).toContain("harvest.trim_lb_per_dlh");
+    expect(ddKpisForWall(DD_KPIS, "bizops").map((r) => r.kpi_key)).not.toContain("harvest.dry_space_utilization_pct");
+    expect(ddKpi("harvest.btr_pct")?.wall_keys).toBe("bizops,culttech");
+    expect(ddKpi("harvest.trim_lb_per_dlh")?.wall_keys).toBe("bizops");
+    expect(ddKpi("harvest.harvest_schedule")?.title_en).toBe("Harvest Schedule");
+    expect(ddKpi("harvest.harvest_schedule")?.title_es).toBe("Calendario de cosecha");
+    expect(ddKpi("harvest.ppp_dry_lb")?.title_en).toBe("PPP dry: yesterday, average HTD, projected");
+    expect(ddKpi("harvest.ppp_wet_lb")?.title_en).toBe("PPP wet: yesterday, average HTD");
+    const farmopsWall = ddKpisForWall(DD_KPIS, "farmops").map((r) => r.kpi_key);
+    expect(farmopsWall[farmopsWall.length - 1]).toBe("farmops.task_units_per_dlh");
     expect(ddKpisForWall(DD_KPIS, "farmops").map((r) => r.kpi_key)).not.toContain("harvest.pct_complete");
     for (const dept of DD_DEPT_KEYS) expect(ddKpisForWall(DD_KPIS, dept).map((r) => r.kpi_key)).not.toContain("bizops.lbs_shipped");
     expect(ddKpi("harvest.wet_lb_per_dlh")?.active).toBe(1);
@@ -549,7 +630,46 @@ describe("DD S1 migration 0105: the registry seed", () => {
     for (const part of trimParts) m.run(part);
     expect(m.all(`SELECT kpi_key, sort, active FROM dd_kpis ORDER BY sort`)).toEqual(shape);
     expect(m.get(`SELECT active AS a FROM dd_kpis WHERE kpi_key = 'harvest.pct_complete'`)?.a).toBe(0);
-    expect(m.get(`SELECT active AS a, wall_keys AS w FROM dd_kpis WHERE kpi_key = 'bizops.trim_throughput'`)).toMatchObject({ a: 1, w: "bizops,farmops" });
+    expect(m.get(`SELECT active AS a, wall_keys AS w FROM dd_kpis WHERE kpi_key = 'bizops.trim_throughput'`)).toMatchObject({ a: 1, w: "bizops" });
+    const l1Sql = fs.readFileSync(new URL("../migrations/0113_dd_silo_utilization.sql", import.meta.url), "utf8");
+    expect(l1Sql.includes("\r")).toBe(false);
+    expect(l1Sql.includes('"')).toBe(false);
+    expect(DASH.test(l1Sql)).toBe(false);
+    const l1Parts: string[] = [];
+    current = "";
+    quote = false;
+    for (let i = 0; i < l1Sql.length; i += 1) {
+      const ch = l1Sql[i] ?? "";
+      if (ch === "'") {
+        current += ch;
+        if (quote && l1Sql[i + 1] === "'") {
+          current += "'";
+          i += 1;
+          continue;
+        }
+        quote = !quote;
+        continue;
+      }
+      if (ch === ";" && !quote) {
+        const statement = current
+          .split("\n")
+          .filter((line) => !line.trim().startsWith("--"))
+          .join("\n")
+          .trim();
+        if (statement) l1Parts.push(statement);
+        current = "";
+        continue;
+      }
+      current += ch;
+    }
+    for (const part of l1Parts) m.run(part);
+    expect(m.all(`SELECT kpi_key, sort, active FROM dd_kpis ORDER BY sort`)).toEqual(shape);
+    expect(m.get(`SELECT wall_keys AS w FROM dd_kpis WHERE kpi_key = 'harvest.btr_pct'`)?.w).toBe("bizops,culttech");
+    expect(m.get(`SELECT title_en AS t, wall_keys AS w, dims AS d FROM dd_kpis WHERE kpi_key = 'harvest.dry_space_utilization_pct'`)).toMatchObject({
+      t: "Silo Utilization",
+      w: "farmops",
+      d: "silo",
+    });
   });
 
   it("the migration carries ddSeedSql() and ddConfigSeedSql() verbatim, nine rows per INSERT at most", async () => {
@@ -939,7 +1059,7 @@ describe("DD S1 pages: the home and the walls", () => {
     }
     expect(markers.some((x) => x.status === "no_data")).toBe(true);
     const headlines = model.groups.reduce((n, group) => n + group.tiles.length, 0);
-    const sparkHeadlines = headlines - model.groups.flatMap((group) => group.tiles).filter((tile) => tile.kpi.kpi_key === "bizops.pct_finished_plants" || tile.kpi.kpi_key === "bizops.plant_weight" || tile.kpi.kpi_key === "bizops.storage_capacity" || tile.kpi.kpi_key === "bizops.trim_throughput").length;
+    const sparkHeadlines = headlines - model.groups.flatMap((group) => group.tiles).filter((tile) => tile.kpi.kpi_key === "bizops.pct_finished_plants" || tile.kpi.kpi_key === "bizops.plant_weight" || tile.kpi.kpi_key === "bizops.storage_capacity" || tile.kpi.kpi_key === "bizops.trim_throughput" || tile.kpi.kpi_key === "harvest.harvest_schedule" || tile.kpi.kpi_key === "harvest.dry_lb_per_plant_vs_plan_pct").length;
     expect(html.match(/data-dd-spark-points="0"/g)).toHaveLength(sparkHeadlines);
     expect(html).toContain(">No data yet<");
     expect(html).not.toContain("data-dd-value=");
@@ -1000,19 +1120,24 @@ describe("DD S1 pages: the home and the walls", () => {
     const headlines = headlineTiles.length;
     const textHeadlines = headlineTiles.filter((tile) => tile.kpi.unit === "text").length;
     const chartTiles = headlineTiles.filter((tile) => (tile.harvest && tile.harvest.days.length > 0) || (tile.dlh && tile.dlh.days.length > 0) || tile.kpi.kpi_key === "bizops.pct_finished_plants" || tile.kpi.kpi_key === "bizops.plant_weight" || tile.kpi.kpi_key === "bizops.storage_capacity" || tile.kpi.kpi_key === "bizops.trim_throughput").length;
+    const scheduleTiles = headlineTiles.filter((tile) => tile.plan != null).length;
+    const yieldTiles = headlineTiles.filter((tile) => tile.seasons != null).length;
     const eight = [...html.matchAll(/data-dd-spark-points="(\d+)"/g)].map((x) => Number(x[1]));
-    expect(eight).toHaveLength(headlines - chartTiles);
-    expect(eight.filter((n) => n === 8)).toHaveLength(headlines - textHeadlines - chartTiles);
-    expect(eight.filter((n) => n === 0)).toHaveLength(textHeadlines);
+    expect(eight).toHaveLength(headlines - chartTiles - scheduleTiles - yieldTiles);
+    expect(eight.filter((n) => n === 8)).toHaveLength(headlines - textHeadlines - chartTiles - yieldTiles);
+    expect(eight.filter((n) => n === 0)).toHaveLength(textHeadlines - scheduleTiles);
     for (const tile of headlineTiles) expect(tile.history, tile.kpi.kpi_key).toHaveLength(8);
     m.run(`UPDATE app_config SET value = '6' WHERE key = 'dd_history_periods'`);
     const sixModel = await loadDirectorWall(m.db, "bizops", DAY, null, null, NOW);
     expect(sixModel.config.historyPeriods).toBe(6);
     const sixHeadlines = sixModel.groups.flatMap((group) => group.tiles);
     const sixChart = sixHeadlines.filter((tile) => (tile.harvest && tile.harvest.days.length > 0) || (tile.dlh && tile.dlh.days.length > 0) || tile.kpi.kpi_key === "bizops.pct_finished_plants" || tile.kpi.kpi_key === "bizops.plant_weight" || tile.kpi.kpi_key === "bizops.storage_capacity" || tile.kpi.kpi_key === "bizops.trim_throughput").length;
+    const sixSchedule = sixHeadlines.filter((tile) => tile.plan != null).length;
+    const sixYield = sixHeadlines.filter((tile) => tile.seasons != null).length;
+    const sixText = sixHeadlines.filter((tile) => tile.kpi.unit === "text").length;
     const six = [...directorWallPage(sixModel, "en").matchAll(/data-dd-spark-points="(\d+)"/g)].map((x) => Number(x[1]));
-    expect(six).toHaveLength(sixHeadlines.length - sixChart);
-    expect(six.filter((n) => n === 6)).toHaveLength(sixHeadlines.length - sixHeadlines.filter((tile) => tile.kpi.unit === "text").length - sixChart);
+    expect(six).toHaveLength(sixHeadlines.length - sixChart - sixSchedule - sixYield);
+    expect(six.filter((n) => n === 6)).toHaveLength(sixHeadlines.length - sixText - sixChart - sixYield);
     for (const tile of sixModel.groups.flatMap((group) => group.tiles)) {
       expect(tile.history).toHaveLength(6);
       expect(tile.history[5]?.period_start).toBe(tile.periodStart);
@@ -1279,7 +1404,7 @@ describe("DD S1 pages: the home and the walls", () => {
     expect(out.length).toBeGreaterThan(0);
     for (const row of out) {
       expect(html, row.kpi_key).toContain(`data-dd-kpi="${row.kpi_key}" data-dd-status="out_of_season"`);
-      if (row.companion_of == null) expect(html).toContain(`<article class="dd-tile dd-tile-out_of_season dd-out" data-dd-kpi="${row.kpi_key}"`);
+      if (row.companion_of == null) expect(html).toContain(`dd-tile-out_of_season dd-out`);
     }
     expect(html.match(/>Out of season</g)).toHaveLength(out.length);
     const es = directorWallPage(model, "es");
@@ -1788,7 +1913,7 @@ describe("DD S2b: targets, questions, and CSV import", () => {
     person(weekDb);
     expect(DD_KPIS.filter((row) => row.cadence === "weekly")).toHaveLength(33);
     await ruleDirectorQuestion(weekDb.db, "week_definition", form({ value: "harvest", reason: "label" }), DAY, NOW);
-    expect(weekDb.get(`SELECT COUNT(*) AS n FROM dd_kpis WHERE def_version = 2`)?.n).toBe(34);
+    expect(weekDb.get(`SELECT COUNT(*) AS n FROM dd_kpis WHERE def_version = 2`)?.n).toBe(39);
     expect(weekDb.get(`SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'dd_kpis' AND field = 'def_version' AND new_value = '2'`)?.n).toBe(33);
     const m = await migratedDb();
     person(m);

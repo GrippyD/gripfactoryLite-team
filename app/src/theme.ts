@@ -477,7 +477,7 @@ body.device-phone .report-scroll > table.data { display: table; overflow: visibl
    through the chrome's token chains only (the accent per view); no fixed
    widths, so 820 has no sideways scroll; a phone stacks cards and tiles in
    one column and the sparkline keeps the tile's width. */
-main:has(.dd-wall), main:has(.dd-cards), main:has(.dd-grid), main:has(.dd-checkin), main:has(.dd-detail), main:has(.dd-import), main:has(.dd-question-list) { max-width: none; }
+main:has(.dd-wall), main:has(.dd-cards), main:has(.dd-grid), main:has(.dd-checkin), main:has(.dd-detail), main:has(.dd-import), main:has(.dd-question-list), main:has(.dd-plan-page), main:has(.dd-labor-page), main:has(.dd-seasons-page), main:has(.dd-maint) { max-width: none; }
 .dd-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.8rem; margin: 0 0 1.2rem; }
 .dd-card { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; text-decoration: none; color: inherit; background: var(--panel, var(--surface, transparent)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); padding: 0.8rem 1rem; }
 .dd-card:focus, .dd-card:hover { border-color: ${accent}; }
@@ -573,6 +573,88 @@ body.device-phone main button.dd-tp-value { width: auto; min-height: 0; }
 body.device-phone .dd-tp-box { flex-basis: 100%; }
 @media (max-width: 480px) { .dd-tp-box { flex-basis: 100%; } }
 @media (max-width: 820px) { .dd-tile-wide { grid-column: 1 / -1; } }
+.dd-silo { min-width: 0; max-width: 100%; overflow: hidden; }
+.dd-silo svg { display: block; width: 100%; height: auto; max-width: 100%; color: ${accent}; }
+.dd-silo-lead, .dd-silo-link, .dd-silo-none { margin: 0.15rem 0; font-size: 0.82rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); overflow-wrap: anywhere; }
+.dd-silo-link a { color: ${accent}; }
+.dd-silo-fill { fill: currentColor; }
+.dd-silo-hit { fill: transparent; }
+.dd-silo-line { stroke: var(--line, var(--border, currentColor)); stroke-width: 1; }
+.dd-silo-label, .dd-silo-count { fill: var(--ink, var(--text, currentColor)); font-size: 10px; }
+.dd-silo-count { opacity: 0; }
+[data-dd-silo-bar]:hover .dd-silo-count, [data-dd-silo-bar]:focus .dd-silo-count { opacity: 1; }
+.dd-silo-tip { margin: 0.25rem 0; padding: 0.35rem 0.5rem; font-size: 0.78rem; background: var(--panel, var(--surface, transparent)); color: var(--ink, var(--text, currentColor)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); overflow-wrap: anywhere; }
+.dd-silo-toggle { display: none; margin: 0.2rem 0; font-size: 0.82rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.dd-silo-span-30 { display: none; }
+.dd-silo-ran { margin: 0.45rem 0 0; min-width: 0; }
+.dd-silo-ran h3 { margin: 0.35rem 0 0.1rem; font-size: 0.85rem; }
+.dd-silo-ran ul { margin: 0.1rem 0 0.3rem; padding-left: 1.1rem; }
+.dd-silo-ran li { overflow-wrap: anywhere; font-size: 0.82rem; }
+.dd-task-empty { margin: 0.2rem 0 0; font-size: 0.9rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); overflow-wrap: anywhere; }
+.dd-home-links { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; margin: 0 0 0.8rem; min-width: 0; }
+.dd-home-links a { overflow-wrap: anywhere; }
+.dd-plan, .dd-labor, .dd-plan-page, .dd-labor-page { min-width: 0; max-width: 100%; }
+.dd-plan-list { list-style: none; margin: 0.3rem 0; padding: 0; }
+.dd-plan-item, .dd-labor-row { display: flex; flex-wrap: wrap; gap: 0.25rem 0.6rem; align-items: baseline; margin: 0.25rem 0; min-width: 0; }
+.dd-plan-overdue { color: var(--warn, var(--alert, #a15c07)); font-weight: 700; }
+.dd-plan-link, .dd-labor-link, .dd-plan-foot, .dd-labor-foot, .dd-plan-empty, .dd-labor-empty, .dd-plan-nav, .dd-labor-nav { margin: 0.25rem 0; overflow-wrap: anywhere; }
+.dd-plan-all { display: inline-flex; gap: 0.35rem; align-items: center; margin: 0.2rem 0; }
+.dd-plan-span-all { display: none; }
+.dd-plan:has([data-dd-plan-all]:checked) .dd-plan-span-21 { display: none; }
+.dd-plan:has([data-dd-plan-all]:checked) .dd-plan-span-all { display: block; }
+.dd-task-track { position: relative; height: 0.75rem; margin: 0.15rem 0; background: var(--line, var(--border, currentColor)); border-radius: 999px; }
+.dd-task-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; }
+.dd-task-fill-track { background: var(--ok, var(--accent, currentColor)); }
+.dd-task-fill-behind { background: var(--warn, var(--alert, #a15c07)); }
+.dd-task-fill-overdue { background: var(--danger, var(--alert, #8b2e2e)); }
+.dd-task-marker { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink, var(--text, currentColor)); }
+.dd-task-bar { min-width: 0; flex: 1 1 8rem; }
+.dd-task-tip { display: none; margin: 0.2rem 0 0; padding: 0.3rem 0.45rem 0.3rem 1.2rem; font-size: 0.78rem; background: var(--panel, var(--surface, transparent)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); }
+.dd-task-bar:hover .dd-task-tip, .dd-task-bar:focus .dd-task-tip, .dd-task-bar:focus-within .dd-task-tip, .dd-task-bar.dd-task-open .dd-task-tip { display: block; }
+.dd-task-end, .dd-task-name, .dd-plan-strain { overflow-wrap: anywhere; }
+.dd-task-end { font-variant-numeric: tabular-nums; }
+.dd-plan-card, .dd-labor-card { min-width: 0; margin: 0 0 0.8rem; padding: 0.6rem 0.7rem; border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); }
+.dd-plan-fields, .dd-labor-fields { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: end; }
+.dd-plan-fields label, .dd-labor-fields label { flex: 1 1 8rem; min-width: 0; }
+.dd-plan-page input, .dd-plan-page select, .dd-labor-page input, .dd-labor-page select, .dd-plan-page button, .dd-labor-page button { max-width: 100%; box-sizing: border-box; }
+.dd-plan-page input, .dd-plan-page select, .dd-labor-page input, .dd-labor-page select { width: 100%; min-width: 0; }
+.dd-plan-page form, .dd-labor-page form { min-width: 0; margin: 0.35rem 0; }
+.dd-maint { min-width: 0; max-width: 100%; }
+.dd-maint-row { display: flex; flex-wrap: wrap; gap: 0.25rem 0.6rem; align-items: baseline; margin: 0.25rem 0; min-width: 0; }
+.dd-maint-row > span, .dd-maint-note, .dd-forecast-label, .dd-forecast-n { overflow-wrap: anywhere; min-width: 0; }
+.dd-maint-overdue { color: var(--warn, var(--alert, #a15c07)); font-weight: 700; }
+.dd-maint-note { margin: 0.15rem 0 0.4rem; }
+.dd-forecast-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.5rem; margin: 0.2rem 0; min-width: 0; }
+.dd-forecast-label { flex: 1 1 5.5rem; }
+.dd-forecast-track { flex: 2 1 6rem; min-width: 0; height: 0.75rem; background: var(--line, var(--border, currentColor)); border-radius: 999px; }
+.dd-forecast-fill { display: block; height: 100%; max-width: 100%; background: var(--ok, var(--accent, currentColor)); border-radius: 999px; }
+.dd-forecast-fill-overdue { background: var(--warn, var(--alert, #a15c07)); }
+.dd-forecast-n { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.dd-yield, .dd-seasons-page { min-width: 0; max-width: 100%; }
+.dd-yield-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.dd-yield-table th, .dd-yield-table td { padding: 0.15rem 0.3rem; text-align: right; vertical-align: top; overflow-wrap: anywhere; }
+.dd-yield-table th:first-child, .dd-yield-table td:first-child { text-align: left; }
+.dd-yield-farm { font-weight: 700; }
+.dd-yield-projected { color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.dd-yield-word { display: block; font-size: 0.68rem; font-weight: 400; }
+.dd-yield-note, .dd-yield-foot, .dd-yield-link, .dd-season-shape, .dd-season-nav { margin: 0.25rem 0; overflow-wrap: anywhere; font-size: 0.82rem; }
+.dd-yield-note, .dd-yield-foot { color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.dd-yield-back { display: none; }
+.dd-yield-row:hover + .dd-yield-back, .dd-yield-row:focus + .dd-yield-back, .dd-yield-row:focus-within + .dd-yield-back { display: table-row; }
+.dd-yield-back td { text-align: left; font-size: 0.75rem; font-weight: 400; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.dd-yield-toggle { display: none; margin: 0.2rem 0; font-size: 0.82rem; }
+.dd-seasons-page table { width: 100%; border-collapse: collapse; }
+.dd-seasons-page th, .dd-seasons-page td { text-align: left; padding: 0.15rem 0.3rem; overflow-wrap: anywhere; vertical-align: top; }
+.dd-seasons-page form, .dd-seasons-page input, .dd-seasons-page button { max-width: 100%; box-sizing: border-box; }
+.dd-seasons-page input[type="file"], .dd-seasons-page input[type="text"] { width: 100%; min-width: 0; }
+body.device-phone .dd-yield-season { display: none; }
+body.device-phone .dd-yield-toggle { display: inline-flex; gap: 0.35rem; align-items: center; }
+body.device-phone .dd-yield:has([data-dd-yield-seasons]:checked) .dd-yield-season { display: table-cell; }
+body.device-phone .dd-silo-span-all { display: none; }
+body.device-phone .dd-silo-span-30 { display: block; }
+body.device-phone .dd-silo-toggle { display: block; }
+body.device-phone .dd-silo:has([data-dd-silo-whole]:checked) .dd-silo-span-all { display: block; }
+body.device-phone .dd-silo:has([data-dd-silo-whole]:checked) .dd-silo-span-30 { display: none; }
 .dd-tile { position: relative; display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; overflow: hidden; background: color-mix(in srgb, ${accent} 4%, var(--panel, var(--surface, transparent))); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); padding: 0.7rem 0.9rem 0.8rem; }
 .dd-tile-on_goal { border-left: 4px solid var(--ok, var(--accent, currentColor)); }
 .dd-tile-off_goal { border-left: 4px solid var(--danger, var(--alert, currentColor)); }
@@ -686,6 +768,7 @@ export function liteStylesheet(): string {
   --accent: #4f6b4a;
   --accent-text: #ffffff;
   --danger: #8b2e2e;
+  --warn: #a15c07;
   --ok: #2f5d3a;
   --focus: #2b4c7e;
   --font: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -705,6 +788,7 @@ export function liteStylesheet(): string {
   --accent: #3d5a80;
   --accent-text: #ffffff;
   --danger: #8b2e2e;
+  --warn: #8a5a00;
   --ok: #2f5d3a;
   --focus: #3d5a80;
   --font: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -1488,6 +1572,8 @@ export function coStylesheet(): string {
   --accent-soft: rgba(217, 162, 74, 0.16);
   --alert: #ef8a6f;
   --alert-soft: rgba(239, 138, 111, 0.16);
+  --warn: #e5c07b;
+  --danger: #ef8a6f;
   --ok: #7fb494;
   --ok-soft: rgba(127, 180, 148, 0.16);
   --glow-a: rgba(200, 138, 60, 0.13);
@@ -2371,7 +2457,7 @@ h1,h2,h3,.eyebrow,.hd{ text-transform:uppercase; letter-spacing:.08em; }
   --bg:#0c0c0e; --panel:#15161a; --panel-2:#1c1e24; --line:#2a2d35; --border:var(--line); --line-2:#3a3e48;
   --ink:#f4f4f5; --ink-dim:#b6b8c0; --ink-mute:#7a7d88; --gold:#f1c232; --gold-dim:#b4901f; --accent-gold:var(--gold);
   --panel-alt:#181a20; --chassis-steel:#3a3d42; --chassis-steel-2:#2a2c30; --chassis-bezel:#1c1e22;
-  --danger:#e05757; --ok:#54b774;
+  --danger:#e05757; --ok:#54b774; --warn:#e5c07b;
 }
 :root{
   --bg2:#101116; --panel2:var(--panel-2);

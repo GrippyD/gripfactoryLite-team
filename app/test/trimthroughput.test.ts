@@ -248,7 +248,10 @@ describe("Trim Throughput", () => {
     expect(biz).not.toContain("Percent finished (plants)");
     expect(biz).not.toContain('data-dd-kpi="harvest.pct_complete"');
     expect(biz).toContain('data-dd-kpi="harvest.trim_lb_per_dlh"');
-    expect(farm).toContain('data-dd-kpi="bizops.trim_throughput"');
+    expect(farm).not.toContain('data-dd-kpi="bizops.trim_throughput"');
+    expect(farm).not.toContain('data-dd-kpi="harvest.btr_pct"');
+    expect(farm).not.toContain('data-dd-kpi="harvest.trim_lb_per_dlh"');
+    expect(biz).toContain('data-dd-kpi="harvest.btr_pct"');
     expect(farm).not.toContain("Percent finished (plants)");
     const tileAt = biz.indexOf('data-dd-kpi="bizops.trim_throughput"');
     expect(DASH.test(biz.slice(tileAt, biz.indexOf("</article>", tileAt)))).toBe(false);

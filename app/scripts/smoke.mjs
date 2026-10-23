@@ -599,8 +599,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 111 migration(s)")) {
-      throw new Error(`from-zero apply must say 111 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 115 migration(s)")) {
+      throw new Error(`from-zero apply must say 115 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -10904,8 +10904,8 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     // department cards, the bizops wall with every tile carrying a status, an
     // unknown department answering 404, and the farmops wall on its weekly tab.
     // Stored tiles are not computed on load. Plant Weight is. The hourly cron
-    // earlier in this smoke may already have stored Lbs Harvested, so that one
-    // tile can read no_goal.
+    // earlier in this smoke may already have stored Lbs Harvested and Yield per
+    // Plant, so those tiles can read no_goal.
     const ddAdmin = await text("/admin");
     assert(ddAdmin.res.status === 200 && ddAdmin.body.includes('data-admin-group="director"'), `Admin must carry the Director Dashboard tile, got ${ddAdmin.res.status}`);
     const ddHome = await text("/admin/director");
@@ -10927,7 +10927,7 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     assert(
       ddKpis.every((key, i) => {
         const status = ddStatuses[i];
-        if (key === "bizops.lbs_processed" || key === "bizops.pct_finished_plants") return status === "no_goal" || status === "no_data";
+        if (key === "bizops.lbs_processed" || key === "bizops.pct_finished_plants" || key === "harvest.dry_lb_per_plant_vs_plan_pct") return status === "no_goal" || status === "no_data";
         return status === "no_data" || status === "out_of_season" || status === "parked";
       }),
       `a from-zero wall reads no_data, out_of_season or parked, and Lbs Harvested may already be stored by the hourly cron, got ${ddTallyText}`
@@ -10973,8 +10973,206 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     localD1(`INSERT INTO wip_packages (id, wet_weight_entry_id, package_code, package_type_code, weight_grams, status, source, trim_date, trim_operator, created_at, updated_at) VALUES ('smoke-tp-night', 'smoke-tp-e-a', 'SMOKE-TP-N', 'BUD', 8960, 'created', 'trim', '${dlhDay}', 'Victor', '${dlhNow}', '${dlhNow}')`);
     localD1(`INSERT INTO trim_labor_hours (id, work_date, shift, hours, created_at, updated_at) VALUES ('smoke-tp-day', '${dlhDay}', 'day', 8, '${dlhNow}', '${dlhNow}')`);
     localD1(`INSERT INTO trim_labor_hours (id, work_date, shift, hours, created_at, updated_at) VALUES ('smoke-tp-night', '${dlhDay}', 'second', 10, '${dlhNow}', '${dlhNow}')`);
+    const suShift = (day, delta) => new Date(Date.parse(`${day}T00:00:00.000Z`) + delta * 86400000).toISOString().slice(0, 10);
+    const suDay0 = suShift(dlhDay, -2);
+    const suDay1 = suShift(dlhDay, -1);
+    const suDay2 = dlhDay;
+    const suBefore = `${suDay0}T09:00:00.000Z`;
+    const suSilo1 = tpId("Silo 1");
+    const suSilo2 = tpId("Silo 2");
+    localD1(`UPDATE silo_loads SET ended_at = '${suBefore}', updated_at = '${suBefore}' WHERE deleted_at IS NULL AND (ended_at IS NULL OR ended_at > '${suBefore}')`);
+    localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-su-a', 'Silo Alpha', 'SUA', '941', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-su-b', 'Silo Beta', 'SUB', '942', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO harvest_batches (id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, hbn, lot_serial, harvest_year, status, license_value, born_from, material_form, created_at, updated_at) VALUES ('smoke-su-a', '${suDay0}', 'PNN', 'GH', 'smoke-su-a', 'Silo Alpha', 0, '26290-PNN-GH-941-0-1-26041', 9941, ${pctYear}, 'open', 'AU-G-C-000832', 'app', 'bucked', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO harvest_batches (id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, hbn, lot_serial, harvest_year, status, license_value, born_from, material_form, created_at, updated_at) VALUES ('smoke-su-b', '${suDay1}', 'PNN', 'GH', 'smoke-su-b', 'Silo Beta', 0, '26291-PNN-GH-942-0-2-26042', 9942, ${pctYear}, 'open', 'AU-G-C-000832', 'app', 'bucked', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, created_at, updated_at) VALUES ('smoke-su-e1', 'smoke-su-a', 4480, '${suSilo1}', 'trimmed', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, created_at, updated_at) VALUES ('smoke-su-e2', 'smoke-su-b', 8960, '${suSilo2}', 'trimmed', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO silo_loads (id, dry_space_id, wet_weight_entry_id, loaded_at, ended_at, paused_seconds, created_at, updated_at) VALUES ('smoke-su-l1', '${suSilo1}', 'smoke-su-e1', '${suDay0}T16:00:00.000Z', '${suDay1}T16:00:00.000Z', 0, '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO silo_loads (id, dry_space_id, wet_weight_entry_id, loaded_at, paused_seconds, created_at, updated_at) VALUES ('smoke-su-l2', '${suSilo2}', 'smoke-su-e2', '${suDay1}T16:00:00.000Z', 0, '${dlhNow}', '${dlhNow}')`);
     const ddRecompute = await req("/admin/director/recompute-lbs-harvested", { method: "POST", body: form({}) });
     assert(ddRecompute.status === 303, `recompute dashboard series expected 303 got ${ddRecompute.status}`);
+    const suFarm = await text("/admin/director/farmops");
+    const suBiz = await text("/admin/director/bizops");
+    const suAt = suFarm.body.indexOf('data-dd-kpi="harvest.dry_space_utilization_pct"');
+    const suTile = suAt < 0 ? "" : suFarm.body.slice(suAt, suFarm.body.indexOf("</article>", suAt));
+    const suCount = (day) => {
+      const hit = suTile.match(new RegExp('data-dd-silo-day="' + day + '" data-dd-silo-count="(\\d+)"'));
+      return hit ? hit[1] : "";
+    };
+    const suOne = suTile.slice(suTile.indexOf('data-dd-silo-silo="Silo 1"'), suTile.indexOf('data-dd-silo-silo="Silo 2"'));
+    const suTwo = suTile.slice(suTile.indexOf('data-dd-silo-silo="Silo 2"'), suTile.indexOf('data-dd-silo-silo="Silo 3"'));
+    const suTaskAt = suFarm.body.indexOf('data-dd-kpi="farmops.task_units_per_dlh"');
+    const suTask = suTaskAt < 0 ? "" : suFarm.body.slice(suTaskAt, suFarm.body.indexOf("</article>", suTaskAt));
+    assert(
+      suFarm.res.status === 200 &&
+        suCount(suDay0) === "1" &&
+        suCount(suDay1) === "2" &&
+        suCount(suDay2) === "1" &&
+        suTile.includes('href="/ops/drying_ops"') &&
+        suTile.includes(">Drying Operations<") &&
+        suTile.includes('data-dd-version="2"') &&
+        suOne.includes(suDay0) &&
+        suOne.includes(suDay1) &&
+        suOne.includes("26041") &&
+        suOne.includes("Silo Alpha") &&
+        suOne.includes("10.00") &&
+        suTwo.includes("still in") &&
+        suTwo.includes("26042") &&
+        suTwo.includes("Silo Beta") &&
+        suTwo.includes("20.00") &&
+        suTile.includes('data-dd-silo-whole') &&
+        suTask.includes("No task data yet.") &&
+        !suTask.includes("data-dd-value") &&
+        !suFarm.body.includes('data-dd-kpi="bizops.trim_throughput"') &&
+        !suFarm.body.includes('data-dd-kpi="harvest.btr_pct"') &&
+        !suFarm.body.includes('data-dd-kpi="harvest.trim_lb_per_dlh"') &&
+        suBiz.body.includes('data-dd-kpi="bizops.trim_throughput"') &&
+        suBiz.body.includes('data-dd-kpi="harvest.btr_pct"') &&
+        suBiz.body.includes('data-dd-kpi="harvest.trim_lb_per_dlh"') &&
+        !suBiz.body.includes('data-dd-kpi="harvest.dry_space_utilization_pct"'),
+      `silo utilization expected counts 1, 2, 1 and the two loads, got ${suCount(suDay0)}, ${suCount(suDay1)}, ${suCount(suDay2)} tile ${suTile.slice(0, 400)}`
+    );
+    const planShift = (day, delta) => new Date(Date.parse(`${day}T00:00:00.000Z`) + delta * 86400000).toISOString().slice(0, 10);
+    const planMonth = (day) => {
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      return `${months[Number(day.slice(5, 7)) - 1]} ${String(Number(day.slice(8, 10)))}`;
+    };
+    const planWords = (day) => {
+      const dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${day}T00:00:00.000Z`).getUTCDay()];
+      return `${dow}, ${planMonth(day)}`;
+    };
+    const planA = planShift(dlhDay, 1);
+    const planB = planShift(dlhDay, 3);
+    const homeLinks = await text("/admin/director");
+    assert(
+      homeLinks.res.status === 200 &&
+        homeLinks.body.includes('href="/admin/director/harvest-plan"') &&
+        homeLinks.body.includes('href="/admin/director/labor-tasks"') &&
+        homeLinks.body.includes('href="/admin/director/projects"') &&
+        homeLinks.body.includes('href="/admin/director/maintenance"') &&
+        homeLinks.body.includes('data-dd-checkin="farmops"'),
+      "director home lists the plan, labor, projects, and maintenance links beside the check-in links"
+    );
+    localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-plan-a', 'Smoke Plan One', 'SPO', '981', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-plan-b', 'Smoke Plan Two', 'SPT', '982', '${dlhNow}', '${dlhNow}')`);
+    const planForm = await text("/admin/director/harvest-plan");
+    assert(planForm.res.status === 200 && planForm.body.includes("Smoke Plan One") && planForm.body.includes("data-dd-harvest-plan"), `harvest plan form expected 200 got ${planForm.res.status}`);
+    const addPlan = async (strain, farm, date, plants) => {
+      const res = await req("/admin/director/harvest-plan", { method: "POST", body: form({ strain, farm_code: farm, planned_date: date, plants, reason: "Weekly check-in" }) });
+      const detail = res.status === 303 ? "" : await res.text();
+      assert(res.status === 303, `add plan ${strain} expected 303 got ${res.status} ${detail.slice(0, 240)}`);
+    };
+    await addPlan("Smoke Plan One", "PNN", planA, "120");
+    await addPlan("Smoke Plan Two", "PNS", planB, "40");
+    const addTask = async (task, farm, started, expected) => {
+      const res = await req("/admin/director/labor-tasks", { method: "POST", body: form({ task, farm_code: farm, started_on: started, expected_on: expected, reason: "Weekly check-in" }) });
+      const detail = res.status === 303 ? "" : await res.text();
+      assert(res.status === 303, `add task ${task} expected 303 got ${res.status} ${detail.slice(0, 240)}`);
+    };
+    await addTask("Smoke defoliate", "PNN", planShift(dlhDay, -10), planShift(dlhDay, 10));
+    await addTask("Smoke overdue", "", planShift(dlhDay, -8), planShift(dlhDay, -1));
+    const openTasks = await text("/admin/director/labor-tasks");
+    assert(openTasks.res.status === 200 && openTasks.body.includes("data-dd-labor-tasks"), `labor form expected 200 got ${openTasks.res.status}`);
+    const idFor = (body, name) => {
+      const at = body.indexOf(`>${name}<`);
+      const before = body.lastIndexOf('data-dd-labor-id="', at);
+      const hit = /data-dd-labor-id="([^"]+)"/.exec(body.slice(before, at + 1));
+      return hit ? hit[1] : "";
+    };
+    const defoliateId = idFor(openTasks.body, "Smoke defoliate");
+    const overdueId = idFor(openTasks.body, "Smoke overdue");
+    assert(defoliateId !== "" && overdueId !== "" && defoliateId !== overdueId, "labor form ids missing");
+    const pctRes = await req(`/admin/director/labor-tasks/${defoliateId}/percent`, { method: "POST", body: form({ pct_complete: "80", pct_as_of: dlhDay, reason: "Weekly check-in" }) });
+    const pctDetail = pctRes.status === 303 ? "" : await pctRes.text();
+    assert(pctRes.status === 303, `percent save expected 303 got ${pctRes.status} ${pctDetail.slice(0, 240)}`);
+    const lateRes = await req(`/admin/director/labor-tasks/${overdueId}/percent`, { method: "POST", body: form({ pct_complete: "20", pct_as_of: dlhDay, reason: "Weekly check-in" }) });
+    assert(lateRes.status === 303, `late percent expected 303 got ${lateRes.status}`);
+    localD1(`INSERT INTO harvest_batches (id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, hbn, lot_serial, harvest_year, status, license_value, born_from, material_form, created_at, updated_at) VALUES ('smoke-plan-cut', '${planA}', 'PNN', 'GH', 'smoke-plan-a', 'Smoke Plan One', 0, 'SMOKEPLANHBN', 26941, ${pctYear}, 'open', 'AU-G-C-000832', 'app', 'bucked', '${dlhNow}', '${dlhNow}')`);
+    const cutPage = await text("/admin/director/harvest-plan");
+    assert(cutPage.body.includes(`cut ${planMonth(planA)}, HBN SMOKEPLANHBN`), `plan form missing the cut line: ${cutPage.body.slice(cutPage.body.indexOf("Smoke Plan One"), cutPage.body.indexOf("Smoke Plan One") + 500)}`);
+    const planWall = await text("/admin/director/farmops");
+    const schedAt = planWall.body.indexOf('data-dd-kpi="harvest.harvest_schedule"');
+    const sched = schedAt < 0 ? "" : planWall.body.slice(schedAt, planWall.body.indexOf("</article>", schedAt));
+    const laborAt = planWall.body.indexOf('data-dd-kpi="farmops.labor_tasks_done_pct"');
+    const laborTile = laborAt < 0 ? "" : planWall.body.slice(laborAt, planWall.body.indexOf("</article>", laborAt));
+    const laborStates = [...laborTile.matchAll(/data-dd-task-state="([^"]+)"/g)].map((hit) => hit[1]);
+    assert(
+      sched.includes("Smoke Plan Two") &&
+        sched.includes(planWords(planB)) &&
+        !sched.includes("Smoke Plan One") &&
+        sched.includes("1 strain, 40 plants planned in the next 21 days") &&
+        sched.includes('href="/admin/director/harvest-plan"') &&
+        laborTile.includes("Smoke defoliate") &&
+        laborTile.includes("Smoke overdue") &&
+        laborTile.includes("1 of 2 on track") &&
+        laborTile.includes("80%, as of") &&
+        laborStates[0] === "overdue" &&
+        laborStates.includes("track") &&
+        laborTile.includes('href="/admin/director/labor-tasks"'),
+      `farmops schedule and labor bars missing, states ${laborStates.join(",")} schedule ${sched.slice(0, 280)} labor ${laborTile.slice(0, 280)}`
+    );
+    const laborRecompute = await req("/admin/director/recompute-lbs-harvested", { method: "POST", body: form({}) });
+    assert(laborRecompute.status === 303, `labor recompute expected 303 got ${laborRecompute.status}`);
+    const laborShare = localD1All("SELECT value FROM dd_kpi_values WHERE kpi_key = 'farmops.labor_tasks_done_pct' AND dim_key = 'all' AND superseded_at IS NULL");
+    assert(laborShare.length === 1 && Number(laborShare[0].value) === 50, `stored on track share expected 50, got ${JSON.stringify(laborShare)}`);
+    localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-yy', 'Smoke Yield', 'SYY', '981', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-yo', 'Smoke Other', 'SYO', '982', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-yt', 'Smoke Third', 'SYT', '983', '${dlhNow}', '${dlhNow}')`);
+    const yyCsv = ["Season,Strain,Farm,Plants,Dry lb", "2024,Smoke Yield,PNN,10,50", "2025,Smoke Yield,PNN,10,30", "2024,Smoke Other,PNN,10,20", "2025,Smoke Other,,10,40", "2024,Smoke Third,PNS,8,16", "2025,Smoke Third,PNS,8,24"].join("\n");
+    const yyPreview = new FormData();
+    yyPreview.append("file", new File([yyCsv], "past-seasons.csv", { type: "text/csv" }));
+    const yyPrevRes = await req("/admin/director/past-seasons/preview", { method: "POST", body: yyPreview });
+    const yyPrevBody = await yyPrevRes.text();
+    assert(
+      yyPrevRes.status === 200 && yyPrevBody.includes("Season, Strain, Farm, Plants, Dry lb") && yyPrevBody.includes("Smoke Yield") && yyPrevBody.includes('data-dd-preview="matched"') && yyPrevBody.includes('data-dd-preview-landing="6"'),
+      `past seasons preview expected 200 with six rows, got ${yyPrevRes.status} ${yyPrevBody.slice(0, 400)}`
+    );
+    const yyCommit = new FormData();
+    yyCommit.append("file", new File([yyCsv], "past-seasons.csv", { type: "text/csv" }));
+    const yyCommitRes = await req("/admin/director/past-seasons/commit", { method: "POST", body: yyCommit });
+    assert(yyCommitRes.status === 303, `past seasons commit expected 303 got ${yyCommitRes.status}`);
+    const yyDry = 10 * 4 * 448;
+    localD1(`INSERT INTO harvest_batches (id, entry_date, farm_code, grow_method_code, strain_id, market_strain, manicure, hbn, lot_serial, harvest_year, status, license_value, born_from, material_form, created_at, updated_at) VALUES ('smoke-yy', '${dlhDay}', 'PNN', 'GH', 'smoke-yy', 'Smoke Yield', 0, 'SMOKEYIELD', 9981, ${pctYear}, 'open', 'AU-G-C-000832', 'app', 'bucked', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, dry_weight_grams, actual_dryspc, status, plant_count, created_at, updated_at) VALUES ('smoke-yy-a', 'smoke-yy', 1000, ${yyDry}, 'silo', 'trimmed', 10, '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, dry_weight_grams, actual_dryspc, status, plant_count, created_at, updated_at) VALUES ('smoke-yy-b', 'smoke-yy', 1000, ${yyDry}, 'silo', 'trimmed', 10, '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, plant_count, created_at, updated_at) VALUES ('smoke-yy-c', 'smoke-yy', 1000, 'silo', 'drying', 10, '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO unload_sessions (id, wet_weight_entry_id, finished_at, effective_date, created_at, updated_at) VALUES ('smoke-yy-ua', 'smoke-yy-a', '${dlhNow}', '${dlhDay}', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO unload_sessions (id, wet_weight_entry_id, finished_at, effective_date, created_at, updated_at) VALUES ('smoke-yy-ub', 'smoke-yy-b', '${dlhNow}', '${dlhDay}', '${dlhNow}', '${dlhNow}')`);
+    localD1(`INSERT INTO field_estimates (id, strain_id, farm_code, effective_date, est_dry_weight, created_at) VALUES ('smoke-yy-est', 'smoke-yy', 'PNN', '${dlhDay}', 6, '${dlhNow}')`);
+    const yyWall = await text("/admin/director/farmops");
+    const yyAt = yyWall.body.indexOf('data-dd-kpi="harvest.dry_lb_per_plant_vs_plan_pct"');
+    const yyTile = yyAt < 0 ? "" : yyWall.body.slice(yyAt, yyWall.body.indexOf("</article>", yyAt));
+    const yyRowAt = yyTile.indexOf('data-dd-yield-strain="Smoke Yield"');
+    const yyRow = yyRowAt < 0 ? "" : yyTile.slice(yyRowAt, yyTile.indexOf("</tr>", yyRowAt));
+    const yyWideAt = yyTile.indexOf('data-dd-yield-farm="1"');
+    assert(
+      yyWall.res.status === 200 &&
+        yyTile.includes("Yield per Plant: seasons") &&
+        yyTile.includes(">2024<") &&
+        yyTile.includes(">2025<") &&
+        yyTile.includes(`${pctYear} to date`) &&
+        yyTile.includes(`${pctYear} projected`) &&
+        yyRow.includes('data-dd-yield-s0="5.00"') &&
+        yyRow.includes('data-dd-yield-s1="3.00"') &&
+        yyRow.includes('data-dd-yield-avg="4.00"') &&
+        yyRow.includes('data-dd-yield-todate="4.00"') &&
+        yyRow.includes('data-dd-yield-projected="4.67"') &&
+        yyRow.includes('data-dd-yield-state="projected"') &&
+        yyWideAt > yyRowAt &&
+        yyTile.includes("Projected: dried lots as weighed"),
+      `yield seasons tile missing the five columns, row ${yyRow.slice(0, 500)} tile ${yyTile.slice(0, 400)}`
+    );
+    const yyRecompute = await req("/admin/director/recompute-lbs-harvested", { method: "POST", body: form({}) });
+    assert(yyRecompute.status === 303, `yield recompute expected 303 got ${yyRecompute.status}`);
+    const yyVals = localD1All("SELECT dim_key, value FROM dd_kpi_values WHERE kpi_key = 'harvest.dry_lb_per_plant_vs_plan_pct' AND superseded_at IS NULL");
+    const yyDims = yyVals.map((row) => row.dim_key).sort();
+    assert(yyDims.includes("") && yyDims.includes("todate") && yyDims.includes("projected"), `yield seasons stored dims ${JSON.stringify(yyVals)}`);
+    const yyDetail = await text("/admin/director/kpi/harvest.dry_lb_per_plant_vs_plan_pct");
+    assert(yyDetail.res.status === 200 && yyDetail.body.includes("todate") && yyDetail.body.includes("projected"), `yield detail expected both numbers, got ${yyDetail.res.status}`);
+    const yyCheck = await text("/admin/director/farmops/enter?cadence=daily");
+    const yyAutoAt = yyCheck.body.indexOf('data-dd-auto-kpi="harvest.dry_lb_per_plant_vs_plan_pct"');
+    const yyAuto = yyAutoAt < 0 ? "" : yyCheck.body.slice(yyAutoAt, yyCheck.body.indexOf("</li>", yyAutoAt));
+    assert(yyCheck.res.status === 200 && yyAutoAt >= 0 && !yyAuto.includes("not yet"), `yield check-in expected a number, got ${yyAuto.slice(0, 240)}`);
     localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-pw-a', 'Pw Gelato', 'PWG', '901', '${dlhNow}', '${dlhNow}')`);
     localD1(`INSERT INTO strains (id, name, abbr, hbn_code, created_at, updated_at) VALUES ('smoke-pw-b', 'Pw Sherb', 'PWS', '902', '${dlhNow}', '${dlhNow}')`);
     localD1(`INSERT INTO harvest_batches (id, entry_date, farm_code, grow_method_code, strain_id, manicure, hbn, lot_serial, harvest_year, status, license_value, born_from, material_form, created_at, updated_at) VALUES ('smoke-pw-od', '${dlhDay}', 'PNN', 'OD', 'smoke-pw-a', 0, 'SMOKE-PW-OD', 9911, ${pctYear}, 'open', 'AU-G-C-000832', 'app', 'bucked', '${dlhNow}', '${dlhNow}')`);
@@ -11120,8 +11318,10 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
         !ddHarvest.body.includes("Percent finished (plants)") &&
         !ddHarvest.body.includes('data-dd-kpi="harvest.pct_complete"') &&
         ddHarvest.body.includes('data-dd-kpi="harvest.trim_lb_per_dlh"') &&
+        ddHarvest.body.includes('data-dd-kpi="harvest.btr_pct"') &&
         ddFarm.res.status === 200 &&
-        ddFarm.body.includes('data-dd-kpi="bizops.trim_throughput"') &&
+        !ddFarm.body.includes('data-dd-kpi="bizops.trim_throughput"') &&
+        !ddFarm.body.includes('data-dd-kpi="harvest.btr_pct"') &&
         !ddFarm.body.includes("Percent finished (plants)"),
       `trim throughput expected the three boxes and Percent finished gone, got ${ddTp.slice(0, 700)}`
     );
@@ -11212,6 +11412,54 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
         ddOkRows === 3 &&
         ddCommit.status === 303,
       `director S2b expected target 303, 17 questions, ruling 303 with 45 ruled, abc 400, import preview 3 ok and commit 303, got target ${ddTarget.status} questions ${ddQuestions.res.status}/${ddQuestionCount} rule ${ddRule.status} abc ${ddAbc.res.status} import ${ddImport.res.status} preview ${ddPreview.res.status}/${ddOkRows} commit ${ddCommit.status} kind ${ddKind} dim ${ddDim} period ${ddPeriod}`
+    );
+    const maintProject = await req("/admin/director/projects", {
+      method: "POST",
+      body: form({
+        name: "Smoke roof fans",
+        owner_name: "crew lead",
+        farm_code: "PNN",
+        status: "active",
+        started_on: planShift(dlhDay, -10),
+        expected_on: planShift(dlhDay, 20),
+        budget_usd: "1000",
+        reason: "project entered",
+      }),
+    });
+    const maintProjectDetail = maintProject.status === 303 ? "" : await maintProject.text();
+    assert(maintProject.status === 303, `add project expected 303 got ${maintProject.status} ${maintProjectDetail.slice(0, 240)}`);
+    const saleId = (eqHome.body.match(/href="\/equipment\/([a-f0-9-]{36})">T-Zero<\/a>/) || [])[1];
+    assert(saleId, "equipment page missing T-Zero");
+    const saleSave = await req(`/equipment/${saleId}/for-sale`, {
+      method: "POST",
+      body: form({ sale_status: "listed", sale_condition: "used", asking_price_usd: "500", sale_note: "ready" }),
+    });
+    const saleDetail = saleSave.status === 303 ? "" : await saleSave.text();
+    assert(saleSave.status === 303, `for sale save expected 303 got ${saleSave.status} ${saleDetail.slice(0, 240)}`);
+    const saleLogs = Number(localD1All("SELECT COUNT(*) AS n FROM record_change_log WHERE record_table = 'equipment_assets' AND reason = 'asset for sale'")[0].n);
+    const saleList = await text("/equipment");
+    const maint = await text("/admin/director/maintenance");
+    const maintFarm = await text("/admin/director/farmops");
+    const maintBiz = await text("/admin/director/bizops");
+    assert(
+      saleLogs > 0 &&
+        saleList.res.status === 200 &&
+        saleList.body.includes('data-eq-sale="listed"') &&
+        saleList.body.includes(">listed<") &&
+        maint.res.status === 200 &&
+        maint.body.includes("data-dd-maint-projects") &&
+        maint.body.includes("Smoke roof fans") &&
+        maint.body.includes("data-dd-maint-upcoming") &&
+        maint.body.includes("data-dd-pm") &&
+        maint.body.includes("data-dd-maint-forecast") &&
+        maint.body.includes("Maintenance budget: not in GRIPCasting yet") &&
+        maint.body.includes("data-dd-maint-sale") &&
+        maint.body.includes("GF-EQ-0001") &&
+        maint.body.includes("used") &&
+        maintFarm.body.includes('data-dd-wall-tabs="farmops"') &&
+        maintFarm.body.includes('href="/admin/director/maintenance"') &&
+        !maintBiz.body.includes("data-dd-wall-tabs"),
+      `maintenance tab expected the four sections, a listed asset, and the farmops head only, got project ${maintProject.status} sale ${saleSave.status} logs ${saleLogs} tab ${maint.res.status}`
     );
     process.stdout.write("SMOKE PASS\n");
   } finally {

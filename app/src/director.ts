@@ -56,6 +56,47 @@ import { dayOffset, etWallClock, isCalendarDate, isoWeekOf, periodLabel, periodS
 import { emptyPlantWeight, PLANT_WEIGHT_KPI, plantWeightBody, plantWeightFromResults, plantWeightStatements, type PlantWeightModel } from "./plantweight";
 import { emptyStorage, loadStorageModel, STORAGE_CAPACITY_KPI, storageBody, storageCapacityStatements, type StorageModel } from "./storagecapacity";
 import { emptyTrim, TRIM_THROUGHPUT_KPI, trimModelFromRows, trimSeriesStatement, trimThroughputBody, type TrimThroughputModel } from "./trimthroughput";
+import {
+  emptySiloUtilization,
+  SILO_UTILIZATION_KPI,
+  siloLoadsStatement,
+  siloModelFromResults,
+  siloSeriesStatement,
+  siloStartHourStatement,
+  siloUtilizationBody,
+  type SiloUtilizationModel,
+} from "./siloutilization";
+import {
+  emptyHarvestSchedule,
+  HARVEST_PLAN_PATH,
+  HARVEST_SCHEDULE_KPI,
+  harvestCutsStatement,
+  harvestPlanStatement,
+  harvestScheduleBody,
+  planModelFromResults,
+  type HarvestScheduleModel,
+} from "./harvestschedule";
+import {
+  emptyLaborTasks,
+  LABOR_TASKS_KPI,
+  LABOR_TASKS_PATH,
+  laborLogStatement,
+  laborModelFromResults,
+  laborTasksBody,
+  laborTasksStatement,
+  type LaborTasksModel,
+} from "./labortasks";
+import {
+  emptyYieldSeasons,
+  PAST_SEASONS_PATH,
+  YIELD_SEASONS_KPI,
+  yieldModelFromRows,
+  yieldSeasonStatements,
+  yieldSeasonsBody,
+  type YieldSeasonsModel,
+} from "./yieldseasons";
+import { countAssetsForSale } from "./equipment";
+import { farmopsHeadTabs, MAINTENANCE_PATH, PROJECTS_PATH } from "./maintenance";
 import { t, tFill, type Locale } from "./i18n";
 import { esc, tabBar } from "./ui";
 
@@ -224,6 +265,18 @@ export type DirectorTile = {
   storage: StorageModel | null;
   /** The stored trim pounds and hours, on that one tile. Null on every other tile. */
   trim: TrimThroughputModel | null;
+  /** The stored silo counts and the live loads, on that one tile. Null on every other tile. */
+  silo: SiloUtilizationModel | null;
+  /** The live harvest plan, on that one tile. Null on every other tile. */
+  plan: HarvestScheduleModel | null;
+  /** The live labor tasks, on that one tile. Null on every other tile. */
+  labor: LaborTasksModel | null;
+  /** Yield per plant by season, on that one tile. Null on every other tile. */
+  seasons: YieldSeasonsModel | null;
+  /** THE GATE'S FIX (Scribe, 2026-10-23): the live count of assets listed or under offer,
+   * on farmops.assets_for_sale_count. Null on every other tile. The row is live with no
+   * stored series, so without it the tile read No data yet beside a listed asset. */
+  forSale: number | null;
 };
 
 export type DirectorWallGroup = { cadence: DdCadence; periodKind: DdPeriodKind; periodStart: string; tiles: DirectorTile[] };
@@ -514,7 +567,7 @@ function buildTile(
   }
   const snapshot = values.get(`${kpi.kpi_key}|${periodKind}|${periodStart}`) ?? null;
   const inSeason = ddInSeason(kpi, model.farmToday);
-  return { kpi, periodKind, periodStart, inSeason, status: ddTileStatus(kpi, snapshot, inSeason, model.nowIso), snapshot, history, companions: [], harvest, dlh: null, dlhGoal: null, pct: null, plant: null, storage: null, trim: null };
+  return { kpi, periodKind, periodStart, inSeason, status: ddTileStatus(kpi, snapshot, inSeason, model.nowIso), snapshot, history, companions: [], harvest, dlh: null, dlhGoal: null, pct: null, plant: null, storage: null, trim: null, silo: null, plan: null, labor: null, seasons: null, forSale: null };
 }
 
 /** A wall: one batch (registry, the wall's live rows over the widest history window, config); tiles grouped by
@@ -556,6 +609,33 @@ export async function loadDirectorWall(
   const withTrim = (dept === "bizops" || dept === "farmops") && Number.isInteger(trimYear) && trimYear > 0;
   const trimAt = reads.length;
   if (withTrim) reads.push(trimSeriesStatement(db, `${trimYear}-01-01`, `${trimYear}-12-31`));
+  const withSilo = dept === "farmops" && Number.isInteger(trimYear) && trimYear > 0;
+  const siloAt = reads.length;
+  if (withSilo) {
+    reads.push(siloSeriesStatement(db, `${trimYear}-01-01`, `${trimYear}-12-31`));
+    reads.push(siloLoadsStatement(db));
+    reads.push(siloStartHourStatement(db));
+  }
+  const withPlan = dept === "bizops" || dept === "farmops";
+  const planAt = reads.length;
+  if (withPlan) {
+    reads.push(harvestPlanStatement(db));
+    reads.push(harvestCutsStatement(db));
+  }
+  let planHourAt = withSilo ? siloAt + 2 : -1;
+  if (withPlan && !withSilo) {
+    planHourAt = reads.length;
+    reads.push(siloStartHourStatement(db));
+  }
+  const withLabor = dept === "farmops";
+  const laborAt = reads.length;
+  if (withLabor) {
+    reads.push(laborTasksStatement(db));
+    reads.push(laborLogStatement(db));
+  }
+  const withYield = (dept === "bizops" || dept === "farmops") && Number.isInteger(trimYear) && trimYear > 0;
+  const yieldAt = reads.length;
+  if (withYield) reads.push(...yieldSeasonStatements(db, trimYear, farmToday));
   const results = await db.batch(reads);
   const registry = registryFromRows(resultsOf(results[0]));
   const values = new Map<string, DdSnapshot>();
@@ -597,6 +677,26 @@ export async function loadDirectorWall(
   if (storageTile) storageTile.storage = withPlants ? await loadStorageModel(db, results.slice(12), nowIso) : emptyStorage(nowIso);
   const trimTile = tiles.get(TRIM_THROUGHPUT_KPI);
   if (trimTile) trimTile.trim = withTrim ? trimModelFromRows(resultsOf(results[trimAt]), farmToday) : emptyTrim(farmToday);
+  const siloTile = tiles.get(SILO_UTILIZATION_KPI);
+  if (siloTile) {
+    siloTile.silo = withSilo ? siloModelFromResults(results[siloAt], results[siloAt + 1], results[siloAt + 2], farmToday) : emptySiloUtilization(farmToday);
+  }
+  const planTile = tiles.get(HARVEST_SCHEDULE_KPI);
+  if (planTile) {
+    planTile.plan = withPlan && planHourAt >= 0 ? planModelFromResults(results[planAt], results[planAt + 1], results[planHourAt], farmToday) : emptyHarvestSchedule(farmToday);
+  }
+  const laborTile = tiles.get(LABOR_TASKS_KPI);
+  if (laborTile) {
+    laborTile.labor = withLabor ? laborModelFromResults(results[laborAt], results[laborAt + 1], farmToday) : emptyLaborTasks(farmToday);
+  }
+  const yieldTile = tiles.get(YIELD_SEASONS_KPI);
+  if (yieldTile) {
+    yieldTile.seasons = withYield
+      ? yieldModelFromRows(resultsOf(results[yieldAt]), resultsOf(results[yieldAt + 1]), resultsOf(results[yieldAt + 2]), resultsOf(results[yieldAt + 3]), farmToday, trimYear)
+      : emptyYieldSeasons(farmToday, trimYear);
+  }
+  const saleTile = tiles.get(ASSETS_FOR_SALE_KPI);
+  if (saleTile) saleTile.forSale = await countAssetsForSale(db);
   for (const tile of tiles.values()) fillWallGoal(tile, targets, nowIso);
   const groups: DirectorWallGroup[] = [];
   for (const kind of DD_CADENCES) {
@@ -722,6 +822,26 @@ function companionHtml(tile: DirectorTile, locale: Locale): string {
       </li>`;
 }
 
+const TASK_EMPTY_LINE =
+  "No task data yet. Harvest, trim, pasteurization and prepack rates read from the console once their hours are typed; other tasks arrive with the labor task form.";
+
+function taskHasRow(tile: DirectorTile): boolean {
+  const numeric = (value: number | null | undefined) => value != null && Number.isFinite(Number(value));
+  if (numeric(tile.snapshot?.value)) return true;
+  return tile.history.some((point) => numeric(point.value));
+}
+
+function taskEmptyHtml(locale: Locale): string {
+  return `<p class="dd-task-empty" data-dd-task-empty>${esc(t(locale, TASK_EMPTY_LINE))}</p>`;
+}
+
+const ASSETS_FOR_SALE_KPI = "farmops.assets_for_sale_count";
+
+function forSaleBody(n: number, locale: Locale): string {
+  return `<p class="dd-forsale" data-dd-forsale="${esc(String(n))}"><span class="dd-tile-value">${esc(String(n))}</span> ${esc(t(locale, n === 1 ? "asset listed or under offer" : "assets listed or under offer"))}</p>
+      <a href="${esc(MAINTENANCE_PATH)}" data-dd-forsale-link>${esc(t(locale, "Equipment for sale"))}</a>`;
+}
+
 function tileHtml(tile: DirectorTile, group: DirectorWallGroup, locale: Locale, lbGrams: number): string {
   const kpi = tile.kpi;
   const stale = tile.status === "stale" ? `<span class="dd-stale-stripe" aria-hidden="true"></span>` : "";
@@ -736,7 +856,14 @@ function tileHtml(tile: DirectorTile, group: DirectorWallGroup, locale: Locale, 
   const plant = tile.plant ? plantWeightBody(tile.plant, locale) : "";
   const storage = tile.storage ? storageBody(tile.storage, locale) : "";
   const trim = tile.trim ? trimThroughputBody(tile.trim, locale) : "";
-  const wide = harvest || dlh || plant || storage || trim;
+  const silo = tile.silo ? siloUtilizationBody(tile.silo, locale) : "";
+  const plan = tile.plan ? harvestScheduleBody(tile.plan, locale) : "";
+  const labor = tile.labor ? laborTasksBody(tile.labor, locale) : "";
+  const seasons = tile.seasons ? yieldSeasonsBody(tile.seasons, locale) : "";
+  const forSale = tile.forSale != null ? forSaleBody(tile.forSale, locale) : "";
+  const taskEmpty = tile.kpi.kpi_key === "farmops.task_units_per_dlh" && !taskHasRow(tile);
+  const wide = harvest || dlh || plant || storage || trim || silo || plan || labor || seasons;
+  const seasonNote = tile.status === "out_of_season" && (plan || labor || seasons) ? `<p class="dd-season">${esc(t(locale, "Out of season"))}</p>` : "";
   const body = harvest
     ? harvest
     : dlh
@@ -749,7 +876,19 @@ function tileHtml(tile: DirectorTile, group: DirectorWallGroup, locale: Locale, 
             ? storage
             : trim
               ? trim
-              : `${valueHtml(tile, locale, lbGrams)}
+              : silo
+                ? silo
+                : plan
+                  ? plan
+                  : labor
+                    ? labor
+                    : seasons
+                      ? seasons
+                      : forSale
+                        ? forSale
+                        : taskEmpty
+                  ? taskEmptyHtml(locale)
+                  : `${valueHtml(tile, locale, lbGrams)}
       ${goalHtml(tile, locale)}
       <span class="dd-tile-meta">${badgeHtml(tile, locale)}${sourceHtml(tile, locale)}${period}</span>
       ${ddSparklineSvg(tile.history)}
@@ -760,6 +899,7 @@ function tileHtml(tile: DirectorTile, group: DirectorWallGroup, locale: Locale, 
         <a class="dd-tile-title" href="${esc(directorKpiPath(kpi.kpi_key))}">${esc(kpiTitle(kpi, locale))}</a>
         <span class="dd-tile-flags">${question}<span class="dd-version" title="${esc(t(locale, "Definition version"))}" data-dd-version="${esc(kpi.def_version)}">v${esc(kpi.def_version)}</span></span>
       </span>
+      ${seasonNote}
       ${body}
     </article>`;
 }
@@ -799,7 +939,9 @@ export function directorWallPage(model: DirectorWallModel, locale: Locale = "en"
   ];
   const shown = model.groups.filter((group) => !tab || group.cadence === tab);
   const groups = shown.map((group) => groupHtml(group, model, locale)).join("");
+  const head = model.dept === "farmops" ? farmopsHeadTabs(locale, "wall") : "";
   return `<div class="dd-wall" data-dd-wall="${esc(model.dept)}" data-dd-day="${esc(model.farmToday)}" data-dd-tiles="${esc(model.tileCount)}">
+    ${head}
     <h1>${esc(t(locale, model.title_en))}</h1>
     <p class="muted">${esc(t(locale, "Each tile reads its latest snapshot. Plant Weight is computed from this year's lots when the page loads. Storage Capacity Utilization reads the rooms live."))}</p>
     ${tabBar(locale, tabs, tab ?? "all")}
@@ -823,10 +965,22 @@ export function directorHomePage(model: DirectorHomeModel, locale: Locale = "en"
       </a>`;
     })
     .join("");
+  const checks = model.departments
+    .map(
+      (card) =>
+        `<a href="${esc(directorGridPath(card.dept_key))}" data-dd-checkin="${esc(card.dept_key)}">${esc(t(locale, card.title_en))} ${esc(t(locale, "check-in"))}</a>`
+    )
+    .join("");
+  const forms = `<a href="${esc(HARVEST_PLAN_PATH)}" data-dd-harvest-plan>${esc(t(locale, "Harvest Schedule"))}</a>
+      <a href="${esc(LABOR_TASKS_PATH)}" data-dd-labor-tasks>${esc(t(locale, "Labor tasks"))}</a>
+      <a href="${esc(PAST_SEASONS_PATH)}" data-dd-past-seasons>${esc(t(locale, "Past Seasons"))}</a>
+      <a href="${esc(PROJECTS_PATH)}" data-dd-projects>${esc(t(locale, "Projects"))}</a>
+      <a href="${esc(MAINTENANCE_PATH)}" data-dd-maintenance>${esc(t(locale, "Maintenance"))}</a>`;
   const q = model.questions;
   return `<h1>${esc(t(locale, "Director Dashboard"))}</h1>
     <p class="muted">${esc(t(locale, "Five walls, one per department. Each card counts the department's own KPIs by status and shows the last time a value was computed."))}</p>
     <div class="dd-cards" data-dd-home data-dd-day="${esc(model.farmToday)}" data-dd-tiles="${esc(model.totalTiles)}">${cards}</div>
+    <nav class="dd-home-links" data-dd-home-links>${checks}${forms}</nav>
     <p class="muted dd-questions" data-dd-questions-open="${esc(q.open)}" data-dd-questions-ruled="${esc(q.ruled)}" data-dd-questions-parked="${esc(q.parked)}">
       <a href="${DIRECTOR_QUESTIONS_PATH}">${esc(t(locale, "Questions"))}</a>
       <a href="${DIRECTOR_IMPORT_PATH}" data-dd-import>${esc(t(locale, "Import"))}</a>:
