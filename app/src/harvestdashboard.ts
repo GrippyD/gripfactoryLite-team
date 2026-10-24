@@ -513,7 +513,7 @@ function fieldForm(field: HarvestField & { value: string; fallback: boolean }, l
 function linkRow(row: LinkRow, locale: Locale): string {
   return `<p data-hd-link="${esc(row.label)}" data-hd-value="${esc(row.value)}" data-hd-unit="${esc(row.unit)}">
       <strong>${esc(t(locale, row.label))}</strong>
-      <span>${esc(row.value)}</span>
+      <span class="hd-break">${esc(row.value)}</span>
       <span class="muted">${esc(t(locale, row.unit))}</span>
       <a href="${esc(row.href)}">${esc(t(locale, "Edit"))}</a>
     </p>

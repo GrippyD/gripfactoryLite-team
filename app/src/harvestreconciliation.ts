@@ -423,7 +423,7 @@ function tollLotsHtml(rows: readonly HarvestReconcileLot[], locale: Locale): str
     })
     .join("");
   return `<h2 data-reconcile-toll="1">${esc(t(locale, TOLL_HEADING))}</h2>
-    <table class="data toll-lots"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    <div class="report-scroll"><table class="data toll-lots"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
 function metrcOnlyHtml(rows: readonly HarvestReconcileMetrcOnly[], locale: Locale): string {
@@ -438,7 +438,7 @@ function metrcOnlyHtml(rows: readonly HarvestReconcileMetrcOnly[], locale: Local
     })
     .join("");
   return `<h2>${esc(t(locale, HARVEST_RECONCILE_METRC_ONLY))}</h2>
-    <table class="data metrc-only"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    <div class="report-scroll"><table class="data metrc-only"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
 function blankRow(): Record<string, string> {

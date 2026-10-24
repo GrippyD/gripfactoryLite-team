@@ -72,6 +72,7 @@ describe("HARVEST WEIGHT RECONCILIATION (BRIEF HR1)", () => {
     expect(poundGapPercentText()).toBe(fixedPlaces(poundGapPercent(), 4));
     expect(poundGapPercentText()).toBe("1.2483");
     const view = harvestReconcileView(model());
+    expect(reportPage(view, "", "")).toContain('class="report-scroll"><table class="data"');
     const lot = view.rows[0];
     expect(lot.short_id).toBe("26010");
     expect(lot.market_strain).toBe("");
@@ -121,9 +122,12 @@ describe("HARVEST WEIGHT RECONCILIATION (BRIEF HR1)", () => {
           },
         ],
         metrcOnly: [{ name: "26270-ARL-ID-001-0-NA-26999", harvestStart: "2026-09-22", pounds: 1, uom: "Pounds" }],
+        tollLots: [{ ...model().lots[0], lotId: "toll-1", hbn: "00000-PNN-GH-001-0-NA-26990", customer: "Northwind Store" }],
         hours: 10,
       })
     );
+    expect(view.belowTable).toContain('class="report-scroll"><table class="data metrc-only"');
+    expect(view.belowTable).toContain('class="report-scroll"><table class="data toll-lots"');
     expect(view.rows[0].flag).toBe("");
     expect(view.rows[0].metrc_lb).toBe("2.50");
     expect(view.rows[0].metrc_uom).toBe("Ounces");

@@ -521,5 +521,5 @@ export function reconcileNotesSection(rows: ReconcileNoteRow[], locale: Locale =
     .join("");
   return `<details class="queue-fold" data-fold="reconcile_notes" open><summary><h2 data-count="${rows.length}">${esc(t(locale, "Reconciliation notes"))} <span class="tile-count">${rows.length}</span></h2></summary>
     <p class="muted">${esc(t(locale, "Ledger changes made on Reconcile Ledger Location. No METRC file rides them; acknowledging records that a hand saw the change."))}</p>
-    <table class="data" data-reconcile-notes><thead>${head}</thead><tbody>${body}</tbody></table></details>`;
+    <div class="report-scroll"><table class="data" data-reconcile-notes><thead>${head}</thead><tbody>${body}</tbody></table></div></details>`;
 }

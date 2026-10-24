@@ -10,9 +10,10 @@
  * correction is an UPDATE of named columns with the merged row re-validated
  * against labrules first. Nothing is deleted: a void sets voided_at and the
  * feeds carry it. Every write goes in ONE db.batch with its record_change_log
- * rows, and each log row is guarded by the write's own stamp, so a write that
- * did not land (a retried create, a stale correction) logs nothing and a
- * landed write never goes unlogged (BRIEF V24 law 4).
+ * rows. A create's log rows are guarded by that request's write id, so a
+ * retry logs nothing whatever the clock says. A correction's log rows are
+ * guarded by the update's own updated_at, so a stale correction logs nothing
+ * and a landed write never goes unlogged (BRIEF V24 law 4).
  *
  * WHO. The operator stored on a row is the actor's person id, as the app's
  * other writes store it. With no actor (or the service token) the package's
@@ -153,7 +154,7 @@ type JsonObject = Record<string, unknown>;
 type Stamps = { operator: string | null; source: "station"; created_at: string; updated_at: string; changed_at: string };
 type InternalInsert = R.InternalTestRow & Stamps;
 type ComplianceInsert = R.ComplianceSampleRow & Stamps;
-type OpInsert = R.OpResultRow & { source: "station"; imported_at: string; changed_at: string };
+type OpInsert = R.OpResultRow & { source: "station"; imported_at: string; changed_at: string; write_id: string };
 
 // ---------------------------------------------------------------- answers
 
@@ -162,6 +163,14 @@ const json = (body: unknown, status = 200, extra: Record<string, string> = {}): 
     status,
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...extra },
   });
+
+/** write_id is the log guard's key. A row read with SELECT * drops it before JSON leaves. */
+function withoutWriteId<T extends object>(row: T): T {
+  if (!("write_id" in row)) return row;
+  const copy = { ...row };
+  delete (copy as { write_id?: unknown }).write_id;
+  return copy;
+}
 
 const bad = (error: string, status = 400, more: Record<string, unknown> = {}): Response => json({ ok: false, error, ...more }, status);
 
@@ -290,7 +299,7 @@ function insertEntries(record: Record<string, unknown>): LogEntry[] {
 }
 
 /** record_change_log rows that land only when `guardSql` (SELECT 1 over the written row,
- * matched on the write's own stamp) finds the write, so they ride in the write's batch. */
+ * matched on the write's own key) finds the write, so they ride in the write's batch. */
 function guardedLogs(
   db: D1Database,
   table: string,
@@ -359,6 +368,7 @@ async function feed(db: D1Database, url: URL, table: string, name: string): Prom
     more = !!beyond;
   }
   for (const r of rows) {
+    delete r.write_id;
     if (r.raw_json) {
       try {
         r.raw = JSON.parse(String(r.raw_json));
@@ -407,7 +417,7 @@ async function listInternal(db: D1Database, url: URL): Promise<Response> {
   if (url.searchParams.get("needs_attention") === "1") where.push(NEEDS_ATTENTION_SQL);
   const sql = `SELECT *, ${operatorNameSql("lab_internal_tests")} FROM lab_internal_tests ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY (tested_at IS NULL) ASC, COALESCE(tested_at, created_at) DESC, id DESC LIMIT ?`;
   const got = await db.prepare(sql).bind(...binds, limit).all<LabInternalTestRow & LabOperatorName>();
-  return json({ ok: true, rows: got.results ?? [] });
+  return json({ ok: true, rows: (got.results ?? []).map(withoutWriteId) });
 }
 
 const INTERNAL_COLS = [
@@ -456,10 +466,12 @@ async function createInternal(db: D1Database, request: Request, actor: Identity 
   if (!v.ok) return bad(v.error);
   const r = v.row;
   const now = iso(nowMs);
+  const writeId = crypto.randomUUID();
   const row: InternalInsert = { ...r, operator: labOperator(actor, request.headers.get(OPERATOR_HEADER)), source: "station", created_at: now, updated_at: now, changed_at: now };
+  const insertCols = [...INTERNAL_COLS, "write_id"] as const;
   const ins = db
-    .prepare(`INSERT OR IGNORE INTO lab_internal_tests (${INTERNAL_COLS.join(",")}) VALUES (${INTERNAL_COLS.map(() => "?").join(",")})`)
-    .bind(...INTERNAL_COLS.map((c) => row[c]));
+    .prepare(`INSERT OR IGNORE INTO lab_internal_tests (${insertCols.join(",")}) VALUES (${insertCols.map(() => "?").join(",")})`)
+    .bind(...insertCols.map((c) => (c === "write_id" ? writeId : row[c])));
   const logs = guardedLogs(
     db,
     "lab_internal_tests",
@@ -468,8 +480,8 @@ async function createInternal(db: D1Database, request: Request, actor: Identity 
     actorIdOf(actor),
     SYSTEM_REASON.lab_station,
     now,
-    "SELECT 1 FROM lab_internal_tests WHERE id = ? AND created_at = ?",
-    [r.id, now]
+    "SELECT 1 FROM lab_internal_tests WHERE id = ? AND write_id = ?",
+    [r.id, writeId]
   );
   const res = await db.batch([ins, ...logs]);
   // A retry that found its row already there is a no-op: no row, no log.
@@ -477,7 +489,7 @@ async function createInternal(db: D1Database, request: Request, actor: Identity 
   const stored = await db.prepare("SELECT * FROM lab_internal_tests WHERE id = ?").bind(r.id).first<LabInternalTestRow>();
   // OR IGNORE also swallows a CHECK failure: no row and no error. Named.
   if (!stored) return bad("insert-refused-by-schema", 500);
-  return json({ ok: true, created, row: stored }, created ? 201 : 200);
+  return json({ ok: true, created, row: withoutWriteId(stored) }, created ? 201 : 200);
 }
 
 async function patchInternal(db: D1Database, request: Request, id: string, actor: Identity | null): Promise<Response> {
@@ -489,7 +501,7 @@ async function patchInternal(db: D1Database, request: Request, id: string, actor
   if (cur.voided_at) return bad("voided", 409);
   // Optimistic concurrency: the page sends the updated_at it loaded; a row
   // that moved since answers stale and the operator sees the newer values.
-  if (body.if_updated_at != null && body.if_updated_at !== cur.updated_at) return bad("stale", 409, { row: cur });
+  if (body.if_updated_at != null && body.if_updated_at !== cur.updated_at) return bad("stale", 409, { row: withoutWriteId(cur) });
   const merged: JsonObject = { ...cur };
   const touched: string[] = [];
   for (const k of R.INTERNAL_TEST_EDITABLE) {
@@ -518,7 +530,7 @@ async function patchInternal(db: D1Database, request: Request, id: string, actor
   const changed: LogEntry[] = [];
   for (const c of INTERNAL_SETS) if (!sameValue(cur[c], r[c])) changed.push({ field: c, from: cur[c], to: r[c] });
   if (source !== cur.tested_at_source) changed.push({ field: "tested_at_source", from: cur.tested_at_source, to: source });
-  if (!changed.length) return json({ ok: true, row: cur, unchanged: true });
+  if (!changed.length) return json({ ok: true, row: withoutWriteId(cur), unchanged: true });
   const upd = db
     .prepare(
       `UPDATE lab_internal_tests SET ${INTERNAL_SETS.map((c) => `${c} = ?`).join(", ")}, tested_at_source = ?, updated_at = ?, changed_at = ? WHERE id = ? AND voided_at IS NULL AND updated_at = ?`
@@ -539,7 +551,7 @@ async function patchInternal(db: D1Database, request: Request, id: string, actor
   // Zero rows: a void or another correction landed between our read and this write.
   if (changesOf(res[0]) !== 1) return bad("stale", 409);
   const stored = await db.prepare("SELECT * FROM lab_internal_tests WHERE id = ?").bind(id).first<LabInternalTestRow>();
-  return json({ ok: true, row: stored });
+  return json({ ok: true, row: stored ? withoutWriteId(stored) : stored });
 }
 
 async function voidRow(db: D1Database, request: Request, table: string, id: string, actor: Identity | null, idCol = "id"): Promise<Response> {
@@ -660,7 +672,8 @@ async function listCompliance(db: D1Database, url: URL): Promise<Response> {
   const scheduledTags = found.filter((r) => r.status === "scheduled").map((r) => r.source_metrc_tag);
   const ready = scheduledTags.length ? await readinessByTag(db, scheduledTags) : {};
   const rows = found.map((r) => {
-    const out: LabComplianceListRow = { ...r, turnaround_days: R.turnaroundDays(r.entered_testing_on, r.finished_testing_on, nowMs) };
+    const src = withoutWriteId(r);
+    const out: LabComplianceListRow = { ...src, turnaround_days: R.turnaroundDays(r.entered_testing_on, r.finished_testing_on, nowMs) };
     // Readiness is only computed while a sample is scheduled.
     if (r.status === "scheduled") out.readiness = ready[r.source_metrc_tag] || null;
     return out;
@@ -679,10 +692,12 @@ async function createCompliance(db: D1Database, request: Request, actor: Identit
   if (!v.ok) return bad(v.error);
   const r = v.row;
   const now = iso(nowMs);
+  const writeId = crypto.randomUUID();
   const row: ComplianceInsert = { ...r, operator: labOperator(actor, request.headers.get(OPERATOR_HEADER)), source: "station", created_at: now, updated_at: now, changed_at: now };
+  const insertCols = [...COMPLIANCE_COLS, "write_id"] as const;
   const ins = db
-    .prepare(`INSERT OR IGNORE INTO lab_compliance_samples (${COMPLIANCE_COLS.join(",")}) VALUES (${COMPLIANCE_COLS.map(() => "?").join(",")})`)
-    .bind(...COMPLIANCE_COLS.map((c) => row[c]));
+    .prepare(`INSERT OR IGNORE INTO lab_compliance_samples (${insertCols.join(",")}) VALUES (${insertCols.map(() => "?").join(",")})`)
+    .bind(...insertCols.map((c) => (c === "write_id" ? writeId : row[c])));
   const logs = guardedLogs(
     db,
     "lab_compliance_samples",
@@ -691,14 +706,14 @@ async function createCompliance(db: D1Database, request: Request, actor: Identit
     actorIdOf(actor),
     SYSTEM_REASON.lab_station,
     now,
-    "SELECT 1 FROM lab_compliance_samples WHERE id = ? AND created_at = ?",
-    [r.id, now]
+    "SELECT 1 FROM lab_compliance_samples WHERE id = ? AND write_id = ?",
+    [r.id, writeId]
   );
   const res = await db.batch([ins, ...logs]);
   const created = changesOf(res[0]) === 1;
   const stored = await db.prepare("SELECT * FROM lab_compliance_samples WHERE id = ?").bind(r.id).first<LabComplianceRow>();
   if (!stored) return bad("insert-refused-by-schema", 500);
-  return json({ ok: true, created, row: stored }, created ? 201 : 200);
+  return json({ ok: true, created, row: withoutWriteId(stored) }, created ? 201 : 200);
 }
 
 async function patchCompliance(db: D1Database, request: Request, id: string, actor: Identity | null): Promise<Response> {
@@ -708,7 +723,7 @@ async function patchCompliance(db: D1Database, request: Request, id: string, act
   const cur = await db.prepare("SELECT * FROM lab_compliance_samples WHERE id = ?").bind(id).first<LabComplianceRow>();
   if (!cur) return bad("not-found", 404);
   if (cur.voided_at) return bad("voided", 409);
-  if (body.if_updated_at != null && body.if_updated_at !== cur.updated_at) return bad("stale", 409, { row: cur });
+  if (body.if_updated_at != null && body.if_updated_at !== cur.updated_at) return bad("stale", 409, { row: withoutWriteId(cur) });
   // Only the grams a correction names are rounded; a stored value it does not name is kept as stored.
   roundGramFields(body);
   const merged: JsonObject = { ...cur };
@@ -727,7 +742,7 @@ async function patchCompliance(db: D1Database, request: Request, id: string, act
   const now = iso(Date.now());
   const changed: LogEntry[] = [];
   for (const c of R.COMPLIANCE_EDITABLE) if (!sameValue(cur[c], r[c])) changed.push({ field: c, from: cur[c], to: r[c] });
-  if (!changed.length) return json({ ok: true, row: cur, unchanged: true });
+  if (!changed.length) return json({ ok: true, row: withoutWriteId(cur), unchanged: true });
   const upd = db
     .prepare(
       `UPDATE lab_compliance_samples SET ${R.COMPLIANCE_EDITABLE.map((c) => `${c} = ?`).join(", ")}, updated_at = ?, changed_at = ? WHERE id = ? AND voided_at IS NULL AND updated_at = ?`
@@ -747,7 +762,7 @@ async function patchCompliance(db: D1Database, request: Request, id: string, act
   const res = await db.batch([upd, ...logs]);
   if (changesOf(res[0]) !== 1) return bad("stale", 409);
   const stored = await db.prepare("SELECT * FROM lab_compliance_samples WHERE id = ?").bind(id).first<LabComplianceRow>();
-  return json({ ok: true, row: stored });
+  return json({ ok: true, row: stored ? withoutWriteId(stored) : stored });
 }
 
 // The sheet's "Testing Autofill CSV" tab: the Metrc bulk template that moves
@@ -927,10 +942,10 @@ const OP_COLS = [
 ] as const satisfies readonly (keyof OpInsert)[];
 
 // One set-based log statement per slice: for every row of the slice that THIS
-// request landed (its imported_at and changed_at are this request's stamp),
-// one record_change_log row per non-null, non-empty column, from null to its
-// value (logsForInsert's rule). A REAL that is whole logs as an integer, the
-// way String() writes it.
+// request inserted (its write_id is this request's key), one record_change_log
+// row per non-null, non-empty column, from null to its value (logsForInsert's
+// rule). A REAL that is whole logs as an integer, the way String() writes it.
+// write_id itself is not a logged field.
 const OP_LOG_VALUE = `CASE f.value ${OP_COLS.map((c) => `WHEN '${c}' THEN r.${c}`).join(" ")} END`;
 const OP_LOG_SQL = `INSERT INTO record_change_log (${LOG_COLS})
   SELECT ${UUID_SQL}, 'lab_op_results', rid, field, NULL,
@@ -941,7 +956,7 @@ const OP_LOG_SQL = `INSERT INTO record_change_log (${LOG_COLS})
     FROM lab_op_results r
     JOIN json_each(?) ids ON ids.value = r.test_id
     CROSS JOIN json_each(?) f
-    WHERE r.imported_at = ? AND r.changed_at = ? AND r.source = 'station'
+    WHERE r.write_id = ? AND r.source = 'station'
   )
   WHERE val IS NOT NULL AND val <> ''`;
 
@@ -953,6 +968,7 @@ async function opImport(db: D1Database, request: Request, actor: Identity | null
   if (parsed.rows.length > IMPORT_MAX_ROWS) return bad("too-many-rows", 413, { max: IMPORT_MAX_ROWS, sent: parsed.rows.length });
   const nowMs = Date.now();
   const now = iso(nowMs);
+  const writeId = crypto.randomUUID();
   const pending: OpInsert[] = [];
   const refused: { line: number; error: string; test_id: string | undefined }[] = [];
   const seen = new Set<string>();
@@ -970,16 +986,17 @@ async function opImport(db: D1Database, request: Request, actor: Identity | null
       return;
     }
     seen.add(v.row.test_id);
-    pending.push({ ...v.row, source: "station", imported_at: now, changed_at: now });
+    pending.push({ ...v.row, source: "station", imported_at: now, changed_at: now, write_id: writeId });
   });
-  const insertSql = `INSERT OR IGNORE INTO lab_op_results (${OP_COLS.join(",")}) VALUES (${OP_COLS.map(() => "?").join(",")})`;
+  const insertCols = [...OP_COLS, "write_id"] as const;
+  const insertSql = `INSERT OR IGNORE INTO lab_op_results (${insertCols.join(",")}) VALUES (${insertCols.map(() => "?").join(",")})`;
   const fieldsJson = JSON.stringify(OP_COLS);
   const actorId = actorIdOf(actor);
   let landed = 0;
   for (let i = 0; i < pending.length; i += BIND_CHUNK) {
     const slice = pending.slice(i, i + BIND_CHUNK);
-    const inserts = slice.map((w) => db.prepare(insertSql).bind(...OP_COLS.map((c) => w[c])));
-    const log = db.prepare(OP_LOG_SQL).bind(actorId, SYSTEM_REASON.lab_station, now, JSON.stringify(slice.map((w) => w.test_id)), fieldsJson, now, now);
+    const inserts = slice.map((w) => db.prepare(insertSql).bind(...insertCols.map((c) => w[c])));
+    const log = db.prepare(OP_LOG_SQL).bind(actorId, SYSTEM_REASON.lab_station, now, JSON.stringify(slice.map((w) => w.test_id)), fieldsJson, writeId);
     const res = await db.batch([...inserts, log]);
     for (let j = 0; j < inserts.length; j++) landed += changesOf(res[j]);
   }
@@ -1196,5 +1213,5 @@ export async function listLabComplianceSurface(db: D1Database, filters: { facili
     .prepare(`SELECT * FROM lab_compliance_samples WHERE ${where.join(" AND ")} ORDER BY scheduled_at DESC, id DESC`)
     .bind(...binds)
     .all<LabComplianceRow>();
-  return got.results ?? [];
+  return (got.results ?? []).map(withoutWriteId);
 }

@@ -1386,11 +1386,11 @@ export function testingDeskPage(desk: TestingDesk, locale: Locale): string {
   const readyTable =
     desk.ready.length === 0
       ? `<p class="muted">${esc(t(locale, "No lots ready."))}</p>`
-      : `<table class="data"><thead><tr>
+      : `<div class="report-scroll"><table class="data"><thead><tr>
           <th>${esc(t(locale, "HBN"))}</th><th>${esc(t(locale, "Strain"))}</th><th>${esc(t(locale, "Farm"))}</th>
           <th>${esc(t(locale, "Item"))}</th><th>${esc(t(locale, "License"))}</th><th>${esc(t(locale, "Market"))}</th>
           <th>${esc(t(locale, "Dry grams"))}</th><th>${esc(t(locale, "Sample size"))}</th><th></th>
-        </tr></thead><tbody>${readyRows}</tbody></table>`;
+        </tr></thead><tbody>${readyRows}</tbody></table></div>`;
 
   const sampleOrders = desk.orders.filter((o) => o.status === "scheduled" || o.status === "retest_scheduled");
   const sampleRows = sampleOrders
@@ -1471,7 +1471,7 @@ export function testingDeskPage(desk: TestingDesk, locale: Locale): string {
       (order) => `<form method="post" action="/testing/results" class="stack" data-results-order="${esc(order.id)}">
         <input type="hidden" name="order_id" value="${esc(order.id)}">
         <p>${esc(shortLotId(order.hbn, null))} · ${esc(order.sample_tag ?? "")} · ${esc(order.lab_name)}</p>
-        <table class="data"><thead><tr><th>${esc(t(locale, "Test"))}</th><th>${esc(t(locale, "Pass"))}</th><th>${esc(t(locale, "Value"))}</th></tr></thead><tbody>${typeRows}</tbody></table>
+        <div class="report-scroll"><table class="data"><thead><tr><th>${esc(t(locale, "Test"))}</th><th>${esc(t(locale, "Pass"))}</th><th>${esc(t(locale, "Value"))}</th></tr></thead><tbody>${typeRows}</tbody></table></div>
         <label class="field">${esc(t(locale, "THC total %"))} <input type="text" name="thc_total_pct"></label>
         <label class="field">${esc(t(locale, "THCa %"))} <input type="text" name="thca_pct"></label>
         <label class="field">${esc(t(locale, "CBD total %"))} <input type="text" name="cbd_total_pct"></label>

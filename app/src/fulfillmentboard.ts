@@ -239,10 +239,10 @@ export function fulfillmentOverridePage(date: string, cells: readonly Fulfillmen
     </form>
     <form method="post" action="${FULFILLMENT_OVERRIDE_PATH}" class="stack" data-fulfill-grid>
       <input type="hidden" name="entry_date" value="${esc(date)}">
-      <table class="fulfill-grid">
+      <div class="report-scroll"><table class="fulfill-grid">
         <thead><tr><th></th>${heads}</tr></thead>
         <tbody>${rows}</tbody>
-      </table>
+      </table></div>
       <button type="submit">${esc(t(locale, "Save"))}</button>
     </form>`;
 }

@@ -469,7 +469,8 @@ body.device-phone .station-triple.field-triple > *, body.device-phone .station-t
 /* FLOOR VS METRC (canon 0.30.415): the tables scroll inside their box. A grid
    column of minmax(0, 1fr) keeps that box on the page, including on a phone. */
 .floor-metrc { display: grid; grid-template-columns: minmax(0, 1fr); max-width: 100%; }
-.report-scroll { display: block; width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.report-scroll { display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.hd-break { overflow-wrap: anywhere; }
 .report-scroll > table.data { width: max-content; min-width: 100%; }
 .report-scroll > table.data th, .report-scroll > table.data td { white-space: nowrap; }
 body.device-phone .report-scroll > table.data { display: table; overflow: visible; white-space: nowrap; }
@@ -1033,9 +1034,9 @@ table.data th { background: var(--panel-2); }
 .resume-lots h3 { margin: 0 0 0.4rem; }
 .resume-lots ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
 .resume-lots a { font-weight: 600; }
-.lot-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 0.9rem; margin: 0 0 1rem; }
-.lot-meta dt { font-weight: 700; }
-.lot-meta dd { margin: 0; }
+.lot-meta { display: grid; grid-template-columns: fit-content(45%) minmax(0, 1fr); gap: 0.2rem 0.9rem; margin: 0 0 1rem; }
+.lot-meta dt { font-weight: 700; overflow-wrap: break-word; }
+.lot-meta dd { margin: 0; overflow-wrap: break-word; }
 .weights-pane {
   background: var(--panel);
   border: 2px solid var(--line);
@@ -1939,7 +1940,7 @@ table.data tbody tr:hover td { background: var(--surface-2); }
   margin: 0.4rem 0;
 }
 .start-another > summary:hover { color: var(--primary); }
-.lot-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0 0 1rem; }
+.lot-meta { display: grid; grid-template-columns: fit-content(45%) minmax(0, 1fr); gap: 0.25rem 1rem; margin: 0 0 1rem; }
 .lot-meta dt {
   font-size: 0.75rem;
   font-weight: 700;
@@ -1948,8 +1949,9 @@ table.data tbody tr:hover td { background: var(--surface-2); }
   color: var(--muted);
   align-self: baseline;
   padding-top: 0.2rem;
+  overflow-wrap: break-word;
 }
-.lot-meta dd { margin: 0; font-variant-numeric: tabular-nums; }
+.lot-meta dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: break-word; }
 .weights-pane {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -2809,9 +2811,9 @@ legend { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; c
 .resume-lots h3 { margin: 0 0 0.4rem; }
 .resume-lots ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
 .resume-lots a { font-weight: 600; }
-.lot-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 0.9rem; margin: 0 0 1rem; }
-.lot-meta dt { font-weight: 600; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.85rem; }
-.lot-meta dd { margin: 0; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+.lot-meta { display: grid; grid-template-columns: fit-content(45%) minmax(0, 1fr); gap: 0.2rem 0.9rem; margin: 0 0 1rem; }
+.lot-meta dt { font-weight: 600; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.85rem; overflow-wrap: break-word; }
+.lot-meta dd { margin: 0; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; overflow-wrap: break-word; }
 .weights-pane {
   background: var(--panel);
   border: 1px solid var(--line);

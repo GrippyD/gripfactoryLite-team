@@ -473,6 +473,7 @@ h3 { font-family: var(--font-display); font-weight: 600; font-size: 1.12rem; mar
 }
 .pill:hover { border-color: var(--primary); }
 .pill .tag { background: var(--primary-soft); color: var(--primary-strong); border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; }
+.eq-scroll { display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 table.eq { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
 table.eq th { text-align: left; font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--border); background: var(--surface-2); }
 table.eq td { padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
@@ -807,10 +808,10 @@ export function equipmentHomePage(
   </div>
   ${ok === "signed" ? `<p class="ok-flash">Signed. The machine says thank you.</p>` : ""}
   <hr class="rule">
-  <table class="eq">
+  <div class="eq-scroll"><table class="eq">
     <thead><tr><th>Serial</th><th>Asset</th><th>Farm</th><th>Open tickets</th><th>Next PM</th></tr></thead>
     <tbody>${rows}</tbody>
-  </table>
+  </table></div>
   <p class="muted" style="margin-top:0.9rem">Every completion is hand signed with a typed name. No dropdowns. A dropdown never turned a wrench.</p>`;
   return c10Shell("Preventive Maintenance", body);
 }
@@ -919,16 +920,16 @@ export function equipmentAssetPage(
   ${forSaleBlock(asset)}
 
   <h2>Recurring PM</h2>
-  <table class="eq">
+  <div class="eq-scroll"><table class="eq">
     <thead><tr><th>Task</th><th>Interval</th><th>Last done</th><th>Next due</th><th>Sign it off</th></tr></thead>
     <tbody>${schedRows}</tbody>
-  </table>
+  </table></div>
 
   <h2>Tickets</h2>
-  <table class="eq">
+  <div class="eq-scroll"><table class="eq">
     <thead><tr><th>What is wrong</th><th>Status</th><th></th></tr></thead>
     <tbody>${ticketRows || `<tr><td colspan="3" class="muted">Nothing is wrong. Officially.</td></tr>`}</tbody>
-  </table>
+  </table></div>
   <form class="inline" method="post" action="/equipment/ticket">
     <input type="hidden" name="asset_id" value="${esc(asset.id)}">
     <input type="text" name="title" placeholder="What is wrong" required>
@@ -937,9 +938,9 @@ export function equipmentAssetPage(
   </form>
 
   <h2>PM history</h2>
-  <table class="eq">
+  <div class="eq-scroll"><table class="eq">
     <thead><tr><th>Date</th><th>Task</th><th>Signed by</th><th>Notes</th></tr></thead>
     <tbody>${logRows || `<tr><td colspan="4" class="muted">No history. The machine is either new or very private.</td></tr>`}</tbody>
-  </table>`;
+  </table></div>`;
   return c10Shell(`${asset.serial} ${asset.name}`, body);
 }

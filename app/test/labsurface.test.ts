@@ -285,6 +285,7 @@ describe("THE LAB STATION External tab rows", () => {
     expect(labStatusText("in_testing", "en")).toBe("In testing");
     expect(labStatusText("Pending", "en")).toBe("Pending");
     const html = testingPage("external", [row], { facility: "", status: "", year: "" });
+    expect(html).toContain('class="report-scroll"><table class="data"');
     expect(html).toContain("Retest passed");
     // The row shows the label; the station word rides only the Status filter's option values.
     const tbody = html.slice(html.indexOf("<tbody>"), html.indexOf("</tbody>"));

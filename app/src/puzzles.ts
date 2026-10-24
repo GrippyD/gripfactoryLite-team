@@ -616,7 +616,7 @@ export function postHarvestHtml(page: PuzzlePage, locale: Locale, flash?: string
       <label class="field">${esc(t(locale, "Reason"))} <input type="text" name="reason" required></label>
       <button type="submit">${esc(t(locale, "Import workbook"))}</button>
     </form>
-    <table class="data" data-php-table>
+    <div class="report-scroll"><table class="data" data-php-table>
       <thead><tr>${head}</tr></thead>
       <tbody>${empty}</tbody>
       <tfoot>
@@ -639,7 +639,7 @@ export function postHarvestHtml(page: PuzzlePage, locale: Locale, flash?: string
           <td></td>
         </tr>
       </tfoot>
-    </table>
+    </table></div>
     <p class="php-key"><span class="php-best">${esc(t(locale, "10 best"))}</span> <span class="php-worst">${esc(t(locale, "10 worst"))}</span> ${esc(t(locale, "PP = per plant"))}</p>
     <h2>${esc(tFill(locale, "New strains for {yy}", { yy: next }))}</h2>
     ${newcomers ? `<ul>${newcomers}</ul>` : `<p class="muted">${esc(t(locale, "No new strains."))}</p>`}

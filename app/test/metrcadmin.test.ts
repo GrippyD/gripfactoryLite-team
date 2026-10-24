@@ -362,6 +362,7 @@ describe("MA1 Law 9: the page renders every section from the seeded rows", () =>
     expect(data.licenses?.find((row) => row.license === GROW)).toMatchObject({ reach: "reached", keyPresent: true, flags: { canGrowPlants: 1, canRecordProcessingJobs: 0, canTrackVegetativePlants: 1 } });
 
     const html = metrcApiPage(data, "en", null, 0);
+    expect(html).toContain('class="report-scroll"><table');
     expect(html).toContain('data-metrc-mode="dry_run" data-metrc-mode-configured="dry_run" data-metrc-host-kind="production"');
     expect(html).toContain(`data-metrc-base="${PROD_HOST}"`);
     expect(html).toContain("Base: api-mi.metrc.com (production)");

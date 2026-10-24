@@ -251,6 +251,7 @@ describe("THE RECONCILE LEDGER LOCATION (canon 0.30.135; owner: [Reconcile Ledge
     expect(twice.batched).toHaveLength(0);
     const section = reconcileNotesSection([row]);
     expect(section).toContain('data-fold="reconcile_notes" open');
+    expect(section).toContain('class="report-scroll"><table class="data" data-reconcile-notes');
     expect(section).toContain("Reconciliation notes");
     expect(section).not.toContain('type="checkbox"');
     expect(section).toContain('data-reconcile-note="note-1" data-reconcile-kind="purge"');

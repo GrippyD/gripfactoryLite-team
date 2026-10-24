@@ -113,6 +113,7 @@ describe("FULFILLMENT (canon 0.30.306)", () => {
       formOf({ person_id: person, entry_date: day, "bulk_bud:shipping_today": "1000", "prepack:shipping_today": "40" })
     );
     const page = fulfillmentOverridePage(day, await listFulfillmentCells(m.db, day));
+    expect(page).toContain('class="report-scroll"><table class="fulfill-grid"');
     expect(page).toContain('data-fulfill-cell="prepack:shipping_today"');
     expect(page).toContain('value="40"');
     expect(page).toContain('value="1000"');

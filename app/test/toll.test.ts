@@ -93,6 +93,7 @@ describe("TOLL LOTS (canon 0.30.431)", () => {
     expect(m.get(`SELECT lot_serial FROM harvest_batches WHERE hbn LIKE '%-26107'`)).toEqual({ lot_serial: 107 });
     const queue = queueByKey("hbn_queue")!;
     const html = queueSection(queue, await listQueueRows(m.db, queue), "en");
+    expect(html).toContain('class="report-scroll"><table class="data"');
     expect(html).toContain("GreenCo-Toll-26111 GreenCo");
     expect(html).toContain('data-hbn-customer="GreenCo"');
     expect(html).not.toContain("26280-PNN-GH-027-0-02-26105 GreenCo");
