@@ -1669,8 +1669,8 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
     stale_after_hours: 2200,
     status: "live",
     def_version: 2,
-    open_question_en: "The asset register of record (the app table or the accounting register) and which fields the app holds",
-    open_question_es: "El registro oficial de activos (la tabla de la app o el registro contable) y qué campos guarda la app",
+    open_question_en: null,
+    open_question_es: null,
     workbook_rows: "76",
   }),
   // culttech (Cultivation and Technology)
@@ -2256,6 +2256,8 @@ const SEED_0105: Readonly<Record<string, Partial<DdKpi>>> = {
   "farmops.assets_for_sale_count": {
     compute_key: "equipment_assets (frozen seed data; no create or edit route and absent from ALLOWED_TABLES) plus status and value columns (S8)",
     def_version: 1,
+    open_question_en: "The asset register of record (the app table or the accounting register) and which fields the app holds",
+    open_question_es: "El registro oficial de activos (la tabla de la app o el registro contable) y qué campos guarda la app",
   },
   "harvest.dry_lb_per_plant_vs_plan_pct": {
     title_en: "Yield per plant vs plan",

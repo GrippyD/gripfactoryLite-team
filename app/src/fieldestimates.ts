@@ -330,7 +330,7 @@ export function fieldEstimatesPage(model: FieldEstimatesPageModel, locale: Local
   const table =
     model.rows.length === 0
       ? `<p class="muted" data-field-estimates-empty>${esc(t(locale, "No field estimates yet."))}</p>`
-      : `<table data-field-estimates>
+      : `<div class="report-scroll"><table data-field-estimates>
       <thead><tr>
         <th>${esc(t(locale, "Strain"))}</th>
         <th>${esc(t(locale, "Farm"))}</th>
@@ -358,7 +358,7 @@ export function fieldEstimatesPage(model: FieldEstimatesPageModel, locale: Local
         )
         .join("\n")}
       </tbody>
-    </table>`;
+    </table></div>`;
   return `<h1>${esc(t(locale, "Field estimates"))}</h1>
     <p class="muted">${esc(t(locale, "Dry pounds, hand entered. One pound is 448 g."))}</p>
     <p class="muted">${esc(t(locale, "An older date stands until a later date replaces it. Saving the same date replaces that row."))}</p>

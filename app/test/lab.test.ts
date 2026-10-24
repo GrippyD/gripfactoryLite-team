@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Identity } from "../src/identity";
 import {
   AUTOFILL_MAX_IDS,
@@ -82,6 +82,20 @@ const logsFor = (m: MigratedDb, table: string, id: string): LogRow[] =>
 const logCount = (m: MigratedDb): number => Number(m.get("SELECT COUNT(*) AS n FROM record_change_log")?.n);
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** One frozen millisecond, so a create and its retry share a clock. */
+const SAME_MS = Date.parse("2026-10-24T16:00:00.000Z");
+
+async function atOneInstant<T>(run: () => Promise<T>): Promise<T> {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(SAME_MS);
+  try {
+    return await run();
+  } finally {
+    clock.mockRestore();
+  }
+}
+
+const hasWriteId = (row: object): boolean => Object.prototype.hasOwnProperty.call(row, "write_id");
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -416,15 +430,24 @@ describe("lab handlers (the package's 14)", () => {
   it("compliance: scheduled, readiness from the bench, the lifecycle, the autofill csv", async () => {
     const { m, who, lab } = await setup();
     const src = "1A4050300061761000009999";
-    const create = await lab.call<Created<LabComplianceRow>>("POST", "/api/lab/compliance", { id: "cs_test0000000001", license: "AU-P-000694", source_metrc_tag: src, required_test: "Full Compliance", net_weight_g: 114, strain: "Test Strain" });
-    expect(create.status, JSON.stringify(create.body)).toBe(201);
-    expect(create.body.row.status).toBe("scheduled");
-    expect(create.body.row.operator).toBe(who.id);
-    const logsAfterCreate = logsFor(m, "lab_compliance_samples", "cs_test0000000001").length;
-    expect(logsAfterCreate).toBeGreaterThan(0);
-    const again = await lab.call<Created<LabComplianceRow>>("POST", "/api/lab/compliance", { id: "cs_test0000000001", license: "AU-P-000694", source_metrc_tag: src, required_test: "Full Compliance" });
-    expect(again.body.created).toBe(false);
-    expect(logsFor(m, "lab_compliance_samples", "cs_test0000000001").length).toBe(logsAfterCreate);
+    // The create and the retry share one millisecond. On a clock that matches,
+    // a guard that reads created_at logs the retry; the write id does not.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(SAME_MS);
+    try {
+      const create = await lab.call<Created<LabComplianceRow>>("POST", "/api/lab/compliance", { id: "cs_test0000000001", license: "AU-P-000694", source_metrc_tag: src, required_test: "Full Compliance", net_weight_g: 114, strain: "Test Strain" });
+      expect(create.status, JSON.stringify(create.body)).toBe(201);
+      expect(create.body.row.status).toBe("scheduled");
+      expect(create.body.row.operator).toBe(who.id);
+      expect(hasWriteId(create.body.row)).toBe(false);
+      const logsAfterCreate = logsFor(m, "lab_compliance_samples", "cs_test0000000001").length;
+      expect(logsAfterCreate).toBeGreaterThan(0);
+      const again = await lab.call<Created<LabComplianceRow>>("POST", "/api/lab/compliance", { id: "cs_test0000000001", license: "AU-P-000694", source_metrc_tag: src, required_test: "Full Compliance" });
+      expect(again.body.created).toBe(false);
+      expect(hasWriteId(again.body.row)).toBe(false);
+      expect(logsFor(m, "lab_compliance_samples", "cs_test0000000001").length).toBe(logsAfterCreate);
+    } finally {
+      clock.mockRestore();
+    }
 
     let list = await lab.call<Rows<LabComplianceListRow>>("GET", "/api/lab/compliance?status=scheduled&tag=09999");
     expect(list.body.rows.length).toBe(1);
@@ -730,12 +753,15 @@ describe("lab handlers (the brief's own cases)", () => {
     expect(tally.prepared).toBe(910);
     expect(tally.batches).toBe(10);
     expect(tally.batched).toBe(910);
-    // every landed row logs each of its non-null, non-empty stored fields
+    // every landed row logs each of its non-null, non-empty stored fields.
+    // write_id is the guard key: it is stored and it is not a log field.
     const first = m.get("SELECT * FROM lab_op_results WHERE test_id = 'dddddddd-0000-0000-0000-000000000000'") as Record<string, unknown>;
-    const perRow = Object.values(first).filter((v) => v != null && v !== "").length;
+    const perRow = Object.entries(first).filter(([k, v]) => k !== "write_id" && v != null && v !== "").length;
     expect(logCount(m)).toBe(900 * perRow);
     const logs = logsFor(m, "lab_op_results", "dddddddd-0000-0000-0000-000000000000");
     expect(logs.length).toBe(perRow);
+    expect(typeof first.write_id).toBe("string");
+    expect(logs.some((l) => l.field === "write_id")).toBe(false);
     expect(logs.find((l) => l.field === "thca")?.new_value).toBe("20");
     expect(logs.find((l) => l.field === "weight_g")?.new_value).toBe("0.3");
     expect(logs.find((l) => l.field === "material_class")?.new_value).toBe("Kief");
@@ -964,5 +990,81 @@ describe("BRIEF V25 law 1a: the status agrees with the test", () => {
     const corrected = await lab.call<Patched<LabComplianceRow>>("PATCH", "/api/lab/compliance/cs_stored0000001", { status: "retest_passed" });
     expect(corrected.status, JSON.stringify(corrected.body)).toBe(200);
     expect(corrected.body.row.status).toBe("retest_passed");
+  });
+});
+
+describe("LB1: a retry in the same millisecond logs nothing", () => {
+  it("bench: the first write's log count stands and the retry answers created false", async () => {
+    const { m, lab } = await setup();
+    const id = "lt_samems00000001";
+    const body = { id, location: "Silo 3", reason: "During Silo", license: "AU-G-C-000832", metrc_tag: "56899", sample_type: "Flower", moisture_pct: "13.2" };
+    await atOneInstant(async () => {
+      const a = await lab.call<Created<LabInternalTestRow>>("POST", "/api/lab/internal-tests", body);
+      expect(a.status, JSON.stringify(a.body)).toBe(201);
+      expect(a.body.created).toBe(true);
+      expect(hasWriteId(a.body.row)).toBe(false);
+      const n = logsFor(m, "lab_internal_tests", id).length;
+      expect(n).toBeGreaterThan(0);
+      const b = await lab.call<Created<LabInternalTestRow>>("POST", "/api/lab/internal-tests", body);
+      expect(b.status).toBe(200);
+      expect(b.body.created).toBe(false);
+      expect(hasWriteId(b.body.row)).toBe(false);
+      expect(logsFor(m, "lab_internal_tests", id).length).toBe(n);
+      const feed = await lab.call<Feed>("GET", "/feeds/lab-internal-tests.json?limit=50");
+      const row = feed.body.rows.find((r) => r.id === id);
+      expect(row).toBeTruthy();
+      expect(hasWriteId(row as object)).toBe(false);
+      const list = await lab.call<Rows<LabInternalTestRow>>("GET", "/api/lab/internal-tests?tag=56899");
+      expect(list.body.rows.every((r) => !hasWriteId(r))).toBe(true);
+    });
+  });
+
+  it("compliance: the first write's log count stands and the retry answers created false", async () => {
+    const { m, lab } = await setup();
+    const id = "cs_samems00000001";
+    const body = { id, license: "AU-P-000694", source_metrc_tag: "01301", required_test: "Full Compliance", net_weight_g: 114, strain: "Test Strain" };
+    await atOneInstant(async () => {
+      const a = await lab.call<Created<LabComplianceRow>>("POST", "/api/lab/compliance", body);
+      expect(a.status, JSON.stringify(a.body)).toBe(201);
+      expect(a.body.created).toBe(true);
+      expect(hasWriteId(a.body.row)).toBe(false);
+      const n = logsFor(m, "lab_compliance_samples", id).length;
+      expect(n).toBeGreaterThan(0);
+      const b = await lab.call<Created<LabComplianceRow>>("POST", "/api/lab/compliance", body);
+      expect(b.status).toBe(200);
+      expect(b.body.created).toBe(false);
+      expect(hasWriteId(b.body.row)).toBe(false);
+      expect(logsFor(m, "lab_compliance_samples", id).length).toBe(n);
+      const feed = await lab.call<Feed>("GET", "/feeds/lab-compliance.json?limit=50");
+      const row = feed.body.rows.find((r) => r.id === id);
+      expect(row).toBeTruthy();
+      expect(hasWriteId(row as object)).toBe(false);
+      const list = await lab.call<Rows<LabComplianceListRow>>("GET", "/api/lab/compliance?tag=01301");
+      expect(list.body.rows.every((r) => !hasWriteId(r))).toBe(true);
+    });
+  });
+
+  it("op results: the first write's log count stands and the retry answers already_there", async () => {
+    const { m, lab } = await setup();
+    const testId = "dddddddd-0000-0000-0000-000000000001";
+    const csv = [OP_HEADER_LINE, opLine(testId, "KIEF", "25.5", "Low")].join("\n");
+    await atOneInstant(async () => {
+      const a = await lab.call<Imported>("POST", "/api/lab/op/import", csv);
+      expect(a.status, JSON.stringify(a.body)).toBe(200);
+      expect(a.body.landed).toBe(1);
+      expect(a.body.already_there).toBe(0);
+      const n = logsFor(m, "lab_op_results", testId).length;
+      expect(n).toBeGreaterThan(0);
+      const b = await lab.call<Imported>("POST", "/api/lab/op/import", csv);
+      expect(b.body.landed).toBe(0);
+      expect(b.body.already_there).toBe(1);
+      expect(logsFor(m, "lab_op_results", testId).length).toBe(n);
+      const feed = await lab.call<Feed>("GET", "/feeds/lab-op-results.json?limit=50");
+      const row = feed.body.rows.find((r) => r.test_id === testId);
+      expect(row).toBeTruthy();
+      expect(hasWriteId(row as object)).toBe(false);
+      const list = await lab.call<Rows<LabOpRow>>("GET", "/api/lab/op?limit=20");
+      expect(list.body.rows.every((r) => !hasWriteId(r))).toBe(true);
+    });
   });
 });

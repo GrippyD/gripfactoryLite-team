@@ -261,6 +261,8 @@ describe("FE1 field estimates", () => {
     expect(html).toContain(">In force<");
     expect(html).toContain("After Party");
     expect(html).toContain(`action="${FIELD_ESTIMATES_PATH}/older/delete"`);
+    const tableAt = html.indexOf("<table data-field-estimates");
+    expect(html.slice(tableAt - 40, tableAt)).toContain('class="report-scroll"');
     const empty = fieldEstimatesPage({ ...model, rows: [] }, "en");
     expect(empty).toContain("No field estimates yet.");
     expect(empty).toContain('value="2026-10-12"');

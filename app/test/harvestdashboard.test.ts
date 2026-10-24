@@ -78,6 +78,7 @@ describe("AD1 Harvest Dashboard", () => {
     expect(html).toContain('data-hd-pane="FG inventory"');
     expect(html).toContain('data-hd-pane="Trimming"');
     expect(html).toContain("btr_type_codes");
+    expect(html).toContain('class="hd-break">BUD=BUD,SMALLS=WPR,SHAKE=SHA');
   });
 
   it("a changed cap turns 35,000 lb red and names 4 trucks, and a changed truck size changes the count", () => {

@@ -803,7 +803,7 @@ export function reportPage(
   return `<h1>${esc(t(locale, view.title))}</h1>
     ${heading}
     ${filterBlock}
-    <table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
+    ${view.key === "environment_history" || view.key === "harvest_reconciliation" ? `<div class="report-scroll"><table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>` : `<table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`}
     ${below}
     ${footnote}`;
 }
@@ -2237,7 +2237,7 @@ export function pendingUploadsPage(
   const manifestsSection =
     manifestRows.length === 0
       ? ""
-      : queueFold("manifests", `<h2 data-count="${manifestRows.length}">${esc(t(locale, "Manifests"))} <span class="tile-count">${manifestRows.length}</span></h2>`, `${uploadBatchBar(manForm, locale)}<table class="data"><thead>${manHead}</thead><tbody>${manBody}</tbody></table>`);
+      : queueFold("manifests", `<h2 data-count="${manifestRows.length}">${esc(t(locale, "Manifests"))} <span class="tile-count">${manifestRows.length}</span></h2>`, `${uploadBatchBar(manForm, locale)}<div class="report-scroll"><table class="data"><thead>${manHead}</thead><tbody>${manBody}</tbody></table></div>`);
   const changedBody = changedRows
     .map((row) => {
       const file = wetWeightsFilename(row.hbn, row.seq);
@@ -2260,7 +2260,7 @@ export function pendingUploadsPage(
   const changedSection =
     changedRows.length === 0
       ? ""
-      : `<section data-changed-after-upload><h2>${esc(t(locale, "Changed after upload"))}</h2><table class="data"><thead><tr><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "Marked"))}</th><th>${esc(t(locale, "Grams"))}</th><th>${esc(t(locale, "Plant count"))}</th><th></th></tr></thead><tbody>${changedBody}</tbody></table></section>`;
+      : `<section data-changed-after-upload><h2>${esc(t(locale, "Changed after upload"))}</h2><div class="report-scroll"><table class="data"><thead><tr><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "Marked"))}</th><th>${esc(t(locale, "Grams"))}</th><th>${esc(t(locale, "Plant count"))}</th><th></th></tr></thead><tbody>${changedBody}</tbody></table></div></section>`;
   const wetForm = "up-wet_weights";
   const head = `<tr>${checkHead(wetForm, locale)}<th>${esc(t(locale, "Type"))}</th><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "Lot"))}</th><th>${esc(t(locale, "Load"))}</th><th>${esc(t(locale, "Wet total (g)"))}</th><th>${esc(t(locale, "Plant count"))}</th><th>${esc(t(locale, "Last activity"))}</th><th>${esc(t(locale, "Plant tags"))}</th><th>${esc(t(locale, "Controls"))}</th></tr>`;
   const body = rows
@@ -2324,11 +2324,11 @@ export function pendingUploadsPage(
   const wetTable =
     rows.length === 0
       ? ""
-      : queueFold("wet_weights", `<h2 data-count="${rows.length}">${esc(t(locale, "Wet Weights"))} <span class="tile-count">${rows.length}</span></h2>`, `${uploadBatchBar(wetForm, locale)}<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`);
+      : queueFold("wet_weights", `<h2 data-count="${rows.length}">${esc(t(locale, "Wet Weights"))} <span class="tile-count">${rows.length}</span></h2>`, `${uploadBatchBar(wetForm, locale)}<div class="report-scroll"><table class="data"><thead>${head}</thead><tbody>${body}</tbody></table></div>`);
   const pkgTable =
     packageRows.length === 0
       ? ""
-      : queueFold("package_files", `<h2 data-count="${packageRows.length}">${esc(t(locale, "Package files"))} <span class="tile-count">${packageRows.length}</span></h2>`, `${uploadBatchBar(pkgForm, locale)}<table class="data"><thead>${pkgHead}</thead><tbody>${pkgBody}</tbody></table>`);
+      : queueFold("package_files", `<h2 data-count="${packageRows.length}">${esc(t(locale, "Package files"))} <span class="tile-count">${packageRows.length}</span></h2>`, `${uploadBatchBar(pkgForm, locale)}<div class="report-scroll"><table class="data"><thead>${pkgHead}</thead><tbody>${pkgBody}</tbody></table></div>`);
   const recForm = "up-receive_manifest";
   const recHead = `<tr>${checkHead(recForm, locale)}<th>${esc(t(locale, "Type"))}</th><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "Last activity"))}</th><th>${esc(t(locale, "Controls"))}</th></tr>`;
   const recBody = receiveRows
@@ -2351,7 +2351,7 @@ export function pendingUploadsPage(
   const recTable =
     receiveRows.length === 0
       ? ""
-      : queueFold("receive_manifest", `<h2 data-count="${receiveRows.length}">${esc(t(locale, "Receive manifest"))} <span class="tile-count">${receiveRows.length}</span></h2>`, `${uploadBatchBar(recForm, locale)}<table class="data"><thead>${recHead}</thead><tbody>${recBody}</tbody></table>`);
+      : queueFold("receive_manifest", `<h2 data-count="${receiveRows.length}">${esc(t(locale, "Receive manifest"))} <span class="tile-count">${receiveRows.length}</span></h2>`, `${uploadBatchBar(recForm, locale)}<div class="report-scroll"><table class="data"><thead>${recHead}</thead><tbody>${recBody}</tbody></table></div>`);
   const splitForm = "up-package_split";
   const splitHead = `<tr>${checkHead(splitForm, locale)}<th>${esc(t(locale, "Type"))}</th><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "Last activity"))}</th><th>${esc(t(locale, "Controls"))}</th></tr>`;
   const splitBody = splitRows
@@ -2374,7 +2374,7 @@ export function pendingUploadsPage(
   const splitTable =
     splitRows.length === 0
       ? ""
-      : queueFold("package_split", `<h2 data-count="${splitRows.length}">${esc(t(locale, "Splits"))} <span class="tile-count">${splitRows.length}</span></h2>`, `${uploadBatchBar(splitForm, locale)}<table class="data"><thead>${splitHead}</thead><tbody>${splitBody}</tbody></table>`);
+      : queueFold("package_split", `<h2 data-count="${splitRows.length}">${esc(t(locale, "Splits"))} <span class="tile-count">${splitRows.length}</span></h2>`, `${uploadBatchBar(splitForm, locale)}<div class="report-scroll"><table class="data"><thead>${splitHead}</thead><tbody>${splitBody}</tbody></table></div>`);
   // Canon 0.30.6: the Load Silo location changes, 832 Barn to 832 Silo n.
   const locForm = "up-location_change";
   const locHead = `<tr>${checkHead(locForm, locale)}<th>${esc(t(locale, "Type"))}</th><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "Lot"))}</th><th>${esc(t(locale, "Silo"))}</th><th>${esc(t(locale, "Last activity"))}</th><th>${esc(t(locale, "Controls"))}</th></tr>`;
@@ -2424,11 +2424,11 @@ export function pendingUploadsPage(
   const moveTable =
     moveRows.length === 0
       ? ""
-      : queueFold("location_moves", `<h2 data-count="${moveRows.length}">${esc(t(locale, "Location moves"))} <span class="tile-count">${moveRows.length}</span></h2>`, `${uploadBatchBar(moveForm, locale)}<table class="data" data-location-moves><thead>${moveHead}</thead><tbody>${moveBody}</tbody></table>`);
+      : queueFold("location_moves", `<h2 data-count="${moveRows.length}">${esc(t(locale, "Location moves"))} <span class="tile-count">${moveRows.length}</span></h2>`, `${uploadBatchBar(moveForm, locale)}<div class="report-scroll"><table class="data" data-location-moves><thead>${moveHead}</thead><tbody>${moveBody}</tbody></table></div>`);
   const locTable =
     locationRows.length === 0
       ? ""
-      : queueFold("location_change", `<h2 data-count="${locationRows.length}">${esc(t(locale, "Location changes"))} <span class="tile-count">${locationRows.length}</span></h2>`, `${uploadBatchBar(locForm, locale)}<table class="data"><thead>${locHead}</thead><tbody>${locBody}</tbody></table>`);
+      : queueFold("location_change", `<h2 data-count="${locationRows.length}">${esc(t(locale, "Location changes"))} <span class="tile-count">${locationRows.length}</span></h2>`, `${uploadBatchBar(locForm, locale)}<div class="report-scroll"><table class="data"><thead>${locHead}</thead><tbody>${locBody}</tbody></table></div>`);
   // THE CRYO RUN (canon 0.30.110): one New Packages file per finished run, in
   // the owner's T3 autofill template; the outputs are true METRC tags by law,
   // so no tag gap can mark these rows.
@@ -2458,7 +2458,7 @@ export function pendingUploadsPage(
   const npTable =
     newPackagesRows.length === 0
       ? ""
-      : queueFold("new_packages", `<h2 data-count="${newPackagesRows.length}">${esc(t(locale, "New Packages"))} <span class="tile-count">${newPackagesRows.length}</span></h2>`, `${uploadBatchBar(npForm, locale)}<table class="data" data-new-packages-table><thead>${npHead}</thead><tbody>${npBody}</tbody></table>`);
+      : queueFold("new_packages", `<h2 data-count="${newPackagesRows.length}">${esc(t(locale, "New Packages"))} <span class="tile-count">${newPackagesRows.length}</span></h2>`, `${uploadBatchBar(npForm, locale)}<div class="report-scroll"><table class="data" data-new-packages-table><thead>${npHead}</thead><tbody>${npBody}</tbody></table></div>`);
   const testForm = "up-test_sample";
   const testHead = `<tr>${checkHead(testForm, locale)}<th>${esc(t(locale, "Type"))}</th><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "HBN"))}</th><th>${esc(t(locale, "Lab"))}</th><th>${esc(t(locale, "Samples"))}</th><th>${esc(t(locale, "Controls"))}</th></tr>`;
   const testBody = testSampleRows
@@ -2483,7 +2483,7 @@ export function pendingUploadsPage(
   const testTable =
     testSampleRows.length === 0
       ? ""
-      : queueFold("test_sample", `<h2 data-count="${testSampleRows.length}">${esc(t(locale, "Test samples"))} <span class="tile-count">${testSampleRows.length}</span></h2>`, `${uploadBatchBar(testForm, locale)}<table class="data" data-test-samples><thead>${testHead}</thead><tbody>${testBody}</tbody></table>`);
+      : queueFold("test_sample", `<h2 data-count="${testSampleRows.length}">${esc(t(locale, "Test samples"))} <span class="tile-count">${testSampleRows.length}</span></h2>`, `${uploadBatchBar(testForm, locale)}<div class="report-scroll"><table class="data" data-test-samples><thead>${testHead}</thead><tbody>${testBody}</tbody></table></div>`);
   const prepackForm = "up-prepack";
   const prepackBody = prepackFiles
     .map((row) => {
@@ -2508,7 +2508,7 @@ export function pendingUploadsPage(
   const prepackTable =
     prepackFiles.length === 0
       ? ""
-      : queueFold("prepack", `<h2 data-count="${prepackFiles.length}">${esc(t(locale, "Prepack"))} <span class="tile-count">${prepackFiles.length}</span></h2>`, `${uploadBatchBar(prepackForm, locale)}<table class="data" data-prepack-uploads><thead><tr>${checkHead(prepackForm, locale)}<th>${esc(t(locale, "Type"))}</th><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "HBN"))}</th><th>${esc(t(locale, "Last activity"))}</th><th>${esc(t(locale, "Controls"))}</th></tr></thead><tbody>${prepackBody}</tbody></table>`);
+      : queueFold("prepack", `<h2 data-count="${prepackFiles.length}">${esc(t(locale, "Prepack"))} <span class="tile-count">${prepackFiles.length}</span></h2>`, `${uploadBatchBar(prepackForm, locale)}<div class="report-scroll"><table class="data" data-prepack-uploads><thead><tr>${checkHead(prepackForm, locale)}<th>${esc(t(locale, "Type"))}</th><th>${esc(t(locale, "File"))}</th><th>${esc(t(locale, "HBN"))}</th><th>${esc(t(locale, "Last activity"))}</th><th>${esc(t(locale, "Controls"))}</th></tr></thead><tbody>${prepackBody}</tbody></table></div>`);
   return `${heading}
     ${ackFlash}
     ${clearAll}
@@ -3869,7 +3869,7 @@ export function queueSection(
           return `<tr>${checkCell(formId, "id", row.id)}${cells}<td class="row-actions">${controls}</td></tr>`;
         })
         .join("");
-      return `${groupHeading}<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+      return `${groupHeading}<div class="report-scroll"><table class="data"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
     })
     .join("");
   return `<section>${queueFold(queue.key, heading, `${exportLink}${voidBatchBar(formId, `/admin/queues/${queue.key}/void-checked`, locale)}${sections}`)}</section>`;
@@ -3884,7 +3884,7 @@ export function movementsQueueSection(rows: MovementQueueRow[], locale: Locale =
   const body =
     rows.length === 0
       ? `<p class="muted">${esc(t(locale, "No logistics moves."))}</p>`
-      : `${voidBatchBar(formId, "/admin/queues/movement/void-checked", locale)}<table class="data"><thead><tr>
+      : `${voidBatchBar(formId, "/admin/queues/movement/void-checked", locale)}<div class="report-scroll"><table class="data"><thead><tr>
           ${checkHead(formId, locale)}<th>${esc(t(locale, "When"))}</th><th>${esc(t(locale, "Kind"))}</th><th>${esc(t(locale, "From"))}</th><th>${esc(t(locale, "To"))}</th><th>${esc(t(locale, "Truck"))}</th><th>${esc(t(locale, "Status"))}</th><th>${esc(t(locale, "Items"))}</th><th>${esc(t(locale, "Controls"))}</th>
         </tr></thead><tbody>${rows
           .map((row) => {
@@ -3907,7 +3907,7 @@ export function movementsQueueSection(rows: MovementQueueRow[], locale: Locale =
               <td>${control}</td>
             </tr>`;
           })
-          .join("")}</tbody></table>`;
+          .join("")}</tbody></table></div>`;
   return `<section class="queue-block" data-queue="logistics_moves">
     ${queueFold("logistics_moves", heading, body)}
   </section>`;

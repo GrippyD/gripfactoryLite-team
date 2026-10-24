@@ -699,7 +699,7 @@ export function testingPage(
       <label class="field">${esc(t(locale, "Year"))} <input type="text" name="year" value="${esc(filters.year)}"></label>
       <button type="submit">${esc(t(locale, "Apply filters"))}</button>
     </form>
-    <table class="data">
+    <div class="report-scroll"><table class="data">
       <thead><tr>
         <th>${esc(t(locale, "Sample Tag"))}</th>
         <th>${esc(t(locale, "Item Name"))}</th>
@@ -711,6 +711,6 @@ export function testingPage(
         <th></th>
       </tr></thead>
       <tbody>${body}</tbody>
-    </table>
+    </table></div>
     <p class="muted" data-lab-station-pointer>${esc(t(locale, "Compliance samples are entered at the lab station, on the Internal tab."))} <a href="/compliance/testing?tab=internal">${esc(t(locale, "Open the lab station"))}</a></p>`;
 }

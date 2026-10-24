@@ -599,8 +599,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 117 migration(s)")) {
-      throw new Error(`from-zero apply must say 117 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 119 migration(s)")) {
+      throw new Error(`from-zero apply must say 119 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -4620,9 +4620,16 @@ async function run() {
     );
     assert(typeof v24Row.tested_at === "string" && v24Row.tested_at.endsWith("Z") && v24Row.tested_at_source === "auto", "a reading with no typed time is stamped by the server in UTC with a Z");
     assert(v24Row.operator === v24MeJson.operator, `an Access login writes as the app's actor (its person id), never a typed name, got ${v24Row.operator}`);
+    assert(!Object.prototype.hasOwnProperty.call(v24Row, "write_id"), "write_id must stay off the API row");
+    const v24LogHits = (html) => (html.match(new RegExp("<td>" + v24Bench.id + "</td>", "g")) || []).length;
+    const v24LogBefore = v24LogHits((await text("/log")).body);
+    assert(v24LogBefore > 0, "the bench reading must land in the change log before the resend");
     const v24Again = await req("/api/lab/internal-tests", v24Json("POST", v24Bench));
     const v24AgainJson = await v24Again.json();
     assert(v24Again.status === 200 && v24AgainJson.created === false && v24AgainJson.row.id === v24Bench.id, `a resend of the same client id must land nothing new, got ${v24Again.status}`);
+    assert(!Object.prototype.hasOwnProperty.call(v24AgainJson.row, "write_id"), "write_id must stay off the resent row");
+    const v24LogAfter = v24LogHits((await text("/log")).body);
+    assert(v24LogAfter === v24LogBefore, `a resend of the same client id must not add change log rows, before ${v24LogBefore} after ${v24LogAfter}`);
     const v24List = await req("/api/lab/internal-tests?tag=56899&limit=200");
     assert(v24List.status === 200, `the bench list expected 200 got ${v24List.status}`);
     const v24ListJson = await v24List.json();
@@ -4644,6 +4651,7 @@ async function run() {
       assert(v24FeedJson.feed === "lab_internal_tests" && Array.isArray(v24FeedJson.rows) && v24FeedJson.count === v24FeedJson.rows.length, "the lab feed must name itself and count its rows");
       const v24FeedRow = v24FeedJson.rows.find((r) => r.id === v24Bench.id);
       assert(v24FeedRow && v24FeedRow.metrc_tag === "1A40503000311FB000056899" && v24FeedRow.moisture_pct === 13.2 && v24FeedRow.voided_at === null, `the feed must carry the reading with its full tag, got ${JSON.stringify(v24FeedRow)}`);
+      assert(v24FeedRow && !Object.prototype.hasOwnProperty.call(v24FeedRow, "write_id"), "write_id must stay off the feed row");
       assert(!v24FeedJson.rows.some((r) => r.id === "lt_smokev24nohdr01" || r.id === "lt_smokev24nopin01"), "the refused writes must not reach the feed");
       assert(v24FeedJson.next_since === v24FeedJson.rows[v24FeedJson.rows.length - 1].changed_at && v24FeedJson.more === false && v24FeedJson.run_completed === 0, "next_since must be the last change instant with more false under the limit");
     }
@@ -11511,7 +11519,9 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
         maint.body.includes("used") &&
         maintFarm.body.includes('data-dd-wall-tabs="farmops"') &&
         maintFarm.body.includes('href="/admin/director/maintenance"') &&
-        !maintBiz.body.includes("data-dd-wall-tabs"),
+        !maintBiz.body.includes("data-dd-wall-tabs") &&
+        maintFarm.body.includes('data-dd-kpi="farmops.assets_for_sale_count"') &&
+        !maintFarm.body.slice(maintFarm.body.indexOf('data-dd-kpi="farmops.assets_for_sale_count"'), maintFarm.body.indexOf("</article>", maintFarm.body.indexOf('data-dd-kpi="farmops.assets_for_sale_count"'))).includes("data-dd-question"),
       `maintenance tab expected the four sections, a listed asset, and the farmops head only, got project ${maintProject.status} sale ${saleSave.status} logs ${saleLogs} tab ${maint.res.status}`
     );
 
@@ -11573,6 +11583,76 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
         bizops.body.includes('querySelector("p[data-dd-test-detail]")'),
       `bizops must show BTR and Testing Throughput, got ${bizops.res.status} ${bizops.body.slice(0, 400)}`
     );
+
+    const ph1Open = (html, marker, label) => {
+      const at = html.indexOf(marker);
+      assert(at >= 0, `${label} must show ${marker}`);
+      const before = html.slice(Math.max(0, at - 160), at);
+      assert(before.includes('class="report-scroll"') || before.includes('class="eq-scroll"'), `${label} must open inside the scroller`);
+    };
+    const ph1Equipment = await text("/equipment");
+    assert(ph1Equipment.res.status === 200, `equipment expected 200 got ${ph1Equipment.res.status}`);
+    ph1Open(ph1Equipment.body, '<table class="eq">', "equipment");
+    const ph1EquipmentId = (ph1Equipment.body.match(/href="\/equipment\/([^"]+)"/) || [])[1];
+    assert(ph1EquipmentId, "equipment must link an asset");
+    const ph1Asset = await text(`/equipment/${ph1EquipmentId}`);
+    assert(ph1Asset.res.status === 200, `equipment asset expected 200 got ${ph1Asset.res.status}`);
+    ph1Open(ph1Asset.body, '<table class="eq">', "equipment asset");
+    const ph1Metrc = await text("/inventory/metrc");
+    assert(ph1Metrc.res.status === 200, `inventory metrc expected 200 got ${ph1Metrc.res.status}`);
+    ph1Open(ph1Metrc.body, '<table class="data metrc-lines"', "inventory metrc");
+    assert(ph1Metrc.body.includes("fit-content(45%) minmax(0, 1fr)"), "lot meta labels must stop at 45% so the value keeps the rest");
+    const ph1Dash = await text("/admin/lookups/harvest_dashboard");
+    assert(ph1Dash.res.status === 200, `harvest dashboard expected 200 got ${ph1Dash.res.status}`);
+    assert(ph1Dash.body.includes('class="hd-break"'), "the harvest dashboard values must wrap");
+    const ph1Fulfill = await text("/admin/lookups/fulfillment_override");
+    assert(ph1Fulfill.res.status === 200, `fulfillment override expected 200 got ${ph1Fulfill.res.status}`);
+    ph1Open(ph1Fulfill.body, '<table class="fulfill-grid"', "fulfillment override");
+    const ph1Estimates = await text("/admin/field_estimates");
+    assert(ph1Estimates.res.status === 200, `field estimates expected 200 got ${ph1Estimates.res.status}`);
+    if (ph1Estimates.body.includes("<table data-field-estimates")) ph1Open(ph1Estimates.body, "<table data-field-estimates", "field estimates");
+    const ph1MetrcApi = await text("/admin/metrc-api");
+    assert(ph1MetrcApi.res.status === 200, `metrc api expected 200 got ${ph1MetrcApi.res.status}`);
+    const ph1EndpointsAt = ph1MetrcApi.body.indexOf('data-metrc-endpoints="');
+    if (ph1EndpointsAt >= 0) {
+      const ph1Endpoints = ph1MetrcApi.body.slice(ph1EndpointsAt, ph1EndpointsAt + 2000);
+      if (ph1Endpoints.includes("<table")) ph1Open(ph1Endpoints, "<table", "metrc api");
+    }
+    const ph1Testing = await text("/testing");
+    assert(ph1Testing.res.status === 200, `testing expected 200 got ${ph1Testing.res.status}`);
+    if (ph1Testing.body.includes('<table class="data"')) ph1Open(ph1Testing.body, '<table class="data"', "testing");
+    const ph1Log = await text("/log");
+    assert(ph1Log.res.status === 200, `log expected 200 got ${ph1Log.res.status}`);
+    ph1Open(ph1Log.body, '<table class="data wide"', "log");
+    const ph1Queues = await text("/admin/queues");
+    assert(ph1Queues.res.status === 200, `queues expected 200 got ${ph1Queues.res.status}`);
+    if (ph1Queues.body.includes('<table class="data"')) ph1Open(ph1Queues.body, '<table class="data"', "queues");
+    const ph1Uploads = await text("/admin/uploads");
+    assert(ph1Uploads.res.status === 200, `uploads expected 200 got ${ph1Uploads.res.status}`);
+    if (ph1Uploads.body.includes('data-fold="wet_weights"')) {
+      const ph1WetAt = ph1Uploads.body.indexOf('data-fold="wet_weights"');
+      ph1Open(ph1Uploads.body.slice(ph1WetAt, ph1WetAt + 4000), '<table class="data">', "uploads");
+    }
+    if (ph1Uploads.body.includes('data-new-packages-table')) ph1Open(ph1Uploads.body, '<table class="data" data-new-packages-table', "new packages");
+    if (ph1Uploads.body.includes("data-reconcile-notes")) ph1Open(ph1Uploads.body, '<table class="data" data-reconcile-notes', "reconcile notes");
+    const ph1Puzzles = await text("/reports/post_harvest_puzzles");
+    assert(ph1Puzzles.res.status === 200, `puzzles expected 200 got ${ph1Puzzles.res.status}`);
+    ph1Open(ph1Puzzles.body, '<table class="data" data-php-table', "puzzles");
+    const ph1Reconcile = await text("/reports/harvest_reconciliation");
+    assert(ph1Reconcile.res.status === 200, `harvest reconciliation expected 200 got ${ph1Reconcile.res.status}`);
+    ph1Open(ph1Reconcile.body, '<table class="data"', "harvest reconciliation");
+    const ph1Compliance = await text("/compliance/testing");
+    assert(ph1Compliance.res.status === 200, `compliance testing expected 200 got ${ph1Compliance.res.status}`);
+    ph1Open(ph1Compliance.body, '<table class="data"', "compliance testing");
+    const ph1Config = await text("/admin/lookups/app_config");
+    assert(ph1Config.res.status === 200, `app config expected 200 got ${ph1Config.res.status}`);
+    ph1Open(ph1Config.body, '<table class="data"', "app config");
+    const ph1People = await text("/admin/lookups/people");
+    assert(ph1People.res.status === 200, `people expected 200 got ${ph1People.res.status}`);
+    ph1Open(ph1People.body, '<table class="data"', "people");
+    const ph1History = await text("/reports/environment_history");
+    assert(ph1History.res.status === 200, `environment history expected 200 got ${ph1History.res.status}`);
+    ph1Open(ph1History.body, '<table class="data"', "environment history");
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

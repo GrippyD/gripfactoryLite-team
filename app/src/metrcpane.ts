@@ -256,7 +256,7 @@ function linesTable(data: MetrcPaneData, locale: Locale): string {
       </tr>`
     )
     .join("");
-  return `<table class="data metrc-lines" data-metrc-lines>
+  return `<div class="report-scroll"><table class="data metrc-lines" data-metrc-lines>
     <thead><tr>
       <th>${esc(t(locale, "License"))}</th>
       <th>${esc(t(locale, "Plants flowering"))}</th>
@@ -267,7 +267,7 @@ function linesTable(data: MetrcPaneData, locale: Locale): string {
       <th>${esc(t(locale, "Newest mount"))}</th>
     </tr></thead>
     <tbody>${rows}</tbody>
-  </table>`;
+  </table></div>`;
 }
 
 function crossCheck(data: MetrcPaneData, locale: Locale): string {

@@ -1555,7 +1555,7 @@ function endpointsSection(data: MetrcAdmin, locale: Locale): string {
     .join("");
   const body = rows.map((row) => endpointRow(row, locale)).join("") + labRow(data, locale);
   const table = body
-    ? `<table${h}><thead${h}><tr${h}>${heads}</tr></thead><tbody${h}>${body}</tbody></table>`
+    ? `<div${h} class="report-scroll"><table${h}><thead${h}><tr${h}>${heads}</tr></thead><tbody${h}>${body}</tbody></table></div>`
     : `<p class="muted" data-metrc-endpoints-none${h}>${esc(t(locale, "No endpoint runs yet."))}</p>`;
   return `<section data-metrc-endpoints="${rows.length}"${h}>
       <h2${h}>${esc(t(locale, "Per endpoint"))}</h2>

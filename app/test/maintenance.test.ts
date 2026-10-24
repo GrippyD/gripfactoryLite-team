@@ -151,6 +151,8 @@ describe("equipment for sale", () => {
     expect(tile).toContain('<span class="dd-tile-value">2</span> assets listed or under offer');
     expect(tile).toContain(`href="${MAINTENANCE_PATH}"`);
     expect(tile).not.toContain("No data yet");
+    expect(tile).not.toContain('data-dd-question="farmops.assets_for_sale_count"');
+    expect(tile).not.toContain(">?</a>");
     const before = m.get(`SELECT COUNT(*) AS n FROM record_change_log`)?.n;
     await saveEquipmentForSale(m.db, A1, formOf({ person_id: "person-1", sale_status: "listed", sale_condition: "used", asking_price_usd: "500", sale_note: "ready" }));
     expect(m.get(`SELECT COUNT(*) AS n FROM record_change_log`)?.n).toBe(before);

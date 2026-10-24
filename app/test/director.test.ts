@@ -356,7 +356,10 @@ describe("DD S1 migration 0105: the registry seed", () => {
         expect(Number(row.def_version)).toBe(2);
         expect(row.status).toBe("live");
         expect(row.compute_key).toBe("count of live equipment_assets whose sale_status is listed or under_offer. Sold and blank stay out of the count");
-        expect(row.updated_at).toBe("2026-10-23T00:00:00.000Z");
+        expect(row.open_question_en).toBeNull();
+        expect(row.open_question_es).toBeNull();
+        expect(row.title_en).toBe("Asset list and for sale list");
+        expect(row.updated_at).toBe("2026-10-24T00:00:00.000Z");
         expect(row.created_at).toBe(DD_SEED_AT);
       } else if (key === "bizops.lab_turnaround_days") {
         expect(Number(row.active)).toBe(0);
@@ -426,6 +429,9 @@ describe("DD S1 migration 0105: the registry seed", () => {
     ).toThrow();
     // The code fallback and the seed agree row for row, every field.
     expect(rows.map(kpiFromRow)).toEqual([...DD_KPIS]);
+    const openQuestions = rows.filter((r) => r.open_question_en != null).length;
+    expect(openQuestions).toBe(DD_KPIS.filter((k) => k.open_question_en != null).length);
+    expect(rows.find((r) => r.kpi_key === "farmops.assets_for_sale_count")?.open_question_en).toBeNull();
     // Every wall has tiles; the bizops wall has at least twenty.
     for (const dept of DD_DEPT_KEYS) expect(ddKpisForWall(DD_KPIS, dept).length, dept).toBeGreaterThan(0);
     expect(ddKpisForWall(DD_KPIS, "bizops").length).toBeGreaterThanOrEqual(20);
@@ -683,6 +689,43 @@ describe("DD S1 migration 0105: the registry seed", () => {
       w: "farmops",
       d: "silo",
     });
+  });
+
+  it("0120 clears the for sale question and a second apply changes nothing", async () => {
+    const m = await migratedDb();
+    const open = () => Number(m.get(`SELECT COUNT(*) AS n FROM dd_kpis WHERE open_question_en IS NOT NULL`)?.n);
+    const other = () => m.get(`SELECT open_question_en AS q, updated_at AS at FROM dd_kpis WHERE kpi_key = 'farmops.maintenance_spend_vs_budget_pct'`);
+    const kept = other();
+    const after = open();
+    expect(after).toBe(DD_KPIS.filter((k) => k.open_question_en != null).length);
+    const seeded = "The asset register of record (the app table or the accounting register) and which fields the app holds";
+    m.run(
+      `UPDATE dd_kpis SET open_question_en = ?, open_question_es = ?, updated_at = '2026-10-23T00:00:00.000Z' WHERE kpi_key = 'farmops.assets_for_sale_count'`,
+      seeded,
+      "El registro oficial de activos (la tabla de la app o el registro contable) y qué campos guarda la app"
+    );
+    expect(open()).toBe(after + 1);
+    const fs = (await import("node:" + "fs")) as { readFileSync(path: URL, encoding: "utf8"): string };
+    const file = fs.readFileSync(new URL("../migrations/0120_for_sale_question.sql", import.meta.url), "utf8");
+    expect(file.includes("\r")).toBe(false);
+    const update = file.slice(file.indexOf("UPDATE")).replace(/;\s*$/, "");
+    const apply = async () => (await m.db.prepare(update).run()) as { meta: { changes: number } };
+    expect((await apply()).meta.changes).toBe(1);
+    expect(open()).toBe(after);
+    const row = m.get(`SELECT title_en, compute_key, status, def_version, open_question_en, open_question_es, updated_at FROM dd_kpis WHERE kpi_key = 'farmops.assets_for_sale_count'`);
+    expect(row).toMatchObject({
+      title_en: "Asset list and for sale list",
+      compute_key: "count of live equipment_assets whose sale_status is listed or under_offer. Sold and blank stay out of the count",
+      status: "live",
+      def_version: 2,
+      open_question_en: null,
+      open_question_es: null,
+      updated_at: "2026-10-24T00:00:00.000Z",
+    });
+    expect((await apply()).meta.changes).toBe(0);
+    expect(open()).toBe(after);
+    expect(m.get(`SELECT updated_at AS at FROM dd_kpis WHERE kpi_key = 'farmops.assets_for_sale_count'`)?.at).toBe("2026-10-24T00:00:00.000Z");
+    expect(other()).toEqual(kept);
   });
 
   it("the migration carries ddSeedSql() and ddConfigSeedSql() verbatim, nine rows per INSERT at most", async () => {

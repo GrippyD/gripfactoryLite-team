@@ -297,7 +297,9 @@ function adminTable(
       </td></tr>`;
     })
     .join("");
-  return `<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  const html = `<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  if (table === "people" || table === "app_config") return `<div class="report-scroll">${html}</div>`;
+  return html;
 }
 
 /** THE TRIM BOGEY (canon 0.30.249; owner, 2026-09-26: "Add a Admin Lookup
@@ -539,7 +541,7 @@ export function logPage(rows: Record<string, unknown>[]): string {
     )
     .join("");
   return `<h1>Change log</h1>${exportLink}
-    <table class="data wide"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+    <div class="report-scroll"><table class="data wide"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
 
 export function editPage(
