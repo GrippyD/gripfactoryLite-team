@@ -29,6 +29,7 @@ describe("Admin cleanup (canon 0.30.418)", () => {
     expect([...settings.matchAll(/href="([^"]+)"/g)].map((hit) => hit[1])).toEqual([
       "/admin/lookups",
       "/admin/field_estimates",
+      "/admin/prepack-targets",
       "/admin/lab-samples",
       "/log",
       "/admin/manual-hbn",
@@ -63,6 +64,7 @@ describe("Admin cleanup (canon 0.30.418)", () => {
     expect(backLinkFor("/admin/metrc-api")).toEqual({ href: "/admin/data-connections", label: "Data Connections" });
     expect(backLinkFor("/admin/lookups")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
     expect(backLinkFor("/admin/field_estimates")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
+    expect(backLinkFor("/admin/prepack-targets")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
     expect(backLinkFor("/admin/lab-samples")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
     expect(backLinkFor("/log")).toEqual({ href: "/admin/settings", label: "Admin Settings" });
     expect(backLinkFor("/admin/manual-hbn")).toEqual({ href: "/admin/settings", label: "Admin Settings" });

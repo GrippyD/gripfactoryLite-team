@@ -32,6 +32,7 @@ import { QUEUE_FOLD_SCRIPT, localTimeScript, queueFold } from "./html";
 import { t, tFill, type Locale } from "./i18n";
 import { terpCompleteLine, terpScheduleControls, type TerpRecipeOption } from "./terps";
 import { spaceTypeOf } from "./silo";
+import { prepackPlanSection, type PrepackPlanView } from "./prepackplan";
 import { esc } from "./ui";
 
 export const SCHEDULE_REFUSAL = {
@@ -332,7 +333,8 @@ function availableByMethod(
   locale: Locale,
   query: string,
   controls: (item: ScheduleItemRow) => string,
-  formId: string
+  formId: string,
+  picks: ReadonlySet<string>
 ): { html: string; shown: number } {
   const groups = new Map<string, { name: string | null; apps: ScheduleItemRow[]; strangers: MetrcAdoptRow[] }>();
   const bucket = (name: string | null) => {
@@ -356,8 +358,11 @@ function availableByMethod(
         .map((item) => {
           const hit = scheduleFilterHit(query, item.hbn, item.tag);
           if (hit) visible += 1;
-          return `<li class="schedule-item" data-schedule-id="${esc(item.id)}" data-schedule-tag="${esc(item.tag ?? "")}" data-schedule-hbn="${esc(item.hbn)}"${hit ? "" : " hidden"}>
+          const picked = picks.has(item.id);
+          const badge = picked ? `<span class="plan-badge" data-plan-badge>${esc(t(locale, "Plan"))}</span>` : "";
+          return `<li class="schedule-item"${picked ? " data-plan-pick" : ""} data-schedule-id="${esc(item.id)}" data-schedule-tag="${esc(item.tag ?? "")}" data-schedule-hbn="${esc(item.hbn)}"${hit ? "" : " hidden"}>
           ${packageIdentityMarkup({ tag: item.tag ?? item.identity, strain: item.strain_name, grams: Number(item.grams ?? 0), hbn: item.hbn, location: item.location }, locale)}
+          ${badge}
           ${controls(item)}
         </li>`;
         })
@@ -400,7 +405,13 @@ function availableByMethod(
  * (canon 0.30.199: the whole tag, the strain and grams, the HBN, the location).
  * Available rows carry >>; Scheduled rows carry << and the > that opens the
  * station; Complete rows read the time. */
-export function prepackSchedulingPage(panes: PrepackPanes, adopt: MetrcAdoptPane | null, locale: Locale, q = ""): string {
+export function prepackSchedulingPage(
+  panes: PrepackPanes,
+  adopt: MetrcAdoptPane | null,
+  locale: Locale,
+  q = "",
+  plan: PrepackPlanView | null = null
+): string {
   const query = String(q ?? "").trim();
   const stage = SCHEDULE_STAGES.prepack;
   const base = `${PRODUCTION_SCHEDULING_PATH}/${stage}`;
@@ -428,9 +439,15 @@ export function prepackSchedulingPage(panes: PrepackPanes, adopt: MetrcAdoptPane
       shown,
     };
   };
-  const available = availableByMethod(panes.available, adopt?.rows ?? [], locale, query, (item) =>
-    `<button type="submit" form="${esc(formId)}" name="wip_package_id" value="${esc(item.id)}" class="shuttle-btn" title="${esc(scheduleTitle)}" aria-label="${esc(scheduleTitle)}">&gt;&gt;</button>`,
-    formId
+  const available = availableByMethod(
+    panes.available,
+    adopt?.rows ?? [],
+    locale,
+    query,
+    (item) =>
+      `<button type="submit" form="${esc(formId)}" name="wip_package_id" value="${esc(item.id)}" class="shuttle-btn" title="${esc(scheduleTitle)}" aria-label="${esc(scheduleTitle)}">&gt;&gt;</button>`,
+    formId,
+    new Set(plan?.picks ?? [])
   );
   const working = pane(
     "working",
@@ -445,7 +462,9 @@ export function prepackSchedulingPage(panes: PrepackPanes, adopt: MetrcAdoptPane
   const complete = pane("complete", panes.complete, (item) =>
     `${item.completed_at ? `<time datetime="${esc(item.completed_at)}" data-local>${esc(item.completed_at)}</time>` : ""}${unfinishForm(stage, item.id, locale, query)}`
   );
+  const planFold = plan ? prepackPlanSection(plan, locale) : "";
   return `<h1>${esc(t(locale, SCHEDULE_STAGE_TITLES[stage]))}</h1>
+    ${planFold}
     <form method="get" action="${esc(base)}" class="schedule-filter" data-schedule-filter-form>
       <label class="field">${esc(t(locale, "Filter"))}
         <input type="search" name="q" value="${esc(query)}" placeholder="${esc(t(locale, "HBN or last six"))}" autocomplete="off" data-schedule-filter>

@@ -438,6 +438,8 @@ export type ScheduleItemRow = {
   /** THE PACKAGE READS IN FOUR LINES (canon 0.30.199): a prepack row's live grams and its ledger location. */
   grams?: number;
   location?: string | null;
+  /** PC1: the package row's created_at. The plan uses it. The panes do not draw it. */
+  created_at?: string;
   /** THE PREPACK HEADINGS (canon 0.30.229): the HBN's grow method display name, or null when the batch has none. */
   grow_method?: string | null;
   /** TERP RECIPES (canon 0.30.321): the run's recipe and dose. Null until a pick or a default. */
@@ -632,6 +634,7 @@ type PrepackFeed = {
   package_id: string;
   package_type_code: string;
   package_code: string;
+  created_at: string;
   harvest_batch_id: string;
   hbn: string;
   farm_code: string;
@@ -647,7 +650,7 @@ type PrepackFeed = {
  * the package. The lot is optional (a package adopted onto a METRC-born batch
  * has none); a package whose lot was voided stays out as before. */
 const PREPACK_PARENT_SQL = `
-  SELECT p.id AS package_id, p.package_type_code, p.package_code,
+  SELECT p.id AS package_id, p.package_type_code, p.package_code, p.created_at,
          b.id AS harvest_batch_id, b.hbn, b.farm_code, b.entry_date,
          COALESCE(b.market_strain, st.name, '') AS strain_name, li.metrc_tag, li.qty, li.location,
          gm.display_name AS grow_method
@@ -702,6 +705,7 @@ function prepackAvailableRow(row: PrepackFeed): ScheduleItemRow {
     grams: Number(row.qty),
     location: row.location,
     grow_method: row.grow_method,
+    created_at: row.created_at == null ? "" : String(row.created_at),
   };
 }
 
