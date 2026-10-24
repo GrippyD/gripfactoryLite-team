@@ -34,3 +34,8 @@ app/wrangler.toml.bak-*
 
 # THE BRANCH FOLDER (canon 0.30.277): the worktree of GFLiteOpsDashboard, a second checkout beside main, never committed
 branches/
+
+# THE TEAM SANDBOX (canon 0.30.542): a teammate's own settings, idea note and screenshots; the canned data sits in app/.sandbox-persist under *-persist/
+tools/sandbox/sandbox.local.json
+tools/sandbox/IDEA.md
+tools/sandbox/shots/
