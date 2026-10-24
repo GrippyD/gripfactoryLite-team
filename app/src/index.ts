@@ -497,6 +497,7 @@ import {
   type TatMetricKey,
 } from "./reports";
 import { floorVsMetrcCsv, floorVsMetrcPage, loadFloorVsMetrc, shownFloorVsMetrc } from "./floormetrc";
+import { wipLineagePage } from "./wiplineage";
 import { DRY_STRAIN_FARMS, DRY_STRAIN_GROW_METHODS, dryStrainNames, dryStrainRefused, dryStrainView, listDryStrainLots, resolveDryStrainRange } from "./drystrain";
 import { HARVEST_RECONCILE_KEY, loadHarvestReconciliation } from "./harvestreconciliation";
 import { deleteFieldEstimate, fieldEstimatesPage, loadFieldEstimatesPage, saveFieldEstimate } from "./fieldestimates";
@@ -971,6 +972,9 @@ app.get("/reports/:key", async (c) => {
     if (!url.searchParams.get("to")) url.searchParams.set("to", window.to);
   }
   const s = await shell(c);
+  if (key === "wip_lineage") {
+    return html(c, s, "WIP Lineage", await wipLineagePage(c.env.DB, url.searchParams, s.locale));
+  }
   if (key === "line_packages") {
     if (!url.searchParams.get("start")) url.searchParams.set("start", `${String(s.farmDayStart).padStart(2, "0")}:00`);
     if (!url.searchParams.get("line")) url.searchParams.set("line", "all");
@@ -1501,6 +1505,7 @@ app.get("/inventory/metrc", async (c) => {
           releasedPassed: Number(c.req.query("released_passed") ?? 0) || 0,
           releasedFailed: Number(c.req.query("released_failed") ?? 0) || 0,
           landed: Number(c.req.query("landed") ?? 0) || 0,
+          grid: c.req.query("grid") || undefined,
         }
       : undefined;
   return html(

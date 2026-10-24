@@ -2404,9 +2404,15 @@ export const DICT: Record<string, { en: string; es: string }> = {
     es: "No hay campos internos registrados para este tipo. Agreguelos en Admin, Data Lookups, Internal fields.",
   },
   "Mount a METRC export": { en: "Mount a METRC export", es: "Montar una exportacion de METRC" },
-  "Drop METRC's Plants (Flowering or Vegetative) or Packages (Active) export for one license, xlsx as METRC gives it or its CSV. The file name carries the license and the grid (MetrcMichigan<license><Plants or Packages><grid>); pick them below only when it does not. The export is the truth of METRC as of the drop: rows update in place and rows the file no longer carries are marked gone.": {
-    en: "Drop METRC's Plants (Flowering or Vegetative) or Packages (Active) export for one license, xlsx as METRC gives it or its CSV. The file name carries the license and the grid (MetrcMichigan<license><Plants or Packages><grid>); pick them below only when it does not. The export is the truth of METRC as of the drop: rows update in place and rows the file no longer carries are marked gone.",
-    es: "Suelte la exportacion de METRC de Plantas (Floracion o Vegetativo) o Paquetes (Activos) de una licencia, el xlsx tal como lo da METRC o su CSV. El nombre del archivo lleva la licencia y la cuadricula (MetrcMichigan<licencia><Plants o Packages><cuadricula>); elijalas abajo solo cuando no las lleve. La exportacion es la verdad de METRC al momento de soltarla: las filas se actualizan en su lugar y las que el archivo ya no trae se marcan como idas.",
+  "Drop METRC's Plants (Flowering or Vegetative) or Packages (Active, Inactive or Transferred) export for one license, xlsx as METRC gives it or its CSV. The file name carries the license and the grid. Pick the license and the plants phase below only when the name does not. An Active export updates rows in place and marks rows the file no longer carries as gone. An Inactive or Transferred export never marks a package gone for being absent.": {
+    en: "Drop METRC's Plants (Flowering or Vegetative) or Packages (Active, Inactive or Transferred) export for one license, xlsx as METRC gives it or its CSV. The file name carries the license and the grid. Pick the license and the plants phase below only when the name does not. An Active export updates rows in place and marks rows the file no longer carries as gone. An Inactive or Transferred export never marks a package gone for being absent.",
+    es: "Suelte la exportacion de METRC de Plantas (Floracion o Vegetativo) o Paquetes (Activos, Inactivos o Transferidos) de una licencia, el xlsx tal como lo da METRC o su CSV. El nombre del archivo lleva la licencia y la cuadricula. Elija la licencia y la fase de las plantas abajo solo cuando el nombre no las lleve. Una exportacion Activa actualiza las filas en su lugar y marca como idas las que el archivo ya no trae. Una exportacion Inactiva o Transferida nunca marca un paquete como ido por estar ausente.",
+  },
+  "Inactive": { en: "Inactive", es: "Inactivo" },
+  "Transferred": { en: "Transferred", es: "Transferido" },
+  "transfers new {n}, updated {u}.": {
+    en: "transfers new {n}, updated {u}.",
+    es: "transferencias nuevas {n}, actualizadas {u}.",
   },
   "METRC export (xlsx or csv)": { en: "METRC export (xlsx or csv)", es: "Exportacion de METRC (xlsx o csv)" },
   "From the file name": { en: "From the file name", es: "Del nombre del archivo" },
@@ -5283,6 +5289,90 @@ for (const [kind, article] of FORMULA_SAVE_KINDS) {
     DICT[key] = { en: key, es: `${article} tiene una formula que no se puede guardar. ${es}` };
   }
 }
+
+const WL_STRINGS: Array<[string, string]> = [
+  ["WIP Lineage", "Linaje de paquetes WIP"],
+  ["Packages from one METRC license, by source harvest: the root WIP, the splits, the lab bar, and what shipped for sale.", "Paquetes de una licencia METRC, por cosecha de origen: el WIP raiz, las divisiones, la barra de laboratorio y lo enviado a la venta."],
+  ["Search", "Buscar"],
+  ["Newest", "Mas reciente"],
+  ["Most packages", "Mas paquetes"],
+  ["Shipped", "Enviado"],
+  ["Failed lab", "Laboratorio fallido"],
+  ["With BUD, PRE or SHA", "Con BUD, PRE o SHA"],
+  ["Hide finished and discontinued", "Ocultar terminados y descontinuados"],
+  ["Strain, tag, harvest, buyer or manifest", "Variedad, etiqueta, cosecha, comprador o manifiesto"],
+  ["Expand all", "Abrir todo"],
+  ["Collapse all", "Cerrar todo"],
+  ["not mounted", "sin montar"],
+  ["WIP families", "Familias WIP"],
+  ["with an active WIP", "con un WIP activo"],
+  ["Active WIP packages", "Paquetes WIP activos"],
+  ["BUD packages", "Paquetes BUD"],
+  ["PRE packages", "Paquetes PRE"],
+  ["SHA packages", "Paquetes SHA"],
+  ["Shipped for sale", "Enviado a la venta"],
+  ["Failed lab tests", "Pruebas de laboratorio fallidas"],
+  ["buyers", "compradores"],
+  ["buyer", "comprador"],
+  ["pre-rolls", "pre-rolls"],
+  ["WIP splits", "Divisiones WIP"],
+  ["WIP family", "familia WIP"],
+  ["No WIP families match these filters.", "Ninguna familia WIP coincide con estos filtros."],
+  ["No packages from this harvest in the selected branches.", "No hay paquetes de esta cosecha en las ramas elegidas."],
+  ["Lab status of active packages", "Estado de laboratorio de los paquetes activos"],
+  ["{n} passed", "{n} aprobados"],
+  ["{n} pending", "{n} pendientes"],
+  ["{n} failed", "{n} fallidos"],
+  ["{n} not submitted", "{n} no enviados"],
+  ["{n} package", "{n} paquete"],
+  ["{n} active", "{n} activos"],
+  ["{n} shipped", "{n} enviados"],
+  ["{qty} {uom} on hand", "{qty} {uom} en existencia"],
+  ["{n} families", "{n} familias"],
+  ["Showing {n} WIP family", "Mostrando {n} familia WIP"],
+  ["Showing {n} WIP families", "Mostrando {n} familias WIP"],
+  ["Sort", "Ordenar"],
+  ["Harvest", "Cosecha"],
+  ["Packaged", "Empacado"],
+  ["Made from", "Hecho de"],
+  ["Lab status", "Estado de laboratorio"],
+  ["Shipment", "Envio"],
+  ["Sent to", "Enviado a"],
+  ["Sale", "Venta"],
+  ["Lab sample", "Muestra de laboratorio"],
+  [
+    "{families} harvests have a WIP package ({active} active WIPs, {inactive} inactive). {traced} of the {total} active BUD, PRE and SHA packages trace back to one of them. {failed} families have active packages that failed lab testing. {shipped} BUD, PRE and SHA packages have shipped for sale.",
+    "{families} cosechas tienen un paquete WIP ({active} WIP activos, {inactive} inactivos). {traced} de los {total} paquetes BUD, PRE y SHA activos vienen de una de ellas. {failed} familias tienen paquetes activos que fallaron en laboratorio. {shipped} paquetes BUD, PRE y SHA se enviaron a la venta.",
+  ],
+  [
+    "Combines the Active, Inactive and Transferred METRC exports mounted in Admin, METRC. A transferred package shows where it went: a shipment to a testing laboratory (a safety compliance license) is a lab sample, everything else a sale. Each card is one harvest: its first WIP package is the root, and every package that shares its source harvest hangs below it. WIP packages made from another WIP sit under WIP splits.",
+    "Combina las exportaciones METRC Activas, Inactivas y Transferidas montadas en Admin, METRC. Un paquete transferido muestra a donde fue: un envio a un laboratorio de pruebas (una licencia de cumplimiento de seguridad) es una muestra de laboratorio, todo lo demas es una venta. Cada tarjeta es una cosecha: su primer paquete WIP es la raiz, y cada paquete que comparte su cosecha de origen cuelga debajo. Los paquetes WIP hechos de otro WIP estan en Divisiones WIP.",
+  ],
+  ["to", "a"],
+];
+// A key the app already had keeps its Spanish (Not submitted stays "No enviada"
+// on the lab pages).
+for (const [en, es] of WL_STRINGS) if (!Object.prototype.hasOwnProperty.call(DICT, en)) DICT[en] = { en, es };
+
+const TT_STRINGS: Array<[string, string]> = [
+  ["AVG Tests/Day", "Promedio de pruebas/dia"],
+  ["AVG COAs/Day", "Promedio de COA/dia"],
+  ["AVG TAT", "Promedio de TAT"],
+  ["tests", "pruebas"],
+  ["intake day", "dia de ingreso"],
+  ["intake days", "dias de ingreso"],
+  ["COAs", "COA"],
+  ["COA day", "dia de COA"],
+  ["COA days", "dias de COA"],
+  ["completed", "completadas"],
+  ["TagLeaf last loaded", "TagLeaf cargo por ultima vez"],
+  ["TagLeaf not loaded", "TagLeaf sin cargar"],
+  ["7 days", "7 dias"],
+  ["14 days", "14 dias"],
+  ["30 days", "30 dias"],
+  ["over", "en"],
+];
+for (const [en, es] of TT_STRINGS) if (!Object.prototype.hasOwnProperty.call(DICT, en)) DICT[en] = { en, es };
 
 /** Look a display string up by its English key; unknown keys render as-is. */
 export function t(locale: Locale, key: string): string {

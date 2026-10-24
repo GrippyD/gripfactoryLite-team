@@ -934,6 +934,26 @@ const ROWS: ReadonlyArray<Omit<DdKpi, "sort">> = [
     workbook_rows: "53,25",
   }),
   K({
+    kpi_key: "bizops.testing_throughput",
+    dept_key: "bizops",
+    wall_keys: "bizops",
+    title_en: "Testing Throughput",
+    title_es: "Rendimiento de pruebas",
+    unit: "ratio",
+    cadence: "daily",
+    dims: "test_type",
+    goal_kind: "none",
+    compute_key:
+      "lab_samples grouped by day: Tests/Day is samples by intake date over intake dates with any sample; COAs/Day is completed samples by the farm day of coa_posted_at over days with any COA; TAT is the average stored tat_days of completed samples whose COA farm day is in the window, one decimal; HTD is the harvest year",
+    source_kind: "connector",
+    stale_after_hours: null,
+    status: "live",
+    def_version: 1,
+    open_question_en: null,
+    open_question_es: null,
+    workbook_rows: null,
+  }),
+  K({
     kpi_key: "harvest.trim_lb_per_dlh",
     dept_key: "bizops",
     wall_keys: "bizops",
@@ -1825,7 +1845,7 @@ function withTaskLast(rows: readonly DdKpi[]): DdKpi[] {
     .sort((a, b) => a.sort - b.sort || a.kpi_key.localeCompare(b.kpi_key));
 }
 
-/** The 78 registry rows. Sorts are 10, 20, ... in registry order, except farmops.task_units_per_dlh, which sorts last. bizops.lbs_shipped, bizops.lab_turnaround_days, harvest.wet_weight_lb, and harvest.pct_complete stay and are inactive. */
+/** The 79 registry rows. Sorts are 10, 20, ... in registry order, except farmops.task_units_per_dlh, which sorts last. bizops.lbs_shipped, bizops.lab_turnaround_days, harvest.wet_weight_lb, and harvest.pct_complete stay and are inactive. */
 export const DD_KPIS: readonly DdKpi[] = withTaskLast(INDEXED);
 
 export function ddKpi(key: string): DdKpi | undefined {
@@ -2254,7 +2274,7 @@ const SEED_0105: Readonly<Record<string, Partial<DdKpi>>> = {
 
 /** 0105's rows: the later Lbs/Labor Hour, % Complete, Plant Weight, Storage Capacity, and Trim Throughput keys are omitted, Lbs shipped, Testing turnaround, Harvest wet weight, and Percent finished (plants) are still active, and the sorts are the original 10, 20, ... so the seed text stays byte for byte. */
 function seedKpiList(): DdKpi[] {
-  return INDEXED.filter((row) => row.kpi_key !== "bizops.lbs_per_dlh" && row.kpi_key !== "bizops.pct_finished_plants" && row.kpi_key !== "bizops.plant_weight" && row.kpi_key !== "bizops.storage_capacity" && row.kpi_key !== "bizops.trim_throughput").map((row, i) => {
+  return INDEXED.filter((row) => row.kpi_key !== "bizops.lbs_per_dlh" && row.kpi_key !== "bizops.pct_finished_plants" && row.kpi_key !== "bizops.plant_weight" && row.kpi_key !== "bizops.storage_capacity" && row.kpi_key !== "bizops.trim_throughput" && row.kpi_key !== "bizops.testing_throughput").map((row, i) => {
     const restored = SEED_0105[row.kpi_key] ? { ...row, ...SEED_0105[row.kpi_key] } : row;
     const base = row.kpi_key === "bizops.lbs_processed" ? { ...restored, ...LBS_PROCESSED_0105 } : restored;
     const seeded = row.kpi_key === "bizops.shipments_count" ? { ...base, wall_keys: "bizops,sales" } : base;

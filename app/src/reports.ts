@@ -39,6 +39,7 @@ export const REPORT_KEYS = [
   "dry_weight_by_strain",
   "environment_history",
   "harvest_reconciliation",
+  "wip_lineage",
 ] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
@@ -375,6 +376,11 @@ export const REPORT_CARDS: Array<{ key: ReportKey; title: string; blurb: string 
     key: "harvest_reconciliation",
     title: "Harvest weight reconciliation",
     blurb: "Wet and dry pounds of each lot at 448 g and at the standard pound, beside the METRC harvest weight.",
+  },
+  {
+    key: "wip_lineage",
+    title: "WIP Lineage",
+    blurb: "Packages from one METRC license, by source harvest: the root WIP, the splits, the lab bar, and what shipped for sale.",
   },
 ];
 

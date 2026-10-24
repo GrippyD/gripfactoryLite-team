@@ -46,6 +46,8 @@ export type MetrcPaneData = {
     releasedPassed?: number;
     releasedFailed?: number;
     landed?: number;
+    /** Inactive or Transferred. Absent on an Active mount, whose line is unchanged. */
+    grid?: string;
   };
 };
 
@@ -126,7 +128,14 @@ function flash(data: MetrcPaneData, locale: Locale): string {
       landedN > 0
         ? ` ${esc(t(locale, "{n} fresh frozen packages landed at the Blast Freezer.").replace("{n}", String(landedN)))}`
         : "";
-    return `<p class="banner ok" data-metrc-flash>${esc(t(locale, "Mounted"))}: ${esc(t(locale, m.kind === "plants" ? "plants" : "packages"))}, ${esc(String(m.added))} ${esc(t(locale, "added"))}, ${esc(String(m.updated))} ${esc(t(locale, "updated"))}, ${esc(String(m.gone))} ${esc(t(locale, "gone"))}.<span data-metrc-closed="${esc(String(closedItems))}" data-metrc-closed-packages="${esc(String(closedPackages))}">${closedNote}</span><span data-metrc-released="${esc(String(m.released ?? 0))}">${releasedNote}</span><span data-metrc-landed="${esc(String(landedN))}">${landedNote}</span></p>`;
+    const gridLabel = m.grid === "inactive" ? "Inactive" : m.grid === "transferred" ? "Transferred" : "";
+    const kindText = t(locale, m.kind === "plants" ? "plants" : "packages");
+    const what = gridLabel ? `${kindText}, ${t(locale, gridLabel)}` : kindText;
+    const transferNote =
+      m.grid === "transferred"
+        ? ` ${esc(t(locale, "transfers new {n}, updated {u}.").replace("{n}", String(m.added)).replace("{u}", String(m.updated)))}`
+        : "";
+    return `<p class="banner ok" data-metrc-flash>${esc(t(locale, "Mounted"))}: ${esc(what)}, ${esc(String(m.added))} ${esc(t(locale, "added"))}, ${esc(String(m.updated))} ${esc(t(locale, "updated"))}, ${esc(String(m.gone))} ${esc(t(locale, "gone"))}.${transferNote}<span data-metrc-closed="${esc(String(closedItems))}" data-metrc-closed-packages="${esc(String(closedPackages))}">${closedNote}</span><span data-metrc-released="${esc(String(m.released ?? 0))}">${releasedNote}</span><span data-metrc-landed="${esc(String(landedN))}">${landedNote}</span></p>`;
   }
   if (data.ok === "field") {
     return `<p class="banner ok" data-metrc-flash>${esc(t(locale, "Field saved."))}</p>`;
@@ -144,7 +153,7 @@ function dropForm(data: MetrcPaneData, locale: Locale): string {
     <p class="muted">${esc(
       t(
         locale,
-        "Drop METRC's Plants (Flowering or Vegetative) or Packages (Active) export for one license, xlsx as METRC gives it or its CSV. The file name carries the license and the grid (MetrcMichigan<license><Plants or Packages><grid>); pick them below only when it does not. The export is the truth of METRC as of the drop: rows update in place and rows the file no longer carries are marked gone."
+        "Drop METRC's Plants (Flowering or Vegetative) or Packages (Active, Inactive or Transferred) export for one license, xlsx as METRC gives it or its CSV. The file name carries the license and the grid. Pick the license and the plants phase below only when the name does not. An Active export updates rows in place and marks rows the file no longer carries as gone. An Inactive or Transferred export never marks a package gone for being absent."
       )
     )}</p>
     <form method="post" action="/inventory/metrc/mount" enctype="multipart/form-data" class="stack" data-metrc-mount-form
@@ -354,17 +363,32 @@ function unfinishedNote(m: MetrcMountRow, locale: Locale): string {
   )}</span>`;
 }
 
+function phaseWord(phase: string): string {
+  if (phase === "flowering") return "Flowering";
+  if (phase === "vegetative") return "Vegetative";
+  if (phase === "inactive") return "Inactive";
+  if (phase === "transferred") return "Transferred";
+  return phase;
+}
+
+function transferNote(m: MetrcMountRow, locale: Locale): string {
+  if (m.phase !== "transferred") return "";
+  return ` <span data-metrc-transfers>${esc(
+    t(locale, "transfers new {n}, updated {u}.").replace("{n}", String(m.rows_added)).replace("{u}", String(m.rows_updated))
+  )}</span>`;
+}
+
 function mountsTable(data: MetrcPaneData, locale: Locale): string {
   if (data.mounts.length === 0) return "";
   const rows = data.mounts
     .map(
       (m) => `<tr data-metrc-mount="${esc(m.id)}">
         <td>${esc(m.created_at)}</td>
-        <td>${esc(t(locale, m.kind === "plants" ? "plants" : "packages"))}${m.phase ? ` / ${esc(t(locale, m.phase === "flowering" ? "Flowering" : m.phase === "vegetative" ? "Vegetative" : m.phase))}` : ""}</td>
+        <td>${esc(t(locale, m.kind === "plants" ? "plants" : "packages"))}${m.phase ? ` / ${esc(t(locale, phaseWord(m.phase)))}` : ""}</td>
         <td><code>${esc(m.license_value)}</code></td>
         <td>${esc(m.filename)} <span class="muted">${esc(m.file_format)}</span></td>
         <td>${esc(formatGramsWhole(m.rows_total))}</td>
-        <td>${esc(String(m.rows_added))} / ${esc(String(m.rows_updated))} / ${esc(String(m.rows_unchanged))} / ${esc(String(m.rows_gone))}${unfinishedNote(m, locale)}</td>
+        <td>${esc(String(m.rows_added))} / ${esc(String(m.rows_updated))} / ${esc(String(m.rows_unchanged))} / ${esc(String(m.rows_gone))}${transferNote(m, locale)}${unfinishedNote(m, locale)}</td>
       </tr>`
     )
     .join("");

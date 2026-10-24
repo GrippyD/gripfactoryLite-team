@@ -10,7 +10,9 @@ import { pendingUploadsPage, stationPage, wetLotPanel, metrcTagInput } from "../
 import { planFinishMint } from "../src/ledger";
 import {
   columnIndex,
+  confirmPackageGrid,
   detectMetrcKind,
+  detectPackageGrid,
   diffMount,
   excelSerialToIso,
   fieldAppliesTo,
@@ -42,7 +44,14 @@ import {
   METRC_PACKAGE_COLUMNS,
   METRC_PLANT_COLUMNS,
   METRC_SLICE_ROWS,
+  inactiveStateOf,
   metrcCrossCheck,
+  mountMetrcExport,
+  mountMetrcRound,
+  shapeInactiveRow,
+  shapeTransferRow,
+  transferTypeOf,
+  transferUom,
 } from "../src/metrc";
 import { metrcPane, mountRowsDone } from "../src/metrcpane";
 import { queueByKey, stationByKey, type QueueDef } from "../src/pipeline";
@@ -208,6 +217,14 @@ describe("THE METRC MIRROR: the file name (canon 0.30.38, fork F2)", () => {
     });
     expect(parseMetrcFilename("C:\\Downloads\\MetrcMichiganGRC002600PlantsFlowering.csv").license).toBe("GR-C-002600");
     expect(parseMetrcFilename("MetrcMichiganAUP000694PackagesActive.xlsx").license).toBe("AU-P-000694");
+    expect(parseMetrcFilename("Metrc-Michigan-AU-P-000694-Packages-Active (18).xlsx")).toEqual({
+      license: "AU-P-000694",
+      kind: "packages",
+      grid: "Active",
+    });
+    expect(parseMetrcFilename("Metrc-Michigan-AU-P-000694-Packages-Inactive.xlsx").grid).toBe("Inactive");
+    expect(parseMetrcFilename("Metrc-Michigan-AU-P-000694-Packages-Transferred.xlsx").grid).toBe("Transferred");
+    expect(parseMetrcFilename("MetrcMichiganAUP000694PackagesInactive_2.csv").grid).toBe("Inactive");
     expect(parseMetrcFilename("Item 2.csv")).toEqual({ license: null, kind: null, grid: null });
     expect(phaseFromGrid("Flowering")).toBe("flowering");
     expect(phaseFromGrid("Vegetative")).toBe("vegetative");
@@ -225,6 +242,7 @@ describe("THE METRC MIRROR: the xlsx reader", () => {
       const grid = await readMetrcGrid(bytes);
       expect(grid.format).toBe("xlsx");
       expect(grid.header).toEqual([...METRC_PLANT_COLUMNS]);
+      // The fixture sheet declares dimension ref="A1" (column A only). Every column still comes back.
       expect(grid.rows).toHaveLength(2);
       expect(grid.rows[0]).toEqual([
         "1A4050000000000000000001",
@@ -278,6 +296,7 @@ describe("THE METRC MIRROR: kinds, shaping and the mount diff", () => {
   it("tells plants from packages by the header, refuses the rest", () => {
     expect(detectMetrcKind([...METRC_PLANT_COLUMNS])).toBe("plants");
     expect(detectMetrcKind([...METRC_PACKAGE_COLUMNS])).toBe("packages");
+    expect(detectPackageGrid([...METRC_PACKAGE_COLUMNS])).toBe("active");
     expect(detectMetrcKind(["Item ID", "SKU", "Stock On Hand"])).toBeNull();
     expect(detectMetrcKind(["Tag", "Weight"])).toBeNull();
   });
@@ -425,6 +444,7 @@ describe("THE SLICED MOUNT (canon 0.30.42): the streaming scan", () => {
     const bytes = new TextEncoder().encode(PACKAGES_CSV);
     const first = await scanMetrcExport(bytes, 0, 1);
     expect(first.kind).toBe("packages");
+    expect(first.packageGrid).toBe("active");
     expect(first.format).toBe("csv");
     expect(first.total).toBe(3);
     expect([...first.seen].sort()).toEqual(["1A4050300000000000000A01", "1A4050300000000000000A02"]);
@@ -1266,3 +1286,311 @@ describe("HF2: the cross-check counts the claimed packages from the ledger join"
     expect(cross.ledger_untagged).toBe(1);
   });
 });
+
+describe("WL1: Inactive and Transferred package exports", () => {
+  const KEEP = "1A4050300000000000000C21";
+  const FIN = "1A4050300000000000000C22";
+  const MOVE = "1A4050300000000000000C23";
+  const DISC = "1A4050300000000000000C24";
+  const FIN2 = "1A4050300000000000000C25";
+  const LAB = "1A4050300000000000000C26";
+  const LAB2 = "1A4050300000000000000C27";
+  const ACTIVE_HEAD = METRC_PACKAGE_COLUMNS.join(",");
+  const INACTIVE_HEAD = [
+    "Tag",
+    "Source Harvest(s)",
+    "Source Package(s)",
+    "Location",
+    "Item",
+    "Category",
+    "Item Strain",
+    "Quantity",
+    "Unit Of Measure",
+    "Lab Test Status",
+    "Finished Goods",
+    "Packaged Date",
+    "Finished",
+    "Discontinued",
+  ].join(",");
+  const TRANSFER_HEAD = [
+    "Destination License",
+    "Destination Facility",
+    "Manifest Number",
+    "Package",
+    "Source Harvest",
+    "Source Package",
+    "Item",
+    "Category",
+    "Item Strain",
+    "Transferred Lab Testing State",
+    "Shipped Quantity",
+    "Received Date",
+  ].join(",");
+
+  function activeLine(tag: string, item: string, qty: string): string {
+    const cells = METRC_PACKAGE_COLUMNS.map(() => "");
+    const set = (name: string, value: string) => {
+      cells[METRC_PACKAGE_COLUMNS.indexOf(name as (typeof METRC_PACKAGE_COLUMNS)[number])] = value;
+    };
+    set("Tag", tag);
+    set("Item", item);
+    set("Category", "Buds");
+    set("Item Strain", "Sample Strain");
+    set("Quantity", qty);
+    set("Unit Of Measure", "g");
+    set("Location", "Barn");
+    set("Lab Test Status", "NotSubmitted");
+    set("Finished Goods", "False");
+    set("Administrative Hold", "False");
+    set("Administrative Recall", "False");
+    set("Packaged Date", "2026-10-01");
+    return cells.join(",");
+  }
+
+  function inactiveLine(tag: string, item: string, qty: string, finished: "True" | "False"): string {
+    return [tag, "", "", "Barn", item, "Buds", "Sample Strain", qty, "g", "NotSubmitted", "False", "2026-10-01", finished, finished === "True" ? "False" : "True"].join(",");
+  }
+
+  function transferLine(tag: string, item: string, dest: string, manifest: string, qty: string, received: string): string {
+    return ["AU-R-000001", dest, manifest, tag, "H-100", "", item, "Buds", "Sample Strain", "TestPassed", qty, received].join(",");
+  }
+
+  function csvFile(name: string, body: string, person: string): FormData {
+    const form = new FormData();
+    form.set("person_id", person);
+    form.set("file", new File([new TextEncoder().encode(body)], name, { type: "text/csv" }));
+    return form;
+  }
+
+  function mountIdOf(redirect: string): string {
+    return new URL(redirect, "http://local").searchParams.get("mount") ?? "";
+  }
+
+  it("reads the three grids from names and headers, and refuses a mismatch", () => {
+    expect(detectPackageGrid(TRANSFER_HEAD.split(","))).toBe("transferred");
+    expect(detectPackageGrid(INACTIVE_HEAD.split(","))).toBe("inactive");
+    expect(detectMetrcKind(TRANSFER_HEAD.split(","))).toBe("packages");
+    expect(confirmPackageGrid("Inactive", INACTIVE_HEAD.split(","))).toBe("inactive");
+    expect(confirmPackageGrid("Transferred", TRANSFER_HEAD.split(","))).toBe("transferred");
+    expect(() => confirmPackageGrid("Active", INACTIVE_HEAD.split(","))).toThrow(/file name says Active but the headers say Inactive/);
+    expect(() => confirmPackageGrid("Transferred", [...METRC_PACKAGE_COLUMNS])).toThrow(/file name says Transferred but the headers say Active/);
+    expect(inactiveStateOf("True")).toBe("Finished");
+    expect(inactiveStateOf("False")).toBe("Discontinued");
+    expect(inactiveStateOf("")).toBe("Discontinued");
+    expect(transferTypeOf("Cedar Laboratory")).toBe("Lab sample");
+    expect(transferTypeOf("Pine Laboratories")).toBe("Lab sample");
+    expect(transferTypeOf("Northwind Store")).toBe("Sale");
+    // THE LAB RULE (owner's pick, 2026-10-24): the license decides, the name is the backup.
+    expect(transferTypeOf("Harbor Testing", "AU-SC-900001")).toBe("Lab sample");
+    expect(transferTypeOf("Harbor Testing", " sc-900002 ")).toBe("Lab sample");
+    expect(transferTypeOf("Cedar Laboratory", "AU-R-900003")).toBe("Lab sample");
+    expect(transferTypeOf("Northwind Store", "AU-R-900003")).toBe("Sale");
+    expect(transferTypeOf("Northwind Store", "AU-P-900004")).toBe("Sale");
+    const harbor = transferLine(LAB, "BUD - Sample Bud - PNN - O", "Harbor Testing", "M-1009", "114", "10/2/2026").replace("AU-R-000001", "AU-SC-900001");
+    expect(shapeTransferRow(metrcIndexer(TRANSFER_HEAD.split(",")), harbor.split(","))).toMatchObject({ transfer_type: "Lab sample", destination_license: "AU-SC-900001" });
+    expect(transferUom("PRE - Sample Roll - PNN - O")).toBe("ea");
+    expect(transferUom("BUD - Sample Bud - PNN - O")).toBe("g");
+    const shaped = shapeTransferRow(metrcIndexer(TRANSFER_HEAD.split(",")), transferLine(LAB, "PRE - Sample Roll - PNN - O", "Cedar Laboratory", "M-1002", "12", "10/2/2026").split(","));
+    expect(shaped).toMatchObject({ tag: LAB, manifest: "M-1002", uom: "ea", transfer_type: "Lab sample", received_date: "2026-10-02" });
+    const inactive = shapeInactiveRow(metrcIndexer(INACTIVE_HEAD.split(",")), inactiveLine(FIN, "BUD - Sample Bud - PNN - O", "200", "True").split(","));
+    expect(inactive).toMatchObject({ tag: FIN, inactive_state: "Finished", expiration_date: null });
+  });
+
+  it("an Active mount still marks the missing packages gone, and its redirect names no grid", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    const bad = `${INACTIVE_HEAD}\n${inactiveLine(KEEP, "BUD - Sample Bud - PNN - O", "100", "True")}\n`;
+    await expect(mountMetrcExport(m.db, csvFile("MetrcMichiganAUP000694PackagesActive_bad.csv", bad, person))).rejects.toThrow(/file name says Active but the headers say Inactive/);
+    expect(m.all(`SELECT tag FROM metrc_packages`)).toEqual([]);
+    const first = `${ACTIVE_HEAD}\n${activeLine(KEEP, "BUD - Sample Bud - PNN - O", "100")}\n${activeLine(FIN, "BUD - Sample Bud - PNN - O", "200")}\n`;
+    const opened = await mountMetrcExport(m.db, csvFile("MetrcMichiganAUP000694PackagesActive_1.csv", first, person));
+    expect(opened.redirect).not.toContain("grid=");
+    expect(opened.redirect).toContain("added=2");
+    expect(opened.redirect).toContain("gone=0");
+    const later = `${ACTIVE_HEAD}\n${activeLine(KEEP, "BUD - Sample Bud - PNN - O", "100")}\n`;
+    const again = await mountMetrcExport(m.db, csvFile("MetrcMichiganAUP000694PackagesActive_2.csv", later, person));
+    expect(again.redirect).toContain("gone=1");
+    expect(m.get(`SELECT gone_at FROM metrc_packages WHERE tag = ?`, KEEP)?.gone_at).toBeNull();
+    expect(m.get(`SELECT gone_at FROM metrc_packages WHERE tag = ?`, FIN)?.gone_at).toBeTruthy();
+  });
+
+  it("Inactive sets Finished or Discontinued and marks nothing else gone", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    const active = `${ACTIVE_HEAD}\n${activeLine(KEEP, "BUD - Sample Bud - PNN - O", "100")}\n${activeLine(FIN, "BUD - Sample Bud - PNN - O", "200")}\n${activeLine(MOVE, "SHA - Sample Shake - PNN - O", "300")}\n`;
+    const activeResult = await mountMetrcExport(m.db, csvFile("Metrc-Michigan-AU-P-000694-Packages-Active (1).csv", active, person));
+    expect(activeResult.redirect).toContain("added=3");
+    expect(activeResult.redirect).not.toContain("grid=");
+    const inactive = `${INACTIVE_HEAD}\n${inactiveLine(FIN, "BUD - Sample Bud - PNN - O", "200", "True")}\n${inactiveLine(DISC, "SHA - Sample Shake - PNN - O", "50", "False")}\n${inactiveLine(FIN2, "BUD - Sample Bud - PNN - O", "60", "True")}\n`;
+    const result = await mountMetrcExport(m.db, csvFile("Metrc-Michigan-AU-P-000694-Packages-Inactive.csv", inactive, person));
+    expect(result.redirect).toContain("grid=inactive");
+    expect(result.redirect).toContain("added=2");
+    expect(result.redirect).toContain("updated=1");
+    expect(result.redirect).toContain("gone=3");
+    expect(m.get(`SELECT inactive_state, gone_at FROM metrc_packages WHERE tag = ?`, FIN)).toMatchObject({ inactive_state: "Finished" });
+    expect(m.get(`SELECT inactive_state FROM metrc_packages WHERE tag = ?`, DISC)?.inactive_state).toBe("Discontinued");
+    expect(m.get(`SELECT inactive_state FROM metrc_packages WHERE tag = ?`, FIN2)?.inactive_state).toBe("Finished");
+    expect(m.get(`SELECT gone_at FROM metrc_packages WHERE tag = ?`, KEEP)?.gone_at).toBeNull();
+    expect(m.get(`SELECT gone_at FROM metrc_packages WHERE tag = ?`, MOVE)?.gone_at).toBeNull();
+    const id = mountIdOf(result.redirect);
+    const fields = m.all(`SELECT field FROM record_change_log WHERE record_table = 'metrc_mounts' AND record_id = ?`, id).map((row) => row.field);
+    expect(fields).toEqual(expect.arrayContaining(["rows_added", "rows_updated", "rows_unchanged", "rows_gone"]));
+    const page = metrcPane(
+      {
+        lines: [],
+        mounts: [
+          {
+            id,
+            kind: "packages",
+            phase: "inactive",
+            license_value: "AU-P-000694",
+            filename: "Metrc-Michigan-AU-P-000694-Packages-Inactive.csv",
+            file_format: "csv",
+            rows_total: 3,
+            rows_added: 2,
+            rows_updated: 1,
+            rows_unchanged: 0,
+            rows_gone: 3,
+            summary: "{}",
+            created_at: "2026-10-23T00:00:00.000Z",
+          },
+        ],
+        cross: emptyCross(),
+        licenses: [],
+        defs: [],
+        ok: "mounted",
+        mounted: { kind: "packages", added: 2, updated: 1, gone: 3, grid: "inactive" },
+      },
+      "en"
+    );
+    expect(page).toContain("packages / Inactive");
+    expect(page).toContain("Mounted: packages, Inactive, 2 added, 1 updated, 3 gone.");
+    expect(page).toContain("never marks a package gone for being absent");
+  });
+
+  it("THE LAB RULE: an AU-SC destination is a Lab sample, and a re-drop moves a row the name rule stored as Sale", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    const harbor = transferLine(LAB, "BUD - Sample Bud - PNN - O", "Harbor Testing", "M-1009", "114", "10/2/2026").replace("AU-R-000001", "AU-SC-900001");
+    const file = `${TRANSFER_HEAD}\n${harbor}\n${transferLine(MOVE, "BUD - Sample Bud - PNN - O", "Northwind Store", "M-1001", "300", "10/1/2026")}\n`;
+    await mountMetrcExport(m.db, csvFile("Metrc-Michigan-AU-P-000694-Packages-Transferred.csv", file, person));
+    expect(m.all(`SELECT manifest, transfer_type FROM metrc_transfers ORDER BY manifest`)).toEqual([
+      { manifest: "M-1001", transfer_type: "Sale" },
+      { manifest: "M-1009", transfer_type: "Lab sample" },
+    ]);
+    // The row as the name rule alone stored it before the owner's pick.
+    m.run(`UPDATE metrc_transfers SET transfer_type = 'Sale' WHERE manifest = 'M-1009'`);
+    const again = await mountMetrcExport(m.db, csvFile("Metrc-Michigan-AU-P-000694-Packages-Transferred_2.csv", file, person));
+    expect(again.redirect).toContain("updated=1");
+    expect(again.redirect).toContain("added=0");
+    expect(m.get(`SELECT transfer_type FROM metrc_transfers WHERE manifest = 'M-1009'`)?.transfer_type).toBe("Lab sample");
+  });
+
+  it("Transferred writes rows by tag and manifest, a second mount writes nothing, and a received date updates one", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    const active = `${ACTIVE_HEAD}\n${activeLine(KEEP, "BUD - Sample Bud - PNN - O", "100")}\n${activeLine(MOVE, "BUD - Sample Bud - PNN - O", "300")}\n`;
+    await mountMetrcExport(m.db, csvFile("MetrcMichiganAUP000694PackagesActive_9.csv", active, person));
+    const file = (received: string) =>
+      `${TRANSFER_HEAD}\n${transferLine(MOVE, "BUD - Sample Bud - PNN - O", "Northwind Store", "M-1001", "300", received)}\n${transferLine(LAB, "PRE - Sample Roll - PNN - O", "Cedar Laboratory", "M-1002", "12", "10/2/2026")}\n${transferLine(LAB2, "SHA - Sample Shake - PNN - O", "Pine Laboratories", "M-1003", "40", "10/3/2026")}\n`;
+    const first = await mountMetrcExport(m.db, csvFile("Metrc-Michigan-AU-P-000694-Packages-Transferred.csv", file("10/1/2026"), person));
+    expect(first.redirect).toContain("grid=transferred");
+    expect(first.redirect).toContain("added=3");
+    expect(first.redirect).toContain("gone=1");
+    const firstId = mountIdOf(first.redirect);
+    expect(m.get(`SELECT gone_at FROM metrc_packages WHERE tag = ?`, KEEP)?.gone_at).toBeNull();
+    expect(m.get(`SELECT gone_at FROM metrc_packages WHERE tag = ?`, MOVE)?.gone_at).toBeTruthy();
+    expect(m.get(`SELECT tag FROM metrc_packages WHERE tag = ?`, LAB)).toBeUndefined();
+    expect(m.all(`SELECT tag, manifest, uom, transfer_type, destination_facility FROM metrc_transfers ORDER BY manifest`)).toEqual([
+      { tag: MOVE, manifest: "M-1001", uom: "g", transfer_type: "Sale", destination_facility: "Northwind Store" },
+      { tag: LAB, manifest: "M-1002", uom: "ea", transfer_type: "Lab sample", destination_facility: "Cedar Laboratory" },
+      { tag: LAB2, manifest: "M-1003", uom: "g", transfer_type: "Lab sample", destination_facility: "Pine Laboratories" },
+    ]);
+    const second = await mountMetrcExport(m.db, csvFile("Metrc-Michigan-AU-P-000694-Packages-Transferred.csv", file("10/1/2026"), person));
+    expect(second.redirect).toContain("added=0");
+    expect(second.redirect).toContain("updated=0");
+    expect(second.redirect).toContain("gone=0");
+    expect(m.get(`SELECT rows_unchanged FROM metrc_mounts WHERE id = ?`, mountIdOf(second.redirect))?.rows_unchanged).toBe(3);
+    expect(m.get(`SELECT mount_id FROM metrc_transfers WHERE tag = ? AND manifest = 'M-1001'`, MOVE)?.mount_id).toBe(firstId);
+    expect(m.all(`SELECT tag, manifest FROM metrc_transfers`).length).toBe(3);
+    const third = await mountMetrcExport(m.db, csvFile("Metrc-Michigan-AU-P-000694-Packages-Transferred_2.csv", file("10/4/2026"), person));
+    expect(third.redirect).toContain("updated=1");
+    expect(third.redirect).toContain("added=0");
+    expect(m.get(`SELECT rows_unchanged, rows_updated FROM metrc_mounts WHERE id = ?`, mountIdOf(third.redirect))).toEqual({ rows_unchanged: 2, rows_updated: 1 });
+    expect(m.get(`SELECT received_date, mount_id FROM metrc_transfers WHERE tag = ? AND manifest = 'M-1001'`, MOVE)).toEqual({
+      received_date: "2026-10-04",
+      mount_id: mountIdOf(third.redirect),
+    });
+    expect(m.get(`SELECT received_date, mount_id FROM metrc_transfers WHERE manifest = 'M-1002'`)?.mount_id).toBe(firstId);
+    const page = metrcPane(
+      {
+        lines: [],
+        mounts: [
+          {
+            id: firstId,
+            kind: "packages",
+            phase: "transferred",
+            license_value: "AU-P-000694",
+            filename: "Metrc-Michigan-AU-P-000694-Packages-Transferred.csv",
+            file_format: "csv",
+            rows_total: 3,
+            rows_added: 3,
+            rows_updated: 0,
+            rows_unchanged: 0,
+            rows_gone: 1,
+            summary: "{}",
+            created_at: "2026-10-23T00:00:00.000Z",
+          },
+        ],
+        cross: emptyCross(),
+        licenses: [],
+        defs: [],
+      },
+      "en"
+    );
+    expect(page).toContain("packages / Transferred");
+    expect(page).toContain("transfers new 3, updated 0.");
+  });
+
+  it("an Inactive mount in rounds marks nothing outside its own rows", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    await mountMetrcExport(m.db, csvFile("MetrcMichiganAUP000694PackagesActive_3.csv", `${ACTIVE_HEAD}\n${activeLine(KEEP, "BUD - Sample Bud - PNN - O", "100")}\n`, person));
+    const tags = Array.from({ length: 101 }, (_, i) => `1A4050300000000000${String(i).padStart(6, "0")}`);
+    const inactive = `${INACTIVE_HEAD}\n${tags.map((tag, i) => inactiveLine(tag, "SHA - Sample Shake - PNN - O", "50", i % 2 === 0 ? "True" : "False")).join("\n")}\n`;
+    const name = "MetrcMichiganAUP000694PackagesInactive_1.csv";
+    const round = (slice: number, id: string) => {
+      const form = csvFile(name, inactive, person);
+      form.set("slice", String(slice));
+      form.set("slice_size", "100");
+      if (id) form.set("mount_id", id);
+      return form;
+    };
+    const first = await mountMetrcRound(m.db, round(0, ""));
+    expect(first.done).toBe(false);
+    expect(first.added).toBe(100);
+    expect(first.gone).toBe(100);
+    const second = await mountMetrcRound(m.db, round(100, first.mount_id));
+    expect(second.done).toBe(true);
+    expect(second.added).toBe(101);
+    expect(second.gone).toBe(101);
+    expect(m.get(`SELECT gone_at FROM metrc_packages WHERE tag = ?`, KEEP)?.gone_at).toBeNull();
+    expect(Number(m.get(`SELECT COUNT(*) AS n FROM metrc_packages WHERE gone_at IS NOT NULL`)?.n)).toBe(101);
+  });
+});
+
+function emptyCross() {
+  return {
+    ledger_tagged: 0,
+    ledger_in_metrc: 0,
+    ledger_gone_in_metrc: 0,
+    ledger_unknown_to_metrc: 0,
+    ledger_untagged: 0,
+    metrc_active: 0,
+    metrc_unclaimed: 0,
+    zoho_tagged: 0,
+    zoho_in_metrc: 0,
+    zoho_not_in_metrc: 0,
+    samples: { ledger_unknown: [] as string[], zoho_not_in_metrc: [] as string[] },
+  };
+}
