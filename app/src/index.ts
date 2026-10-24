@@ -353,7 +353,6 @@ import {
   listLotTrimPackages,
   listLotWeights,
   listPaneRows,
-  listPrepackPanes,
   listScheduleAvailable,
   listScheduleComplete,
   listScheduleWorking,
@@ -501,6 +500,14 @@ import { wipLineagePage } from "./wiplineage";
 import { DRY_STRAIN_FARMS, DRY_STRAIN_GROW_METHODS, dryStrainNames, dryStrainRefused, dryStrainView, listDryStrainLots, resolveDryStrainRange } from "./drystrain";
 import { HARVEST_RECONCILE_KEY, loadHarvestReconciliation } from "./harvestreconciliation";
 import { deleteFieldEstimate, fieldEstimatesPage, loadFieldEstimatesPage, saveFieldEstimate } from "./fieldestimates";
+import {
+  PREPACK_TARGETS_PATH,
+  deletePrepackTarget,
+  loadPrepackSurface,
+  loadPrepackTargetsPage,
+  prepackTargetsPage,
+  savePrepackTarget,
+} from "./prepackplan";
 import { ENVIRONMENT_HISTORY_KEY, loadEnvironmentHistory, rollupSensorHours } from "./sensorhistory";
 import {
   PIPELINE,
@@ -3004,8 +3011,13 @@ app.get(`${PRODUCTION_SCHEDULING_PATH}/:stage`, async (c) => {
   const s = await shell(c);
   // THE SCHEDULER BY PACKAGE (canon 0.30.196): the Prepack page lists packages, filtered by ?q=.
   if (stage === SCHEDULE_STAGES.prepack) {
-    const [panes, adopt] = await Promise.all([listPrepackPanes(c.env.DB), listMetrcAdoptions(c.env.DB)]);
-    return html(c, s, SCHEDULE_STAGE_TITLES[stage], prepackSchedulingPage(panes, adopt, s.locale, c.req.query("q") ?? ""));
+    const [surface, adopt] = await Promise.all([loadPrepackSurface(c.env.DB, nowIso()), listMetrcAdoptions(c.env.DB)]);
+    return html(
+      c,
+      s,
+      SCHEDULE_STAGE_TITLES[stage],
+      prepackSchedulingPage(surface.panes, adopt, s.locale, c.req.query("q") ?? "", surface.plan)
+    );
   }
   const [available, working, complete, terpRecipes] = await Promise.all([
     listScheduleAvailable(c.env.DB, stage),
@@ -3794,6 +3806,21 @@ app.post("/admin/field_estimates", async (c) => {
 });
 app.post("/admin/field_estimates/:id/delete", async (c) => {
   const result = await deleteFieldEstimate(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+
+// PC1: prepack targets, pounds at 448 g. The PIN on /admin/* already fronts these routes.
+app.get(PREPACK_TARGETS_PATH, async (c) => {
+  const s = await shell(c);
+  const page = await loadPrepackTargetsPage(c.env.DB, nowIso());
+  return html(c, s, "Prepack targets", prepackTargetsPage(page, s.locale));
+});
+app.post(PREPACK_TARGETS_PATH, async (c) => {
+  const result = await savePrepackTarget(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
+});
+app.post(`${PREPACK_TARGETS_PATH}/:id/delete`, async (c) => {
+  const result = await deletePrepackTarget(c.env.DB, c.req.param("id"), actorForm(c, await c.req.formData()));
   return c.redirect(result.redirect, 303);
 });
 

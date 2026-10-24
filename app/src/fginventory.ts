@@ -542,7 +542,8 @@ function foldedOf(prefix: string, settings: FgSettings): FgFold | undefined {
   return settings.folds.find((row) => row.prefix === prefix);
 }
 
-function prepackEach(prefix: string, stored: number | null, settings: FgSettings): number {
+/** Bags to grams. A stored each wins. MOB's fold is 70 g. A PRE with none reads fg_pre_each_grams. */
+export function prepackEach(prefix: string, stored: number | null, settings: FgSettings): number {
   if (stored != null && stored > 0) return stored;
   const folded = foldedOf(prefix, settings);
   if (folded?.eachGrams != null && folded.eachGrams > 0) return folded.eachGrams;

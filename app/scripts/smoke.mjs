@@ -599,8 +599,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 119 migration(s)")) {
-      throw new Error(`from-zero apply must say 119 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 120 migration(s)")) {
+      throw new Error(`from-zero apply must say 120 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -8103,6 +8103,13 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
       "a prepack row must read the whole tag, the strain and grams, the HBN and the location on their own lines"
     );
     assert(!availPre.body.includes("schedule-identity") && !/000A01 \/ Fruity Pebbles/.test(availPre.body), "the one-line identity must be gone from the prepack page");
+    const planAt = availPre.body.indexOf('data-fold="prepack-plan"');
+    const panesAt = availPre.body.indexOf('data-schedule-pane="available"');
+    assert(planAt >= 0 && planAt < panesAt && availPre.body.includes("<h2>Plan</h2>"), "the Plan fold must sit above the prepack panes");
+    assert(availPre.body.slice(planAt, panesAt).includes('class="report-scroll"') && availPre.body.includes("data-prepack-plan"), "the plan table must sit in a scroll box");
+    assert(availPre.body.includes('href="/admin/prepack-targets"'), "the plan must link to targets");
+    assert(availPre.body.includes("Orders as of") && !availPre.body.includes("No sales orders mounted yet"), "a mounted book must stamp the plan");
+    assert(availPre.body.includes('data-plan-key="fruity pebbles"'), "the ready strain must be a plan row");
     // THE SCHEDULER BY PACKAGE (canon 0.30.196): packages on the panes with >>
     // each; the filter narrows by last six or HBN and rides ?q=; >> on one
     // package leaves its HBN sibling Available; << returns it.
@@ -8160,7 +8167,18 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     const hbnWide = await req("/production/scheduling/prepack/schedule", { method: "POST", body: form({ hbn_id: batchId }) });
     assert(hbnWide.status === 400, `an HBN-wide post on prepack expected 400 got ${hbnWide.status}`);
     await hbnWide.text();
+    if (!jar.get("gf_pin")) jar.set("gf_pin", ADMIN_PIN);
+    const savedPlanPin = jar.get("gf_pin");
+    jar.delete("gf_pin");
+    const lockedTargets = await text("/admin/prepack-targets");
+    assert(lockedTargets.res.status === 401 && lockedTargets.body.includes("Enter PIN"), "prepack targets must sit behind the PIN");
+    jar.set("gf_pin", savedPlanPin);
+    const targetSet = await req("/admin/prepack-targets", { method: "POST", body: form({ strain: "Ribbon Citrus", pounds: "2.50", reason: "smoke plan" }) });
+    assert(targetSet.status === 303, `setting a prepack target expected 303 got ${targetSet.status} ${await targetSet.text()}`);
     const workPre = await text("/production/scheduling/prepack");
+    const ribbonAt = workPre.body.indexOf('data-plan-key="ribbon citrus"');
+    const ribbon = ribbonAt < 0 ? "" : workPre.body.slice(ribbonAt, workPre.body.indexOf("</tr>", ribbonAt));
+    assert(ribbon.includes('data-plan-target') && ribbon.includes('data-grams="1120"') && ribbon.includes("2.50"), "the plan must show the 2.50 lb target as 1,120 g");
     const jobOf = (six) => jobIn(workPre.body, six);
     const jobA = jobOf("000A01");
     const jobB = jobOf("000A02");

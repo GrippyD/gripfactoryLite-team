@@ -5374,6 +5374,31 @@ const TT_STRINGS: Array<[string, string]> = [
 ];
 for (const [en, es] of TT_STRINGS) if (!Object.prototype.hasOwnProperty.call(DICT, en)) DICT[en] = { en, es };
 
+const PC_STRINGS: Array<[string, string]> = [
+  ["Plan", "Plan"],
+  ["On hand", "En existencia"],
+  ["Free", "Libre"],
+  ["Need", "Necesidad"],
+  ["Pace", "Ritmo"],
+  ["Months", "Meses"],
+  ["Totals", "Totales"],
+  ["Pounds", "Libras"],
+  ["Add a strain", "Agregar una variedad"],
+  ["Prepack targets", "Metas de preempaque"],
+  ["Zoho stock as of {time}", "Existencias de Zoho al {time}"],
+  ["Orders as of {time}", "Pedidos al {time}"],
+  ["No sales orders mounted yet", "Aún no hay pedidos de venta montados"],
+  ["Name a strain.", "Nombra una variedad."],
+  ["Target must be pounds, zero or more, with at most two decimals.", "La meta son libras, cero o más, con dos decimales como máximo."],
+  ["That target is not on the list.", "Esa meta no está en la lista."],
+  ["The target for this strain, in pounds. One pound is 448 g.", "La meta de esta variedad, en libras. Una libra es 448 g."],
+  ["A strain the plan does not list yet.", "Una variedad que el plan aún no lista."],
+  ["per month", "por mes"],
+  ["No strains on the plan.", "No hay variedades en el plan."],
+  ["Optional note", "Nota opcional"],
+];
+for (const [en, es] of PC_STRINGS) if (!Object.prototype.hasOwnProperty.call(DICT, en)) DICT[en] = { en, es };
+
 /** Look a display string up by its English key; unknown keys render as-is. */
 export function t(locale: Locale, key: string): string {
   // Own keys only: a stored word or a code from a query string that names a

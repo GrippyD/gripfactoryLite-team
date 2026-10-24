@@ -474,6 +474,8 @@ body.device-phone .station-triple.field-triple > *, body.device-phone .station-t
 .report-scroll > table.data { width: max-content; min-width: 100%; }
 .report-scroll > table.data th, .report-scroll > table.data td { white-space: nowrap; }
 body.device-phone .report-scroll > table.data { display: table; overflow: visible; white-space: nowrap; }
+.plan-short { color: var(--warn, var(--alert, #a15c07)); font-weight: 700; }
+.plan-badge { font-weight: 700; }
 /* DD S1: the Director Dashboard home cards and the department walls. Colors
    through the chrome's token chains only (the accent per view); no fixed
    widths, so 820 has no sideways scroll; a phone stacks cards and tiles in

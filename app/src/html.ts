@@ -2063,6 +2063,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     members: [
       { href: "/admin/lookups", kind: "Admin", title: "Lookups" },
       { href: "/admin/field_estimates", kind: "Admin", title: "Field estimates" },
+      { href: "/admin/prepack-targets", kind: "Admin", title: "Prepack targets" },
       { href: "/admin/lab-samples", kind: "Admin", title: "Lab Samples" },
       { href: "/log", kind: "Admin", title: "Change log" },
       { href: "/admin/manual-hbn", kind: "Fallback", title: "Manual HBN" },
