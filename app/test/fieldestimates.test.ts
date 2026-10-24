@@ -283,7 +283,7 @@ describe("FE1 field estimates", () => {
   });
 
   it("gates the page, defaults the date to the farm's today, and does not add a report", async () => {
-    expect(REPORT_KEYS).toHaveLength(16);
+    expect(REPORT_KEYS).toHaveLength(17);
     expect(isReportKey("field_estimates")).toBe(false);
     expect(REPORT_KEYS).not.toContain("field_estimates");
 

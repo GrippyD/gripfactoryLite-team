@@ -599,8 +599,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 115 migration(s)")) {
-      throw new Error(`from-zero apply must say 115 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 117 migration(s)")) {
+      throw new Error(`from-zero apply must say 117 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -7092,6 +7092,59 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     const fgFfz = await text("/inventory");
     assert(fgFfz.body.includes('data-fg-type="FFZ" data-fg-uom="g"'), "the FG pane must carry the FFZ kind now");
 
+    // WL1: the same drop takes Inactive and Transferred. Three invented rows
+    // each, on a license that holds no packages yet, so the Active mount's
+    // gone sweep has nothing else to mark. Inactive and Transferred must not
+    // mark a package gone for being absent.
+    const WL_KEEP = "1A4050300000000000000C21";
+    const WL_FIN = "1A4050300000000000000C22";
+    const WL_MOVE = "1A4050300000000000000C23";
+    const WL_DISC = "1A4050300000000000000C24";
+    const WL_FIN2 = "1A4050300000000000000C25";
+    const WL_LAB = "1A4050300000000000000C26";
+    const WL_LAB2 = "1A4050300000000000000C27";
+    const wlActiveHead = "Tag,Source Harvest(s),Source Package(s),Original Source Package Label,Source Processing Job(s),Location,Sublocation,Item,Category,Item Strain,Quantity,Unit Of Measure,Production Batch Number,Source Production Batch,Lab Test Status,Finished Goods,Administrative Hold,Administrative Recall,Packaged Date,Received,Expiration Date,Lab Test Expiration";
+    const wlActiveLine = (tag, item, qty) => `${tag},,,,,Barn,,${item},Buds,Sample Strain,${qty},g,,,NotSubmitted,False,False,False,2026-10-01,,,`;
+    const wlActiveCsv = `${wlActiveHead}\r\n${wlActiveLine(WL_KEEP, "BUD - Sample Bud - PNN - O", "100")}\r\n${wlActiveLine(WL_FIN, "BUD - Sample Bud - PNN - O", "200")}\r\n${wlActiveLine(WL_MOVE, "SHA - Sample Shake - PNN - O", "300")}\r\n`;
+    const wlActiveForm = new FormData();
+    wlActiveForm.append("file", new File([new TextEncoder().encode(wlActiveCsv)], "Metrc-Michigan-GR-C-001132-Packages-Active (1).csv", { type: "text/csv" }));
+    const wlActiveRes = await req("/inventory/metrc/mount", { method: "POST", body: wlActiveForm });
+    const wlActiveLoc = wlActiveRes.headers.get("location") || "";
+    assert(wlActiveRes.status === 303 && wlActiveLoc.includes("added=3") && wlActiveLoc.includes("gone=0") && !wlActiveLoc.includes("grid="), `WL1 active mount must add 3 and name no grid, got ${wlActiveRes.status} ${wlActiveLoc}`);
+    const wlInactiveHead = "Tag,Location,Item,Category,Item Strain,Quantity,Unit Of Measure,Lab Test Status,Finished Goods,Packaged Date,Finished,Discontinued";
+    const wlInactiveLine = (tag, item, qty, finished) => `${tag},Barn,${item},Buds,Sample Strain,${qty},g,NotSubmitted,False,2026-10-01,${finished},${finished === "True" ? "False" : "True"}`;
+    const wlInactiveCsv = `${wlInactiveHead}\r\n${wlInactiveLine(WL_FIN, "BUD - Sample Bud - PNN - O", "200", "True")}\r\n${wlInactiveLine(WL_DISC, "SHA - Sample Shake - PNN - O", "50", "False")}\r\n${wlInactiveLine(WL_FIN2, "BUD - Sample Bud - PNN - O", "60", "True")}\r\n`;
+    const wlInactiveForm = new FormData();
+    wlInactiveForm.append("file", new File([new TextEncoder().encode(wlInactiveCsv)], "Metrc-Michigan-GR-C-001132-Packages-Inactive.csv", { type: "text/csv" }));
+    const wlInactiveRes = await req("/inventory/metrc/mount", { method: "POST", body: wlInactiveForm });
+    const wlInactiveLoc = wlInactiveRes.headers.get("location") || "";
+    assert(wlInactiveRes.status === 303 && wlInactiveLoc.includes("grid=inactive") && wlInactiveLoc.includes("added=2") && wlInactiveLoc.includes("updated=1") && wlInactiveLoc.includes("gone=3"), `WL1 inactive mount must add 2, update 1, mark 3 gone, got ${wlInactiveRes.status} ${wlInactiveLoc}`);
+    const wlInactivePage = await text(wlInactiveLoc);
+    assert(wlInactivePage.body.includes("packages / Inactive"), "the inactive mount line must name its grid");
+    assert(wlInactivePage.body.includes("Mounted: packages, Inactive, 2 added, 1 updated, 3 gone."), "the inactive flash must name the grid and the counts");
+    const wlTransferHead = "Destination License,Destination Facility,Manifest Number,Package,Item,Category,Item Strain,Transferred Lab Testing State,Shipped Quantity,Received Date";
+    const wlTransferLine = (tag, item, dest, manifest, qty, received) => `AU-R-000001,${dest},${manifest},${tag},${item},Buds,Sample Strain,TestPassed,${qty},${received}`;
+    const wlTransferCsv = `${wlTransferHead}\r\n${wlTransferLine(WL_MOVE, "BUD - Sample Bud - PNN - O", "Northwind Store", "M-1001", "300", "10/1/2026")}\r\n${wlTransferLine(WL_LAB, "PRE - Sample Roll - PNN - O", "Cedar Laboratory", "M-1002", "12", "10/2/2026")}\r\n${wlTransferLine(WL_LAB2, "SHA - Sample Shake - PNN - O", "Pine Laboratories", "M-1003", "40", "10/3/2026")}\r\n`;
+    const wlTransferForm = new FormData();
+    wlTransferForm.append("file", new File([new TextEncoder().encode(wlTransferCsv)], "Metrc-Michigan-GR-C-001132-Packages-Transferred.csv", { type: "text/csv" }));
+    const wlTransferRes = await req("/inventory/metrc/mount", { method: "POST", body: wlTransferForm });
+    const wlTransferLoc = wlTransferRes.headers.get("location") || "";
+    assert(wlTransferRes.status === 303 && wlTransferLoc.includes("grid=transferred") && wlTransferLoc.includes("added=3") && wlTransferLoc.includes("gone=1"), `WL1 transferred mount must add 3 transfers and mark 1 package gone, got ${wlTransferRes.status} ${wlTransferLoc}`);
+    const wlTransferPage = await text(wlTransferLoc);
+    assert(wlTransferPage.body.includes("packages / Transferred"), "the transferred mount line must name its grid");
+    assert(wlTransferPage.body.includes("transfers new 3, updated 0."), "the transferred mount line must name the transfers new and updated");
+    const wlLive = localD1All(`SELECT tag FROM metrc_packages WHERE tag IN ('${WL_KEEP}','${TRUCK_TAG}','${FFZ_TAG}') AND gone_at IS NOT NULL`);
+    assert(wlLive.length === 0, `Inactive and Transferred must not mark packages gone for being absent, got ${JSON.stringify(wlLive)}`);
+    const wlNamed = localD1All(`SELECT tag, inactive_state, CASE WHEN gone_at IS NULL THEN 0 ELSE 1 END AS gone FROM metrc_packages WHERE tag IN ('${WL_FIN}','${WL_MOVE}','${WL_DISC}','${WL_FIN2}') ORDER BY tag`);
+    assert(JSON.stringify(wlNamed) === JSON.stringify([
+      { tag: WL_FIN, inactive_state: "Finished", gone: 1 },
+      { tag: WL_MOVE, inactive_state: null, gone: 1 },
+      { tag: WL_DISC, inactive_state: "Discontinued", gone: 1 },
+      { tag: WL_FIN2, inactive_state: "Finished", gone: 1 },
+    ]), `the named inactive and transferred packages must be gone, got ${JSON.stringify(wlNamed)}`);
+    const wlXfer = localD1All(`SELECT manifest, uom, transfer_type FROM metrc_transfers ORDER BY manifest`);
+    assert(wlXfer.length === 3 && wlXfer[0].transfer_type === "Sale" && wlXfer[0].uom === "g" && wlXfer[1].transfer_type === "Lab sample" && wlXfer[1].uom === "ea" && wlXfer[2].transfer_type === "Lab sample", `transfers must key the three manifests, got ${JSON.stringify(wlXfer)}`);
+
     // THE CHANGE LOCATION SETUP (canon 0.30.40): the seeds in Admin, a
     // package moved within its license, the plants at a row moved as one act,
     // the files pending on the export home and marked, the refusals in words.
@@ -11461,6 +11514,66 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
         !maintBiz.body.includes("data-dd-wall-tabs"),
       `maintenance tab expected the four sections, a listed asset, and the farmops head only, got project ${maintProject.status} sale ${saleSave.status} logs ${saleLogs} tab ${maint.res.status}`
     );
+
+    // WL2: WIP Lineage under Reports, on invented mounts. This is the last check,
+    // so the Active mount may mark other packages on this license gone.
+    const reportsHome = await text("/reports");
+    assert(reportsHome.body.includes('data-report-key="wip_lineage"') && reportsHome.body.includes("WIP Lineage"), "Reports must list WIP Lineage");
+    const linHead = "Tag,Source Harvest(s),Source Package(s),Item,Category,Item Strain,Quantity,Unit Of Measure,Location,Lab Test Status,Packaged Date";
+    const linActive = `${linHead}\r\nWL1A4050300000000000000D01,H-SAMPLE-1,,WIP - Sample Strain - PNN - I,Buds,Sample Strain,4480,g,Barn,NotSubmitted,2026-09-01\r\nWL1A4050300000000000000D02,H-SAMPLE-1,WL1A4050300000000000000D01,BUD - Sample Strain - PNN - O,Buds,Sample Strain,896,g,Barn,TestPassed,2026-10-01\r\nWL1A4050300000000000000D03,H-SAMPLE-1,WL1A4050300000000000000D01,PRE - Sample Roll - PNN - O,Buds,Sample Strain,10,ea,Barn,TestPassed,2026-10-02\r\n`;
+    const linActiveForm = new FormData();
+    linActiveForm.append("file", new File([new TextEncoder().encode(linActive)], "MetrcMichiganAUP000694PackagesActive_wl2.csv", { type: "text/csv" }));
+    const linActiveMount = await req("/inventory/metrc/mount", { method: "POST", body: linActiveForm });
+    assert(linActiveMount.status === 303, `lineage active mount expected 303 got ${linActiveMount.status}`);
+    const linInactive = `Tag,Item,Category,Item Strain,Quantity,Unit Of Measure,Location,Lab Test Status,Packaged Date,Finished,Discontinued\r\nWL1A4050300000000000000D04,SHA - Sample Strain - PNN - O,Buds,Sample Strain,100,g,Barn,TestPassed,2026-08-01,True,False\r\n`;
+    const linInactiveForm = new FormData();
+    linInactiveForm.append("file", new File([new TextEncoder().encode(linInactive)], "MetrcMichiganAUP000694PackagesInactive_wl2.csv", { type: "text/csv" }));
+    const linInactiveMount = await req("/inventory/metrc/mount", { method: "POST", body: linInactiveForm });
+    assert(linInactiveMount.status === 303, `lineage inactive mount expected 303 got ${linInactiveMount.status}`);
+    // THE LAB RULE (owner's pick, 2026-10-24): the AU-SC row is a lab sample though its name holds no "laboratory".
+    const linTransfer = `Package,Item,Destination Facility,Destination License,Manifest Number,Shipped Quantity,Transferred Lab Testing State,Received Date,Source Harvest,Source Package\r\nWL1A4050300000000000000D03,PRE - Sample Roll - PNN - O,Northwind Store,AU-R-000001,M-2001,10,TestPassed,2026-10-03,H-SAMPLE-1,WL1A4050300000000000000D01\r\nWL1A4050300000000000000D05,BUD - Sample Strain - PNN - O,Harbor Testing,AU-SC-900001,M-2002,114,SubmittedForTesting,2026-10-04,H-SAMPLE-1,WL1A4050300000000000000D01\r\n`;
+    const linTransferForm = new FormData();
+    linTransferForm.append("file", new File([new TextEncoder().encode(linTransfer)], "MetrcMichiganAUP000694PackagesTransferred_wl2.csv", { type: "text/csv" }));
+    const linTransferMount = await req("/inventory/metrc/mount", { method: "POST", body: linTransferForm });
+    assert(linTransferMount.status === 303, `lineage transfer mount expected 303 got ${linTransferMount.status}`);
+    const lineage = await text("/reports/wip_lineage");
+    assert(lineage.res.status === 200, `WIP Lineage expected 200 got ${lineage.res.status}`);
+    assert(lineage.body.includes("data-wl-asof") && lineage.body.includes("Active ") && lineage.body.includes("Inactive ") && lineage.body.includes("Transferred "), "the page must print data as of for each grid");
+    assert(lineage.body.includes("H-SAMPLE-1") && lineage.body.includes("WL1A4050300000000000000D01") && lineage.body.includes("Northwind Store") && lineage.body.includes("M-2001"), "the family, the root, and the sale must render");
+    assert(lineage.body.includes("wl-trio"), "BUD, PRE and SHA tiles sit side by side");
+    assert(lineage.body.includes("data-wl-takeaway") && lineage.body.includes('data-wl-take="inactive"') && lineage.body.includes('data-wl-take="traced"'), "the takeaway must carry the inactive WIPs and the traced count");
+    assert(lineage.body.includes('<span class="wl-ship-tag is-lab">Lab sample</span>') && lineage.body.includes("Harbor Testing") && lineage.body.includes("<th>Made from</th>"), "the AU-SC shipment must read as a lab sample in the branch table");
+
+    // S3g: three invented lab rows on the feed, then Testing Throughput beside BTR.
+    const ttFeed = await req("/feeds/lab-samples.json", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        rows: [
+          { "Lab Code": "TT-SMOKE-001", "Intake Date": "2026-10-20", Status: "Completed", "Test Type": "First-time", Result: "Pass", "COA Posted (ET)": "2026-10-22 10:00", "TAT (days)": 2, Strain: "Sample Alpha", Farm: "PNS" },
+          { "Lab Code": "TT-SMOKE-002", "Intake Date": "2026-10-21", Status: "Completed", "Test Type": "Retest", Result: "Pass", "COA Posted (ET)": "2026-10-22 15:00", "TAT (days)": 1, Strain: "Sample Beta", Farm: "PNN" },
+          { "Lab Code": "TT-SMOKE-003", "Intake Date": "2026-10-22", Status: "In Process", "Test Type": "Internal QA", Strain: "Sample Gamma", Farm: "ARL" },
+        ],
+      }),
+    });
+    const ttFeedBody = await ttFeed.json();
+    assert(ttFeed.status === 200 && ttFeedBody.inserted === 3, `testing throughput feed expected 3 inserted, got ${ttFeed.status} ${JSON.stringify(ttFeedBody)}`);
+    const bizops = await text("/admin/director/bizops");
+    assert(
+      bizops.res.status === 200 &&
+        bizops.body.includes('data-dd-kpi="harvest.btr_pct"') &&
+        bizops.body.includes('data-dd-kpi="bizops.testing_throughput"') &&
+        bizops.body.includes("AVG Tests/Day") &&
+        bizops.body.includes("AVG COAs/Day") &&
+        bizops.body.includes("AVG TAT") &&
+        bizops.body.includes("data-dd-test-box=\"tests\"") &&
+        bizops.body.includes("data-dd-test-box=\"coas\"") &&
+        bizops.body.includes("data-dd-test-box=\"tat\"") &&
+        bizops.body.includes("data-dd-test-split=") &&
+        bizops.body.includes('querySelector("p[data-dd-test-detail]")'),
+      `bizops must show BTR and Testing Throughput, got ${bizops.res.status} ${bizops.body.slice(0, 400)}`
+    );
+
     process.stdout.write("SMOKE PASS\n");
   } finally {
     await stopWrangler(child);

@@ -56,6 +56,8 @@ import { dayOffset, etWallClock, isCalendarDate, isoWeekOf, periodLabel, periodS
 import { emptyPlantWeight, PLANT_WEIGHT_KPI, plantWeightBody, plantWeightFromResults, plantWeightStatements, type PlantWeightModel } from "./plantweight";
 import { emptyStorage, loadStorageModel, STORAGE_CAPACITY_KPI, storageBody, storageCapacityStatements, type StorageModel } from "./storagecapacity";
 import { emptyTrim, TRIM_THROUGHPUT_KPI, trimModelFromRows, trimSeriesStatement, trimThroughputBody, type TrimThroughputModel } from "./trimthroughput";
+import { LAB_SAMPLES_LAST_LOAD_KEY } from "./labsamples";
+import { TESTING_THROUGHPUT_KPI, testingCoaStatement, testingIntakeStatement, testingModelFromRows, testingThroughputBody, type TestingModel } from "./testingthroughput";
 import {
   emptySiloUtilization,
   SILO_UTILIZATION_KPI,
@@ -265,6 +267,8 @@ export type DirectorTile = {
   storage: StorageModel | null;
   /** The stored trim pounds and hours, on that one tile. Null on every other tile. */
   trim: TrimThroughputModel | null;
+  /** Testing Throughput from lab_samples, on that one tile. Null on every other tile. */
+  testing: TestingModel | null;
   /** The stored silo counts and the live loads, on that one tile. Null on every other tile. */
   silo: SiloUtilizationModel | null;
   /** The live harvest plan, on that one tile. Null on every other tile. */
@@ -567,7 +571,7 @@ function buildTile(
   }
   const snapshot = values.get(`${kpi.kpi_key}|${periodKind}|${periodStart}`) ?? null;
   const inSeason = ddInSeason(kpi, model.farmToday);
-  return { kpi, periodKind, periodStart, inSeason, status: ddTileStatus(kpi, snapshot, inSeason, model.nowIso), snapshot, history, companions: [], harvest, dlh: null, dlhGoal: null, pct: null, plant: null, storage: null, trim: null, silo: null, plan: null, labor: null, seasons: null, forSale: null };
+  return { kpi, periodKind, periodStart, inSeason, status: ddTileStatus(kpi, snapshot, inSeason, model.nowIso), snapshot, history, companions: [], harvest, dlh: null, dlhGoal: null, pct: null, plant: null, storage: null, trim: null, testing: null, silo: null, plan: null, labor: null, seasons: null, forSale: null };
 }
 
 /** A wall: one batch (registry, the wall's live rows over the widest history window, config); tiles grouped by
@@ -609,6 +613,13 @@ export async function loadDirectorWall(
   const withTrim = (dept === "bizops" || dept === "farmops") && Number.isInteger(trimYear) && trimYear > 0;
   const trimAt = reads.length;
   if (withTrim) reads.push(trimSeriesStatement(db, `${trimYear}-01-01`, `${trimYear}-12-31`));
+  const withTesting = dept === "bizops" && Number.isInteger(trimYear) && trimYear > 0;
+  const testingAt = reads.length;
+  if (withTesting) {
+    reads.push(testingIntakeStatement(db, `${trimYear}-01-01`, `${trimYear}-12-31`));
+    reads.push(testingCoaStatement(db, `${trimYear - 1}-12-31T00:00:00.000Z`, `${trimYear + 1}-01-02T00:00:00.000Z`));
+    reads.push(db.prepare(`SELECT value FROM app_config WHERE key = ? AND deleted_at IS NULL`).bind(LAB_SAMPLES_LAST_LOAD_KEY));
+  }
   const withSilo = dept === "farmops" && Number.isInteger(trimYear) && trimYear > 0;
   const siloAt = reads.length;
   if (withSilo) {
@@ -677,6 +688,17 @@ export async function loadDirectorWall(
   if (storageTile) storageTile.storage = withPlants ? await loadStorageModel(db, results.slice(12), nowIso) : emptyStorage(nowIso);
   const trimTile = tiles.get(TRIM_THROUGHPUT_KPI);
   if (trimTile) trimTile.trim = withTrim ? trimModelFromRows(resultsOf(results[trimAt]), farmToday) : emptyTrim(farmToday);
+  const testTile = tiles.get(TESTING_THROUGHPUT_KPI);
+  if (testTile && withTesting) {
+    const lastRow = resultsOf(results[testingAt + 2])[0];
+    testTile.testing = testingModelFromRows(
+      resultsOf(results[testingAt]) as Array<{ day: string; test_type: string; n: number }>,
+      resultsOf(results[testingAt + 1]) as Array<{ hour: string; test_type: string; n: number; tat_sum: number; tat_n: number }>,
+      lastRow ? String(lastRow.value ?? "") : null,
+      farmToday,
+      nowIso
+    );
+  }
   const siloTile = tiles.get(SILO_UTILIZATION_KPI);
   if (siloTile) {
     siloTile.silo = withSilo ? siloModelFromResults(results[siloAt], results[siloAt + 1], results[siloAt + 2], farmToday) : emptySiloUtilization(farmToday);
@@ -856,13 +878,14 @@ function tileHtml(tile: DirectorTile, group: DirectorWallGroup, locale: Locale, 
   const plant = tile.plant ? plantWeightBody(tile.plant, locale) : "";
   const storage = tile.storage ? storageBody(tile.storage, locale) : "";
   const trim = tile.trim ? trimThroughputBody(tile.trim, locale) : "";
+  const testing = tile.testing ? testingThroughputBody(tile.testing, locale) : "";
   const silo = tile.silo ? siloUtilizationBody(tile.silo, locale) : "";
   const plan = tile.plan ? harvestScheduleBody(tile.plan, locale) : "";
   const labor = tile.labor ? laborTasksBody(tile.labor, locale) : "";
   const seasons = tile.seasons ? yieldSeasonsBody(tile.seasons, locale) : "";
   const forSale = tile.forSale != null ? forSaleBody(tile.forSale, locale) : "";
   const taskEmpty = tile.kpi.kpi_key === "farmops.task_units_per_dlh" && !taskHasRow(tile);
-  const wide = harvest || dlh || plant || storage || trim || silo || plan || labor || seasons;
+  const wide = harvest || dlh || plant || storage || trim || testing || silo || plan || labor || seasons;
   const seasonNote = tile.status === "out_of_season" && (plan || labor || seasons) ? `<p class="dd-season">${esc(t(locale, "Out of season"))}</p>` : "";
   const body = harvest
     ? harvest
@@ -876,7 +899,9 @@ function tileHtml(tile: DirectorTile, group: DirectorWallGroup, locale: Locale, 
             ? storage
             : trim
               ? trim
-              : silo
+              : testing
+                ? testing
+                : silo
                 ? silo
                 : plan
                   ? plan

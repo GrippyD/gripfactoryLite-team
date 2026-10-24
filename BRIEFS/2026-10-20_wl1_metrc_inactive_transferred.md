@@ -6,7 +6,7 @@ THE SOURCE (the Scribe named it; his pick, 2026-10-20): GripFactory already has 
 
 For the build session (Cursor, one plain session, no sub-agents): open in `C:\Users\DennisWallace\Documents\Claude\Projects\gripfactory Practical\branches\GFLiteMetrcAPI` (its `app\` is the app). If your working folder is not under `branches\GFLiteMetrcAPI`, stop and say so. Under THE DISPATCH RULE (canon 0.30.155).
 
-RUN AFTER S3g. Pin: the S3g gated tree; the Scribe gives its hash at dispatch. Verify with canon's hash command in `app/` and stop if it differs. No git; nothing committed, pushed or deployed. One migration (the next number after S3g's). LF only. Read big files by search and line range (`src/metrc.ts` is large; start at `parseMetrcFilename`, `detectMetrcKind`, the mount scope and the gone law).
+Part of THE QUEUE (`BRIEFS/2026-10-23_queue_wl1_wl2_s3g.md`): read it first; its runner law and stop rules apply here. FIRST IN THE QUEUE. Pin: `9d751a5730ab2493` (the live tree, L1 to L4 pushed 2026-10-23). Verify with canon's hash command in `app/` and stop if it differs. No git; nothing committed, pushed or deployed. One migration, `0117`. LF only. Read big files by search and line range (`src/metrc.ts` is large; start at `parseMetrcFilename`, `detectMetrcKind`, the mount scope and the gone law).
 
 ## 1. Recognize the three package exports
 - Today a packages file is one kind. Add the grid as the law: Active (today's behaviour, unchanged), Inactive, Transferred. Read it from the file name (`Packages-Active`, `Packages-Inactive`, `Packages-Transferred`, numbered copies included) and confirm it from the headers the way her `MetrcNormalize.detectKind` does (Transferred carries Package, Destination Facility, Manifest Number; Inactive carries Finished). A file whose name and headers disagree is refused in words.
@@ -34,9 +34,9 @@ The same drop zone takes all three files; each mount line names its grid and cou
 - No dash characters in any output.
 
 ## Smoke and gates
-Smoke: the migration count up one. Mount a three row Active, Inactive and Transferred file each (invented data), check the counts and that nothing went gone from the Inactive or Transferred mounts; keep every other check. Gates: typecheck 0; vitest under TZ=UTC and TZ=America/New_York with counts; `node --check scripts/smoke.mjs`; the from zero smoke (SMOKE PASS, no 500); renders of Admin, METRC in Lite, CO and Cerberus at 1920, 820 and the phone; dash, CR and name scans of every touched file.
+Smoke: `About to apply 116 migration(s)` (L4's read 115). Mount a three row Active, Inactive and Transferred file each (invented data), check the counts and that nothing went gone from the Inactive or Transferred mounts; keep every other check. Gates: typecheck 0; vitest under TZ=UTC and TZ=America/New_York with counts; `node --check scripts/smoke.mjs`; the from zero smoke run in the background by the runner law (SMOKE PASS, SMOKE_EXIT 0, no 500); dash, CR and name scans of every touched file. No renders (the Scribe renders Admin, METRC at the gate).
 
-THE ACCEPTANCE (the Scribe runs it at the gate with the owner's Oct 17 exports placed in `DROPS/metrc_20261017/` by his hands): mounting the three AU-P-000694 files (Active 1,684 rows, Inactive 429, Transferred 2,073) gives, under her precedence rule, 4,186 packages: Active 1,684, Finished 304, Discontinued 125, Transferred 2,073, row for row equal to her data/packages.csv.
+THE ACCEPTANCE (the Scribe runs it at the gate): the owner's three AU-P-000694 exports sit in the main folder's `DROPS\metrc_20261017\` (taken 2026-10-20, so newer than her Oct 17 data file). Mounting them must give, under her precedence rule, the same packages row for row as her converter (`RESEARCH/wip-lineage-dashboard/src/metrc-normalize.js`) gives on the same three files.
 
 ## Hand back
 Report `SESSION_REPORTS/2026-10-20_wl1_metrc_inactive_transferred.md`, short: the tree received and left, files touched, gate results, anything declined and why. Close with the tree hash and that nothing is committed, pushed or deployed.

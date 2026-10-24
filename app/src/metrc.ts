@@ -14,7 +14,10 @@
  * METRC as of the drop for its license (and phase, for plants); a newer drop
  * updates rows in place and marks the rows it no longer carries as gone; the
  * mount row is the log entry (one per drop, never one per plant); history is
- * never edited. Our own fields hang off the tag (internal_field_values); the
+ * never edited. WL1 adds the Inactive and Transferred package exports to the
+ * same drop. THE GONE LAW STAYS ACTIVE ONLY: only an Active packages mount
+ * may mark packages gone for being absent from the file. An Inactive or
+ * Transferred mount never does. Our own fields hang off the tag (internal_field_values); the
  * field list is a lookup (category internal_field), so a new field is an Admin
  * row, not a migration: the stretching he named.
  *
@@ -41,6 +44,9 @@ import type { MirrorPackage } from "./manifest";
 /* ------------------------------------------------------------- constants */
 
 export type MetrcKind = "plants" | "packages";
+
+/** The three package exports. Active is today's grid. */
+export type PackageGrid = "active" | "inactive" | "transferred";
 
 /** METRC's plants grid, byte for byte (PlantsFlowering and PlantsVegetative). */
 export const METRC_PLANT_COLUMNS = [
@@ -105,21 +111,64 @@ export type MetrcFilenameRead = {
   grid: string | null;
 };
 
+/** The grid word after Plants or Packages, in the canonical spelling. */
+function namedGrid(rest: string): string | null {
+  const g = rest.toLowerCase();
+  if (!g) return null;
+  if (g.startsWith("flower")) return "Flowering";
+  if (g.startsWith("veg")) return "Vegetative";
+  if (g.startsWith("inactive")) return "Inactive";
+  if (g.startsWith("transfer")) return "Transferred";
+  if (g.startsWith("active")) return "Active";
+  return rest;
+}
+
 /** MetrcMichiganAUGC000832PackagesActive_12.xlsx reads license AU-G-C-000832,
  * kind packages, grid Active; MetrcMichiganGRC001132PlantsVegetative_6.xlsx
- * reads GR-C-001132, plants, Vegetative. AUP is the processor line. */
+ * reads GR-C-001132, plants, Vegetative. AUP is the processor line. Hyphenated
+ * names (Metrc-Michigan-AU-P-000694-Packages-Active (18).xlsx) and the Inactive
+ * and Transferred grids read the same way. A trailing copy number is not part
+ * of the grid. */
 export function parseMetrcFilename(name: string): MetrcFilenameRead {
   const base = String(name ?? "").split(/[\\/]/).pop() ?? "";
-  const m = /Metrc(?:[A-Za-z]+?)?((?:AUGC|AUP|GRC)\d{6})(Plants|Packages)([A-Za-z]*)/i.exec(base);
-  if (!m) return { license: null, kind: null, grid: null };
-  const raw = m[1].toUpperCase();
+  const noExt = base.replace(/\.(xlsx|csv)$/i, "");
+  const stripped = noExt.replace(/(?:\s*\(\d+\)|_\d+|\s+\d+)$/, "");
+  const compact = stripped.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const found = /(?:AUGC|AUP|GRC)\d{6}/.exec(compact);
+  if (!found) return { license: null, kind: null, grid: null };
+  const raw = found[0];
   let license: string;
   if (raw.startsWith("AUGC")) license = `AU-G-C-${raw.slice(4)}`;
   else if (raw.startsWith("AUP")) license = `AU-P-${raw.slice(3)}`;
   else license = `GR-C-${raw.slice(3)}`;
-  const kind = m[2].toLowerCase() === "plants" ? "plants" : "packages";
-  const grid = m[3] ? m[3] : null;
+  const after = compact.slice(found.index + raw.length);
+  let kind: MetrcKind | null = null;
+  let grid: string | null = null;
+  if (after.startsWith("PLANTS")) {
+    kind = "plants";
+    grid = namedGrid(after.slice("PLANTS".length));
+  } else if (after.startsWith("PACKAGES")) {
+    kind = "packages";
+    grid = namedGrid(after.slice("PACKAGES".length));
+  }
+  if (!kind) return { license: null, kind: null, grid: null };
   return { license, kind, grid };
+}
+
+/** Active, Inactive or Transferred from the file name's grid word. Null when
+ * the name does not say which package export it is. */
+export function packageGridFromName(grid: string | null | undefined): PackageGrid | null {
+  const g = String(grid ?? "").trim().toLowerCase();
+  if (g.startsWith("inactive")) return "inactive";
+  if (g.startsWith("transfer")) return "transferred";
+  if (g.startsWith("active")) return "active";
+  return null;
+}
+
+function packageGridTitle(grid: PackageGrid): string {
+  if (grid === "inactive") return "Inactive";
+  if (grid === "transferred") return "Transferred";
+  return "Active";
 }
 
 export function phaseFromGrid(grid: string | null | undefined): string | null {
@@ -347,7 +396,9 @@ export type GridStreamResult = { header: string[]; format: "xlsx" | "csv"; total
 /** THE SLICED MOUNT (canon 0.30.42, after the live Error 1102 on the third
  * export): the grid streams to a callback, header first, so nothing holds every
  * row at once; the caller keeps only the rows it wants. total counts the data
- * rows seen (blank rows skipped). */
+ * rows seen (blank rows skipped). METRC's xlsx declares a wrong sheet size
+ * (often column A only). This walk reads every row and cell that is present
+ * and never trusts that dimension. */
 export async function streamMetrcGrid(
   bytes: Uint8Array,
   onHeader: (header: string[]) => void,
@@ -418,12 +469,45 @@ export async function readMetrcGrid(bytes: Uint8Array): Promise<MetrcGrid> {
   return readCsvGrid(new TextDecoder().decode(bytes));
 }
 
-export function detectMetrcKind(header: readonly string[]): MetrcKind | null {
-  const set = new Set(header.map((h) => h.trim().toLowerCase()));
-  if (!set.has("tag")) return null;
-  if (set.has("plant batch")) return "plants";
-  if (set.has("item") && set.has("category")) return "packages";
+function headerSet(header: readonly string[]): Set<string> {
+  return new Set(header.map((h) => h.trim().toLowerCase()));
+}
+
+/** Which package export the headers are. Transferred carries Package,
+ * Destination Facility and Manifest Number. Inactive carries Finished.
+ * Active is today's Tag, Item and Category grid. Transferred is tested
+ * first so a transfer file is not read as Active. */
+export function detectPackageGrid(header: readonly string[]): PackageGrid | null {
+  const set = headerSet(header);
+  if (set.has("package") && set.has("destination facility") && set.has("manifest number")) return "transferred";
+  if (set.has("finished")) return "inactive";
+  if (set.has("tag") && set.has("item") && set.has("category")) return "active";
   return null;
+}
+
+export function detectMetrcKind(header: readonly string[]): MetrcKind | null {
+  const set = headerSet(header);
+  if (set.has("plant batch")) return "plants";
+  if (detectPackageGrid(header)) return "packages";
+  if (!set.has("tag")) return null;
+  return null;
+}
+
+/** The file name and the headers must name the same package grid. A name
+ * that says nothing leaves the headers to decide. A disagreement is refused. */
+export function confirmPackageGrid(namedGrid: string | null | undefined, header: readonly string[]): PackageGrid {
+  const fromHeader = detectPackageGrid(header);
+  const fromName = packageGridFromName(namedGrid);
+  if (fromName && fromHeader && fromName !== fromHeader) {
+    throw new HttpError(400, `The file name says ${packageGridTitle(fromName)} but the headers say ${packageGridTitle(fromHeader)}.`);
+  }
+  if (fromName && !fromHeader) {
+    throw new HttpError(400, `The file name says ${packageGridTitle(fromName)} but the headers are not that packages grid.`);
+  }
+  if (!fromHeader) {
+    throw new HttpError(400, "That grid is not METRC's plants or packages export (no Tag with Plant Batch, or Item and Category).");
+  }
+  return fromHeader;
 }
 
 /* ------------------------------------------------------------ shaping */
@@ -562,6 +646,83 @@ export function shapePackageRow(get: Getter, r: string[]): MetrcPackageRow | nul
     received_date: normalizeMetrcDate(get(r, "Received")),
     expiration_date: normalizeMetrcDate(get(r, "Expiration Date")),
     lab_test_expiration: normalizeMetrcDate(get(r, "Lab Test Expiration")),
+  };
+}
+
+/** Finished when the Inactive export's Finished cell is true, else Discontinued. */
+export function inactiveStateOf(finished: string): "Finished" | "Discontinued" {
+  return normalizeMetrcBool(finished) === 1 ? "Finished" : "Discontinued";
+}
+
+export type MetrcInactiveRow = MetrcPackageRow & { inactive_state: "Finished" | "Discontinued" };
+
+/** One Inactive row: the package columns as today, plus inactive_state. */
+export function shapeInactiveRow(get: Getter, r: string[]): MetrcInactiveRow | null {
+  const row = shapePackageRow(get, r);
+  if (!row) return null;
+  return { ...row, inactive_state: inactiveStateOf(get(r, "Finished")) };
+}
+
+/** The transfer export has no unit column. ea when the item prefix is PRE, else g. */
+export function transferUom(item: string | null): "ea" | "g" {
+  const prefix = String(item ?? "").split(" - ")[0].trim();
+  return prefix === "PRE" ? "ea" : "g";
+}
+
+/** A Michigan safety compliance facility (a testing laboratory) holds an AU-SC
+ * (adult use) or SC (medical) license. */
+export function isSafetyComplianceLicense(license: string | null | undefined): boolean {
+  return /^(?:AU-)?SC-\d/i.test(String(license ?? "").trim());
+}
+
+/** THE LAB RULE (owner's pick, 2026-10-24): a shipment to a safety compliance
+ * license is a Lab sample whatever the destination is called (a lab's name
+ * need not hold "laboratory"); the analyst's name rule (the destination name holds
+ * laboratory or laboratories) stays as the backup; everything else is a Sale. */
+export function transferTypeOf(destination: string | null, license: string | null = null): "Lab sample" | "Sale" {
+  if (isSafetyComplianceLicense(license)) return "Lab sample";
+  return /laborator/i.test(String(destination ?? "")) ? "Lab sample" : "Sale";
+}
+
+export type MetrcTransferRow = {
+  tag: string;
+  manifest: string;
+  destination_facility: string | null;
+  destination_license: string | null;
+  shipped_quantity: number | null;
+  uom: "ea" | "g";
+  lab_state: string | null;
+  received_date: string | null;
+  source_harvests: string | null;
+  source_packages: string | null;
+  item: string | null;
+  category: string | null;
+  item_strain: string | null;
+  transfer_type: "Lab sample" | "Sale";
+};
+
+/** One Transferred row, keyed later by tag and manifest. A blank tag is dropped. */
+export function shapeTransferRow(get: Getter, r: string[]): MetrcTransferRow | null {
+  const tag = get(r, "Package").trim().toUpperCase();
+  if (!tag) return null;
+  const item = text(get(r, "Item"));
+  const destination = text(get(r, "Destination Facility"));
+  const destinationLicense = text(get(r, "Destination License"));
+  return {
+    tag,
+    manifest: get(r, "Manifest Number").trim(),
+    destination_facility: destination,
+    destination_license: destinationLicense,
+    shipped_quantity: num(get(r, "Shipped Quantity")),
+    uom: transferUom(item),
+    lab_state: text(get(r, "Transferred Lab Testing State")),
+    received_date: normalizeMetrcDate(get(r, "Received Date")),
+    source_harvests: text(get(r, "Source Harvest")),
+    source_packages: text(get(r, "Source Package")),
+    item,
+    category: text(get(r, "Category")),
+    item_strain: text(get(r, "Item Strain")),
+    transfer_type: transferTypeOf(destination, destinationLicense),
   };
 }
 
@@ -985,6 +1146,8 @@ export type MountScan = {
   header: string[];
   format: "xlsx" | "csv";
   kind: MetrcKind;
+  /** Active, Inactive or Transferred for a packages file. Null for plants. */
+  packageGrid: PackageGrid | null;
   /** Data rows in the file (blank rows skipped, blank tags counted). */
   total: number;
   /** Every tag the file carries, whatever the window. */
@@ -992,26 +1155,42 @@ export type MountScan = {
   /** The window's rows, a tag listed twice keeping its last row. */
   plants: MetrcPlantRow[];
   packages: MetrcPackageRow[];
+  inactive: MetrcInactiveRow[];
+  transfers: MetrcTransferRow[];
   /** Over the whole file, each tag counted once. */
   summary: MountSummary;
 };
+
+function transferKey(tag: string, manifest: string): string {
+  return `${tag}\n${manifest}`;
+}
 
 /** One streaming pass over the export. Rows with index in [start, end) are kept;
  * every row feeds the seen set and the summary. */
 export async function scanMetrcExport(bytes: Uint8Array, start: number, end: number): Promise<MountScan> {
   let kind: MetrcKind | null = null;
+  let packageGrid: PackageGrid | null = null;
   let get: Getter = () => "";
   const seen = new Set<string>();
   const plants = new Map<string, MetrcPlantRow>();
   const packages = new Map<string, MetrcPackageRow>();
+  const inactive = new Map<string, MetrcInactiveRow>();
+  const transfers = new Map<string, MetrcTransferRow>();
   const plantAcc = plantSummaryAcc();
   const packageAcc = packageSummaryAcc();
+  const transferSeen = new Set<string>();
   const result = await streamMetrcGrid(
     bytes,
     (header) => {
       kind = detectMetrcKind(header);
       if (!kind) {
         throw new HttpError(400, "That grid is not METRC's plants or packages export (no Tag with Plant Batch, or Item and Category).");
+      }
+      if (kind === "packages") {
+        packageGrid = detectPackageGrid(header);
+        if (!packageGrid) {
+          throw new HttpError(400, "That grid is not METRC's plants or packages export (no Tag with Plant Batch, or Item and Category).");
+        }
       }
       get = indexer(header);
     },
@@ -1025,6 +1204,21 @@ export async function scanMetrcExport(bytes: Uint8Array, start: number, end: num
           accumulatePlant(plantAcc, row);
         }
         if (inWindow) plants.set(row.tag, row);
+      } else if (packageGrid === "transferred") {
+        const row = shapeTransferRow(get, cells);
+        if (!row) return;
+        if (!seen.has(row.tag)) seen.add(row.tag);
+        const key = transferKey(row.tag, row.manifest);
+        transferSeen.add(key);
+        if (inWindow) transfers.set(key, row);
+      } else if (packageGrid === "inactive") {
+        const row = shapeInactiveRow(get, cells);
+        if (!row) return;
+        if (!seen.has(row.tag)) {
+          seen.add(row.tag);
+          accumulatePackage(packageAcc, row);
+        }
+        if (inWindow) inactive.set(row.tag, row);
       } else {
         const row = shapePackageRow(get, cells);
         if (!row) return;
@@ -1038,15 +1232,24 @@ export async function scanMetrcExport(bytes: Uint8Array, start: number, end: num
   );
   if (!kind) throw new HttpError(400, "That file is empty.");
   const k: MetrcKind = kind;
+  const summary =
+    k === "plants"
+      ? finishPlantSummary(plantAcc)
+      : packageGrid === "transferred"
+        ? { transfers: transferSeen.size, grid: "transferred" }
+        : finishPackageSummary(packageAcc);
   return {
     header: result.header,
     format: result.format,
     kind: k,
+    packageGrid,
     total: result.total,
     seen,
     plants: [...plants.values()],
     packages: [...packages.values()],
-    summary: k === "plants" ? finishPlantSummary(plantAcc) : finishPackageSummary(packageAcc),
+    inactive: [...inactive.values()],
+    transfers: [...transfers.values()],
+    summary,
   };
 }
 
@@ -1313,6 +1516,7 @@ type MountRowState = {
   rows_added: number;
   rows_updated: number;
   rows_unchanged: number;
+  rows_gone: number;
 };
 
 /** What every round reads from the form before the file is scanned. */
@@ -1334,11 +1538,14 @@ async function mountHead(db: D1Database, form: FormData): Promise<MountHead> {
   return { actor, file, bytes, license, named, phaseAsked: textOrNull(form.get("phase")) };
 }
 
-function resolvePhase(head: MountHead, kind: MetrcKind): string | null {
-  if (kind !== "plants") return null;
-  const phase = phaseFromGrid(head.phaseAsked ?? head.named.grid);
-  if (!phase) throw new HttpError(400, "Say which phase this plants file is (flowering or vegetative).");
-  return phase;
+function resolvePhase(head: MountHead, kind: MetrcKind, packageGrid: PackageGrid | null): string | null {
+  if (kind === "plants") {
+    const phase = phaseFromGrid(head.phaseAsked ?? head.named.grid);
+    if (!phase) throw new HttpError(400, "Say which phase this plants file is (flowering or vegetative).");
+    return phase;
+  }
+  if (packageGrid === "inactive" || packageGrid === "transferred") return packageGrid;
+  return null;
 }
 
 function checkKind(head: MountHead, kind: MetrcKind): void {
@@ -1583,7 +1790,8 @@ function mountedRedirect(
   gone: number,
   closed: { items: number; packages: number } = { items: 0, packages: 0 },
   released: MirrorRelease = { total: 0, passed: 0, failed: 0 },
-  landed = 0
+  landed = 0,
+  grid: string | null = null
 ): string {
   const q = new URLSearchParams({
     pane: "metrc",
@@ -1600,6 +1808,7 @@ function mountedRedirect(
     released_failed: String(released.failed),
     landed: String(landed),
   });
+  if (grid) q.set("grid", grid);
   return `/inventory/metrc?${q.toString()}`;
 }
 
@@ -1682,7 +1891,7 @@ function mountRowInsert(
 async function mountRowFor(db: D1Database, mountId: string, head: MountHead, scan: MountScan, phase: string | null): Promise<MountRowState> {
   const row = await db
     .prepare(
-      `SELECT id, kind, phase, license_value, rows_total, rows_added, rows_updated, rows_unchanged
+      `SELECT id, kind, phase, license_value, rows_total, rows_added, rows_updated, rows_unchanged, rows_gone
        FROM metrc_mounts WHERE id = ? AND deleted_at IS NULL`
     )
     .bind(mountId)
@@ -1694,7 +1903,13 @@ async function mountRowFor(db: D1Database, mountId: string, head: MountHead, sca
   if (Number(row.rows_total) !== scan.total) {
     throw new HttpError(400, `That is not the file this drop started with (${row.rows_total} rows then, ${scan.total} now); start again.`);
   }
-  return { ...row, rows_added: Number(row.rows_added), rows_updated: Number(row.rows_updated), rows_unchanged: Number(row.rows_unchanged) };
+  return {
+    ...row,
+    rows_added: Number(row.rows_added),
+    rows_updated: Number(row.rows_updated),
+    rows_unchanged: Number(row.rows_unchanged),
+    rows_gone: Number(row.rows_gone),
+  };
 }
 
 export type MountCounts = { added: number; updated: number; unchanged: number; gone: number };
@@ -1717,27 +1932,28 @@ export type WriteMirrorPassInput = {
   ts: string;
 };
 
-/** MA1 Law 1: write one plan behind its mount row. The mount row leads so a
- * chunk that fails leaves the pass on record; the counts trail in the last
- * batch so they never run ahead of the rows; the count logs land only on a
- * completed pass. Returns the mount's counts so far. */
-export async function writeMirrorPass(db: D1Database, w: WriteMirrorPassInput): Promise<MountCounts> {
-  const stmts: D1PreparedStatement[] = [...w.lead, ...mirrorPlanStmts(db, w.plan, w.mountId, w.ts)];
-  const counts: MountCounts = {
-    added: w.before.added + w.plan.add.length,
-    updated: w.before.updated + w.plan.update.length,
-    unchanged: w.before.unchanged + w.plan.unchanged,
-    gone: w.before.gone + w.plan.gone.length,
-  };
-  stmts.push(
+/** The mount row's count update and, on a completed pass, the four count logs.
+ * The same statements the Active mount has always written. */
+function mountCountStmts(
+  db: D1Database,
+  counts: MountCounts,
+  rowsTotal: number,
+  summary: unknown,
+  actorId: string | null,
+  mountId: string,
+  ts: string,
+  done: boolean,
+  reason: string
+): D1PreparedStatement[] {
+  const stmts: D1PreparedStatement[] = [
     db
       .prepare(
         `UPDATE metrc_mounts SET rows_total = ?, rows_added = ?, rows_updated = ?, rows_unchanged = ?, rows_gone = ?,
          summary = ?, updated_at = ?, updated_by = ? WHERE id = ?`
       )
-      .bind(w.rowsTotal, counts.added, counts.updated, counts.unchanged, counts.gone, JSON.stringify(w.summary), w.ts, w.actorId, w.mountId)
-  );
-  if (w.done) {
+      .bind(rowsTotal, counts.added, counts.updated, counts.unchanged, counts.gone, JSON.stringify(summary), ts, actorId, mountId),
+  ];
+  if (done) {
     const finals: Record<string, number> = {
       rows_added: counts.added,
       rows_updated: counts.updated,
@@ -1748,17 +1964,36 @@ export async function writeMirrorPass(db: D1Database, w: WriteMirrorPassInput): 
       stmts.push(
         insertLog(db, {
           record_table: "metrc_mounts",
-          record_id: w.mountId,
+          record_id: mountId,
           field,
           old_value: null,
           new_value: String(value),
-          actor_person_id: w.actorId,
-          reason: w.reason,
-          changed_at: w.ts,
+          actor_person_id: actorId,
+          reason,
+          changed_at: ts,
         })
       );
     }
   }
+  return stmts;
+}
+
+/** MA1 Law 1: write one plan behind its mount row. The mount row leads so a
+ * chunk that fails leaves the pass on record; the counts trail in the last
+ * batch so they never run ahead of the rows; the count logs land only on a
+ * completed pass. Returns the mount's counts so far. */
+export async function writeMirrorPass(db: D1Database, w: WriteMirrorPassInput): Promise<MountCounts> {
+  const counts: MountCounts = {
+    added: w.before.added + w.plan.add.length,
+    updated: w.before.updated + w.plan.update.length,
+    unchanged: w.before.unchanged + w.plan.unchanged,
+    gone: w.before.gone + w.plan.gone.length,
+  };
+  const stmts: D1PreparedStatement[] = [
+    ...w.lead,
+    ...mirrorPlanStmts(db, w.plan, w.mountId, w.ts),
+    ...mountCountStmts(db, counts, w.rowsTotal, w.summary, w.actorId, w.mountId, w.ts, w.done, w.reason),
+  ];
   await runChunked(db, stmts);
   return counts;
 }
@@ -1789,22 +2024,309 @@ export async function afterPackagesPass(db: D1Database, actorId: string | null, 
   return { closed, landed, released };
 }
 
+async function loadTagged(db: D1Database, columns: string, table: string, tags: readonly string[]): Promise<Array<Record<string, unknown> & { key: string }>> {
+  if (tags.length === 0) return [];
+  const stmts = chunkRows([...tags], D1_MAX_PARAMS).map((chunk) => {
+    const marks = chunk.map(() => "?").join(", ");
+    return db.prepare(`SELECT ${columns} FROM ${table} WHERE tag IN (${marks})`).bind(...chunk);
+  });
+  const out: Array<Record<string, unknown> & { key: string }> = [];
+  for (let i = 0; i < stmts.length; i += METRC_MOUNT_CHUNK) {
+    const results = await db.batch<Record<string, unknown> & { key: string }>(stmts.slice(i, i + METRC_MOUNT_CHUNK));
+    for (const r of results) for (const row of r.results ?? []) out.push({ ...row, key: String(row.key) });
+  }
+  return out;
+}
+
+function packageColumnsMoved(was: MirrorExisting, row: MetrcPackageRow): boolean {
+  for (const c of PACKAGE_COLS) if (!same(was[c], row[c])) return true;
+  return false;
+}
+
+function inactiveInsertStmts(db: D1Database, rows: MetrcInactiveRow[], license: string, mountId: string, ts: string): D1PreparedStatement[] {
+  const cols = ["tag", "license_value", ...PACKAGE_COLS, "inactive_state", "mount_id", "first_seen_at", "changed_at", "gone_at", "gone_mount_id"];
+  const per = rowsPerInsert(cols.length);
+  return chunkRows(rows, per).map((chunk) => {
+    const marks = chunk.map(() => `(${cols.map(() => "?").join(", ")})`).join(", ");
+    const values: unknown[] = [];
+    for (const r of chunk) {
+      values.push(r.tag, license);
+      for (const c of PACKAGE_COLS) values.push(r[c]);
+      values.push(r.inactive_state, mountId, ts, ts, ts, mountId);
+    }
+    return db.prepare(`INSERT INTO metrc_packages (${cols.join(", ")}) VALUES ${marks}`).bind(...values);
+  });
+}
+
+function inactiveUpdateStmt(db: D1Database, r: MetrcInactiveRow, license: string, mountId: string, ts: string, markGone: boolean): D1PreparedStatement {
+  const sets = ["license_value = ?", ...PACKAGE_COLS.map((c) => `${c} = ?`), "inactive_state = ?", "mount_id = ?", "changed_at = ?"];
+  const values: unknown[] = [license];
+  for (const c of PACKAGE_COLS) values.push(r[c]);
+  values.push(r.inactive_state, mountId, ts);
+  if (markGone) {
+    sets.push("gone_at = ?", "gone_mount_id = ?");
+    values.push(ts, mountId);
+  }
+  values.push(r.tag);
+  return db.prepare(`UPDATE metrc_packages SET ${sets.join(", ")} WHERE tag = ?`).bind(...values);
+}
+
+/** Inactive writes the package row (inserting one the mirror has never seen),
+ * sets inactive_state, and marks that package gone when it is not already.
+ * It never marks a package gone for being absent from the file. */
+async function writeInactiveWindow(
+  db: D1Database,
+  head: MountHead,
+  scan: MountScan,
+  mountId: string,
+  before: MountCounts,
+  lead: D1PreparedStatement[],
+  done: boolean,
+  next: number,
+  ts: string
+): Promise<MountCounts> {
+  const rows = scan.inactive;
+  const loaded = await loadTagged(db, ["tag AS key", "license_value", "gone_at", "inactive_state", ...PACKAGE_COLS].join(", "), "metrc_packages", rows.map((r) => r.tag));
+  const byTag = new Map(loaded.map((row) => [row.key, row]));
+  const toAdd: MetrcInactiveRow[] = [];
+  const toUpdate: Array<{ row: MetrcInactiveRow; markGone: boolean }> = [];
+  const goneOnly: string[] = [];
+  let unchanged = 0;
+  let gone = 0;
+  for (const row of rows) {
+    const was = byTag.get(row.tag);
+    if (!was) {
+      toAdd.push(row);
+      gone += 1;
+      continue;
+    }
+    const moved = packageColumnsMoved(was as MirrorExisting, row) || !same(was.inactive_state, row.inactive_state);
+    const markGone = was.gone_at == null;
+    if (markGone) gone += 1;
+    if (moved) toUpdate.push({ row, markGone });
+    else {
+      unchanged += 1;
+      if (markGone) goneOnly.push(row.tag);
+    }
+  }
+  const counts: MountCounts = {
+    added: before.added + toAdd.length,
+    updated: before.updated + toUpdate.length,
+    unchanged: before.unchanged + unchanged,
+    gone: before.gone + gone,
+  };
+  const stmts: D1PreparedStatement[] = [
+    ...lead,
+    ...inactiveInsertStmts(db, toAdd, head.license, mountId, ts),
+    ...toUpdate.map((item) => inactiveUpdateStmt(db, item.row, head.license, mountId, ts, item.markGone)),
+    ...goneStmts(db, "packages", goneOnly, mountId, ts),
+    ...mountCountStmts(
+      db,
+      counts,
+      scan.total,
+      done ? { ...scan.summary, grid: "inactive" } : { mounting: true, rows_done: next },
+      head.actor.id,
+      mountId,
+      ts,
+      done,
+      SYSTEM_REASON.metrc_mount
+    ),
+  ];
+  await runChunked(db, stmts);
+  return counts;
+}
+
+const TRANSFER_FIELDS = [
+  "destination_facility",
+  "destination_license",
+  "shipped_quantity",
+  "uom",
+  "lab_state",
+  "received_date",
+  "source_harvests",
+  "source_packages",
+  "item",
+  "category",
+  "item_strain",
+  "transfer_type",
+] as const;
+
+type TransferExisting = Record<(typeof TRANSFER_FIELDS)[number] | "license_value" | "tag" | "manifest", unknown>;
+
+function transferMoved(was: TransferExisting, row: MetrcTransferRow, license: string): boolean {
+  if (!same(was.license_value, license)) return true;
+  for (const c of TRANSFER_FIELDS) if (!same(was[c], row[c])) return true;
+  return false;
+}
+
+function transferInsertStmts(db: D1Database, rows: MetrcTransferRow[], license: string, mountId: string, ts: string): D1PreparedStatement[] {
+  const cols = [
+    "tag",
+    "license_value",
+    "manifest",
+    "destination_facility",
+    "destination_license",
+    "shipped_quantity",
+    "uom",
+    "lab_state",
+    "received_date",
+    "source_harvests",
+    "source_packages",
+    "item",
+    "category",
+    "item_strain",
+    "transfer_type",
+    "mount_id",
+    "first_seen_at",
+    "changed_at",
+  ];
+  const per = rowsPerInsert(cols.length);
+  return chunkRows(rows, per).map((chunk) => {
+    const marks = chunk.map(() => `(${cols.map(() => "?").join(", ")})`).join(", ");
+    const values: unknown[] = [];
+    for (const r of chunk) {
+      values.push(
+        r.tag,
+        license,
+        r.manifest,
+        r.destination_facility,
+        r.destination_license,
+        r.shipped_quantity,
+        r.uom,
+        r.lab_state,
+        r.received_date,
+        r.source_harvests,
+        r.source_packages,
+        r.item,
+        r.category,
+        r.item_strain,
+        r.transfer_type,
+        mountId,
+        ts,
+        ts
+      );
+    }
+    return db.prepare(`INSERT INTO metrc_transfers (${cols.join(", ")}) VALUES ${marks}`).bind(...values);
+  });
+}
+
+function transferUpdateStmt(db: D1Database, r: MetrcTransferRow, license: string, mountId: string, ts: string): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE metrc_transfers SET license_value = ?, destination_facility = ?, destination_license = ?, shipped_quantity = ?,
+       uom = ?, lab_state = ?, received_date = ?, source_harvests = ?, source_packages = ?, item = ?, category = ?,
+       item_strain = ?, transfer_type = ?, mount_id = ?, changed_at = ? WHERE tag = ? AND manifest = ?`
+    )
+    .bind(
+      license,
+      r.destination_facility,
+      r.destination_license,
+      r.shipped_quantity,
+      r.uom,
+      r.lab_state,
+      r.received_date,
+      r.source_harvests,
+      r.source_packages,
+      r.item,
+      r.category,
+      r.item_strain,
+      r.transfer_type,
+      mountId,
+      ts,
+      r.tag,
+      r.manifest
+    );
+}
+
+/** Transferred upserts by tag and manifest. A row the later file does not
+ * carry stays. The package row, when the mirror already has it and it is not
+ * gone, is marked gone. No package row is inserted from a transfer. Nothing
+ * absent from the file is marked gone. */
+async function writeTransferWindow(
+  db: D1Database,
+  head: MountHead,
+  scan: MountScan,
+  mountId: string,
+  before: MountCounts,
+  lead: D1PreparedStatement[],
+  done: boolean,
+  next: number,
+  ts: string
+): Promise<MountCounts> {
+  const rows = scan.transfers;
+  const tags = [...new Set(rows.map((r) => r.tag))];
+  const loaded = await loadTagged(
+    db,
+    ["tag", "manifest", "license_value", ...TRANSFER_FIELDS].join(", "),
+    "metrc_transfers",
+    tags
+  );
+  const byKey = new Map(loaded.map((row) => [transferKey(String(row.tag), String(row.manifest ?? "")), row as unknown as TransferExisting]));
+  const toAdd: MetrcTransferRow[] = [];
+  const toUpdate: MetrcTransferRow[] = [];
+  let unchanged = 0;
+  for (const row of rows) {
+    const was = byKey.get(transferKey(row.tag, row.manifest));
+    if (!was) {
+      toAdd.push(row);
+      continue;
+    }
+    if (transferMoved(was, row, head.license)) toUpdate.push(row);
+    else unchanged += 1;
+  }
+  const packages = await loadExistingByKeys(db, "packages", tags);
+  const goneTags = [...new Set(packages.filter((row) => row.gone_at == null).map((row) => row.key))];
+  const counts: MountCounts = {
+    added: before.added + toAdd.length,
+    updated: before.updated + toUpdate.length,
+    unchanged: before.unchanged + unchanged,
+    gone: before.gone + goneTags.length,
+  };
+  const stmts: D1PreparedStatement[] = [
+    ...lead,
+    ...transferInsertStmts(db, toAdd, head.license, mountId, ts),
+    ...toUpdate.map((row) => transferUpdateStmt(db, row, head.license, mountId, ts)),
+    ...goneStmts(db, "packages", goneTags, mountId, ts),
+    ...mountCountStmts(
+      db,
+      counts,
+      scan.total,
+      done ? scan.summary : { mounting: true, rows_done: next },
+      head.actor.id,
+      mountId,
+      ts,
+      done,
+      SYSTEM_REASON.metrc_mount
+    ),
+  ];
+  await runChunked(db, stmts);
+  return counts;
+}
+
 /** The CSV door's round: diff the window through the one reconcile and write
  * it behind the mount row; on the last round the gone rows (the file's seen
  * set against the live rows, no guard: the file is whole), the summary and
- * the count logs land too. Returns the mount's counts so far. */
+ * the count logs land too. Returns the mount's counts so far.
+ *
+ * THE GONE LAW STAYS ACTIVE ONLY (WL1). Only an Active packages mount, and a
+ * plants mount, may mark rows gone because the file does not carry them. An
+ * Inactive mount and a Transferred mount never do that. They mark gone only
+ * the packages named in their own file, and only when those packages are not
+ * already gone. Breaking this would empty the mirror. */
 async function writeMountWindow(
   db: D1Database,
   head: MountHead,
   scan: MountScan,
   phase: string | null,
   mountId: string,
-  before: { added: number; updated: number; unchanged: number },
+  before: MountCounts,
   lead: D1PreparedStatement[],
   done: boolean,
   next: number,
   ts: string
 ): Promise<MountCounts> {
+  if (scan.packageGrid === "inactive") return writeInactiveWindow(db, head, scan, mountId, before, lead, done, next, ts);
+  if (scan.packageGrid === "transferred") return writeTransferWindow(db, head, scan, mountId, before, lead, done, next, ts);
   const incoming: object[] = scan.kind === "plants" ? scan.plants : scan.packages;
   const existing = await loadExistingByKeys(db, scan.kind, incoming.map((r) => mirrorKeyOf(scan.kind, r)));
   const live = done ? await loadLiveKeys(db, scan.kind, head.license, phase) : [];
@@ -1823,7 +2345,7 @@ async function writeMountWindow(
     actorId: head.actor.id,
     reason: SYSTEM_REASON.metrc_mount,
     lead,
-    before: { ...before, gone: 0 },
+    before: { added: before.added, updated: before.updated, unchanged: before.unchanged, gone: 0 },
     rowsTotal: scan.total,
     done,
     summary: done ? scan.summary : { mounting: true, rows_done: next },
@@ -1853,10 +2375,11 @@ export async function mountMetrcRound(db: D1Database, form: FormData): Promise<M
   const end = start + size;
   const scan = await scanMetrcExport(head.bytes, start, end);
   checkKind(head, scan.kind);
-  const phase = resolvePhase(head, scan.kind);
+  const packageGrid = scan.kind === "packages" ? confirmPackageGrid(head.named.grid, scan.header) : null;
+  const phase = resolvePhase(head, scan.kind, packageGrid);
   const ts = nowIso();
   let mountId: string;
-  let before = { added: 0, updated: 0, unchanged: 0 };
+  let before: MountCounts = { added: 0, updated: 0, unchanged: 0, gone: 0 };
   let lead: D1PreparedStatement[] = [];
   if (start === 0) {
     mountId = crypto.randomUUID();
@@ -1865,7 +2388,7 @@ export async function mountMetrcRound(db: D1Database, form: FormData): Promise<M
     mountId = String(form.get("mount_id") ?? "").trim();
     if (!mountId) throw new HttpError(400, "A round after the first must name its mount.");
     const row = await mountRowFor(db, mountId, head, scan, phase);
-    before = { added: row.rows_added, updated: row.rows_updated, unchanged: row.rows_unchanged };
+    before = { added: row.rows_added, updated: row.rows_updated, unchanged: row.rows_unchanged, gone: row.rows_gone };
   }
   const next = Math.min(end, scan.total);
   const done = next >= scan.total;
@@ -1895,7 +2418,7 @@ export async function mountMetrcRound(db: D1Database, form: FormData): Promise<M
     released_passed: released.passed,
     released_failed: released.failed,
     landed,
-    redirect: mountedRedirect(mountId, scan.kind, counts.added, counts.updated, counts.gone, closed, released, landed),
+    redirect: mountedRedirect(mountId, scan.kind, counts.added, counts.updated, counts.gone, closed, released, landed, redirectGrid(packageGrid)),
   };
 }
 
@@ -1907,17 +2430,23 @@ export async function mountMetrcExport(db: D1Database, form: FormData): Promise<
   const head = await mountHead(db, form);
   const scan = await scanMetrcExport(head.bytes, 0, Number.MAX_SAFE_INTEGER);
   checkKind(head, scan.kind);
-  const phase = resolvePhase(head, scan.kind);
+  const packageGrid = scan.kind === "packages" ? confirmPackageGrid(head.named.grid, scan.header) : null;
+  const phase = resolvePhase(head, scan.kind, packageGrid);
   const ts = nowIso();
   const mountId = crypto.randomUUID();
   const lead = mountRowInsert(db, head, scan, phase, mountId, ts);
-  const counts = await writeMountWindow(db, head, scan, phase, mountId, { added: 0, updated: 0, unchanged: 0 }, lead, true, scan.total, ts);
+  const counts = await writeMountWindow(db, head, scan, phase, mountId, { added: 0, updated: 0, unchanged: 0, gone: 0 }, lead, true, scan.total, ts);
   // THE MIRROR CLOSES THE LEDGER (canon 0.30.128): the packages mount has landed whole.
   const after =
     scan.kind === "packages"
       ? await afterPackagesPass(db, head.actor.id, mountId, ts, { complete: true, goneHeld: false, labStateChanged: 0, releaseAlways: true })
       : { closed: { items: 0, packages: 0 }, landed: 0, released: { total: 0, passed: 0, failed: 0 } };
-  return { redirect: mountedRedirect(mountId, scan.kind, counts.added, counts.updated, counts.gone, after.closed, after.released, after.landed) };
+  return { redirect: mountedRedirect(mountId, scan.kind, counts.added, counts.updated, counts.gone, after.closed, after.released, after.landed, redirectGrid(packageGrid)) };
+}
+
+function redirectGrid(packageGrid: PackageGrid | null): string | null {
+  if (packageGrid === "inactive" || packageGrid === "transferred") return packageGrid;
+  return null;
 }
 
 /* ------------------------------------------------------------ readers */
