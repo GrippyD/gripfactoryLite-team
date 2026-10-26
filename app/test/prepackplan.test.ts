@@ -11,12 +11,15 @@ import { DICT } from "../src/i18n";
 import { app } from "../src/index";
 import { backLinkFor } from "../src/nav";
 import {
+  PREPACK_PLAN_XLSX_PATH,
   PREPACK_TARGETS_PATH,
   deletePrepackTarget,
+  loadPrepackSurface,
   loadPrepackTargetsPage,
   planRows,
   poundsToGrams,
   prepackPlanSection,
+  prepackPlanXlsx,
   prepackTargetsPage,
   savePrepackTarget,
   strainKey,
@@ -24,10 +27,13 @@ import {
   zohoPrepackOrders,
   zohoPrepackStock,
   type PlanInput,
+  type PlanModel,
   type PlanPackage,
   type PrepackPlanView,
 } from "../src/prepackplan";
+import { reportFileStamp } from "../src/reports";
 import { prepackSchedulingPage } from "../src/scheduling";
+import { buildXlsx, readXlsxSheets, readZip } from "../src/xlsx";
 import type { ScheduleItemRow } from "../src/db";
 import { formOf, migratedDb, seedPerson } from "./migrated";
 
@@ -38,11 +44,15 @@ const ORDERS_AT = "2026-10-24T12:00:00.000Z";
 
 const PAGE_KEYS = [
   "Plan",
-  "On hand",
-  "Free",
+  "Packed (not ordered)",
+  "On Pack Schedule",
   "Need",
-  "Pace",
-  "Months",
+  "Net Need",
+  "Ready to pack",
+  "Short Product",
+  "Net Short",
+  "Export",
+  "Net Need and Net Short count what is already on the pack schedule. The Plan picks follow Net Need.",
   "Totals",
   "Pounds",
   "Add a strain",
@@ -55,10 +65,23 @@ const PAGE_KEYS = [
   "That target is not on the list.",
   "The target for this strain, in pounds. One pound is 448 g.",
   "A strain the plan does not list yet.",
-  "per month",
   "No strains on the plan.",
   "Optional note",
 ];
+
+const PLAN_HEADINGS = [
+  "Strain",
+  "Target",
+  "Packed (not ordered)",
+  "On Pack Schedule",
+  "Need",
+  "Net Need",
+  "Ready to pack",
+  "Short Product",
+  "Net Short",
+];
+
+const EXPORT_HEADINGS = [...PLAN_HEADINGS, "On hand", "Open", "Pace (lb per month)", "Months"];
 
 function baseInput(over: Partial<PlanInput> = {}): PlanInput {
   return {
@@ -184,32 +207,18 @@ describe("PC1 plan rows", () => {
     expect(row.openGrams).toBeNull();
     expect(row.freeGrams).toBe(100);
     expect(row.needGrams).toBe(0);
+    expect(row.grossNeedGrams).toBe(-100);
     expect(row.paceGrams).toBeNull();
     const view: PrepackPlanView = { ...planned, ordersMounted: false, stockAsOf: STOCK_AT, ordersAsOf: null };
     const html = prepackPlanSection(view, "en");
     expect(html).toContain("No sales orders mounted yet");
-    expect(html).toContain('data-plan-open></td>');
+    expect(html).not.toContain("data-plan-open");
     expect(html).not.toContain("Orders as of");
-    expect(prepackPlanSection(view, "es")).toContain("Aún no hay pedidos de venta montados");
-    expect(prepackPlanSection(view, "es")).toContain("En existencia");
+    const es = prepackPlanSection(view, "es");
+    expect(es).toContain("Aún no hay pedidos de venta montados");
+    expect(es).toContain("Empacado (sin pedido)");
+    expect(es).not.toContain("En existencia");
     expect(DASH.test(html)).toBe(false);
-  });
-
-  it("reads months as months, not pounds (the gate)", () => {
-    const planned = planRows(
-      baseInput({
-        onHand: [{ strain: "Glass Mango", grams: 896 }],
-        shipped: [{ strain: "Glass Mango", grams: 1344 }],
-      })
-    );
-    const row = planned.rows[0];
-    expect(row.paceGrams).toBe(448);
-    expect(row.months).toBe(2);
-    const view: PrepackPlanView = { ...planned, ordersMounted: true, stockAsOf: STOCK_AT, ordersAsOf: STOCK_AT };
-    const html = prepackPlanSection(view, "en");
-    expect(html).toContain('<td data-plan-months data-months="2">2.00</td>');
-    expect(html).toContain('data-plan-pace data-grams="448">1.00 lb</td>');
-    expect(html).not.toMatch(/data-plan-months[^>]*>[^<]*lb/);
   });
 
   it("joins case and spacing, keeps a one sided strain, and sorts by short, need, then name", () => {
@@ -291,6 +300,7 @@ describe("PC1 on the scheduler page", () => {
     expect(html).toContain(`Zoho stock as of ${fgMountedLabel(STOCK_AT)}`);
     expect(html).toContain(`Orders as of ${fgMountedLabel(ORDERS_AT)}`);
     expect(html).toContain(`href="${PREPACK_TARGETS_PATH}"`);
+    expect(html).toContain(`<a class="btn secondary" href="${PREPACK_PLAN_XLSX_PATH}">Export</a>`);
     expect(html).toContain('data-plan-pick');
     expect(html.match(/data-plan-pick/g)).toHaveLength(1);
     expect(html).toContain('data-plan-pick data-schedule-id="pkg-a"');
@@ -308,6 +318,270 @@ describe("PC1 on the scheduler page", () => {
       stockAsOf: null,
       ordersAsOf: null,
     }))).toBe(false);
+  });
+});
+
+function viewOf(planned: PlanModel, over: Partial<PrepackPlanView> = {}): PrepackPlanView {
+  return { ...planned, ordersMounted: true, stockAsOf: STOCK_AT, ordersAsOf: ORDERS_AT, ...over };
+}
+
+function headLabels(html: string): string[] {
+  const head = html.slice(html.indexOf("<thead>"), html.indexOf("</thead>"));
+  return [...head.matchAll(/<th>([^<]*)<\/th>/g)].map((match) => match[1]);
+}
+
+async function sheetXmlOf(bytes: Uint8Array): Promise<string> {
+  const entries = await readZip(bytes);
+  const hit = entries.find((entry) => entry.name === "xl/worksheets/sheet1.xml");
+  if (!hit) throw new Error("no sheet");
+  return new TextDecoder().decode(hit.data);
+}
+
+const PINNED_SHEET = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cols><col min="1" max="1" width="12" customWidth="1"/><col min="2" max="2" width="12" customWidth="1"/></cols>
+  <sheetData>
+    
+    <row r="1"><c r="A1" t="inlineStr" s="1"><is><t>Lot</t></is></c><c r="B1" t="inlineStr" s="1"><is><t>Note</t></is></c></row>
+    <row r="2"><c r="A2" t="inlineStr"><is><t>Oak</t></is></c><c r="B2" t="inlineStr"><is><t>none</t></is></c></row>
+  </sheetData>
+</worksheet>`;
+
+describe("PC1b both needs and the plan table", () => {
+  it("keeps his Need beside Net Need, and the totals keep a negative", () => {
+    const covered = planRows(
+      baseInput({
+        targets: [{ strain: "Ribbon Citrus", grams: 200 }],
+        onHand: [{ strain: "Ribbon Citrus", grams: 80 }],
+        scheduled: [{ strain: "Ribbon Citrus", grams: 150 }],
+        ready: [{ strain: "Ribbon Citrus", grams: 400 }],
+        packages: [{ id: "pkg-a", strain: "Ribbon Citrus", grams: 500, entryDate: "2026-10-01", createdAt: T0 }],
+      })
+    ).rows[0];
+    expect(covered).toMatchObject({ grossNeedGrams: 120, needGrams: 0, grossShortGrams: 0, shortGrams: 0 });
+    const picked = planRows(
+      baseInput({
+        targets: [{ strain: "Ribbon Citrus", grams: 200 }],
+        onHand: [{ strain: "Ribbon Citrus", grams: 80 }],
+        scheduled: [{ strain: "Ribbon Citrus", grams: 150 }],
+        packages: [{ id: "pkg-a", strain: "Ribbon Citrus", grams: 500, entryDate: "2026-10-01", createdAt: T0 }],
+      })
+    );
+    expect(picked.rows[0].grossNeedGrams).toBe(120);
+    expect(picked.rows[0].needGrams).toBe(0);
+    expect(picked.picks).toEqual([]);
+
+    const waiting = planRows(
+      baseInput({
+        targets: [{ strain: "Glass Mango", grams: 200 }],
+        scheduled: [{ strain: "Glass Mango", grams: 175 }],
+        ready: [{ strain: "Glass Mango", grams: 75 }],
+      })
+    ).rows[0];
+    expect(waiting).toMatchObject({ grossNeedGrams: 200, needGrams: 25, grossShortGrams: 125, shortGrams: 0 });
+
+    const over = planRows(
+      baseInput({
+        targets: [{ strain: "Paper Orchard", grams: 200 }],
+        onHand: [{ strain: "Paper Orchard", grams: 450 }],
+      })
+    ).rows[0];
+    expect(over).toMatchObject({ freeGrams: 450, grossNeedGrams: -250, needGrams: 0, grossShortGrams: 0, shortGrams: 0 });
+
+    const blank = planRows(
+      baseInput({
+        onHand: [{ strain: "Glass Mango", grams: 80 }],
+        scheduled: [{ strain: "Glass Mango", grams: 10 }],
+      })
+    ).rows[0];
+    const zeroTarget = planRows(
+      baseInput({
+        targets: [{ strain: "Glass Mango", grams: 0 }],
+        onHand: [{ strain: "Glass Mango", grams: 80 }],
+        scheduled: [{ strain: "Glass Mango", grams: 10 }],
+      })
+    ).rows[0];
+    expect(blank.targetGrams).toBeNull();
+    expect(zeroTarget.targetGrams).toBe(0);
+    expect(blank.grossNeedGrams).toBe(-80);
+    expect(blank.grossNeedGrams).toBe(zeroTarget.grossNeedGrams);
+    expect(blank.needGrams).toBe(0);
+    expect(blank.needGrams).toBe(zeroTarget.needGrams);
+
+    const summed = planRows(
+      baseInput({
+        targets: [
+          { strain: "Amber Field", grams: 200 },
+          { strain: "Zinc Bloom", grams: 200 },
+        ],
+        onHand: [
+          { strain: "Amber Field", grams: 450 },
+          { strain: "Zinc Bloom", grams: 80 },
+        ],
+        scheduled: [{ strain: "Zinc Bloom", grams: 150 }],
+        ready: [{ strain: "Zinc Bloom", grams: 400 }],
+      })
+    );
+    expect(summed.rows.map((row) => row.strain)).toEqual(["Amber Field", "Zinc Bloom"]);
+    expect(summed.totals.grossNeedGrams).toBe(-130);
+    expect(summed.totals.needGrams).toBe(0);
+    expect(summed.totals.grossShortGrams).toBe(0);
+    expect(summed.totals.shortGrams).toBe(0);
+  });
+
+  it("shows his nine headings, the note, the export, and the warn tone on both shorts", () => {
+    const both = planRows(
+      baseInput({
+        targets: [{ strain: "Ribbon Citrus", grams: 200 }],
+        ready: [{ strain: "Ribbon Citrus", grams: 50 }],
+      })
+    );
+    const html = prepackPlanSection(viewOf(both), "en");
+    expect(headLabels(html)).toEqual(PLAN_HEADINGS);
+    expect(html).not.toContain("data-plan-on-hand");
+    expect(html).not.toContain("data-plan-open");
+    expect(html).not.toContain("data-plan-pace");
+    expect(html).not.toContain("data-plan-months");
+    for (const heading of ["On hand", "Open", "Pace", "Months", "Free"]) {
+      expect(headLabels(html)).not.toContain(heading);
+    }
+    expect(html.indexOf("data-prepack-plan")).toBeLessThan(html.indexOf("data-plan-note"));
+    expect(html).toContain("Net Need and Net Short count what is already on the pack schedule. The Plan picks follow Net Need.");
+    expect(html).toContain(`<a class="btn secondary" href="${PREPACK_PLAN_XLSX_PATH}">Export</a>`);
+    expect(html).toContain('data-plan-gross-short class="plan-short"');
+    expect(html).toContain('data-plan-short class="plan-short"');
+    expect(html).toMatch(/data-plan-target[\s\S]*data-plan-free[\s\S]*data-plan-scheduled[\s\S]*data-plan-gross-need[\s\S]*data-plan-need[\s\S]*data-plan-ready[\s\S]*data-plan-gross-short[\s\S]*data-plan-short/);
+    const es = prepackPlanSection(viewOf(both), "es");
+    expect(es).toContain("Exportar");
+    expect(es).toContain("La necesidad neta y el faltante neto cuentan lo que ya está en el programa de empaque. Las selecciones del plan siguen la necesidad neta.");
+    expect(DASH.test(html)).toBe(false);
+    expect(DASH.test(es)).toBe(false);
+
+    const onlyGross = prepackPlanSection(
+      viewOf(
+        planRows(
+          baseInput({
+            targets: [{ strain: "Glass Mango", grams: 200 }],
+            scheduled: [{ strain: "Glass Mango", grams: 175 }],
+            ready: [{ strain: "Glass Mango", grams: 75 }],
+          })
+        )
+      ),
+      "en"
+    );
+    expect(onlyGross).toContain('data-plan-gross-short class="plan-short"');
+    expect(onlyGross).not.toContain('data-plan-short class="plan-short"');
+
+    const signs = prepackPlanSection(
+      viewOf(
+        planRows(
+          baseInput({
+            targets: [
+              { strain: "Glass Mango", grams: 200 },
+              { strain: "Ribbon Citrus", grams: 200 },
+            ],
+            onHand: [{ strain: "Ribbon Citrus", grams: 450 }],
+            open: [{ strain: "Glass Mango", grams: 80 }],
+          })
+        )
+      ),
+      "en"
+    );
+    expect(signs).toMatch(/data-plan-free data-grams="-80">-/);
+    expect(signs).not.toMatch(/data-plan-free class="plan-short"/);
+    expect(signs).toMatch(/data-plan-gross-need data-grams="-250">-/);
+    expect(signs).not.toMatch(/data-plan-gross-need class="plan-short"/);
+
+    const empty = prepackPlanSection(viewOf(planRows(baseInput())), "en");
+    expect(empty).toContain("No strains on the plan.");
+    expect(empty).toContain("data-plan-note");
+    expect(empty).toContain(PREPACK_PLAN_XLSX_PATH);
+    expect(empty).not.toContain("data-prepack-plan");
+  });
+});
+
+describe("PC1b the plan export", () => {
+  it("with autoFilter unset, a two row sheet matches the pinned XML", async () => {
+    const bytes = buildXlsx({ headers: ["Lot", "Note"], rows: [[{ text: "Oak" }, { text: "none" }]] });
+    expect(await sheetXmlOf(bytes)).toBe(PINNED_SHEET);
+    const filtered = buildXlsx({ headers: ["Lot", "Note"], rows: [[{ text: "Oak" }, { text: "none" }]], autoFilter: 2 });
+    expect(await sheetXmlOf(filtered)).toBe(PINNED_SHEET.replace("</sheetData>", '</sheetData>\n  <autoFilter ref="A1:B2"/>'));
+  });
+
+  it("reads months as a plain number on the export, and the filter stops at the strains (the gate)", async () => {
+    const planned = planRows(
+      baseInput({
+        targets: [{ strain: "Velvet Lantern", grams: 448 }],
+        onHand: [
+          { strain: "Glass Mango", grams: 896 },
+          { strain: "Paper Orchard", grams: 448 },
+        ],
+        shipped: [
+          { strain: "Glass Mango", grams: 1344 },
+          { strain: "Paper Orchard", grams: 1344 },
+        ],
+      })
+    );
+    expect(planned.rows.map((row) => row.strain)).toEqual(["Velvet Lantern", "Glass Mango", "Paper Orchard"]);
+    expect(planned.rows[1].paceGrams).toBe(448);
+    expect(planned.rows[1].months).toBe(2);
+    expect(planned.rows[0].months).toBeNull();
+    expect(planned.totals.months).toBeCloseTo(1.5);
+    expect((planned.rows[1].months ?? 0) + (planned.rows[2].months ?? 0)).toBe(3);
+
+    const bytes = prepackPlanXlsx(viewOf(planned));
+    const grid = (await readXlsxSheets(bytes)).get("Prepack plan");
+    expect(grid?.map((row) => row.row)).toEqual([0, 1, 2, 3, 5, 7, 8]);
+    expect(grid?.[0].cells).toEqual(EXPORT_HEADINGS);
+    expect(grid?.[1].cells[11]).toBeUndefined();
+    expect(grid?.[1].cells[12]).toBeUndefined();
+    expect(grid?.[2].cells).toEqual(["Glass Mango", null, 2, 0, -2, 0, 0, 0, 0, 2, 0, 1, 2]);
+    expect(grid?.[3].cells[12]).toBe(1);
+    expect(grid?.[4].cells[0]).toBe("Totals");
+    expect(grid?.[4].cells[11]).toBe(2);
+    expect(grid?.[4].cells[12]).toBe(1.5);
+    expect(grid?.[5].cells).toEqual([`Zoho stock as of ${fgMountedLabel(STOCK_AT)}`]);
+    expect(grid?.[6].cells).toEqual([`Orders as of ${fgMountedLabel(ORDERS_AT)}`]);
+    const xml = await sheetXmlOf(bytes);
+    expect(xml).toContain('<autoFilter ref="A1:M4"/>');
+    expect(xml).not.toContain("A1:M5");
+    expect(xml).toContain('<c r="M3" t="n"><v>2.00</v></c>');
+    expect(xml).not.toContain('<c r="M3" t="n" s="3"');
+    expect(xml).toContain('<c r="L3" t="n" s="3"><v>1</v></c>');
+    expect(xml).toContain('<c r="M6" t="n"><v>1.50</v></c>');
+    expect(xml).not.toContain("<v>3.00</v>");
+    const text = grid?.map((row) => row.cells.join(" ")).join("\n") ?? "";
+    expect(DASH.test(text)).toBe(false);
+    expect(DASH.test(xml)).toBe(false);
+  });
+
+  it("GET /production/scheduling/prepack/plan.xlsx is the same workbook the page's plan builds", async () => {
+    const m = await migratedDb();
+    listing(m, { id: "pre-plain", name: "PRE - Ribbon Citrus", qty: 2, each: 448, at: STOCK_AT });
+    const env = {
+      DB: m.db,
+      THEME: "grip",
+      ASSETS: { fetch: () => Promise.resolve(new Response("no", { status: 404 })) },
+    } as unknown as Env;
+    const surface = await loadPrepackSurface(m.db, "2026-10-26T16:00:00.000Z");
+    const res = await app.request(PREPACK_PLAN_XLSX_PATH, {}, env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    expect(res.headers.get("content-disposition")).toBe(`attachment; filename="prepack_plan_${reportFileStamp()}.xlsx"`);
+    const body = new Uint8Array(await res.arrayBuffer());
+    expect(body[0]).toBe(0x50);
+    expect(body[1]).toBe(0x4b);
+    expect(Array.from(body)).toEqual(Array.from(prepackPlanXlsx(surface.plan)));
+    const grid = (await readXlsxSheets(body)).get("Prepack plan");
+    expect(grid?.[0].cells).toEqual(EXPORT_HEADINGS);
+    expect(grid?.map((row) => row.row)).toEqual([0, 1, 3, 5, 6]);
+    expect(grid?.[1].cells[0]).toBe("Ribbon Citrus");
+    expect(grid?.[1].cells[10]).toBeUndefined();
+    expect(grid?.[1].cells[12]).toBeUndefined();
+    expect(grid?.[2].cells[0]).toBe("Totals");
+    expect(grid?.[3].cells[0]).toBe(`Zoho stock as of ${fgMountedLabel(STOCK_AT)}`);
+    expect(grid?.[4].cells[0]).toBe("No sales orders mounted yet");
+    expect(await sheetXmlOf(body)).toContain('<autoFilter ref="A1:M2"/>');
   });
 });
 

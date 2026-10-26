@@ -39,3 +39,8 @@ branches/
 tools/sandbox/sandbox.local.json
 tools/sandbox/IDEA.md
 tools/sandbox/shots/
+
+# THE STRAYS IN PLACE (canon 0.30.551, his pick b): the old gate tars, the empty Patrick Slices.zip, and workbooks beside the reports; data never rides in the repo
+/gateV*.tar
+/Patrick Slices.zip
+SESSION_REPORTS/*.xlsx

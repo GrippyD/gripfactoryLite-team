@@ -8108,6 +8108,32 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     assert(planAt >= 0 && planAt < panesAt && availPre.body.includes("<h2>Plan</h2>"), "the Plan fold must sit above the prepack panes");
     assert(availPre.body.slice(planAt, panesAt).includes('class="report-scroll"') && availPre.body.includes("data-prepack-plan"), "the plan table must sit in a scroll box");
     assert(availPre.body.includes('href="/admin/prepack-targets"'), "the plan must link to targets");
+    const planFold = availPre.body.slice(planAt, panesAt);
+    const planHead = planFold.slice(planFold.indexOf("<thead>"), planFold.indexOf("</thead>"));
+    const planLabels = ["Strain", "Target", "Packed (not ordered)", "On Pack Schedule", "Need", "Net Need", "Ready to pack", "Short Product", "Net Short"];
+    let planCursor = 0;
+    for (const label of planLabels) {
+      const at = planHead.indexOf(`>${label}<`, planCursor);
+      assert(at > planCursor, `the plan headings must read ${label} in order`);
+      planCursor = at;
+    }
+    assert(
+      !planHead.includes(">On hand<") && !planHead.includes(">Open<") && !planHead.includes(">Pace<") && !planHead.includes(">Months<") && !planHead.includes(">Free<") &&
+        !planFold.includes("data-plan-on-hand") && !planFold.includes("data-plan-open") && !planFold.includes("data-plan-pace") && !planFold.includes("data-plan-months"),
+      "On hand, Open, Pace and Months leave the plan table"
+    );
+    assert(planFold.includes('class="btn secondary" href="/production/scheduling/prepack/plan.xlsx"'), "the plan must offer Export beside the targets link");
+    assert(planFold.includes("Net Need and Net Short count what is already on the pack schedule."), "the plan must say what Net Need counts");
+    const planXlsx = await req("/production/scheduling/prepack/plan.xlsx");
+    assert(planXlsx.status === 200, `the plan export expected 200 got ${planXlsx.status}`);
+    assert(
+      (planXlsx.headers.get("content-type") || "").includes("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+      "the plan export must be an xlsx"
+    );
+    const planName = planXlsx.headers.get("content-disposition") || "";
+    assert(/attachment; filename="prepack_plan_\d{8}\.xlsx"/.test(planName), `the plan export must be named prepack_plan_YYYYMMDD.xlsx, got ${planName}`);
+    const planBuf = new Uint8Array(await planXlsx.arrayBuffer());
+    assert(planBuf[0] === 0x50 && planBuf[1] === 0x4b, "the plan export must start with PK");
     assert(availPre.body.includes("Orders as of") && !availPre.body.includes("No sales orders mounted yet"), "a mounted book must stamp the plan");
     assert(availPre.body.includes('data-plan-key="fruity pebbles"'), "the ready strain must be a plan row");
     // THE SCHEDULER BY PACKAGE (canon 0.30.196): packages on the panes with >>

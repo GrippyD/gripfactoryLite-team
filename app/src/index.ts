@@ -501,10 +501,12 @@ import { DRY_STRAIN_FARMS, DRY_STRAIN_GROW_METHODS, dryStrainNames, dryStrainRef
 import { HARVEST_RECONCILE_KEY, loadHarvestReconciliation } from "./harvestreconciliation";
 import { deleteFieldEstimate, fieldEstimatesPage, loadFieldEstimatesPage, saveFieldEstimate } from "./fieldestimates";
 import {
+  PREPACK_PLAN_XLSX_PATH,
   PREPACK_TARGETS_PATH,
   deletePrepackTarget,
   loadPrepackSurface,
   loadPrepackTargetsPage,
+  prepackPlanXlsx,
   prepackTargetsPage,
   savePrepackTarget,
 } from "./prepackplan";
@@ -2972,6 +2974,16 @@ app.post("/station/load_silo/:loadId/pause", async (c) => {
 app.get(PRODUCTION_SCHEDULING_PATH, async (c) => {
   const s = await shell(c);
   return html(c, s, "Production Scheduling", schedulingLanding(s.locale));
+});
+
+app.get(PREPACK_PLAN_XLSX_PATH, async (c) => {
+  const surface = await loadPrepackSurface(c.env.DB, nowIso());
+  return new Response(prepackPlanXlsx(surface.plan), {
+    headers: {
+      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content-disposition": `attachment; filename="prepack_plan_${reportFileStamp()}.xlsx"`,
+    },
+  });
 });
 
 app.get(`${PRODUCTION_SCHEDULING_PATH}/:stage`, async (c) => {
