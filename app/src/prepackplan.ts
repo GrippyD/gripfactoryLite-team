@@ -4,7 +4,7 @@
  * changes, those two are what change.
  */
 import { nowIso, refusal, requireReason, textOrNull } from "./audit";
-import { format2, GRAMS_PER_LB, round2 } from "./config";
+import { format2, GRAMS_PER_LB, PRODUCTION_SCHEDULING_PATH, round2 } from "./config";
 import { getConfigMap, insertLog, listPrepackPanes, logsForInsert, requireActor, type MountedOrderRow } from "./db";
 import { DD_CONFIG, DD_CONFIG_DEFAULTS, DD_CONFIG_RULES } from "./directorregistry";
 import { farmToday } from "./effective";
@@ -23,8 +23,10 @@ import {
 } from "./fginventory";
 import { t, tFill, type Locale } from "./i18n";
 import { esc, fieldBlock } from "./ui";
+import { buildXlsx, type XlsxCell } from "./xlsx";
 
 export const PREPACK_TARGETS_PATH = "/admin/prepack-targets";
+export const PREPACK_PLAN_XLSX_PATH = `${PRODUCTION_SCHEDULING_PATH}/prepack/plan.xlsx`;
 
 const WINDOW_KEY = DD_CONFIG.dd_moh_window_months;
 const WINDOW_RULE = DD_CONFIG_RULES[WINDOW_KEY];
@@ -88,8 +90,14 @@ export type PlanRow = {
   openGrams: number | null;
   freeGrams: number;
   scheduledGrams: number;
+  /** Target minus free. The schedule is left out. May go below zero. */
+  grossNeedGrams: number;
+  /** Net Need: Target minus free minus scheduled, never below zero. */
   needGrams: number;
   readyGrams: number;
+  /** Need minus ready, never below zero. */
+  grossShortGrams: number;
+  /** Net Short: Net Need minus ready, never below zero. */
   shortGrams: number;
   paceGrams: number | null;
   months: number | null;
@@ -101,8 +109,10 @@ export type PlanTotals = {
   openGrams: number | null;
   freeGrams: number;
   scheduledGrams: number;
+  grossNeedGrams: number;
   needGrams: number;
   readyGrams: number;
+  grossShortGrams: number;
   shortGrams: number;
   paceGrams: number | null;
   months: number | null;
@@ -191,8 +201,10 @@ function blankTotals(): PlanTotals {
     openGrams: null,
     freeGrams: 0,
     scheduledGrams: 0,
+    grossNeedGrams: 0,
     needGrams: 0,
     readyGrams: 0,
+    grossShortGrams: 0,
     shortGrams: 0,
     paceGrams: 0,
     months: null,
@@ -236,7 +248,10 @@ export function planPicks(rows: readonly PlanRow[], packages: readonly PlanPacka
   return ids;
 }
 
-/** Need = Target - (On hand - Open) - Scheduled, never below zero. Pure. */
+/** Net Need is Target minus free minus scheduled, never below zero.
+ * Need leaves the schedule out and may go below zero. A blank target counts as zero in both.
+ * Pure. Picks follow Net Need.
+ */
 export function planRows(input: PlanInput): PlanModel {
   const map = new Map<string, Acc>();
   for (const row of input.targets) {
@@ -262,7 +277,9 @@ export function planRows(input: PlanInput): PlanModel {
   for (const [key, acc] of map) {
     const openGrams = input.ordersMounted ? acc.open : null;
     const free = acc.onHand - (openGrams ?? 0);
-    const need = Math.max(0, (acc.hasTarget ? acc.target : 0) - free - acc.scheduled);
+    const grossNeed = (acc.hasTarget ? acc.target : 0) - free;
+    const need = Math.max(0, grossNeed - acc.scheduled);
+    const grossShort = Math.max(0, grossNeed - acc.ready);
     const short = Math.max(0, need - acc.ready);
     const pace = input.ordersMounted && acc.shipped > 0 && monthsN >= 1 ? acc.shipped / monthsN : null;
     const months = pace != null && pace > 0 ? free / pace : null;
@@ -274,8 +291,10 @@ export function planRows(input: PlanInput): PlanModel {
       openGrams,
       freeGrams: free,
       scheduledGrams: acc.scheduled,
+      grossNeedGrams: grossNeed,
       needGrams: need,
       readyGrams: acc.ready,
+      grossShortGrams: grossShort,
       shortGrams: short,
       paceGrams: pace,
       months,
@@ -303,8 +322,10 @@ export function planRows(input: PlanInput): PlanModel {
     if (input.ordersMounted) totals.openGrams = (totals.openGrams ?? 0) + (row.openGrams ?? 0);
     totals.freeGrams += row.freeGrams;
     totals.scheduledGrams += row.scheduledGrams;
+    totals.grossNeedGrams += row.grossNeedGrams;
     totals.needGrams += row.needGrams;
     totals.readyGrams += row.readyGrams;
+    totals.grossShortGrams += row.grossShortGrams;
     totals.shortGrams += row.shortGrams;
     if (row.paceGrams != null && monthsN >= 1) shipped += row.paceGrams * monthsN;
   }
@@ -565,29 +586,37 @@ function gramCell(attr: string, grams: number | null, locale: Locale, warn: bool
   return `<td ${attr}${cls} data-grams="${esc(String(grams))}">${esc(poundsLabel(grams, locale))}</td>`;
 }
 
-/** Months of Free at the pace: a plain number, never pounds. */
-function monthsCell(months: number | null): string {
-  if (months == null) return `<td data-plan-months></td>`;
-  return `<td data-plan-months data-months="${esc(String(months))}">${esc(format2(round2(months)))}</td>`;
-}
+const PLAN_NOTE = "Net Need and Net Short count what is already on the pack schedule. The Plan picks follow Net Need.";
 
 function planRow(row: PlanRow, locale: Locale): string {
   return `<tr data-plan-key="${esc(row.key)}">
         <th scope="row">${esc(row.strain)}</th>
         ${gramCell("data-plan-target", row.targetGrams, locale, false)}
-        ${gramCell("data-plan-on-hand", row.onHandGrams, locale, false)}
-        ${gramCell("data-plan-open", row.openGrams, locale, false)}
         ${gramCell("data-plan-free", row.freeGrams, locale, false)}
         ${gramCell("data-plan-scheduled", row.scheduledGrams, locale, false)}
+        ${gramCell("data-plan-gross-need", row.grossNeedGrams, locale, false)}
         ${gramCell("data-plan-need", row.needGrams, locale, false)}
         ${gramCell("data-plan-ready", row.readyGrams, locale, false)}
+        ${gramCell("data-plan-gross-short", row.grossShortGrams, locale, row.grossShortGrams > 0)}
         ${gramCell("data-plan-short", row.shortGrams, locale, row.shortGrams > 0)}
-        ${gramCell("data-plan-pace", row.paceGrams, locale, false)}
-        ${monthsCell(row.months)}
       </tr>`;
 }
 
-/** The Plan fold. Pounds at 448 g. Short above zero uses the warn tone. */
+function planTotalRow(totals: PlanTotals, locale: Locale): string {
+  return `<tr data-plan-total>
+      <th scope="row">${esc(t(locale, "Totals"))}</th>
+      ${gramCell("data-plan-target", totals.targetGrams, locale, false)}
+      ${gramCell("data-plan-free", totals.freeGrams, locale, false)}
+      ${gramCell("data-plan-scheduled", totals.scheduledGrams, locale, false)}
+      ${gramCell("data-plan-gross-need", totals.grossNeedGrams, locale, false)}
+      ${gramCell("data-plan-need", totals.needGrams, locale, false)}
+      ${gramCell("data-plan-ready", totals.readyGrams, locale, false)}
+      ${gramCell("data-plan-gross-short", totals.grossShortGrams, locale, totals.grossShortGrams > 0)}
+      ${gramCell("data-plan-short", totals.shortGrams, locale, totals.shortGrams > 0)}
+    </tr>`;
+}
+
+/** The Plan fold. Pounds at 448 g. Short Product and Net Short above zero use the warn tone. */
 export function prepackPlanSection(plan: PrepackPlanView, locale: Locale): string {
   const stock = plan.stockAsOf
     ? `<p data-plan-stock>${esc(tFill(locale, "Zoho stock as of {time}", { time: asOfLabel(plan.stockAsOf) }))}</p>`
@@ -595,43 +624,107 @@ export function prepackPlanSection(plan: PrepackPlanView, locale: Locale): strin
   const orders = plan.ordersMounted
     ? `<p data-plan-orders>${esc(tFill(locale, "Orders as of {time}", { time: asOfLabel(plan.ordersAsOf) }))}</p>`
     : `<p data-plan-orders>${esc(t(locale, "No sales orders mounted yet"))}</p>`;
-  const link = `<p><a href="${PREPACK_TARGETS_PATH}">${esc(t(locale, "Targets"))}</a></p>`;
+  const link = `<p><a href="${PREPACK_TARGETS_PATH}">${esc(t(locale, "Targets"))}</a> <a class="btn secondary" href="${PREPACK_PLAN_XLSX_PATH}">${esc(t(locale, "Export"))}</a></p>`;
   const head = `<tr>
       <th>${esc(t(locale, "Strain"))}</th>
       <th>${esc(t(locale, "Target"))}</th>
-      <th>${esc(t(locale, "On hand"))}</th>
-      <th>${esc(t(locale, "Open"))}</th>
-      <th>${esc(t(locale, "Free"))}</th>
-      <th>${esc(t(locale, "Scheduled"))}</th>
+      <th>${esc(t(locale, "Packed (not ordered)"))}</th>
+      <th>${esc(t(locale, "On Pack Schedule"))}</th>
       <th>${esc(t(locale, "Need"))}</th>
-      <th>${esc(t(locale, "Ready"))}</th>
-      <th>${esc(t(locale, "Short"))}</th>
-      <th>${esc(t(locale, "Pace"))}<br><span class="muted">${esc(t(locale, "per month"))}</span></th>
-      <th>${esc(t(locale, "Months"))}</th>
-    </tr>`;
-  const total = `<tr data-plan-total>
-      <th scope="row">${esc(t(locale, "Totals"))}</th>
-      ${gramCell("data-plan-target", plan.totals.targetGrams, locale, false)}
-      ${gramCell("data-plan-on-hand", plan.totals.onHandGrams, locale, false)}
-      ${gramCell("data-plan-open", plan.totals.openGrams, locale, false)}
-      ${gramCell("data-plan-free", plan.totals.freeGrams, locale, false)}
-      ${gramCell("data-plan-scheduled", plan.totals.scheduledGrams, locale, false)}
-      ${gramCell("data-plan-need", plan.totals.needGrams, locale, false)}
-      ${gramCell("data-plan-ready", plan.totals.readyGrams, locale, false)}
-      ${gramCell("data-plan-short", plan.totals.shortGrams, locale, plan.totals.shortGrams > 0)}
-      ${gramCell("data-plan-pace", plan.totals.paceGrams, locale, false)}
-      ${monthsCell(plan.totals.months)}
+      <th>${esc(t(locale, "Net Need"))}</th>
+      <th>${esc(t(locale, "Ready to pack"))}</th>
+      <th>${esc(t(locale, "Short Product"))}</th>
+      <th>${esc(t(locale, "Net Short"))}</th>
     </tr>`;
   const table =
     plan.rows.length === 0
       ? `<p class="muted" data-plan-empty>${esc(t(locale, "No strains on the plan."))}</p>`
-      : `<div class="report-scroll"><table class="data" data-prepack-plan><thead>${head}</thead><tbody>${plan.rows.map((row) => planRow(row, locale)).join("")}${total}</tbody></table></div>`;
+      : `<div class="report-scroll"><table class="data" data-prepack-plan><thead>${head}</thead><tbody>${plan.rows.map((row) => planRow(row, locale)).join("")}${planTotalRow(plan.totals, locale)}</tbody></table></div>`;
+  const note = `<p data-plan-note>${esc(t(locale, PLAN_NOTE))}</p>`;
   return `<details class="queue-fold" data-fold="prepack-plan" open><summary><h2>${esc(t(locale, "Plan"))}</h2></summary>
     ${stock}
     ${orders}
     ${link}
     ${table}
+    ${note}
   </details>`;
+}
+
+const PLAN_XLSX_HEADINGS = [
+  "Strain",
+  "Target",
+  "Packed (not ordered)",
+  "On Pack Schedule",
+  "Need",
+  "Net Need",
+  "Ready to pack",
+  "Short Product",
+  "Net Short",
+  "On hand",
+  "Open",
+  "Pace (lb per month)",
+  "Months",
+] as const;
+
+function planPounds(grams: number): number {
+  return round2(grams / GRAMS_PER_LB);
+}
+
+/** A weight in pounds at 448, or a blank when the figure was never set. */
+function lbsCell(grams: number | null): XlsxCell {
+  if (grams == null) return {};
+  return { number: planPounds(grams), lbs: true };
+}
+
+/** Months of cover: a plain number, never the pounds format. */
+function monthsXlsxCell(months: number | null): XlsxCell {
+  if (months == null) return {};
+  return { number: round2(months) };
+}
+
+function planXlsxCells(row: PlanRow | PlanTotals, label: string): XlsxCell[] {
+  return [
+    { text: label },
+    lbsCell(row.targetGrams),
+    lbsCell(row.freeGrams),
+    lbsCell(row.scheduledGrams),
+    lbsCell(row.grossNeedGrams),
+    lbsCell(row.needGrams),
+    lbsCell(row.readyGrams),
+    lbsCell(row.grossShortGrams),
+    lbsCell(row.shortGrams),
+    lbsCell(row.onHandGrams),
+    lbsCell(row.openGrams),
+    lbsCell(row.paceGrams),
+    monthsXlsxCell(row.months),
+  ];
+}
+
+function blankXlsxRow(): XlsxCell[] {
+  return PLAN_XLSX_HEADINGS.map(() => ({}));
+}
+
+/** The same lines the fold header shows, in English, as the house exports are. */
+function planAsOfRows(plan: PrepackPlanView): XlsxCell[][] {
+  const lines: string[] = [];
+  if (plan.stockAsOf) lines.push(`Zoho stock as of ${asOfLabel(plan.stockAsOf)}`);
+  lines.push(plan.ordersMounted ? `Orders as of ${asOfLabel(plan.ordersAsOf)}` : "No sales orders mounted yet");
+  return lines.map((text) => {
+    const row = blankXlsxRow();
+    row[0] = { text };
+    return row;
+  });
+}
+
+/** One sheet, Prepack plan. The autofilter stops at the last strain row. */
+export function prepackPlanXlsx(plan: PrepackPlanView): Uint8Array {
+  const strainRows = plan.rows.map((row) => planXlsxCells(row, row.strain));
+  return buildXlsx({
+    sheetName: "Prepack plan",
+    headers: [...PLAN_XLSX_HEADINGS],
+    autoFilter: 1 + strainRows.length,
+    rows: [...strainRows, blankXlsxRow(), planXlsxCells(plan.totals, "Totals"), blankXlsxRow(), ...planAsOfRows(plan)],
+  });
 }
 
 export function poundsInput(grams: number): string {

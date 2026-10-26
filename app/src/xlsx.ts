@@ -139,6 +139,9 @@ export type XlsxSheet = {
   plainNumbers?: boolean;
   /** A text line in row 1, above the header. The header and body shift down. */
   banner?: string;
+  /** When set, an autofilter from A1 through the last heading and this 1-based
+   * row. Unset writes the sheet exactly as before. */
+  autoFilter?: number;
 };
 
 function xmlEsc(s: string): string {
@@ -201,6 +204,10 @@ function sheetXml(sheet: XlsxSheet): string {
       return `<row r="${rowNum}">${cells}</row>`;
     })
     .join("");
+  const filter =
+    typeof sheet.autoFilter === "number" && Number.isInteger(sheet.autoFilter) && sheet.autoFilter >= 1 && sheet.headers.length > 0
+      ? `\n  <autoFilter ref="A1:${colLetter(sheet.headers.length - 1)}${sheet.autoFilter}"/>`
+      : "";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <cols>${cols}</cols>
@@ -208,7 +215,7 @@ function sheetXml(sheet: XlsxSheet): string {
     ${bannerRow}
     <row r="${headerRow}">${headerCells}</row>
     ${body}
-  </sheetData>
+  </sheetData>${filter}
 </worksheet>`;
 }
 

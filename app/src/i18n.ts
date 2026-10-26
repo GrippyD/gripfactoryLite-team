@@ -5376,11 +5376,18 @@ for (const [en, es] of TT_STRINGS) if (!Object.prototype.hasOwnProperty.call(DIC
 
 const PC_STRINGS: Array<[string, string]> = [
   ["Plan", "Plan"],
-  ["On hand", "En existencia"],
-  ["Free", "Libre"],
+  ["Packed (not ordered)", "Empacado (sin pedido)"],
+  ["On Pack Schedule", "En el programa de empaque"],
   ["Need", "Necesidad"],
-  ["Pace", "Ritmo"],
-  ["Months", "Meses"],
+  ["Net Need", "Necesidad neta"],
+  ["Ready to pack", "Listo para empacar"],
+  ["Short Product", "Producto faltante"],
+  ["Net Short", "Faltante neto"],
+  ["Export", "Exportar"],
+  [
+    "Net Need and Net Short count what is already on the pack schedule. The Plan picks follow Net Need.",
+    "La necesidad neta y el faltante neto cuentan lo que ya está en el programa de empaque. Las selecciones del plan siguen la necesidad neta.",
+  ],
   ["Totals", "Totales"],
   ["Pounds", "Libras"],
   ["Add a strain", "Agregar una variedad"],
@@ -5393,7 +5400,6 @@ const PC_STRINGS: Array<[string, string]> = [
   ["That target is not on the list.", "Esa meta no está en la lista."],
   ["The target for this strain, in pounds. One pound is 448 g.", "La meta de esta variedad, en libras. Una libra es 448 g."],
   ["A strain the plan does not list yet.", "Una variedad que el plan aún no lista."],
-  ["per month", "por mes"],
   ["No strains on the plan.", "No hay variedades en el plan."],
   ["Optional note", "Nota opcional"],
 ];
