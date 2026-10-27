@@ -5193,7 +5193,15 @@ export type SoMountRow = {
   ignored_count: number;
   created_at: string;
   created_by: string | null;
+  /** SM1 (canon 0.30.554): a mount sent in rounds. Null on a mount made before SM1. */
+  rounds_total?: number | null;
+  rounds_done?: number | null;
+  completed_at?: string | null;
+  /** THE GONE RULE: orders the export's date range covers but the export lacks. */
+  gone_count?: number;
+  gone_held?: number;
 };
+
 
 /** One mounted Zoho sales order. zoho_status and internal_status are Zoho's
  * columns as mounted; pick_status (NULL, picking, fulfilled) is ours. */
@@ -5258,7 +5266,8 @@ const MOUNTED_LINE_COLUMNS = `id, sales_order_id, seq, item_name, sku, product_s
 export async function listSoMounts(db: D1Database, limit = 20): Promise<SoMountRow[]> {
   const result = await db
     .prepare(
-      `SELECT id, filename, row_count, order_count, ignored_count, created_at, created_by
+      `SELECT id, filename, row_count, order_count, ignored_count, created_at, created_by,
+              rounds_total, rounds_done, completed_at, gone_count, gone_held
        FROM so_mounts WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?`
     )
     .bind(limit)
@@ -5365,6 +5374,62 @@ export async function listMountedLinesAll(
     .prepare(`SELECT ${MOUNTED_LINE_COLUMNS}, deleted_at FROM mounted_sales_order_lines ORDER BY sales_order_id, seq`)
     .all<MountedLineRow & { deleted_at: string | null }>();
   return result.results ?? [];
+}
+
+/** SM1 (canon 0.30.554): the order rows a mount round carries, voided ones
+ * included, read by so_number in chunks under D1's 100 bound values. A round
+ * reads only its own orders, never the whole table. */
+export async function listMountedOrdersByNumbers(
+  db: D1Database,
+  numbers: string[]
+): Promise<Array<MountedOrderRow & { deleted_at: string | null }>> {
+  const out: Array<MountedOrderRow & { deleted_at: string | null }> = [];
+  const unique = [...new Set(numbers)];
+  for (let i = 0; i < unique.length; i += 90) {
+    const chunk = unique.slice(i, i + 90);
+    const result = await db
+      .prepare(
+        `SELECT ${MOUNTED_ORDER_COLUMNS}, deleted_at FROM mounted_sales_orders WHERE so_number IN (${chunk.map(() => "?").join(", ")})`
+      )
+      .bind(...chunk)
+      .all<MountedOrderRow & { deleted_at: string | null }>();
+    out.push(...(result.results ?? []));
+  }
+  return out;
+}
+
+/** SM1: the line rows of those orders, soft-deleted ones included, for the seq match. */
+export async function listMountedLinesByOrderIds(
+  db: D1Database,
+  orderIds: string[]
+): Promise<Array<MountedLineRow & { deleted_at: string | null }>> {
+  const out: Array<MountedLineRow & { deleted_at: string | null }> = [];
+  const unique = [...new Set(orderIds)];
+  for (let i = 0; i < unique.length; i += 90) {
+    const chunk = unique.slice(i, i + 90);
+    const result = await db
+      .prepare(
+        `SELECT ${MOUNTED_LINE_COLUMNS}, deleted_at FROM mounted_sales_order_lines
+         WHERE sales_order_id IN (${chunk.map(() => "?").join(", ")}) ORDER BY sales_order_id, seq`
+      )
+      .bind(...chunk)
+      .all<MountedLineRow & { deleted_at: string | null }>();
+    out.push(...(result.results ?? []));
+  }
+  return out;
+}
+
+/** SM1: one mount row with its round state, or null. */
+export async function getSoMount(db: D1Database, id: string): Promise<SoMountRow | null> {
+  const row = await db
+    .prepare(
+      `SELECT id, filename, row_count, order_count, ignored_count, created_at, created_by,
+              rounds_total, rounds_done, completed_at, gone_count, gone_held
+       FROM so_mounts WHERE id = ? AND deleted_at IS NULL`
+    )
+    .bind(id)
+    .first<SoMountRow>();
+  return row ?? null;
 }
 
 /** Labor hours report: one row per saved console value, newest date first. */

@@ -158,6 +158,7 @@ import {
   getHarvestLoad,
   getRow,
   getSiloLoad,
+  getSoMount,
   insertLog,
   listBatchTruckNumbers,
   listOpenFarmHbns,
@@ -173,9 +174,9 @@ import {
   listLookupValues,
   listManifestedTags,
   personIdByPhone,
-  listMountedLinesAll,
+  listMountedLinesByOrderIds,
   listMountedOrderLines,
-  listMountedOrdersAll,
+  listMountedOrdersByNumbers,
   listMovementItems,
   logsForInsert,
   listSplitChildren,
@@ -9494,10 +9495,31 @@ function sameValue(a: unknown, b: unknown): boolean {
  * ignored; one order per SalesOrder Number), made durable: an order upserts by
  * so_number, keeping our pick marks; lines match by seq inside the order and
  * keep picked_qty, short_flag and pick_note; a line the newer export dropped
- * soft-deletes; an order absent from a later export keeps its last state
- * (nothing here deletes an order). Nothing writes back to Zoho. */
-export async function mountSalesOrders(db: D1Database, form: FormData): Promise<ActionOk> {
-  const actor = await requireActor(db, personIdFrom(form));
+ * soft-deletes. Nothing writes back to Zoho.
+ *
+ * SM1, THE WHOLE EXPORT MOUNT (canon 0.30.554; the owner, 2026-10-27: "the
+ * data should exist in gripfactory as it does in Zoho. That means if, for
+ * whatever unforseen reason, I need to change an invoice a year after the fact
+ * that gfLite sees that"). After the live 1102 of 2026-10-27 on his 23.8 MB
+ * export, the page sends the whole export in rounds of whole orders, and a
+ * round reads only its own orders. THE GONE RULE (his pick): once the last
+ * round lands, an order dated inside the export's date range that the export
+ * lacks is gone from Zoho and soft-deletes with its lines; an order outside
+ * the range keeps its last state, so a filtered export never removes anything.
+ * THE GONE GUARD: when more than SO_GONE_HOLD_MIN orders and more than
+ * SO_GONE_HOLD_SHARE of the export's orders would go, nothing goes and the
+ * mount says so (a filtered export does that). An order the export carries
+ * again revives. */
+export const SO_GONE_REASON = "gone from the Zoho export";
+export const SO_GONE_HOLD_MIN = 10;
+export const SO_GONE_HOLD_SHARE = 0.02;
+const SO_ROUNDS_MAX = 1000;
+const SO_BATCH = 200;
+
+type SoUpload = { filename: string; parsed: ReturnType<typeof parseZohoSalesOrders> };
+
+/** The file a mount or a round carries, read and checked. */
+async function readSoUpload(form: FormData): Promise<SoUpload> {
   const file = form.get("file");
   if (!(file instanceof File)) throw new HttpError(400, "A file is required.");
   const filename = uploadBasename(file.name);
@@ -9517,13 +9539,36 @@ export async function mountSalesOrders(db: D1Database, form: FormData): Promise<
     for (let c = 0; c < headers.length; c++) rec[headers[c].trim()] = rows[r][c] ?? "";
     if (Object.values(rec).some((v) => v.trim() !== "")) records.push(rec);
   }
-  const parsed = parseZohoSalesOrders(records);
-  if (parsed.orders.length === 0) {
-    throw new HttpError(400, "No sales order lines found in that file.");
-  }
-  const ts = nowIso();
-  const mountId = crypto.randomUUID();
-  const [existingOrders, existingLines] = await Promise.all([listMountedOrdersAll(db), listMountedLinesAll(db)]);
+  return { filename, parsed: parseZohoSalesOrders(records) };
+}
+
+/** The mount row, its round count set and nothing counted yet. */
+function soMountInsert(db: D1Database, mountId: string, filename: string, rounds: number, actorId: string, ts: string): D1PreparedStatement[] {
+  return [
+    db
+      .prepare(
+        `INSERT INTO so_mounts (
+          id, filename, row_count, order_count, ignored_count, rounds_total, rounds_done, completed_at, gone_count, gone_held,
+          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
+        ) VALUES (?, ?, 0, 0, 0, ?, 0, NULL, 0, 0, ?, ?, ?, ?, NULL, NULL, NULL)`
+      )
+      .bind(mountId, filename, rounds, ts, actorId, ts, actorId),
+    ...logsForInsert(db, "so_mounts", mountId, { filename, rounds_total: rounds }, actorId, SYSTEM_REASON.so_mount, ts),
+  ];
+}
+
+/** One mount's worth of orders (a whole file or one round of whole orders),
+ * read by so_number and written by the 0.30.18 rules, unchanged. */
+async function writeSoOrders(
+  db: D1Database,
+  actor: Awaited<ReturnType<typeof requireActor>>,
+  parsed: SoUpload["parsed"],
+  mountId: string,
+  ts: string
+): Promise<void> {
+  if (parsed.orders.length === 0) return;
+  const existingOrders = await listMountedOrdersByNumbers(db, parsed.orders.map((o) => o.so_number));
+  const existingLines = await listMountedLinesByOrderIds(db, existingOrders.map((o) => o.id));
   const byNumber = new Map(existingOrders.map((o) => [o.so_number, o]));
   const linesByOrder = new Map<string, Array<MountedLineRow & { deleted_at: string | null }>>();
   for (const line of existingLines) {
@@ -9699,28 +9744,202 @@ export async function mountSalesOrders(db: D1Database, form: FormData): Promise<
       stmts.push(log("mounted_sales_orders", orderId, "lines", liveBefore, liveAfter));
     }
   }
+  await batchChunked(db, stmts, SO_BATCH);
+}
 
-  stmts.unshift(
-    db
-      .prepare(
-        `INSERT INTO so_mounts (
-          id, filename, row_count, order_count, ignored_count,
-          created_at, created_by, updated_at, updated_by, deleted_at, deleted_by, delete_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`
-      )
-      .bind(mountId, filename, parsed.counted, parsed.orders.length, parsed.ignored, ts, actor.id, ts, actor.id),
-    ...logsForInsert(
-      db,
-      "so_mounts",
-      mountId,
-      { filename, row_count: parsed.counted, order_count: parsed.orders.length, ignored_count: parsed.ignored },
-      actor.id,
-      reason,
-      ts
+/** THE GONE RULE and THE GONE GUARD (above), once a mount's last round lands. */
+async function applySoGoneRule(db: D1Database, actorId: string, mountId: string, ts: string): Promise<{ gone: number; held: number }> {
+  const span = await db
+    .prepare(
+      `SELECT MIN(order_date) AS from_date, MAX(order_date) AS to_date, COUNT(*) AS n
+       FROM mounted_sales_orders WHERE deleted_at IS NULL AND last_mount_id = ? AND order_date IS NOT NULL`
     )
-  );
-  await batchChunked(db, stmts);
+    .bind(mountId)
+    .first<{ from_date: string | null; to_date: string | null; n: number }>();
+  if (!span || !span.from_date || !span.to_date) return { gone: 0, held: 0 };
+  const missing =
+    (
+      await db
+        .prepare(
+          `SELECT id FROM mounted_sales_orders
+           WHERE deleted_at IS NULL AND (last_mount_id IS NULL OR last_mount_id != ?) AND order_date >= ? AND order_date <= ?`
+        )
+        .bind(mountId, span.from_date, span.to_date)
+        .all<{ id: string }>()
+    ).results ?? [];
+  if (missing.length === 0) return { gone: 0, held: 0 };
+  if (missing.length > SO_GONE_HOLD_MIN && missing.length > Number(span.n) * SO_GONE_HOLD_SHARE) {
+    return { gone: 0, held: missing.length };
+  }
+  const stmts: D1PreparedStatement[] = [];
+  for (const order of missing) {
+    stmts.push(
+      db
+        .prepare(
+          `UPDATE mounted_sales_orders SET deleted_at = ?, deleted_by = ?, delete_reason = ?, updated_at = ?, updated_by = ?
+           WHERE id = ? AND deleted_at IS NULL`
+        )
+        .bind(ts, actorId, SO_GONE_REASON, ts, actorId, order.id),
+      db
+        .prepare(
+          `UPDATE mounted_sales_order_lines SET deleted_at = ?, deleted_by = ?, delete_reason = ?, updated_at = ?, updated_by = ?
+           WHERE sales_order_id = ? AND deleted_at IS NULL`
+        )
+        .bind(ts, actorId, SO_GONE_REASON, ts, actorId, order.id),
+      insertLog(db, {
+        record_table: "mounted_sales_orders",
+        record_id: order.id,
+        field: "deleted_at",
+        old_value: null,
+        new_value: ts,
+        actor_person_id: actorId,
+        reason: SYSTEM_REASON.so_mount,
+        changed_at: ts,
+      }),
+      insertLog(db, {
+        record_table: "mounted_sales_orders",
+        record_id: order.id,
+        field: "delete_reason",
+        old_value: null,
+        new_value: SO_GONE_REASON,
+        actor_person_id: actorId,
+        reason: SYSTEM_REASON.so_mount,
+        changed_at: ts,
+      })
+    );
+  }
+  await batchChunked(db, stmts, SO_BATCH);
+  return { gone: missing.length, held: 0 };
+}
+
+/** A round's counts onto its mount; on the last round, THE GONE RULE and the close. */
+async function finishSoRound(
+  db: D1Database,
+  actorId: string,
+  mountId: string,
+  parsed: SoUpload["parsed"],
+  roundsDone: number,
+  done: boolean,
+  ts: string
+): Promise<{ gone: number; held: number }> {
+  await db
+    .prepare(
+      `UPDATE so_mounts SET row_count = row_count + ?, order_count = order_count + ?, ignored_count = ignored_count + ?,
+         rounds_done = ?, updated_at = ?, updated_by = ? WHERE id = ?`
+    )
+    .bind(parsed.counted, parsed.orders.length, parsed.ignored, roundsDone, ts, actorId, mountId)
+    .run();
+  if (!done) return { gone: 0, held: 0 };
+  const result = await applySoGoneRule(db, actorId, mountId, ts);
+  const mount = await getSoMount(db, mountId);
+  const log = (field: string, newValue: unknown) =>
+    insertLog(db, {
+      record_table: "so_mounts",
+      record_id: mountId,
+      field,
+      old_value: null,
+      new_value: String(newValue),
+      actor_person_id: actorId,
+      reason: SYSTEM_REASON.so_mount,
+      changed_at: ts,
+    });
+  const stmts: D1PreparedStatement[] = [
+    db
+      .prepare(`UPDATE so_mounts SET completed_at = ?, gone_count = ?, gone_held = ?, updated_at = ?, updated_by = ? WHERE id = ?`)
+      .bind(ts, result.gone, result.held, ts, actorId, mountId),
+    log("completed_at", ts),
+    log("row_count", mount?.row_count ?? 0),
+    log("order_count", mount?.order_count ?? 0),
+    log("ignored_count", mount?.ignored_count ?? 0),
+  ];
+  if (result.gone > 0) stmts.push(log("gone_count", result.gone));
+  if (result.held > 0) stmts.push(log("gone_held", result.held));
+  await db.batch(stmts);
+  return result;
+}
+
+/** The plain post (a browser without the page's script): the whole file in one request. */
+export async function mountSalesOrders(db: D1Database, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const { filename, parsed } = await readSoUpload(form);
+  if (parsed.orders.length === 0) {
+    throw new HttpError(400, "No sales order lines found in that file.");
+  }
+  const ts = nowIso();
+  const mountId = crypto.randomUUID();
+  await db.batch(soMountInsert(db, mountId, filename, 1, actor.id, ts));
+  await writeSoOrders(db, actor, parsed, mountId, ts);
+  await finishSoRound(db, actor.id, mountId, parsed, 1, true, ts);
   return { redirect: "/fulfillment/mount-sos?ok=mounted" };
+}
+
+/** SM1: one round of the page's mount answers JSON (refusals included). */
+export type SoMountRound = {
+  ok: true;
+  mount_id: string;
+  round: number;
+  rounds: number;
+  next: number;
+  done: boolean;
+  gone: number;
+  held: number;
+  redirect: string;
+};
+
+/** True when the form is one of the Mount SOs page's rounds (it carries round). */
+export function isSoMountRound(form: FormData): boolean {
+  return form.has("round");
+}
+
+function roundNumber(raw: unknown, what: string): number {
+  const n = Number(String(raw ?? "").trim());
+  if (!Number.isInteger(n) || n < 0) throw new HttpError(400, `The ${what} must be a whole number.`);
+  return n;
+}
+
+/** SM1: round k of n. Round 0 opens the mount; each later round names it and
+ * must come next; the last one runs THE GONE RULE and closes the mount. */
+export async function mountSalesOrdersRound(db: D1Database, form: FormData): Promise<SoMountRound> {
+  const actor = await requireActor(db, personIdFrom(form));
+  const round = roundNumber(form.get("round"), "round");
+  const rounds = roundNumber(form.get("rounds"), "round count");
+  if (rounds < 1 || rounds > SO_ROUNDS_MAX) throw new HttpError(400, `A mount takes 1 to ${SO_ROUNDS_MAX} rounds.`);
+  if (round >= rounds) throw new HttpError(400, "The round must fall inside its mount.");
+  const { filename, parsed } = await readSoUpload(form);
+  if (rounds === 1 && parsed.orders.length === 0) {
+    throw new HttpError(400, "No sales order lines found in that file.");
+  }
+  const ts = nowIso();
+  let mountId: string;
+  if (round === 0) {
+    mountId = crypto.randomUUID();
+    await db.batch(soMountInsert(db, mountId, filename, rounds, actor.id, ts));
+  } else {
+    mountId = String(form.get("mount_id") ?? "").trim();
+    if (!mountId) throw new HttpError(400, "A round after the first must name its mount.");
+    const mount = await getSoMount(db, mountId);
+    if (!mount) throw new HttpError(400, "That mount is not on file.");
+    if (mount.completed_at) throw new HttpError(400, "That mount has already landed.");
+    if (mount.rounds_total !== rounds) throw new HttpError(400, "The round count changed in the middle of the mount.");
+    const expected = Number(mount.rounds_done ?? 0);
+    if (expected !== round) {
+      throw new HttpError(400, `Round ${round + 1} came out of order: the mount expects round ${expected + 1}.`);
+    }
+  }
+  await writeSoOrders(db, actor, parsed, mountId, ts);
+  const done = round + 1 === rounds;
+  const result = await finishSoRound(db, actor.id, mountId, parsed, round + 1, done, ts);
+  return {
+    ok: true,
+    mount_id: mountId,
+    round,
+    rounds,
+    next: round + 1,
+    done,
+    gone: result.gone,
+    held: result.held,
+    redirect: "/fulfillment/mount-sos?ok=mounted",
+  };
 }
 
 /* ------------------------------------------------------ fulfillment: pick */

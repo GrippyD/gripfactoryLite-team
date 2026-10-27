@@ -10,6 +10,7 @@ import {
   wetWeightsFilename,
   anyPlantCount,
   type WetWeightsCsvRow,
+  parseCsv,
 } from "../src/csv";
 import { parsePlantTags } from "../src/actions";
 import { parsePlantCount, HttpError } from "../src/audit";
@@ -418,5 +419,115 @@ describe("queue csv exports (owner ruling 2026-08-31: commas are display only)",
     expect(csv).toContain("1000000");
     expect(csv).not.toContain("1,234.56");
     expect(csv).not.toContain("1,000,000");
+  });
+});
+
+/* SM1 (canon 0.30.554): the sliced reader against the char by char reader it
+ * replaced, kept here word for word as the reference. */
+function parseCsvReference(text: string): string[][] {
+  const rows: string[][] = [];
+  let cell = "";
+  let row: string[] = [];
+  let i = 0;
+  let quoted = false;
+  const src = text.replace(/^\uFEFF/, "");
+  while (i < src.length) {
+    const ch = src[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') {
+          cell += '"';
+          i += 2;
+          continue;
+        }
+        quoted = false;
+        i += 1;
+        continue;
+      }
+      cell += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      quoted = true;
+      i += 1;
+      continue;
+    }
+    if (ch === ",") {
+      row.push(cell);
+      cell = "";
+      i += 1;
+      continue;
+    }
+    if (ch === "\n") {
+      row.push(cell);
+      if (row.length > 1 || row[0] !== "") rows.push(row);
+      row = [];
+      cell = "";
+      i += 1;
+      continue;
+    }
+    if (ch === "\r") {
+      i += 1;
+      continue;
+    }
+    cell += ch;
+    i += 1;
+  }
+  if (quoted) throw new Error("CSV quote was not closed.");
+  if (cell !== "" || row.length > 0) {
+    row.push(cell);
+    if (row.length > 1 || row[0] !== "") rows.push(row);
+  }
+  return rows;
+}
+
+function readBoth(text: string): [string, string] {
+  const run = (f: (s: string) => string[][]) => {
+    try {
+      return JSON.stringify(f(text));
+    } catch (err) {
+      return `THROW ${(err as Error).message}`;
+    }
+  };
+  return [run(parseCsv), run(parseCsvReference)];
+}
+
+describe("parseCsv, the sliced reader (SM1)", () => {
+  it("reads every edge the old reader read, the same way", () => {
+    const cases = [
+      "", "\n", "a", "a,b\nc,d", "a,b\r\nc,d\r\n", "\uFEFFx,y\n1,2", '"a,b",c\n', '"he said ""hi""",x', 'a"b,c"d,e',
+      '"x\r\ny",z', "a\rb,c", ",,\n,", "a,\n\n\nb", '""', '"",""\n', "x,y\n\n", 'a""b', '"a"b"c"', "\r\n\r\n", "a\n\r\nb",
+      '"unterminated', 'ok,"bad',
+    ];
+    for (const text of cases) {
+      const [now, before] = readBoth(text);
+      expect(now, JSON.stringify(text)).toBe(before);
+    }
+  });
+
+  it("matches the old reader on 20,000 random texts", () => {
+    const alphabet = ["a", "b", ",", '"', "\n", "\r", " ", '""', "\uFEFF"];
+    let seed = 20261027;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    for (let k = 0; k < 20000; k++) {
+      let text = "";
+      const length = Math.floor(rnd() * 16);
+      for (let j = 0; j < length; j++) text += alphabet[Math.floor(rnd() * alphabet.length)];
+      const [now, before] = readBoth(text);
+      if (now !== before) expect(now, JSON.stringify(text)).toBe(before);
+    }
+  });
+
+  it("reads a wide quoted export the same way", () => {
+    const head = Array.from({ length: 60 }, (_, c) => `Column ${c}`);
+    const lines = [head.join(",")];
+    for (let r = 0; r < 800; r++) {
+      lines.push(head.map((_, c) => (c % 7 === 0 ? `"note ${r}, with ""quotes""\nand a break"` : c % 5 === 0 ? "" : `v${r}.${c}`)).join(","));
+    }
+    const text = "\uFEFF" + lines.join("\r\n") + "\r\n";
+    const [now, before] = readBoth(text);
+    expect(now).toBe(before);
+    expect(parseCsv(text)).toHaveLength(801);
   });
 });

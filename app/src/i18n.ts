@@ -737,10 +737,6 @@ export const DICT: Record<string, { en: string; es: string }> = {
   "Last mount": { en: "Last mount", es: "Ultimo montaje" },
   "Nothing mounted yet.": { en: "Nothing mounted yet.", es: "Nada montado todavia." },
   "Zoho Sales Order export (csv)": { en: "Zoho Sales Order export (csv)", es: "Exportacion de Sales Orders de Zoho (csv)" },
-  "Drop the Sales Order export from Zoho Inventory. An xlsx export saves as csv first. Re-mounting a newer export updates statuses in place; nothing writes back to Zoho.": {
-    en: "Drop the Sales Order export from Zoho Inventory. An xlsx export saves as csv first. Re-mounting a newer export updates statuses in place; nothing writes back to Zoho.",
-    es: "Suelte la exportacion de Sales Orders de Zoho Inventory. Una exportacion xlsx se guarda primero como csv. Volver a montar una exportacion mas nueva actualiza los estados en su lugar; nada se escribe de vuelta en Zoho.",
-  },
   "lines": { en: "lines", es: "lineas" },
   "orders": { en: "orders", es: "pedidos" },
   "qty": { en: "qty", es: "cant." },
@@ -5404,6 +5400,29 @@ const PC_STRINGS: Array<[string, string]> = [
   ["Optional note", "Nota opcional"],
 ];
 for (const [en, es] of PC_STRINGS) if (!Object.prototype.hasOwnProperty.call(DICT, en)) DICT[en] = { en, es };
+
+// SM1, THE WHOLE EXPORT MOUNT (canon 0.30.554).
+const SM_STRINGS: Array<[string, string]> = [
+  ["Mounting: {done} of {total} rounds landed.", "Montando: {done} de {total} rondas cargadas."],
+  ["Mounted. Loading the orders.", "Montado. Cargando los pedidos."],
+  [
+    "Drop Zoho Inventory's whole Sales Order export, no filters; an xlsx export saves as csv first. It mounts in rounds of whole orders, and the line under the button counts them. Every order takes what Zoho says now, a year back included; an order inside the export's dates that the export lacks is gone from Zoho and leaves. Nothing writes back to Zoho.",
+    "Suelte la exportación completa de Sales Orders de Zoho Inventory, sin filtros; una exportación xlsx se guarda primero como csv. Se monta en rondas de pedidos completos, y la línea bajo el botón las cuenta. Cada pedido toma lo que Zoho dice ahora, incluso de hace un año; un pedido dentro de las fechas de la exportación que la exportación no trae ya no está en Zoho y sale. Nada se escribe de vuelta en Zoho.",
+  ],
+  [
+    "Gone from Zoho with this mount: {n}. An order dated inside the export that the export no longer carries leaves.",
+    "Salieron de Zoho con este montaje: {n}. Un pedido con fecha dentro de la exportación que la exportación ya no trae sale.",
+  ],
+  [
+    "Missing from this export but dated inside it: {n}. Nothing was removed; a filtered export does that. Mount Zoho's whole export to settle them.",
+    "Faltan en esta exportación pero tienen fecha dentro de ella: {n}. No se quitó nada; una exportación filtrada hace eso. Monte la exportación completa de Zoho para resolverlos.",
+  ],
+  [
+    "The mount of {file} stopped after round {done} of {total}. Mount the file again; what landed stays.",
+    "El montaje de {file} se detuvo después de la ronda {done} de {total}. Monte el archivo otra vez; lo que ya cargó se queda.",
+  ],
+];
+for (const [en, es] of SM_STRINGS) if (!Object.prototype.hasOwnProperty.call(DICT, en)) DICT[en] = { en, es };
 
 /** Look a display string up by its English key; unknown keys render as-is. */
 export function t(locale: Locale, key: string): string {

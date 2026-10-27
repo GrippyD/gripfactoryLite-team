@@ -599,8 +599,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 120 migration(s)")) {
-      throw new Error(`from-zero apply must say 120 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 121 migration(s)")) {
+      throw new Error(`from-zero apply must say 121 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -1321,6 +1321,48 @@ async function run() {
     const afterRemount = await text(`/fulfillment/pick-orders?order=${orderId}`);
     assert(afterRemount.body.includes("Fulfilled by Austin"), "a re-mount must keep the pick marks");
     assert(afterRemount.body.includes("<td>9</td><td>short</td><td>one bag light</td>"), "a re-mount must keep the line marks");
+    // SM1, THE WHOLE EXPORT MOUNT (canon 0.30.554): the page's rounds. The
+    // export in two rounds of whole orders lands whole and sums its rounds; a
+    // round after the close refuses in JSON; a later whole export that lacks
+    // SO-00901, dated inside its range, takes it out (THE GONE RULE); the next
+    // export that carries it brings it back with our pick marks.
+    const allSoRows = zohoRows("Approved");
+    const firstSoRound = allSoRows.filter((r) => r[0] === "SO-00901");
+    const restSoRounds = allSoRows.filter((r) => r[0] !== "SO-00901");
+    const sendSoRound = async (rows, round, rounds, mountId) => {
+      const f = new FormData();
+      f.append("file", new File([new TextEncoder().encode(zohoCsv(rows))], "Sales_Order.csv", { type: "text/csv" }));
+      f.append("round", String(round));
+      f.append("rounds", String(rounds));
+      if (mountId) f.append("mount_id", mountId);
+      const res = await req("/fulfillment/mount-sos", { method: "POST", body: f, headers: { Accept: "application/json" } });
+      const raw = await res.text();
+      let body = null;
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        body = null;
+      }
+      return { status: res.status, body, raw };
+    };
+    const soRound0 = await sendSoRound(firstSoRound, 0, 2, "");
+    assert(soRound0.status === 200 && soRound0.body?.ok === true && soRound0.body.done === false, `SO round 0 expected ok, got ${soRound0.status} ${soRound0.raw.slice(0, 200)}`);
+    const soRound1 = await sendSoRound(restSoRounds, 1, 2, soRound0.body.mount_id);
+    assert(soRound1.status === 200 && soRound1.body?.done === true && soRound1.body.gone === 0, `SO round 1 expected done, got ${soRound1.status} ${soRound1.raw.slice(0, 200)}`);
+    const soLate = await sendSoRound(restSoRounds, 1, 2, soRound0.body.mount_id);
+    assert(soLate.status === 400 && soLate.body?.ok === false && /already landed/.test(soLate.body.error || ""), `a round after the close must refuse in JSON, got ${soLate.status} ${soLate.raw.slice(0, 200)}`);
+    const soRoundsPage = await text("/fulfillment/mount-sos");
+    assert(soRoundsPage.body.includes("4 lines, 3 orders, 1 ignored (CRIF, processing)"), "the rounds mount must sum its rounds");
+    assert(soRoundsPage.body.includes("function soSplit(text, cap)") && soRoundsPage.body.includes('data-round-rows="1500"'), "the mount page must carry its rounds script");
+    const soGone = await sendSoRound(restSoRounds, 0, 1, "");
+    assert(soGone.body?.done === true && soGone.body.gone === 1 && soGone.body.held === 0, `the export without SO-00901 must take it out, got ${soGone.raw.slice(0, 200)}`);
+    const soGonePage = await text("/fulfillment/mount-sos");
+    assert(!soGonePage.body.includes('data-so="SO-00901"'), "an order gone from Zoho must leave the open list");
+    assert(soGonePage.body.includes("Gone from Zoho with this mount: 1."), "the mount must count the order that left");
+    const soBack = await sendSoRound(allSoRows, 0, 1, "");
+    assert(soBack.body?.done === true && soBack.body.gone === 0, `the export that carries SO-00901 again must land, got ${soBack.raw.slice(0, 200)}`);
+    const soBackPick = await text(`/fulfillment/pick-orders?order=${orderId}`);
+    assert(soBackPick.body.includes("Fulfilled by Austin"), "an order that comes back keeps our pick marks");
     // Unknown order 404s on the sheet; the mount and pick pages es.
     const noSheet = await req("/fulfillment/pick-orders/nope/print");
     assert(noSheet.status === 404, `unknown pick sheet expected 404 got ${noSheet.status}`);
