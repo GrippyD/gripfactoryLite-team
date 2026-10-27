@@ -16,7 +16,7 @@
  */
 
 import { esc } from "./html";
-import { t, type Locale } from "./i18n";
+import { t, tFill, type Locale } from "./i18n";
 import type { MountedLineRow, MountedOrderRow, SoMountRow } from "./db";
 
 /* ------------------------------------------------------------- categories */
@@ -443,6 +443,175 @@ function statusChip(order: MountedOrderRow, locale: Locale): string {
   return `<span class="chip so-${esc(s ?? "unknown")}">${esc(label)}</span>`;
 }
 
+/** SM1, THE WHOLE EXPORT MOUNT (canon 0.30.554): the most rows one round of the
+ * Mount SOs page carries. Rounds hold whole orders, so an order with more lines
+ * than this rides alone. A round of 1,500 lines reads in about 25 MB, where the
+ * Worker has 128 MB. */
+export const SO_ROUND_ROWS = 1500;
+
+/** SM1: a mount is whole when its rounds all landed (a mount from before SM1 is). */
+export function soMountWhole(mount: Pick<SoMountRow, "rounds_total" | "completed_at">): boolean {
+  return mount.rounds_total == null || Boolean(mount.completed_at);
+}
+
+/** SM1: the page's splitter, plain script (it rides inline, and the tests run
+ * it through new Function). It cuts the export into records at line breaks
+ * outside quotes (the parseCsv rules), groups the records by the order key
+ * the mount reads (the first filled of SalesOrder Number, Sales Order Number,
+ * SO Number, Order Number, by exact name and then any case; then SalesOrder
+ * ID; rows with none ride together), keeps file order inside an order, and
+ * packs whole orders into rounds of at most cap records, each with the header. */
+export const SO_SPLIT_JS = `function soSplit(text, cap) {
+  var src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  var records = [];
+  var start = 0;
+  var quoted = false;
+  for (var i = 0; i < src.length; i++) {
+    var ch = src.charCodeAt(i);
+    if (ch === 34) { quoted = !quoted; continue; }
+    if (ch === 10 && !quoted) { records.push(src.slice(start, i)); start = i + 1; }
+  }
+  if (start < src.length) records.push(src.slice(start));
+  var header = null;
+  var body = [];
+  for (var r = 0; r < records.length; r++) {
+    if (records[r].replace(/\\r/g, "") === "") continue;
+    if (header === null) header = records[r]; else body.push(records[r]);
+  }
+  if (header === null) return { rounds: [], orders: 0, rows: 0 };
+  function unquote(raw) {
+    var out = "";
+    var q = false;
+    for (var j = 0; j < raw.length; j++) {
+      var c = raw.charAt(j);
+      if (q) {
+        if (c === '"') { if (raw.charAt(j + 1) === '"') { out += '"'; j++; } else { q = false; } }
+        else out += c;
+        continue;
+      }
+      if (c === '"') { q = true; continue; }
+      if (c === "\\r") continue;
+      out += c;
+    }
+    return out;
+  }
+  function fields(record) {
+    var out = [];
+    var q = false;
+    var from = 0;
+    for (var j = 0; j <= record.length; j++) {
+      var c = j < record.length ? record.charCodeAt(j) : 44;
+      if (c === 34) { q = !q; continue; }
+      if (c === 44 && !q) { out.push(record.slice(from, j)); from = j + 1; }
+    }
+    return out;
+  }
+  function fieldAt(record, want) {
+    var idx = 0;
+    var q = false;
+    var from = 0;
+    for (var j = 0; j <= record.length; j++) {
+      var c = j < record.length ? record.charCodeAt(j) : 44;
+      if (c === 34) { q = !q; continue; }
+      if (c === 44 && !q) {
+        if (idx === want) return unquote(record.slice(from, j)).trim();
+        idx++;
+        from = j + 1;
+      }
+    }
+    return "";
+  }
+  var heads = fields(header).map(function (h) { return unquote(h).trim(); });
+  var tries = [];
+  function look(names) {
+    var n, k;
+    for (n = 0; n < names.length; n++) for (k = 0; k < heads.length; k++) if (heads[k] === names[n] && tries.indexOf(k) < 0) tries.push(k);
+    for (n = 0; n < names.length; n++) for (k = 0; k < heads.length; k++) if (heads[k].toLowerCase() === names[n].toLowerCase() && tries.indexOf(k) < 0) tries.push(k);
+  }
+  look(["SalesOrder Number", "Sales Order Number", "SO Number", "Order Number"]);
+  look(["SalesOrder ID"]);
+  var groups = new Map();
+  for (var b = 0; b < body.length; b++) {
+    var key = "";
+    for (var t = 0; t < tries.length && key === ""; t++) key = fieldAt(body[b], tries[t]);
+    var group = groups.get(key);
+    if (!group) { group = []; groups.set(key, group); }
+    group.push(body[b]);
+  }
+  var rounds = [];
+  var current = [];
+  groups.forEach(function (group) {
+    if (current.length > 0 && current.length + group.length > cap) { rounds.push(current); current = []; }
+    for (var g = 0; g < group.length; g++) current.push(group[g]);
+  });
+  if (current.length > 0) rounds.push(current);
+  return {
+    rounds: rounds.map(function (rows) { return header + "\\n" + rows.join("\\n") + "\\n"; }),
+    orders: groups.size,
+    rows: body.length
+  };
+}`;
+
+/** SM1: the page's rounds. Without fetch, FormData, Blob, Map or File.text the
+ * form posts the whole file once, as before. */
+function soRoundsScript(): string {
+  return `<script>(function(){
+  var form = document.querySelector("[data-mount-form]");
+  if (!form || !window.fetch || !window.FormData || !window.Blob || !window.Map) return;
+  var input = form.querySelector('input[type="file"]');
+  var line = form.querySelector("[data-so-progress]");
+  var button = form.querySelector('button[type="submit"]');
+  var cap = Number(form.getAttribute("data-round-rows")) || ${SO_ROUND_ROWS};
+  ${SO_SPLIT_JS}
+  function say(text) { line.textContent = text; line.hidden = false; }
+  function fill(template, done, total) { return template.replace("{done}", String(done)).replace("{total}", String(total)); }
+  function stop(err) {
+    say(form.getAttribute("data-text-fail") + " " + (err && err.message ? err.message : String(err)));
+    button.disabled = false;
+  }
+  form.addEventListener("submit", function (ev) {
+    var file = input && input.files && input.files[0];
+    if (!file || typeof file.text !== "function") return;
+    ev.preventDefault();
+    button.disabled = true;
+    say(form.getAttribute("data-text-start"));
+    file.text().then(function (text) {
+      var split = soSplit(text, cap);
+      var rounds = split.rounds.length ? split.rounds : [text];
+      var total = rounds.length;
+      var k = 0;
+      var mountId = "";
+      function round() {
+        var body = new FormData();
+        body.set("file", new Blob([rounds[k]], { type: "text/csv" }), file.name);
+        body.set("round", String(k));
+        body.set("rounds", String(total));
+        if (mountId) body.set("mount_id", mountId);
+        fetch(form.getAttribute("action"), { method: "POST", body: body, credentials: "same-origin", headers: { "Accept": "application/json" } })
+          .then(function (res) {
+            return res.text().then(function (raw) {
+              var data = null;
+              try { data = JSON.parse(raw); } catch (e) { data = null; }
+              if (!res.ok || !data || data.ok !== true) throw new Error((data && data.error) || ("HTTP " + res.status));
+              return data;
+            });
+          })
+          .then(function (data) {
+            mountId = data.mount_id;
+            if (data.done) { say(form.getAttribute("data-text-done")); window.location.assign(data.redirect); return; }
+            k = data.next;
+            say(fill(form.getAttribute("data-text-progress"), k, total));
+            round();
+          })
+          .catch(stop);
+      }
+      say(fill(form.getAttribute("data-text-progress"), 0, total));
+      round();
+    }).catch(stop);
+  });
+})();</script>`;
+}
+
 export function mountSosPage(input: {
   mounts: SoMountRow[];
   orders: OrderWithLines[];
@@ -453,24 +622,54 @@ export function mountSosPage(input: {
 }): string {
   const locale = input.locale ?? "en";
   const latest = input.mounts[0];
+  // SM1: the summary, the stale chip and the gone line read the last whole
+  // mount; a mount whose rounds stopped says so on its own line.
+  const whole = input.mounts.find((m) => soMountWhole(m));
   const flash =
     input.ok === "mounted"
       ? `<p class="banner ok">${esc(t(locale, "Mounted."))}</p>`
       : input.err
         ? `<p class="banner err">${esc(input.err)}</p>`
         : "";
-  const summary = latest
-    ? `<p class="muted" data-mount-summary>${esc(t(locale, "Last mount"))}: ${esc(latest.filename)} &middot; ${localTime(latest.created_at)} &middot; ${esc(
-        String(latest.row_count)
-      )} ${esc(t(locale, "lines"))}, ${esc(String(latest.order_count))} ${esc(t(locale, "orders"))}, ${esc(String(latest.ignored_count))} ${esc(
+  const summaryLine = whole
+    ? `<p class="muted" data-mount-summary>${esc(t(locale, "Last mount"))}: ${esc(whole.filename)} &middot; ${localTime(whole.created_at)} &middot; ${esc(
+        String(whole.row_count)
+      )} ${esc(t(locale, "lines"))}, ${esc(String(whole.order_count))} ${esc(t(locale, "orders"))}, ${esc(String(whole.ignored_count))} ${esc(
         t(locale, "ignored (CRIF, processing)")
       )}</p>`
     : `<p class="muted">${esc(t(locale, "Nothing mounted yet."))}</p>`;
+  const goneLine =
+    whole && Number(whole.gone_count ?? 0) > 0
+      ? `<p class="muted" data-mount-gone>${esc(
+          tFill(locale, "Gone from Zoho with this mount: {n}. An order dated inside the export that the export no longer carries leaves.", { n: String(whole.gone_count) })
+        )}</p>`
+      : "";
+  const heldLine =
+    whole && Number(whole.gone_held ?? 0) > 0
+      ? `<p class="banner err" data-mount-held>${esc(
+          tFill(
+            locale,
+            "Missing from this export but dated inside it: {n}. Nothing was removed; a filtered export does that. Mount Zoho's whole export to settle them.",
+            { n: String(whole.gone_held) }
+          )
+        )}</p>`
+      : "";
+  const stoppedLine =
+    latest && !soMountWhole(latest)
+      ? `<p class="banner err" data-mount-stopped>${esc(
+          tFill(locale, "The mount of {file} stopped after round {done} of {total}. Mount the file again; what landed stays.", {
+            file: latest.filename,
+            done: String(latest.rounds_done ?? 0),
+            total: String(latest.rounds_total ?? 0),
+          })
+        )}</p>`
+      : "";
+  const summary = `${stoppedLine}${summaryLine}${goneLine}${heldLine}`;
   const open = input.orders.filter((o) => effectiveStatus(o) !== "shipped");
   const list =
     open.length === 0
       ? `<p class="muted">${esc(t(locale, "- EMPTY -"))}</p>`
-      : `<table class="data" data-mounted-orders><thead><tr><th>${esc(t(locale, "SO"))}</th><th>${esc(t(locale, "Customer"))}</th><th>${esc(
+      : `<div class="report-scroll"><table class="data" data-mounted-orders><thead><tr><th>${esc(t(locale, "SO"))}</th><th>${esc(t(locale, "Customer"))}</th><th>${esc(
           t(locale, "Ships")
         )}</th><th>${esc(t(locale, "Status"))}</th><th>${esc(t(locale, "Lines"))}</th><th></th></tr></thead><tbody>${open
           .map(
@@ -479,28 +678,40 @@ export function mountSosPage(input: {
           <td>${esc(o.customer_name ?? "")}</td>
           <td>${esc(o.expected_ship ?? "")}</td>
           <td>${statusChip(o, locale)}${
-            latest && o.last_mount_id !== latest.id ? ` <span class="chip so-stale" data-stale>${esc(t(locale, "not in last mount"))}</span>` : ""
+            whole && o.last_mount_id !== whole.id ? ` <span class="chip so-stale" data-stale>${esc(t(locale, "not in last mount"))}</span>` : ""
           }</td>
           <td>${esc(String(o.lines.length))}</td>
           <td><a class="btn secondary" href="/fulfillment/pick-orders?order=${esc(o.id)}">${esc(t(locale, "Pick"))}</a></td>
         </tr>`
           )
-          .join("")}</tbody></table>`;
+          .join("")}</tbody></table></div>`;
   return `<h1>${esc(t(locale, "Mount SOs"))}</h1>
     ${flash}
-    <form class="stack" method="post" action="/fulfillment/mount-sos" enctype="multipart/form-data" data-mount-form>
+    <form class="stack" method="post" action="/fulfillment/mount-sos" enctype="multipart/form-data" data-mount-form
+      data-round-rows="${esc(String(SO_ROUND_ROWS))}"
+      data-text-start="${esc(t(locale, "Mounting: reading the file."))}"
+      data-text-progress="${esc(t(locale, "Mounting: {done} of {total} rounds landed."))}"
+      data-text-done="${esc(t(locale, "Mounted. Loading the orders."))}"
+      data-text-fail="${esc(t(locale, "The mount stopped:"))}">
       <label class="field">${esc(t(locale, "Zoho Sales Order export (csv)"))}
         <input type="file" name="file" accept=".csv" required>
       </label>
-      <p class="muted">${esc(t(locale, "Drop the Sales Order export from Zoho Inventory. An xlsx export saves as csv first. Re-mounting a newer export updates statuses in place; nothing writes back to Zoho."))}</p>
+      <p class="muted">${esc(
+        t(
+          locale,
+          "Drop Zoho Inventory's whole Sales Order export, no filters; an xlsx export saves as csv first. It mounts in rounds of whole orders, and the line under the button counts them. Every order takes what Zoho says now, a year back included; an order inside the export's dates that the export lacks is gone from Zoho and leaves. Nothing writes back to Zoho."
+        )
+      )}</p>
       <button type="submit">${esc(t(locale, "Mount"))}</button>
+      <p class="muted" data-so-progress hidden></p>
     </form>
+    ${soRoundsScript()}
     ${summary}
     <h2>${esc(t(locale, "Sales Pipeline"))} &middot; ${esc(t(locale, "Orders and quantity"))}</h2>
-    <div data-today="${esc(input.today)}">${pipelineTable(input.orders, input.today, locale)}</div>
+    <div data-today="${esc(input.today)}"><div class="report-scroll">${pipelineTable(input.orders, input.today, locale)}</div></div>
     ${todayResolveScript()}
     <h2>${esc(t(locale, "SO Status Detail"))}</h2>
-    ${soStatusDetail(input.orders, locale) || `<p class="muted">${esc(t(locale, "Populates on the first mount."))}</p>`}
+    <div class="report-scroll">${soStatusDetail(input.orders, locale) || `<p class="muted">${esc(t(locale, "Populates on the first mount."))}</p>`}</div>
     <h2>${esc(t(locale, "Open orders"))} <span class="tile-count">${esc(String(open.length))}</span></h2>
     ${list}
     ${localTimeScript()}`;

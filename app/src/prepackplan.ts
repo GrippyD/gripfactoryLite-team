@@ -450,7 +450,11 @@ function pushGrams(map: Map<string, { strain: string; grams: number }>, strain: 
 /** Open bags on orders that are not shipped, and invoiced bags shipped inside the window. */
 export async function zohoPrepackOrders(db: D1Database, today: string, windowMonths: number): Promise<ZohoPrepackOrders> {
   const mount = await db
-    .prepare(`SELECT created_at FROM so_mounts WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`)
+    // SM1 (canon 0.30.554): the newest whole mount; a mount whose rounds stopped is not one.
+    .prepare(
+      `SELECT created_at FROM so_mounts WHERE deleted_at IS NULL AND (rounds_total IS NULL OR completed_at IS NOT NULL)
+       ORDER BY created_at DESC LIMIT 1`
+    )
     .first<{ created_at: string }>();
   if (!mount) return { mounted: false, mountedAt: null, open: [], shipped: [] };
   const settings = fgSettingsFrom(await getConfigMap(db, FG_SETTING_KEYS));

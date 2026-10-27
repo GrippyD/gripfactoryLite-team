@@ -1,60 +1,85 @@
 import { metrcLocationName, metrcQuantity } from "./config";
 import { FARM_DAY_START_HOUR_DEFAULT, farmDay } from "./farmday";
 
-/** RFC 4180 reader. Returns rows of cells; the first row is headers when present. */
+/** RFC 4180 reader. Returns rows of cells; the first row is headers when present.
+ * SM1 (canon 0.30.554): each cell is sliced from the text rather than built one
+ * character at a time. The rules are the old reader's exactly (a quote opens or
+ * closes anywhere in a cell, "" inside quotes is one quote, a CR outside quotes
+ * is dropped, a blank line is no row), and the memory is a small multiple of
+ * the file: the char by char reader needed about 20 times it, 640 MB for a
+ * 24 MB Zoho export, past the Worker's 128 MB (the live 1102 of 2026-10-27). */
 export function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let cell = "";
-  let row: string[] = [];
-  let i = 0;
-  let quoted = false;
   const src = text.replace(/^\uFEFF/, "");
-  while (i < src.length) {
-    const ch = src[i];
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let parts: string[] = [];
+  let seg = 0;
+  let quoted = false;
+  const n = src.length;
+  let i = 0;
+  const take = (end: number) => {
+    if (end > seg) parts.push(src.slice(seg, end));
+  };
+  const cellDone = (): string => {
+    const cell = parts.length === 0 ? "" : parts.length === 1 ? parts[0] : parts.join("");
+    parts = [];
+    return cell;
+  };
+  while (i < n) {
+    const ch = src.charCodeAt(i);
     if (quoted) {
-      if (ch === '"') {
-        if (src[i + 1] === '"') {
-          cell += '"';
+      if (ch === 34) {
+        take(i);
+        if (src.charCodeAt(i + 1) === 34) {
+          parts.push('"');
           i += 2;
+          seg = i;
           continue;
         }
         quoted = false;
         i += 1;
+        seg = i;
         continue;
       }
-      cell += ch;
       i += 1;
       continue;
     }
-    if (ch === '"') {
+    if (ch === 34) {
+      take(i);
       quoted = true;
       i += 1;
+      seg = i;
       continue;
     }
-    if (ch === ",") {
-      row.push(cell);
-      cell = "";
+    if (ch === 44) {
+      take(i);
+      row.push(cellDone());
       i += 1;
+      seg = i;
       continue;
     }
-    if (ch === "\n") {
-      row.push(cell);
+    if (ch === 10) {
+      take(i);
+      row.push(cellDone());
       if (row.length > 1 || row[0] !== "") rows.push(row);
       row = [];
-      cell = "";
       i += 1;
+      seg = i;
       continue;
     }
-    if (ch === "\r") {
+    if (ch === 13) {
+      take(i);
       i += 1;
+      seg = i;
       continue;
     }
-    cell += ch;
     i += 1;
   }
   if (quoted) throw new Error("CSV quote was not closed.");
-  if (cell !== "" || row.length > 0) {
-    row.push(cell);
+  take(n);
+  const last = cellDone();
+  if (last !== "" || row.length > 0) {
+    row.push(last);
     if (row.length > 1 || row[0] !== "") rows.push(row);
   }
   return rows;

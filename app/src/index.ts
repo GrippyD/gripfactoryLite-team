@@ -138,7 +138,9 @@ import {
   ensureUnloadSession,
   updateUnloadSession,
   voidRecord,
+  isSoMountRound,
   mountSalesOrders,
+  mountSalesOrdersRound,
   startPick,
   savePick,
   completePick,
@@ -1378,7 +1380,21 @@ app.get("/fulfillment/mount-sos", async (c) => {
 });
 
 app.post("/fulfillment/mount-sos", async (c) => {
-  const result = await mountSalesOrders(c.env.DB, actorForm(c, await c.req.formData()));
+  const form = actorForm(c, await c.req.formData());
+  // SM1, THE WHOLE EXPORT MOUNT (canon 0.30.554): the page's script sends the
+  // export in rounds of whole orders that carry round; each answers JSON,
+  // refusals included, so the page can say what stopped. A plain post mounts
+  // the whole file in one request, as before.
+  if (isSoMountRound(form)) {
+    try {
+      return c.json(await mountSalesOrdersRound(c.env.DB, form));
+    } catch (err) {
+      if (err instanceof HttpError) return c.json({ ok: false, error: err.message }, err.status as 400);
+      console.error(err);
+      return c.json({ ok: false, error: "Server error." }, 500);
+    }
+  }
+  const result = await mountSalesOrders(c.env.DB, form);
   return c.redirect(result.redirect, 303);
 });
 

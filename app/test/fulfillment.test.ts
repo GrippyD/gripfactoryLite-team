@@ -420,6 +420,35 @@ describe("Mount SOs page", () => {
     expect(html).toContain("not in last mount");
   });
 
+  it("reads the summary and the stale chip from the last whole mount when a later one stopped (SM1)", () => {
+    const stopped: SoMountRow = {
+      id: "m2",
+      filename: "Sales_Order (11).csv",
+      row_count: 3,
+      order_count: 2,
+      ignored_count: 0,
+      created_at: "2026-09-09T12:00:00.000Z",
+      created_by: "p1",
+      rounds_total: 4,
+      rounds_done: 2,
+      completed_at: null,
+    };
+    const carried = order({ id: "o8", so_number: "SO-00908", last_mount_id: "m1" });
+    const html = mountSosPage({ mounts: [stopped, ...mounts], orders: [carried], today: TODAY });
+    expect(html).toContain("data-mount-stopped");
+    expect(html).toContain("The mount of Sales_Order (11).csv stopped after round 2 of 4.");
+    expect(html).toContain("5 lines, 4 orders, 1 ignored (CRIF, processing)");
+    expect(html).not.toContain("data-stale");
+    expect(html).toContain('data-text-progress="Mounting: {done} of {total} rounds landed."');
+  });
+
+  it("keeps every table in the report-scroll box, so a full mount never pushes the page sideways (SM1)", () => {
+    const html = mountSosPage({ mounts, orders: ORDERS, today: TODAY });
+    const tables = [...html.matchAll(/<table\b/g)].map((m) => m.index ?? 0);
+    expect(tables.length).toBe(3);
+    for (const at of tables) expect(html.slice(Math.max(0, at - 40), at)).toContain('<div class="report-scroll">');
+  });
+
   it("says so before the first mount", () => {
     const html = mountSosPage({ mounts: [], orders: [], today: TODAY });
     expect(html).toContain("Nothing mounted yet.");
