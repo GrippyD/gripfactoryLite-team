@@ -234,8 +234,9 @@ export async function countQueue(db: D1Database, def: QueueDef): Promise<number>
  * farm's today (06:00 Eastern, farmDayBounds(today).startIso), so an HBN
  * finished this morning stays through the farm day whatever day its lot
  * started. The bound value is that instant. */
-export const NO_FINISHED_LOT_SQL =
-  "AND (EXISTS (SELECT 1 FROM wet_weight_entries w2 WHERE w2.harvest_batch_id = b.id AND w2.deleted_at IS NULL AND w2.status = 'weighing') OR NOT EXISTS (SELECT 1 FROM wet_weight_entries w WHERE w.harvest_batch_id = b.id AND w.deleted_at IS NULL AND w.status <> 'weighing') OR EXISTS (SELECT 1 FROM wet_weight_entries w3 WHERE w3.harvest_batch_id = b.id AND w3.deleted_at IS NULL AND w3.status <> 'weighing' AND COALESCE(NULLIF(w3.finished_at, ''), w3.updated_at) >= ?))";
+const NO_FINISHED_LOT_CLAUSE =
+  "(EXISTS (SELECT 1 FROM wet_weight_entries w2 WHERE w2.harvest_batch_id = b.id AND w2.deleted_at IS NULL AND w2.status = 'weighing') OR NOT EXISTS (SELECT 1 FROM wet_weight_entries w WHERE w.harvest_batch_id = b.id AND w.deleted_at IS NULL AND w.status <> 'weighing') OR EXISTS (SELECT 1 FROM wet_weight_entries w3 WHERE w3.harvest_batch_id = b.id AND w3.deleted_at IS NULL AND w3.status <> 'weighing' AND COALESCE(NULLIF(w3.finished_at, ''), w3.updated_at) >= ?))";
+export const NO_FINISHED_LOT_SQL = `AND ${NO_FINISHED_LOT_CLAUSE}`;
 
 /** The instant the farm's current day began, the bound NO_FINISHED_LOT_SQL takes. */
 export async function farmTodayStartIso(db: D1Database): Promise<{ today: string; startHour: number; startIso: string }> {
@@ -1540,6 +1541,8 @@ export type OpenHbnOption = {
   /** THE HBN ENTRY (canon 0.30.341): the field select names each HBN's form and silo ("Bucked Silo 1"). */
   form?: "spear" | "bucked";
   silo?: string | null;
+  /** MT1 (canon 0.30.556): a part of this HBN was finished with More trucks coming; its last truck has not come. */
+  moreTrucks?: boolean;
 };
 
 /** Minted open HBNs of one farm, header first, then newest by entry date. */
@@ -1576,15 +1579,19 @@ function hbnOptionLabel(row: { farm_code: string; strain_name: string; entry_dat
  * today keeps the HBN for the day's later loads; a finish before today, the
  * truck flow's or the pass's, leaves it, so last week's HBNs never crowd the
  * select). The Demote of that HBN's lot back to weighing clears the close and
- * opens a weighing lot. The bound value is the farm's today. */
-export const FIELD_OPEN_HBN_SQL = `AND b.field_closed_at IS NULL ${NO_FINISHED_LOT_SQL}`;
+ * opens a weighing lot. The bound value is the farm's today.
+ * MT1, MORE TRUCKS COMING (canon 0.30.556): an HBN whose part was finished
+ * with More trucks coming stays on the select whatever the day, until Last
+ * truck or the Admin close clears field_more_trucks_at. */
+export const FIELD_OPEN_HBN_SQL = `AND b.field_closed_at IS NULL AND (b.field_more_trucks_at IS NOT NULL OR ${NO_FINISHED_LOT_CLAUSE})`;
 
 export async function listFieldHbns(db: D1Database): Promise<OpenHbnOption[]> {
   const day = await farmTodayStartIso(db);
   const sequence = await listSiloSequence(db);
   const result = await db
     .prepare(
-      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, COALESCE(s.name, '') AS strain_name, b.material_form, b.planned_dryspc
+      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, COALESCE(s.name, '') AS strain_name, b.material_form, b.planned_dryspc,
+              b.field_more_trucks_at
        FROM harvest_batches b
        LEFT JOIN strains s ON s.id = b.strain_id
        WHERE b.deleted_at IS NULL AND b.status = 'open' AND b.farm_code IN ('ARL', 'PNS') AND ${farmHarvestSql("b")}
@@ -1592,13 +1599,72 @@ export async function listFieldHbns(db: D1Database): Promise<OpenHbnOption[]> {
        ORDER BY b.entry_date DESC, b.created_at DESC`
     )
     .bind(day.startIso)
-    .all<{ id: string; hbn: string; entry_date: string; farm_code: string; strain_name: string; material_form: string | null; planned_dryspc: string | null }>();
+    .all<{
+      id: string;
+      hbn: string;
+      entry_date: string;
+      farm_code: string;
+      strain_name: string;
+      material_form: string | null;
+      planned_dryspc: string | null;
+      field_more_trucks_at: string | null;
+    }>();
   return (result.results ?? []).map((row) => ({
     id: row.id,
     hbn: row.hbn,
     label: hbnOptionLabel(row),
     form: row.material_form === "spear" ? "spear" : "bucked",
     silo: siloSpaceOfNumber(sequence, row.planned_dryspc)?.name ?? null,
+    moreTrucks: Boolean(row.field_more_trucks_at),
+  }));
+}
+
+/** MT1 (canon 0.30.556): an HBN waiting on more trucks, for the field station's list and its Admin close. */
+export type MoreTrucksHbn = {
+  id: string;
+  hbn: string;
+  label: string;
+  more_trucks_at: string;
+  /** Its parts finished so far (lots past weighing). */
+  parts: number;
+  /** Its grams across those parts. */
+  grams: number;
+  /** A part of it is weighing on an open load now, with a live tote. */
+  weighing: boolean;
+};
+
+export async function listMoreTrucksHbns(db: D1Database): Promise<MoreTrucksHbn[]> {
+  const result = await db
+    .prepare(
+      `SELECT b.id, b.hbn, b.entry_date, b.farm_code, COALESCE(s.name, '') AS strain_name, b.field_more_trucks_at,
+              (SELECT COUNT(*) FROM wet_weight_entries w WHERE w.harvest_batch_id = b.id AND w.deleted_at IS NULL AND w.status <> 'weighing') AS parts,
+              (SELECT COALESCE(SUM(w.weight_grams), 0) FROM wet_weight_entries w WHERE w.harvest_batch_id = b.id AND w.deleted_at IS NULL AND w.status <> 'weighing') AS grams,
+              EXISTS (SELECT 1 FROM wet_weight_entries w WHERE w.harvest_batch_id = b.id AND w.deleted_at IS NULL AND w.status = 'weighing'
+                        AND EXISTS (SELECT 1 FROM wet_weights t WHERE t.wet_weight_entry_id = w.id AND t.deleted_at IS NULL)) AS weighing
+       FROM harvest_batches b
+       LEFT JOIN strains s ON s.id = b.strain_id
+       WHERE b.deleted_at IS NULL AND b.field_more_trucks_at IS NOT NULL AND b.field_closed_at IS NULL
+       ORDER BY b.field_more_trucks_at ASC, b.hbn ASC`
+    )
+    .all<{
+      id: string;
+      hbn: string;
+      entry_date: string;
+      farm_code: string;
+      strain_name: string;
+      field_more_trucks_at: string;
+      parts: number;
+      grams: number;
+      weighing: number;
+    }>();
+  return (result.results ?? []).map((row) => ({
+    id: row.id,
+    hbn: row.hbn,
+    label: hbnOptionLabel(row),
+    more_trucks_at: row.field_more_trucks_at,
+    parts: Number(row.parts),
+    grams: Number(row.grams),
+    weighing: Boolean(row.weighing),
   }));
 }
 

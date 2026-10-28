@@ -1261,12 +1261,31 @@ async function requireAdminPin(db: D1Database, form: FormData, message: string):
   if (!pin || entered !== pin) throw new HttpError(403, message);
 }
 
-function checkedFieldHbns(form: FormData): string[] {
-  const ids = [...form.getAll("hbn"), ...form.getAll("harvest_batch_id")]
-    .map((value) => String(value).trim())
-    .filter((value) => value.length > 0);
-  return [...new Set(ids)];
+/** A form or a query string: what the Finish Load picks are read from. */
+export type FieldPickSource = { getAll(name: string): unknown[]; entries(): IterableIterator<[string, unknown]> };
+
+/** MT1, MORE TRUCKS COMING (canon 0.30.556). The Finish Load picks: Last truck is the old YES (hbn, as every
+ * caller before MT1 posts it, or harvest_batch_id), More trucks coming is hbn_more; the page's radios post
+ * pick_{id} = last or more. An HBN in both lists is returned in both so the caller can refuse it in words. */
+export function readFieldFinishPicks(src: FieldPickSource): { last: string[]; more: string[]; both: string[] } {
+  const clean = (values: unknown[]) => values.map((value) => String(value).trim()).filter((value) => value.length > 0);
+  const last = clean([...src.getAll("hbn"), ...src.getAll("harvest_batch_id")]);
+  const more = clean(src.getAll("hbn_more"));
+  for (const [key, value] of src.entries()) {
+    if (!key.startsWith("pick_")) continue;
+    const id = key.slice("pick_".length).trim();
+    const pick = String(value).trim();
+    if (!id) continue;
+    if (pick === "last") last.push(id);
+    else if (pick === "more") more.push(id);
+  }
+  const lastSet = [...new Set(last)];
+  const moreSet = [...new Set(more)];
+  return { last: lastSet, more: moreSet, both: lastSet.filter((id) => moreSet.includes(id)) };
 }
+
+/** Pick one choice for each HBN: More trucks coming or Last truck. */
+export const FIELD_PICK_BOTH = "Pick one choice for each HBN: More trucks coming or Last truck.";
 
 const FIELD_FINISH_LOT_SQL = `SELECT w.id, w.status, w.weight_grams, w.harvest_batch_id, w.material_form, w.truck_number,
               d.kind AS dry_space_kind, d.name AS dry_space_name,
@@ -1437,9 +1456,16 @@ export async function sendFieldLoad(db: D1Database, loadId: string, form: FormDa
   if (totes.length === 0) throw new HttpError(400, "This load has no weights to send.");
   const ledger = ledgerByTable("wet_weights");
   if (!ledger) throw new HttpError(500, "Server error.");
+  // MT1, MORE TRUCKS COMING (canon 0.30.556): each HBN on the truck is finished one of two ways. Last truck is the
+  // old YES: its lot finishes and the HBN closes. More trucks coming finishes this truck's part the same way (its
+  // file pends as the next (n)) but leaves the HBN open, marked, so the next truck's first tote opens the next part.
+  const picks = readFieldFinishPicks(form);
+  if (picks.both.length > 0) throw new HttpError(400, FIELD_PICK_BOTH);
   const ts = nowIso();
   const stmts: D1PreparedStatement[] = [];
-  for (const hbnId of checkedFieldHbns(form)) {
+  const finishes = [...picks.last.map((id) => ({ id, last: true })), ...picks.more.map((id) => ({ id, last: false }))];
+  for (const pick of finishes) {
+    const hbnId = pick.id;
     if (!totes.some((tote) => tote.harvest_batch_id === hbnId)) {
       throw new HttpError(400, "That HBN is not on this load.");
     }
@@ -1448,37 +1474,101 @@ export async function sendFieldLoad(db: D1Database, loadId: string, form: FormDa
     assertLotHasWeights(await countLotWeights(db, ledger, lot.id));
     stmts.push(...(await singleLotFinishStmts(db, lot, actor.id, new FormData(), ts)));
     const prior = await db
-      .prepare(`SELECT field_closed_at, field_closed_by FROM harvest_batches WHERE id = ? AND deleted_at IS NULL`)
+      .prepare(
+        `SELECT field_closed_at, field_closed_by, field_more_trucks_at, field_more_trucks_by
+         FROM harvest_batches WHERE id = ? AND deleted_at IS NULL`
+      )
       .bind(hbnId)
-      .first<{ field_closed_at: string | null; field_closed_by: string | null }>();
-    stmts.push(
-      db
-        .prepare(
-          `UPDATE harvest_batches SET field_closed_at = ?, field_closed_by = ?, updated_at = ?, updated_by = ?
-           WHERE id = ? AND deleted_at IS NULL`
-        )
-        .bind(ts, actor.id, ts, actor.id, hbnId),
-      insertLog(db, {
-        record_table: "harvest_batches",
-        record_id: hbnId,
-        field: "field_closed_at",
-        old_value: prior?.field_closed_at ?? null,
-        new_value: ts,
-        actor_person_id: actor.id,
-        reason: SYSTEM_REASON.field_hbn_closed,
-        changed_at: ts,
-      }),
-      insertLog(db, {
-        record_table: "harvest_batches",
-        record_id: hbnId,
-        field: "field_closed_by",
-        old_value: prior?.field_closed_by ?? null,
-        new_value: actor.id,
-        actor_person_id: actor.id,
-        reason: SYSTEM_REASON.field_hbn_closed,
-        changed_at: ts,
-      })
-    );
+      .first<{
+        field_closed_at: string | null;
+        field_closed_by: string | null;
+        field_more_trucks_at: string | null;
+        field_more_trucks_by: string | null;
+      }>();
+    if (pick.last) {
+      stmts.push(
+        db
+          .prepare(
+            `UPDATE harvest_batches SET field_closed_at = ?, field_closed_by = ?, field_more_trucks_at = NULL, field_more_trucks_by = NULL,
+               updated_at = ?, updated_by = ?
+             WHERE id = ? AND deleted_at IS NULL`
+          )
+          .bind(ts, actor.id, ts, actor.id, hbnId),
+        insertLog(db, {
+          record_table: "harvest_batches",
+          record_id: hbnId,
+          field: "field_closed_at",
+          old_value: prior?.field_closed_at ?? null,
+          new_value: ts,
+          actor_person_id: actor.id,
+          reason: SYSTEM_REASON.field_hbn_closed,
+          changed_at: ts,
+        }),
+        insertLog(db, {
+          record_table: "harvest_batches",
+          record_id: hbnId,
+          field: "field_closed_by",
+          old_value: prior?.field_closed_by ?? null,
+          new_value: actor.id,
+          actor_person_id: actor.id,
+          reason: SYSTEM_REASON.field_hbn_closed,
+          changed_at: ts,
+        })
+      );
+      if (prior?.field_more_trucks_at) {
+        stmts.push(
+          insertLog(db, {
+            record_table: "harvest_batches",
+            record_id: hbnId,
+            field: "field_more_trucks_at",
+            old_value: prior.field_more_trucks_at,
+            new_value: null,
+            actor_person_id: actor.id,
+            reason: SYSTEM_REASON.field_hbn_closed,
+            changed_at: ts,
+          }),
+          insertLog(db, {
+            record_table: "harvest_batches",
+            record_id: hbnId,
+            field: "field_more_trucks_by",
+            old_value: prior.field_more_trucks_by,
+            new_value: null,
+            actor_person_id: actor.id,
+            reason: SYSTEM_REASON.field_hbn_closed,
+            changed_at: ts,
+          })
+        );
+      }
+    } else if (!prior?.field_more_trucks_at) {
+      stmts.push(
+        db
+          .prepare(
+            `UPDATE harvest_batches SET field_more_trucks_at = ?, field_more_trucks_by = ?, updated_at = ?, updated_by = ?
+             WHERE id = ? AND deleted_at IS NULL`
+          )
+          .bind(ts, actor.id, ts, actor.id, hbnId),
+        insertLog(db, {
+          record_table: "harvest_batches",
+          record_id: hbnId,
+          field: "field_more_trucks_at",
+          old_value: null,
+          new_value: ts,
+          actor_person_id: actor.id,
+          reason: SYSTEM_REASON.field_more_trucks,
+          changed_at: ts,
+        }),
+        insertLog(db, {
+          record_table: "harvest_batches",
+          record_id: hbnId,
+          field: "field_more_trucks_by",
+          old_value: null,
+          new_value: actor.id,
+          actor_person_id: actor.id,
+          reason: SYSTEM_REASON.field_more_trucks,
+          changed_at: ts,
+        })
+      );
+    }
   }
   stmts.push(
     db
@@ -1510,6 +1600,69 @@ export async function sendFieldLoad(db: D1Database, loadId: string, form: FormDa
   );
   await db.batch(stmts);
   return { redirect: "/station/field_harvest?ok=load_sent" };
+}
+
+/** MT1 (canon 0.30.556): an HBN marked More trucks coming that gets no more trucks is closed here, behind the
+ * Admin PIN, as Last truck would have closed it. A part weighing on an open load refuses: that truck finishes
+ * it at Finish Load. */
+export async function closeFieldHbn(db: D1Database, hbnId: string, form: FormData): Promise<ActionOk> {
+  const actor = await requireActor(db, personIdFrom(form));
+  await requireAdminPin(db, form, "Closing an HBN needs the Admin PIN.");
+  const batch = await db
+    .prepare(
+      `SELECT id, field_closed_at, field_closed_by, field_more_trucks_at, field_more_trucks_by
+       FROM harvest_batches WHERE id = ? AND deleted_at IS NULL`
+    )
+    .bind(hbnId)
+    .first<{
+      id: string;
+      field_closed_at: string | null;
+      field_closed_by: string | null;
+      field_more_trucks_at: string | null;
+      field_more_trucks_by: string | null;
+    }>();
+  if (!batch) throw new HttpError(404, "Unknown harvest batch.");
+  if (!batch.field_more_trucks_at || batch.field_closed_at) throw new HttpError(400, "That HBN is not waiting on more trucks.");
+  // A weighing part with a live tote is on a truck now; an empty one (every tote voided) does not hold the close.
+  const weighing = await db
+    .prepare(
+      `SELECT 1 AS one FROM wet_weight_entries w
+       WHERE w.harvest_batch_id = ? AND w.status = ? AND w.deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM wet_weights t WHERE t.wet_weight_entry_id = w.id AND t.deleted_at IS NULL)
+       LIMIT 1`
+    )
+    .bind(hbnId, LOT_STATUS.weighing)
+    .first<{ one: number }>();
+  if (weighing) {
+    throw new HttpError(400, "That HBN is weighing on an open load. Finish that load with Last truck instead.");
+  }
+  const ts = nowIso();
+  const reason = SYSTEM_REASON.field_hbn_closed_no_truck;
+  const log = (field: string, oldValue: string | null, newValue: string | null) =>
+    insertLog(db, {
+      record_table: "harvest_batches",
+      record_id: hbnId,
+      field,
+      old_value: oldValue,
+      new_value: newValue,
+      actor_person_id: actor.id,
+      reason,
+      changed_at: ts,
+    });
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE harvest_batches SET field_closed_at = ?, field_closed_by = ?, field_more_trucks_at = NULL, field_more_trucks_by = NULL,
+           updated_at = ?, updated_by = ?
+         WHERE id = ? AND deleted_at IS NULL AND field_closed_at IS NULL AND field_more_trucks_at IS NOT NULL`
+      )
+      .bind(ts, actor.id, ts, actor.id, hbnId),
+    log("field_closed_at", null, ts),
+    log("field_closed_by", null, actor.id),
+    log("field_more_trucks_at", batch.field_more_trucks_at, null),
+    log("field_more_trucks_by", batch.field_more_trucks_by, null),
+  ]);
+  return { redirect: "/station/field_harvest?ok=hbn_closed" };
 }
 
 export async function reopenFieldLoad(db: D1Database, loadId: string, form: FormData): Promise<ActionOk> {

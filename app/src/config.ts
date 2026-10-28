@@ -210,6 +210,10 @@ export const SYSTEM_REASON = {
   field_load_reopened: "field load reopened",
   field_load_received: "field load received",
   field_hbn_closed: "field hbn closed",
+  // MT1, MORE TRUCKS COMING (canon 0.30.556): a part finished with more trucks
+  // coming, and an HBN the Admin PIN closes when no more trucks came.
+  field_more_trucks: "field more trucks coming",
+  field_hbn_closed_no_truck: "field hbn closed, no more trucks",
   field_tote_hbn: "field tote hbn",
   // TERP RECIPES (canon 0.30.321): the pick and the dose on a pasteurization run.
   terp_recipe_picked: "terp recipe picked",

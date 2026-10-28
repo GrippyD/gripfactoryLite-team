@@ -438,6 +438,17 @@ select option[data-occupied] { color: var(--text-dim, #888); }
 .field-finish > summary::-webkit-details-marker { display: none; }
 .field-finish > p { margin-top: 0.8rem; }
 .field-finish-item { display: block; margin: 0.3rem 0; }
+/* MT1, MORE TRUCKS COMING (canon 0.30.556): each HBN on the truck is a fieldset of three radios that wrap on a phone,
+   and the station's home lists the HBNs waiting on more trucks with the Admin close. */
+fieldset.field-finish-item { border: 0; padding: 0; margin: 0.6rem 0; min-width: 0; }
+fieldset.field-finish-item > legend { padding: 0; font-weight: 700; overflow-wrap: anywhere; }
+.field-finish-choice { display: inline-flex; align-items: center; gap: 0.35rem; margin: 0.3rem 1.1rem 0.3rem 0; min-height: 2.2rem; }
+.field-more { margin-top: 1.2rem; }
+.field-more > ul { list-style: none; padding: 0; margin: 0; }
+.field-more li { margin: 0.7rem 0; overflow-wrap: anywhere; }
+.field-more li > p { margin: 0.2rem 0; }
+.field-more-close { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.field-more-close input[type="password"] { width: 5rem; min-width: 0; }
 .field-warn { margin: 0.6rem 0; padding: 0.6rem 0.8rem; border: 2px solid var(--line, #888); border-radius: 8px; }
 /* TERP RECIPES (canon 0.30.321): the builder and the schedule pick, shared by the three sheets. */
 .terp-work, .terp-pick { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }

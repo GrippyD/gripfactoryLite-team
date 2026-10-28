@@ -599,8 +599,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 121 migration(s)")) {
-      throw new Error(`from-zero apply must say 121 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 122 migration(s)")) {
+      throw new Error(`from-zero apply must say 122 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -7954,9 +7954,9 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     const agreeLine = sheetExport.find((line) => line.includes(agreeHbn)) || "";
     // The sync renames the app batch to the sheet's text (THE HBN FOLLOWS METRC), so its 01 segment reads NA here; its silo column is untouched.
     const knownLine = sheetExport.find((line) => line.includes("26244-ARL-GH-027-0-NA-26010")) || "";
-    assert(aliasLine.endsWith(",sheet,,,bucked,0,") && !sheetExport.some((line) => line.includes(aliasSheet)), `serial 80 must be minted under METRC's text, got ${aliasLine}`);
-    assert(agreeLine.endsWith(",sheet,,,bucked,0,"), `the agreeing lot must keep the sheet's text, got ${agreeLine}`);
-    assert(knownLine.includes("Smoke Cream") && knownLine.endsWith(",app,,,bucked,0,"), `the app batch must take the sheet's market strain and stay app-born, got ${knownLine}`);
+    assert(aliasLine.endsWith(",sheet,,,bucked,0,,,") && !sheetExport.some((line) => line.includes(aliasSheet)), `serial 80 must be minted under METRC's text, got ${aliasLine}`);
+    assert(agreeLine.endsWith(",sheet,,,bucked,0,,,"), `the agreeing lot must keep the sheet's text, got ${agreeLine}`);
+    assert(knownLine.includes("Smoke Cream") && knownLine.endsWith(",app,,,bucked,0,,,"), `the app batch must take the sheet's market strain and stay app-born, got ${knownLine}`);
     const sheetLog = await text("/log");
     assert(sheetLog.body.includes("<td>harvest details (sync)</td>") && sheetLog.body.includes("<td>Smoke Cream</td>"), "the market strain change must be logged under harvest details (sync)");
     const sheetId = aliasLine.split(",")[0];
@@ -8391,11 +8391,11 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     // born_from is followed by the in-transit close columns (0083), empty until YES.
     const batchesCsv = (await text("/export/harvest_batches.csv")).body.split(/\r?\n/);
     const newLine = batchesCsv.find((line) => line.includes(NEW_HBN)) || "";
-    assert(batchesCsv[0].endsWith(",born_from,field_closed_at,field_closed_by,material_form,is_test,customer") && newLine.endsWith(",metrc,,,bucked,0,"), `the minted batch must be born from METRC, got ${newLine}`);
+    assert(batchesCsv[0].endsWith(",born_from,field_closed_at,field_closed_by,material_form,is_test,customer,field_more_trucks_at,field_more_trucks_by") && newLine.endsWith(",metrc,,,bucked,0,,,"), `the minted batch must be born from METRC, got ${newLine}`);
     assert(newLine.includes(",2026,open,") || newLine.includes(",7,2026,"), `the minted batch must carry 2026 serial 7, got ${newLine}`);
     const newBatchId = newLine.split(",")[0];
     const appLines = batchesCsv.filter((line) => line.includes(pickedHbn));
-    assert(appLines.length === 1 && appLines[0].endsWith(",app,,,bucked,0,"), "the app's own batch must stay born from the app");
+    assert(appLines.length === 1 && appLines[0].endsWith(",app,,,bucked,0,,,"), "the app's own batch must stay born from the app");
     const queuesNew = await text("/admin/queues");
     assert(!queuesNew.body.includes(NEW_HBN), "the HBN Queue must leave the METRC-born batch out");
     const wetNew = await text("/station/wet_weight");
@@ -8437,7 +8437,7 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     assert(histWork.includes(`data-schedule-tag="${HIST}" data-schedule-hbn="${aliasMetrc}">`) && histWork.includes("Sheet Apple - 33 g"), "the adopted package must read the sheet's market strain");
     const batchesAfterHist = (await text("/export/harvest_batches.csv")).body;
     assert(batchesAfterHist.split(aliasMetrc).length === batchesBeforeHist.split(aliasMetrc).length, ">> on a known lot must mint nothing");
-    assert((batchesAfterHist.split(/\r?\n/).find((line) => line.includes(aliasMetrc)) || "").endsWith(",sheet,,,bucked,0,"), "the historical lot stays sheet-born");
+    assert((batchesAfterHist.split(/\r?\n/).find((line) => line.includes(aliasMetrc)) || "").endsWith(",sheet,,,bucked,0,,,"), "the historical lot stays sheet-born");
 
     const queuesFold = await text("/admin/queues");
     assert(queuesFold.body.includes('data-fold="hbn_queue" open') && queuesFold.body.includes('data-fold="logistics_moves" open'), "Data Queues folds must render open");
@@ -9512,7 +9512,9 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     const yesPage = await text(`/station/field_harvest?load=${fieldLoad2}&finish=ask`);
     assert(yesPage.body.includes('<details class="field-finish" data-finish-load open>'), "YES must open the Finish Load block");
     assert(yesPage.body.includes("Would you like to finish any HBNs on this load?"), "YES must show the first warning");
-    assert(yesPage.body.includes('<label class="field-finish-item">'), "the checkbox list is one HBN per line");
+    // MT1 (canon 0.30.556): one fieldset per HBN on the truck, its three radios with Not finished checked.
+    assert(yesPage.body.includes(`<fieldset class="field-finish-item" data-finish-hbn="${fieldArlId}">`), "the finish list is one HBN per fieldset");
+    assert(yesPage.body.includes(`name="pick_${fieldArlId}" value="" data-hbn-label="${fieldArl.hbn}" checked>`), "Not finished must be the default pick");
     assert(yesPage.body.includes("Are you sure you want to finish adding weights to HBN(s): {list}?"), "the second warning must be in the markup");
     const fieldNo2 = await req(`/station/field_harvest/load/${fieldLoad2}/send`, { method: "POST", body: form({}) });
     assert(fieldNo2.status === 303, `the second Finish Load NO expected 303 got ${fieldNo2.status} ${await fieldNo2.text()}`);
@@ -11739,6 +11741,73 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     const ph1History = await text("/reports/environment_history");
     assert(ph1History.res.status === 200, `environment history expected 200 got ${ph1History.res.status}`);
     ph1Open(ph1History.body, '<table class="data"', "environment history");
+
+    // MT1, MORE TRUCKS COMING (canon 0.30.556): one silo batch across two trucks, a file per truck, the HBN kept on
+    // the select until its last truck, one HBN in both lists refused, and the Admin close for one with no more trucks.
+    // Last in the walk, so its silo lots touch no later check. The walk has spent 2026's lot numbers by here, so its
+    // two HBNs are minted on a 2025 entry date (the field select reads no year).
+    const mtMint = async (silo) => {
+      const mk = await req("/station/acquire_hbn", {
+        method: "POST",
+        body: form({ entry_date: "2025-09-18", farm_code: "PNS", grow_method_code: "GH", strain_id: fieldStrain, planned_dryspc: silo, material_form: "bucked" }),
+      });
+      assert(mk.status === 303, `MT1 HBN acquire expected 303 got ${mk.status} ${await mk.text()}`);
+      const at = new URL(mk.headers.get("location") || "", base);
+      return { hbn: at.searchParams.get("minted"), id: at.searchParams.get("id") || "" };
+    };
+    const mtS1 = await mtMint("3");
+    const mtS2 = await mtMint("4");
+    const mtStart = async () => {
+      const res = await req("/station/field_harvest/start", { method: "POST", body: form({ operator_name: "Field Hand", destination_farm_code: "PNN" }) });
+      assert(res.status === 303, `MT1 field start expected 303 got ${res.status} ${await res.text()}`);
+      const id = new URL(res.headers.get("location") || "", base).searchParams.get("load");
+      assert(id, "MT1 start must redirect to its load");
+      return id;
+    };
+    const mtTruck1 = await mtStart();
+    const mtOpened1 = await text(`/station/field_harvest?load=${mtTruck1}`);
+    const mtS1Id = optionId(mtOpened1.body, mtS1.hbn);
+    const mtS2Id = optionId(mtOpened1.body, mtS2.hbn);
+    await addFieldTote(mtTruck1, mtS1Id, "7000");
+    await addFieldTote(mtTruck1, mtS1Id, "6500");
+    const mtAsk = await text(`/station/field_harvest?load=${mtTruck1}&finish=ask`);
+    assert(
+      mtAsk.body.includes(`name="pick_${mtS1Id}" value="more"`) && mtAsk.body.includes(`name="pick_${mtS1Id}" value="last"`),
+      "YES must offer More trucks coming and Last truck for each HBN on the truck"
+    );
+    const mtWarn = await text(`/station/field_harvest?load=${mtTruck1}&finish=warn&pick_${mtS1Id}=more`);
+    assert(
+      mtWarn.body.includes("will be finished and its harvest file will pend") && mtWarn.body.includes(`name="hbn_more" value="${mtS1Id}"`),
+      "the warn must read More trucks coming and carry hbn_more"
+    );
+    const mtSend1 = await req(`/station/field_harvest/load/${mtTruck1}/send`, { method: "POST", body: form({ [`pick_${mtS1Id}`]: "more" }) });
+    assert(mtSend1.status === 303, `MT1 truck 1 send expected 303 got ${mtSend1.status} ${await mtSend1.text()}`);
+    const mtTruck2 = await mtStart();
+    const mtOpened2 = await text(`/station/field_harvest?load=${mtTruck2}`);
+    assert(mtOpened2.body.includes(`(${mtS1.hbn}) Bucked Silo 3, more trucks coming</option>`), "the select must keep the HBN, marked more trucks coming");
+    await addFieldTote(mtTruck2, mtS1Id, "6000");
+    await addFieldTote(mtTruck2, mtS2Id, "6800");
+    const mtBoth = await req(`/station/field_harvest/load/${mtTruck2}/send`, { method: "POST", body: form({ hbn: mtS1Id, hbn_more: mtS1Id }) });
+    assert(mtBoth.status === 400 && (await mtBoth.text()).includes("Pick one choice for each HBN"), "one HBN in both lists must refuse in words");
+    const mtSend2 = await req(`/station/field_harvest/load/${mtTruck2}/send`, { method: "POST", body: form({ hbn: mtS1Id, hbn_more: mtS2Id }) });
+    assert(mtSend2.status === 303, `MT1 truck 2 send expected 303 got ${mtSend2.status} ${await mtSend2.text()}`);
+    const mtUploads = await text("/admin/uploads");
+    assert(mtUploads.body.includes(`${mtS1.hbn}(1).csv`) && mtUploads.body.includes(`${mtS1.hbn}(2).csv`), "each truck's part must pend its own file");
+    assert(mtUploads.body.includes(`${mtS2.hbn}(1).csv`), "the next silo's first part must pend its file");
+    const mtHome = await text("/station/field_harvest");
+    assert(mtHome.body.includes(`data-more-hbn="${mtS2Id}"`) && !mtHome.body.includes(`data-more-hbn="${mtS1Id}"`), "the waiting list must hold the continuing HBN only");
+    const mtTruck3 = await mtStart();
+    const mtOpened3 = await text(`/station/field_harvest?load=${mtTruck3}`);
+    assert(!mtOpened3.body.includes(`(${mtS1.hbn})`), "Last truck must take the HBN off the select");
+    assert(mtOpened3.body.includes(`(${mtS2.hbn}) Bucked Silo 4, more trucks coming</option>`), "the continuing HBN must stay on the select");
+    const mtCloseNo = await req(`/station/field_harvest/hbn/${mtS2Id}/close`, { method: "POST", body: form({ pin: "00000" }) });
+    assert(mtCloseNo.status === 403, `the close without the PIN expected 403 got ${mtCloseNo.status}`);
+    const mtClose = await req(`/station/field_harvest/hbn/${mtS2Id}/close`, { method: "POST", body: form({ pin: ADMIN_PIN }) });
+    assert(mtClose.status === 303 && (mtClose.headers.get("location") || "").includes("ok=hbn_closed"), `the close expected 303 to ok=hbn_closed got ${mtClose.status}`);
+    const mtAfter = await text(`/station/field_harvest?load=${mtTruck3}`);
+    assert(!mtAfter.body.includes(`(${mtS2.hbn})`), "the close must take the HBN off the select");
+    const mtHomeAfter = await text("/station/field_harvest?ok=hbn_closed");
+    assert(mtHomeAfter.body.includes("HBN closed.") && !mtHomeAfter.body.includes("data-more-trucks"), "the closed HBN must leave the waiting list");
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

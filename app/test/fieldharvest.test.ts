@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   addFieldLoadWeight,
   changeFieldToteHbn,
+  closeFieldHbn,
+  FIELD_PICK_BOTH,
+  readFieldFinishPicks,
   reopenFieldLoad,
   runQueueControl,
   scheduleLogisticsLot,
@@ -10,7 +13,7 @@ import {
   unscheduleLogisticsLot,
 } from "../src/actions";
 import { nowIso } from "../src/audit";
-import { listBarnWetLots, listDryQueueLots, listFieldHbns, listInTransitFieldLoads, listOpenLogisticsSchedules } from "../src/db";
+import { listBarnWetLots, listDryQueueLots, listFieldHbns, listInTransitFieldLoads, listMoreTrucksHbns, listOpenLogisticsSchedules } from "../src/db";
 import { farmDay, FARM_DAY_START_HOUR_DEFAULT } from "../src/farmday";
 import { fieldHarvestPage } from "../src/fieldharvest";
 import { internalLogisticsPage, logisticsLotView } from "../src/scheduling";
@@ -554,7 +557,15 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     expect(es).toContain('block.addEventListener("toggle"');
     expect(es).toContain('<details class="field-finish" data-finish-load open>');
     expect(es).toContain('<summary class="btn" data-finish-open>Terminar carga</summary>');
-    expect(es).toContain('<label class="field-finish-item">');
+    // MT1 (canon 0.30.556): each HBN on the truck is a fieldset of three radios, Not finished checked.
+    expect(es).toContain('<fieldset class="field-finish-item" data-finish-hbn="hb">');
+    expect(es).toContain('<input type="radio" name="pick_hb" value="" data-hbn-label="26244-ARL-GH-027-0-NA-26001" checked> Sin terminar');
+    expect(es).toContain('<input type="radio" name="pick_hb" value="more" data-hbn-label="26244-ARL-GH-027-0-NA-26001"> Vienen mas camiones');
+    expect(es).toContain('<input type="radio" name="pick_hb" value="last" data-hbn-label="26244-ARL-GH-027-0-NA-26001"> Ultimo camion');
+    expect(es).toContain(
+      'data-confirm-more="La parte de los HBN: {list} en este camion se terminara y su archivo de cosecha quedara pendiente. El HBN sigue en la lista para el proximo camion."'
+    );
+    expect(es).not.toContain('type="checkbox" name="hbn"');
     expect(es).toContain('<select name="harvest_batch_id" aria-label="HBN">');
     expect(es).toContain('<span class="field-tote-pin"><input type="password" name="pin"');
     expect(es).toContain("Desea terminar algun HBN de esta carga?");
@@ -583,5 +594,250 @@ describe("Penn South/Arlington Harvest (canon 0.30.317)", () => {
     expect(warn).toContain("Volver");
     expect(warn).toContain("Confirmar");
     expect(warn).toContain("Cargas enviadas");
+  });
+});
+
+describe("MT1, More trucks coming (canon 0.30.556)", () => {
+  async function newLoad(m: MigratedDb, person: string): Promise<string> {
+    const started = await startFieldLoad(m.db, formOf({ person_id: person, operator_name: "Field Hand", destination_farm_code: "PNN" }));
+    return new URL("http://local" + started.redirect).searchParams.get("load") ?? "";
+  }
+
+  it("More trucks coming finishes the truck's part and keeps the HBN listed; the next truck opens part 2; Last truck closes it", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    // A silo batch filled by two trucks, Bucked on Silo 1 as the 2026-10-26 Penn South run was, and the next silo's HBN.
+    seedBatch(m, { id: "hb-s1", hbn: "26299-PNS-OD-044-0-01-26701", serial: 6701, farm: "PNS", silo: "1" });
+    seedBatch(m, { id: "hb-s2", hbn: "26299-PNS-OD-074-0-02-26702", serial: 6702, farm: "PNS", silo: "2" });
+    const truck1 = await newLoad(m, person);
+    await addFieldLoadWeight(m.db, truck1, formOf({ person_id: person, weight_grams: "7000", harvest_batch_id: "hb-s1" }));
+    await addFieldLoadWeight(m.db, truck1, formOf({ person_id: person, weight_grams: "6500", harvest_batch_id: "hb-s1" }));
+    const more = formOf({ person_id: person });
+    more.append("hbn_more", "hb-s1");
+    await sendFieldLoad(m.db, truck1, more);
+    const part1 = m.get(`SELECT id, status, weight_grams, harvest_file_seq, finished_at FROM wet_weight_entries WHERE harvest_batch_id = 'hb-s1'`);
+    expect(part1?.status).toBe("drying");
+    expect(part1?.weight_grams).toBe(13500);
+    expect(part1?.harvest_file_seq).toBe(1);
+    expect(part1?.finished_at).toBeTruthy();
+    const marked = m.get(`SELECT field_closed_at, field_more_trucks_at, field_more_trucks_by FROM harvest_batches WHERE id = 'hb-s1'`);
+    expect(marked?.field_closed_at).toBeNull();
+    expect(marked?.field_more_trucks_at).toBeTruthy();
+    expect(marked?.field_more_trucks_by).toBe(person);
+    expect(
+      m.all(`SELECT field, reason FROM record_change_log WHERE record_id = 'hb-s1' ORDER BY field`).map((row) => `${row.field} ${row.reason}`)
+    ).toEqual(["field_more_trucks_at field more trucks coming", "field_more_trucks_by field more trucks coming"]);
+    const listed = (await listFieldHbns(m.db)).find((row) => row.id === "hb-s1");
+    expect(listed?.moreTrucks).toBe(true);
+    expect((await listFieldHbns(m.db)).find((row) => row.id === "hb-s2")?.moreTrucks).toBe(false);
+
+    // Truck 2 carries the rest of Silo 1 and the start of Silo 2.
+    const truck2 = await newLoad(m, person);
+    await addFieldLoadWeight(m.db, truck2, formOf({ person_id: person, weight_grams: "6000", harvest_batch_id: "hb-s1" }));
+    await addFieldLoadWeight(m.db, truck2, formOf({ person_id: person, weight_grams: "6800", harvest_batch_id: "hb-s2" }));
+    expect(m.all(`SELECT id FROM wet_weight_entries WHERE harvest_batch_id = 'hb-s1' AND deleted_at IS NULL`)).toHaveLength(2);
+    const picks = formOf({ person_id: person });
+    picks.append("pick_hb-s1", "last");
+    picks.append("pick_hb-s2", "more");
+    await sendFieldLoad(m.db, truck2, picks);
+    const parts = m.all(
+      `SELECT status, weight_grams, harvest_file_seq FROM wet_weight_entries WHERE harvest_batch_id = 'hb-s1' ORDER BY harvest_file_seq`
+    );
+    expect(parts).toEqual([
+      { status: "drying", weight_grams: 13500, harvest_file_seq: 1 },
+      { status: "drying", weight_grams: 6000, harvest_file_seq: 2 },
+    ]);
+    const closed = m.get(
+      `SELECT field_closed_at, field_closed_by, field_more_trucks_at, field_more_trucks_by FROM harvest_batches WHERE id = 'hb-s1'`
+    );
+    expect(closed?.field_closed_at).toBeTruthy();
+    expect(closed?.field_closed_by).toBe(person);
+    expect(closed?.field_more_trucks_at).toBeNull();
+    expect(closed?.field_more_trucks_by).toBeNull();
+    expect(
+      m
+        .all(`SELECT field, new_value, reason FROM record_change_log WHERE record_id = 'hb-s1' AND reason = 'field hbn closed' ORDER BY field`)
+        .map((row) => `${row.field} ${row.new_value === null ? "null" : "set"}`)
+    ).toEqual(["field_closed_at set", "field_closed_by set", "field_more_trucks_at null", "field_more_trucks_by null"]);
+    const ids = (await listFieldHbns(m.db)).map((row) => row.id);
+    expect(ids).not.toContain("hb-s1");
+    expect(ids).toContain("hb-s2");
+    expect(m.get(`SELECT field_more_trucks_at FROM harvest_batches WHERE id = 'hb-s2'`)?.field_more_trucks_at).toBeTruthy();
+    expect(m.get(`SELECT status FROM wet_weight_entries WHERE harvest_batch_id = 'hb-s2'`)?.status).toBe("drying");
+    expect((await listMoreTrucksHbns(m.db)).map((row) => [row.id, row.parts, row.grams, row.weighing])).toEqual([["hb-s2", 1, 6800, false]]);
+  });
+
+  it("the mark keeps the HBN on the select past the farm day; a second More trucks coming keeps the first mark", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    seedBatch(m, { id: "hb-x", hbn: "26244-PNS-GH-027-0-NA-26711", serial: 6711, farm: "PNS", form: "spear" });
+    // A part finished three days ago, before the farm's today: the farm-day rule alone drops the HBN.
+    m.run(
+      `INSERT INTO wet_weight_entries (id, harvest_batch_id, weight_grams, actual_dryspc, status, effective_date, finished_at, harvest_file_seq, created_at, updated_at)
+       VALUES ('lot-x1', 'hb-x', 10, ?, 'drying', '2026-09-27', ?, 1, ?, ?)`,
+      HANG,
+      T0,
+      T0,
+      T0
+    );
+    expect((await listFieldHbns(m.db)).map((row) => row.id)).not.toContain("hb-x");
+    m.run(`UPDATE harvest_batches SET field_more_trucks_at = ?, field_more_trucks_by = ? WHERE id = 'hb-x'`, T0, person);
+    expect((await listFieldHbns(m.db)).map((row) => row.id)).toContain("hb-x");
+    // The next truck: its first tote opens part 2; More trucks coming again leaves the mark as it was.
+    const truck = await newLoad(m, person);
+    await addFieldLoadWeight(m.db, truck, formOf({ person_id: person, weight_grams: "5", harvest_batch_id: "hb-x" }));
+    const again = formOf({ person_id: person });
+    again.append("hbn_more", "hb-x");
+    await sendFieldLoad(m.db, truck, again);
+    expect(m.get(`SELECT field_more_trucks_at FROM harvest_batches WHERE id = 'hb-x'`)?.field_more_trucks_at).toBe(T0);
+    expect(m.all(`SELECT id FROM record_change_log WHERE record_id = 'hb-x' AND field LIKE 'field_more_trucks%'`)).toHaveLength(0);
+    expect(m.all(`SELECT harvest_file_seq FROM wet_weight_entries WHERE harvest_batch_id = 'hb-x' ORDER BY harvest_file_seq`).map((row) => row.harvest_file_seq)).toEqual([1, 2]);
+    expect((await listFieldHbns(m.db)).map((row) => row.id)).toContain("hb-x");
+  });
+
+  it("refuses one HBN in both lists and a pick off the load, in words; the old YES and NO stand", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    seedBatch(m, { id: "hb-a", hbn: "26244-ARL-GH-027-0-NA-26721", serial: 6721, farm: "ARL", form: "spear" });
+    seedBatch(m, { id: "hb-b", hbn: "26244-PNS-GH-027-0-NA-26722", serial: 6722, farm: "PNS", form: "spear" });
+    const truck = await newLoad(m, person);
+    await addFieldLoadWeight(m.db, truck, formOf({ person_id: person, weight_grams: "4", harvest_batch_id: "hb-a" }));
+    const both = formOf({ person_id: person });
+    both.append("hbn", "hb-a");
+    both.append("hbn_more", "hb-a");
+    await expect(sendFieldLoad(m.db, truck, both)).rejects.toMatchObject({ message: FIELD_PICK_BOTH });
+    const radios = formOf({ person_id: person });
+    radios.append("hbn_more", "hb-a");
+    radios.append("pick_hb-a", "last");
+    await expect(sendFieldLoad(m.db, truck, radios)).rejects.toMatchObject({ message: FIELD_PICK_BOTH });
+    const off = formOf({ person_id: person });
+    off.append("pick_hb-b", "more");
+    await expect(sendFieldLoad(m.db, truck, off)).rejects.toMatchObject({ message: "That HBN is not on this load." });
+    expect(m.get(`SELECT status FROM field_loads WHERE id = ?`, truck)?.status).toBe("open");
+    const notYet = formOf({ person_id: person });
+    notYet.append("pick_hb-a", "");
+    await sendFieldLoad(m.db, truck, notYet);
+    expect(m.get(`SELECT status FROM wet_weight_entries WHERE harvest_batch_id = 'hb-a'`)?.status).toBe("weighing");
+    expect(m.get(`SELECT field_more_trucks_at, field_closed_at FROM harvest_batches WHERE id = 'hb-a'`)).toEqual({
+      field_more_trucks_at: null,
+      field_closed_at: null,
+    });
+    expect(readFieldFinishPicks(new URLSearchParams("hbn=a&pick_b=more&pick_c=last&pick_d=&hbn_more=e"))).toEqual({
+      last: ["a", "c"],
+      more: ["e", "b"],
+      both: [],
+    });
+  });
+
+  it("the Admin close: the PIN, a part still weighing, then the close with its four logs", async () => {
+    const m = await migratedDb();
+    const person = seedPerson(m);
+    const pin = await pinOf(m);
+    seedBatch(m, { id: "hb-c", hbn: "26244-PNS-GH-027-0-NA-26731", serial: 6731, farm: "PNS", form: "spear" });
+    const truck = await newLoad(m, person);
+    await addFieldLoadWeight(m.db, truck, formOf({ person_id: person, weight_grams: "8", harvest_batch_id: "hb-c" }));
+    const more = formOf({ person_id: person });
+    more.append("hbn_more", "hb-c");
+    await sendFieldLoad(m.db, truck, more);
+    await expect(closeFieldHbn(m.db, "hb-c", formOf({ person_id: person, pin: "0" }))).rejects.toMatchObject({
+      status: 403,
+      message: "Closing an HBN needs the Admin PIN.",
+    });
+    // The next truck has started weighing it: that truck finishes it, not the close.
+    const next = await newLoad(m, person);
+    await addFieldLoadWeight(m.db, next, formOf({ person_id: person, weight_grams: "3", harvest_batch_id: "hb-c" }));
+    await expect(closeFieldHbn(m.db, "hb-c", formOf({ person_id: person, pin }))).rejects.toMatchObject({
+      message: "That HBN is weighing on an open load. Finish that load with Last truck instead.",
+    });
+    expect((await listMoreTrucksHbns(m.db)).map((row) => [row.id, row.weighing])).toEqual([["hb-c", true]]);
+    // The floor voids that tote (it was weighed under the wrong HBN): the empty part no longer holds the close.
+    m.run(`UPDATE wet_weights SET deleted_at = ?, deleted_by = ? WHERE field_load_id = ?`, T0, person, next);
+    expect((await listMoreTrucksHbns(m.db)).map((row) => [row.id, row.weighing])).toEqual([["hb-c", false]]);
+    const done = await closeFieldHbn(m.db, "hb-c", formOf({ person_id: person, pin }));
+    expect(done.redirect).toBe("/station/field_harvest?ok=hbn_closed");
+    const row = m.get(`SELECT field_closed_at, field_closed_by, field_more_trucks_at FROM harvest_batches WHERE id = 'hb-c'`);
+    expect(row?.field_closed_at).toBeTruthy();
+    expect(row?.field_closed_by).toBe(person);
+    expect(row?.field_more_trucks_at).toBeNull();
+    expect(
+      m.all(`SELECT field FROM record_change_log WHERE record_id = 'hb-c' AND reason = 'field hbn closed, no more trucks' ORDER BY field`).map((r) => r.field)
+    ).toEqual(["field_closed_at", "field_closed_by", "field_more_trucks_at", "field_more_trucks_by"]);
+    expect((await listFieldHbns(m.db)).map((r) => r.id)).not.toContain("hb-c");
+    expect(await listMoreTrucksHbns(m.db)).toEqual([]);
+    await expect(closeFieldHbn(m.db, "hb-c", formOf({ person_id: person, pin }))).rejects.toMatchObject({
+      message: "That HBN is not waiting on more trucks.",
+    });
+  });
+
+  it("the page: the select's mark, the warn's two sentences with their hidden fields, and the waiting list with its close", () => {
+    const load = {
+      id: "load-1",
+      operator_name: "Field Hand",
+      destination_farm_code: "PNN",
+      destination_name: "Penn North",
+      status: "open",
+      started_at: T0,
+      sent_at: null,
+      effective_date: "2026-09-30",
+    };
+    const tote = (hb: string, hbn: string) => ({
+      id: `t-${hb}`,
+      weight_grams: 10,
+      created_at: T0,
+      harvest_batch_id: hb,
+      hbn,
+      lot_id: `lot-${hb}`,
+      lot_grams: 10,
+      lot_status: "weighing",
+    });
+    const options = [
+      { id: "hb-1", hbn: "26299-PNS-OD-044-0-01-26741", label: "PNS / Fruity / 2026-10-26", form: "bucked" as const, silo: "Silo 1", moreTrucks: true },
+      { id: "hb-2", hbn: "26299-PNS-OD-074-0-02-26742", label: "PNS / Fruity / 2026-10-26", form: "bucked" as const, silo: "Silo 2", moreTrucks: false },
+    ];
+    const page = fieldHarvestPage({
+      locale: "en",
+      destinations: [],
+      openLoads: [],
+      sentLoads: [],
+      picked: {
+        load,
+        totes: [tote("hb-1", options[0].hbn), tote("hb-2", options[1].hbn)],
+        hbnOptions: options,
+        carryId: "hb-1",
+        finish: "warn",
+        warnIds: ["hb-1"],
+        moreIds: ["hb-2"],
+      },
+    });
+    expect(page).toContain(">PNS / Fruity / 2026-10-26 (26299-PNS-OD-044-0-01-26741) Bucked Silo 1, more trucks coming</option>");
+    expect(page).toContain(">PNS / Fruity / 2026-10-26 (26299-PNS-OD-074-0-02-26742) Bucked Silo 2</option>");
+    expect(page).toContain(
+      "<p data-finish-warn-more>This truck's part of HBN(s): 26299-PNS-OD-074-0-02-26742 will be finished and its harvest file will pend. The HBN stays on the list for the next truck.</p>"
+    );
+    expect(page).toContain("<p data-finish-warn-last>Are you sure you want to finish adding weights to HBN(s): 26299-PNS-OD-044-0-01-26741?");
+    expect(page).toContain('<input type="hidden" name="hbn" value="hb-1"><input type="hidden" name="hbn_more" value="hb-2">');
+    expect(page).toContain('name="pick_hb-1" value="last" data-hbn-label="26299-PNS-OD-044-0-01-26741" checked>');
+    expect(page).toContain('name="pick_hb-2" value="more" data-hbn-label="26299-PNS-OD-074-0-02-26742" checked>');
+    expect(page).not.toContain("data-more-trucks");
+    const home = fieldHarvestPage({
+      locale: "es",
+      destinations: [{ code: "PNN", display_name: "Penn North" }],
+      openLoads: [],
+      sentLoads: [],
+      picked: null,
+      moreTrucks: [
+        { id: "hb-2", hbn: options[1].hbn, label: "PNS / Fruity / 2026-10-26", more_trucks_at: T0, parts: 1, grams: 6800, weighing: false },
+        { id: "hb-3", hbn: "26299-PNS-OD-074-0-03-26743", label: "PNS / Fruity / 2026-10-26", more_trucks_at: T0, parts: 2, grams: 13600, weighing: true },
+      ],
+    });
+    expect(home).toContain('<section class="field-more" data-more-trucks>');
+    expect(home).toContain("HBN en espera de mas camiones <span class=\"tile-count\">2</span>");
+    expect(home).toContain("1 parte terminada, 6,800 g. Marcado");
+    expect(home).toContain("2 partes terminadas, 13,600 g. Marcado");
+    expect(home).toContain('action="/station/field_harvest/hbn/hb-2/close" class="field-more-close"');
+    expect(home).not.toContain('action="/station/field_harvest/hbn/hb-3/close"');
+    expect(home).toContain("Pesando ahora en una carga abierta.");
+    expect(home).toContain(">Cerrar HBN</button>");
+    expect(fieldHarvestPage({ locale: "en", destinations: [], openLoads: [], sentLoads: [], picked: null, moreTrucks: [] })).not.toContain("data-more-trucks");
   });
 });
