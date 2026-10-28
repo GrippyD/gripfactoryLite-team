@@ -101,6 +101,10 @@ import { countAssetsForSale } from "./equipment";
 import { farmopsHeadTabs, MAINTENANCE_PATH, PROJECTS_PATH } from "./maintenance";
 import { t, tFill, type Locale } from "./i18n";
 import { esc, tabBar } from "./ui";
+import { CT_REGISTER_CARDS } from "./ctregister";
+
+/** CT1 (canon 0.30.558): the department whose wall is the C&T register. */
+const CT_REGISTER_DEPT = "culttech";
 
 export const DIRECTOR_PATH = "/admin/director";
 
@@ -978,6 +982,14 @@ export function directorWallPage(model: DirectorWallModel, locale: Locale = "en"
 export function directorHomePage(model: DirectorHomeModel, locale: Locale = "en"): string {
   const cards = model.departments
     .map((card) => {
+      // CT1 (canon 0.30.558): the C&T wall is the register, read live on the wall, so its card counts nothing here.
+      if (card.dept_key === CT_REGISTER_DEPT) {
+        return `<a class="dd-card dd-card-register" href="${esc(`${DIRECTOR_PATH}/${card.dept_key}`)}" data-dd-dept="${esc(card.dept_key)}" data-dd-tiles="${esc(CT_REGISTER_CARDS.length)}" data-dd-register>
+        <span class="dd-card-title">${esc(t(locale, card.title_en))}</span>
+        <span class="dd-card-tiles"><b>${esc(CT_REGISTER_CARDS.length)}</b> ${esc(t(locale, "KPIs from the C&T register"))}</span>
+        <span class="dd-card-foot">${esc(t(locale, "Read live from Field Ops on the wall"))}</span>
+      </a>`;
+      }
       const counts = DD_TILE_STATUSES.map(
         (status) => `<span class="dd-count dd-count-${esc(status)}" data-dd-count="${esc(status)}"><b>${esc(card.counts[status])}</b> ${esc(t(locale, DD_STATUS_WORDS[status]))}</span>`
       ).join("");
@@ -991,6 +1003,7 @@ export function directorHomePage(model: DirectorHomeModel, locale: Locale = "en"
     })
     .join("");
   const checks = model.departments
+    .filter((card) => card.dept_key !== CT_REGISTER_DEPT)
     .map(
       (card) =>
         `<a href="${esc(directorGridPath(card.dept_key))}" data-dd-checkin="${esc(card.dept_key)}">${esc(t(locale, card.title_en))} ${esc(t(locale, "check-in"))}</a>`
@@ -1003,7 +1016,7 @@ export function directorHomePage(model: DirectorHomeModel, locale: Locale = "en"
       <a href="${esc(MAINTENANCE_PATH)}" data-dd-maintenance>${esc(t(locale, "Maintenance"))}</a>`;
   const q = model.questions;
   return `<h1>${esc(t(locale, "Director Dashboard"))}</h1>
-    <p class="muted">${esc(t(locale, "Five walls, one per department. Each card counts the department's own KPIs by status and shows the last time a value was computed."))}</p>
+    <p class="muted">${esc(t(locale, "Five walls, one per department. Each card counts the department's own KPIs by status and shows the last time a value was computed."))} ${esc(t(locale, "The Cultivation and Technology card is the exception: its wall reads the C&T register live."))}</p>
     <div class="dd-cards" data-dd-home data-dd-day="${esc(model.farmToday)}" data-dd-tiles="${esc(model.totalTiles)}">${cards}</div>
     <nav class="dd-home-links" data-dd-home-links>${checks}${forms}</nav>
     <p class="muted dd-questions" data-dd-questions-open="${esc(q.open)}" data-dd-questions-ruled="${esc(q.ruled)}" data-dd-questions-parked="${esc(q.parked)}">

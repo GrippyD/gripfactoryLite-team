@@ -534,6 +534,41 @@ function runCmd(command) {
  * Retry-After: 1, once. A request without the fake keys' Basic header answers
  * 401, so the walk proves the keys reach the stub and only the stub. Nothing
  * here reaches metrc.com. */
+/** CT1 (canon 0.30.558): a stand-in for Field Ops' register feed on a free port: an invented feed in the register's
+ * shape behind a fake bearer token, never the live sample. */
+function startKpiStub() {
+  const token = "fake-kpi-token";
+  const hits = [];
+  const codes = ["r01", "r02", "r03", "r04", "r05", "r06", "r07"];
+  const rows = [];
+  for (const day of ["2026-10-02", "2026-10-01"]) {
+    for (const kpi of codes) {
+      rows.push({
+        day,
+        kpi,
+        status: kpi === "r03" ? "action" : "nominal",
+        headline: `Smoke ${kpi} headline for ${day}`,
+        reasons: kpi === "r03" ? [{ level: "action", text: "Smoke reason." }] : [],
+        series: [kpi === "r02" ? { key: "first_pass", label: "Smoke held", value: null, held: true } : { key: kpi === "r03" ? "proj_dry" : "open", label: "Smoke number", value: 1234 }],
+        unread: [],
+        rule_version: "kpi-smoke",
+        computed_at: `${day}T11:00:00Z`,
+      });
+    }
+  }
+  const server = createServer((request, response) => {
+    const url = new URL(request.url || "/", "http://127.0.0.1");
+    hits.push(`${url.pathname}?${url.searchParams.toString()}`);
+    response.writeHead(request.headers.authorization === `Bearer ${token}` ? 200 : 401, { "content-type": "application/json" });
+    if (request.headers.authorization !== `Bearer ${token}`) return response.end(JSON.stringify({ ok: false, error: "the stub saw no fake token" }));
+    response.end(JSON.stringify({ ok: true, feed: "kpi-register", generated_at: "2026-10-02T12:00:00.000Z", days: 2, rule_version: "kpi-smoke", rows, bad_json: [] }));
+  });
+  return new Promise((resolve, reject) => {
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port, hits, token }));
+  });
+}
+
 function startMetrcStub() {
   const fixtures = join(appRoot, "test", "fixtures", "metrc");
   const token = Buffer.from("fake-vendor-key:fake-user-key").toString("base64");
@@ -685,6 +720,7 @@ function stopWrangler(child) {
 async function run() {
   let child = await startWrangler();
   let metrcStub = null;
+  let kpiStub = null;
   try {
     const home = await text("/");
     if (home.res.status !== 200) fail("GET /", `status ${home.res.status}`);
@@ -10623,17 +10659,24 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     // sandbox host to the page and the mode law, so nothing can write; the sweep mode
     // is dry_run for this walk. No page, pack or log row may carry the fake key
     // strings or their base64 token.
+    // CT1 (canon 0.30.558): before the restart the worker holds no KPI_FEED_TOKEN, so the C&T wall says so in words.
+    const ctNoToken = await text("/admin/director/culttech");
+    assert(
+      ctNoToken.res.status === 200 && ctNoToken.body.includes('data-ct-register="no_token"') && ctNoToken.body.includes("token is not set on this worker yet") && !ctNoToken.body.includes("data-dd-kpi="),
+      `the C&T wall without its token expected 200 with the no_token words and no registry tile, got ${ctNoToken.res.status}`
+    );
     await stopWrangler(child);
     child = null;
     await waitForPortFree();
     metrcStub = await startMetrcStub();
+    kpiStub = await startKpiStub();
     await localD1WhenFree("UPDATE app_config SET value = 'dry_run' WHERE key = 'metrc_sweep_mode'");
     const callsBeforeStub = Number(localD1All("SELECT COUNT(*) AS n FROM metrc_api_calls")[0].n);
     const packagesBeforeStub = Number(localD1All("SELECT COUNT(*) AS n FROM metrc_packages")[0].n);
     const plantsBeforeStub = Number(localD1All("SELECT COUNT(*) AS n FROM metrc_plants")[0].n);
     const runsBeforeStub = Number(localD1All("SELECT COUNT(*) AS n FROM metrc_sweep_runs")[0].n);
     child = await spawnWrangler(
-      ` --var METRC_STUB_BASE:http://127.0.0.1:${metrcStub.port} --var METRC_STUB_ENABLED:1 --var METRC_INTEGRATOR_KEY:fake-vendor-key --var METRC_USER_KEY:fake-user-key`
+      ` --var METRC_STUB_BASE:http://127.0.0.1:${metrcStub.port} --var METRC_STUB_ENABLED:1 --var METRC_INTEGRATOR_KEY:fake-vendor-key --var METRC_USER_KEY:fake-user-key --var KPI_FEED_BASE:http://127.0.0.1:${kpiStub.port} --var KPI_FEED_TOKEN:${kpiStub.token}`
     );
     const noKeyText = (label, body) => {
       assert(!body.includes("fake-vendor-key") && !body.includes("fake-user-key") && !body.includes(metrcStub.token), `${label} must carry no key text or token`);
@@ -11082,6 +11125,17 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
       `a from-zero wall reads no_data, out_of_season or parked, and Lbs Harvested may already be stored by the hourly cron, got ${ddTallyText}`
     );
     assert(ddHome.body.includes('data-dd-recompute="dashboard-series"'), "the director home must offer Recompute dashboard series");
+    // CT1 (canon 0.30.558): the home's C&T card is the register's; the wall reads the stand-in live with the fake token,
+    // shows the seven cards as recorded, and carries the token nowhere.
+    assert(ddHome.body.includes('data-dd-register') && !ddHome.body.includes('data-dd-checkin="culttech"') && ddHome.body.includes("its wall reads the C&amp;T register live."), "the home's C&T card must be the register's, with no check-in, and the home must say so");
+    const ctWall = await text("/admin/director/culttech");
+    const ctKpis = [...ctWall.body.matchAll(/data-ct-kpi="(r0\d)"/g)].map((hit) => hit[1]);
+    assert(
+      ctWall.res.status === 200 && ctWall.body.includes('data-ct-register="ok"') && ctKpis.join(",") === "r01,r02,r03,r04,r05,r06,r07" && ctWall.body.includes("Smoke r03 headline for 2026-10-02") && ctWall.body.includes('data-ct-key="open">1,234<') && ctWall.body.includes('data-ct-key="proj_dry">1,234<') && ctWall.body.includes('data-ct-key="first_pass">held<') && !ctWall.body.includes("data-dd-kpi="),
+      `the C&T wall expected the stand-in's seven cards as recorded, got ${ctWall.res.status} and ${ctKpis.join(",")}`
+    );
+    assert(!ctWall.body.includes(kpiStub.token), "the C&T wall must never carry the register's token");
+    assert(kpiStub.hits.length >= 1 && kpiStub.hits.every((hit) => hit === "/api/kpi/feed?days=30"), `the wall must read /api/kpi/feed?days=30, got ${JSON.stringify(kpiStub.hits)}`);
     const dlhNow = new Date().toISOString();
     const dlhParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit" }).formatToParts(new Date(dlhNow));
     const dlhPick = (type) => (dlhParts.find((part) => part.type === type) || {}).value || "";
@@ -11813,6 +11867,7 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
   } finally {
     await stopWrangler(child);
     if (metrcStub) metrcStub.server.close();
+    if (kpiStub) kpiStub.server.close();
   }
 }
 

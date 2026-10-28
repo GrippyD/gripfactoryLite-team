@@ -534,6 +534,7 @@ import { loadStrainPerformance } from "./strainperformance";
 import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { loadFgInventory } from "./fginventory";
 import { harvestDashboardPage, loadHarvestDashboard } from "./harvestdashboard";
+import { ctRegisterWallPage, readCtRegister } from "./ctregister";
 import { DIRECTOR_PATH, DIRECTOR_RECOMPUTE_LBS_PATH, directorDetailPage, directorGridPage, directorHomePage, directorWallPage, isDdDeptKey, loadDirectorDetail, loadDirectorGrid, loadDirectorHome, loadDirectorWall, saveDirectorGrid } from "./director";
 import { refreshLbsHarvested, refreshLbsPerDlh, refreshPctFinished, refreshSiloUtilization, refreshTrimThroughput } from "./ddsnapshot";
 import { addHarvestPlan, deleteHarvestPlan, doneHarvestPlan, HARVEST_PLAN_PATH, harvestPlanPage, loadHarvestPlanPage, updateHarvestPlan } from "./harvestschedule";
@@ -1883,6 +1884,8 @@ app.get(`${DIRECTOR_PATH}/:dept`, async (c) => {
   if (!isDdDeptKey(dept)) throw new HttpError(404, "Unknown department.");
   const s = await shell(c);
   const now = nowIso();
+  // CT1, THE C&T WALL IS THE REGISTER (canon 0.30.558): the wall reads the C&T register live, server side, on each view.
+  if (dept === "culttech") return html(c, s, "Cultivation and Technology", ctRegisterWallPage(await readCtRegister(c.env, fetch, now), s.locale));
   const model = await loadDirectorWall(c.env.DB, dept, await farmToday(c.env.DB, now), c.req.query("cadence") ?? null, c.req.query("period") ?? null, now);
   return html(c, s, model.title_en, directorWallPage(model, s.locale));
 });
