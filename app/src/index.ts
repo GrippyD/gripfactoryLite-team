@@ -152,6 +152,8 @@ import {
   startFieldLoad,
   addFieldLoadWeight,
   sendFieldLoad,
+  closeFieldHbn,
+  readFieldFinishPicks,
   reopenFieldLoad,
   changeFieldToteHbn,
 } from "./actions";
@@ -340,6 +342,7 @@ import {
   listFieldLoadTotes,
   listFieldHbns,
   listInTransitFieldLoads,
+  listMoreTrucksHbns,
   listDryQueueLots,
   listChangeLog,
   listSiloSequence,
@@ -865,6 +868,7 @@ function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
   if (ok === "load_started") return { kind: "ok", text: t(locale, "Load started.") };
   if (ok === "load_sent") return { kind: "ok", text: t(locale, "Load sent.") };
   if (ok === "load_reopened") return { kind: "ok", text: t(locale, "Load reopened.") };
+  if (ok === "hbn_closed") return { kind: "ok", text: t(locale, "HBN closed.") };
   if (ok === "field_weight") return { kind: "ok", text: t(locale, "Weight added.") };
   // FINISHED LOTS, FOUND (canon 0.30.373): a tote voided off a lot's page, a lot reopened onto its weigh screen.
   if (ok === "tote_voided") return { kind: "ok", text: t(locale, "Tote voided. The lot and its wet package dropped by its grams.") };
@@ -3239,10 +3243,11 @@ app.get("/station/field_harvest", async (c) => {
   const loadId = url.searchParams.get("load") ?? "";
   const finishParam = url.searchParams.get("finish") ?? "";
   const finish = finishParam === "ask" || finishParam === "warn" ? finishParam : "";
-  const [destinations, openLoads, sentLoads] = await Promise.all([
+  const [destinations, openLoads, sentLoads, moreTrucks] = await Promise.all([
     listFieldDestinations(c.env.DB),
     listOpenFieldLoads(c.env.DB),
     listInTransitFieldLoads(c.env.DB),
+    listMoreTrucksHbns(c.env.DB),
   ]);
   let picked: Parameters<typeof fieldHarvestPage>[0]["picked"] = null;
   if (loadId) {
@@ -3252,7 +3257,9 @@ app.get("/station/field_harvest", async (c) => {
       // THE HBN KEPT (canon 0.30.346): the load's newest tote's HBN is the pick on every load of the page, not
       // only after a "+" (the carry flag was lost on every other link and on refresh).
       const carry = totes[0]?.harvest_batch_id ?? null;
-      picked = { load, totes, hbnOptions, carryId: carry, finish, warnIds: url.searchParams.getAll("hbn") };
+      // MT1 (canon 0.30.556): the warn reads Last truck and More trucks coming apart (the radios post pick_{id}).
+      const picks = readFieldFinishPicks(url.searchParams);
+      picked = { load, totes, hbnOptions, carryId: carry, finish, warnIds: picks.last, moreIds: picks.more };
     }
   }
   // FINISHED LOTS, FOUND (canon 0.30.373): a weighing lot whose totes are not all on this load (the lot a Reopen
@@ -3280,6 +3287,7 @@ app.get("/station/field_harvest", async (c) => {
       picked,
       lotsSoFar: fieldLotsSoFarBlock(s.locale, soFar, picked?.load.id ?? null),
       focusLotId: focusLot ? focusLot.id : null,
+      moreTrucks,
     }) + finishedLotsSection(s.locale, FINISHED_LOT_SCREENS.field_harvest, finished)
   );
 });
@@ -3343,6 +3351,13 @@ app.post("/station/field_harvest/load/:id/send", async (c) => {
 app.post("/station/field_harvest/load/:id/reopen", async (c) => {
   const form = actorForm(c, await c.req.formData());
   const result = await reopenFieldLoad(c.env.DB, c.req.param("id"), form);
+  return c.redirect(result.redirect, 303);
+});
+
+// MT1 (canon 0.30.556): the Admin close of an HBN marked More trucks coming that gets no more trucks.
+app.post("/station/field_harvest/hbn/:id/close", async (c) => {
+  const form = actorForm(c, await c.req.formData());
+  const result = await closeFieldHbn(c.env.DB, c.req.param("id"), form);
   return c.redirect(result.redirect, 303);
 });
 

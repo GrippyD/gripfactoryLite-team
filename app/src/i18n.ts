@@ -366,6 +366,37 @@ export const DICT: Record<string, { en: string; es: string }> = {
     en: "Pick an HBN to finish, or send the load without finishing.",
     es: "Elija un HBN para terminar, o envie la carga sin terminar.",
   },
+  // MT1, MORE TRUCKS COMING (canon 0.30.556): the Finish Load choices, the warn, the select's mark and the Admin close.
+  "Not finished": { en: "Not finished", es: "Sin terminar" },
+  "More trucks coming": { en: "More trucks coming", es: "Vienen mas camiones" },
+  "Last truck": { en: "Last truck", es: "Ultimo camion" },
+  "more trucks coming": { en: "more trucks coming", es: "vienen mas camiones" },
+  "This truck's part of HBN(s): {list} will be finished and its harvest file will pend. The HBN stays on the list for the next truck.": {
+    en: "This truck's part of HBN(s): {list} will be finished and its harvest file will pend. The HBN stays on the list for the next truck.",
+    es: "La parte de los HBN: {list} en este camion se terminara y su archivo de cosecha quedara pendiente. El HBN sigue en la lista para el proximo camion.",
+  },
+  "Pick one choice for each HBN: More trucks coming or Last truck.": {
+    en: "Pick one choice for each HBN: More trucks coming or Last truck.",
+    es: "Elija una opcion para cada HBN: Vienen mas camiones o Ultimo camion.",
+  },
+  "HBNs waiting on more trucks": { en: "HBNs waiting on more trucks", es: "HBN en espera de mas camiones" },
+  "{n} part finished, {grams} g": { en: "{n} part finished, {grams} g", es: "{n} parte terminada, {grams} g" },
+  "{n} parts finished, {grams} g": { en: "{n} parts finished, {grams} g", es: "{n} partes terminadas, {grams} g" },
+  "Close HBN": { en: "Close HBN", es: "Cerrar HBN" },
+  "Weighing on an open load now.": { en: "Weighing on an open load now.", es: "Pesando ahora en una carga abierta." },
+  "HBN closed.": { en: "HBN closed.", es: "HBN cerrado." },
+  "Closing an HBN needs the Admin PIN.": {
+    en: "Closing an HBN needs the Admin PIN.",
+    es: "Cerrar un HBN requiere el PIN de Admin.",
+  },
+  "That HBN is not waiting on more trucks.": {
+    en: "That HBN is not waiting on more trucks.",
+    es: "Ese HBN no espera mas camiones.",
+  },
+  "That HBN is weighing on an open load. Finish that load with Last truck instead.": {
+    en: "That HBN is weighing on an open load. Finish that load with Last truck instead.",
+    es: "Ese HBN se esta pesando en una carga abierta. Termine esa carga con Ultimo camion.",
+  },
   "On this load": { en: "On this load", es: "En esta carga" },
   "In all": { en: "In all", es: "En total" },
   "Started": { en: "Started", es: "Iniciada" },

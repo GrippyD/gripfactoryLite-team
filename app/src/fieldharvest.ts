@@ -1,5 +1,5 @@
 import { formatGrams, shortLotId } from "./config";
-import type { FieldDestination, FieldLoadRow, FieldSentLoad, FieldToteRow, OpenHbnOption } from "./db";
+import type { FieldDestination, FieldLoadRow, FieldSentLoad, FieldToteRow, MoreTrucksHbn, OpenHbnOption } from "./db";
 import { etWallClock } from "./farmday";
 import { esc } from "./ui";
 import { t, tFill, type Locale } from "./i18n";
@@ -17,8 +17,13 @@ export type FieldHarvestPageInput = {
     hbnOptions: OpenHbnOption[];
     carryId: string | null;
     finish: "" | "ask" | "warn";
+    /** Last truck: the HBNs the warn closes (the old YES). */
     warnIds: string[];
+    /** MT1 (canon 0.30.556): More trucks coming, the HBNs whose part the warn finishes without closing. */
+    moreIds?: string[];
   } | null;
+  /** MT1 (canon 0.30.556): the HBNs waiting on more trucks, with the Admin close, on the station's home. */
+  moreTrucks?: MoreTrucksHbn[];
   /** FINISHED LOTS, FOUND (canon 0.30.373): the lots weighing here whose totes are not all on this load, rendered. */
   lotsSoFar?: string;
   /** The lot a Reopen landed on; the open loads' links carry it. */
@@ -40,7 +45,9 @@ function hbnSelect(
     .map((row) => {
       const on = row.id === selected ? " selected" : "";
       const landing = row.form ? ` ${t(locale, row.form === "bucked" ? "Bucked" : "Spear")}${row.silo ? ` ${row.silo}` : ""}` : "";
-      return `<option value="${esc(row.id)}"${on}>${esc(row.label)} (${esc(row.hbn)})${esc(landing)}</option>`;
+      // MT1 (canon 0.30.556): an HBN whose last truck has not come says so on its option.
+      const more = row.moreTrucks ? `, ${t(locale, "more trucks coming")}` : "";
+      return `<option value="${esc(row.id)}"${on}>${esc(row.label)} (${esc(row.hbn)})${esc(landing)}${esc(more)}</option>`;
     })
     .join("");
   if (!caption) return `<select name="${esc(name)}" aria-label="${esc(t(locale, "HBN"))}">${blankOpt}${opts}</select>`;
@@ -102,7 +109,7 @@ export function fieldHarvestPage(input: FieldHarvestPageInput): string {
 function middle(input: FieldHarvestPageInput): string {
   const locale = input.locale;
   const picked = input.picked;
-  if (!picked) return `${input.lotsSoFar ?? ""}${emptyHeader(input.destinations, locale)}`;
+  if (!picked) return `${input.lotsSoFar ?? ""}${emptyHeader(input.destinations, locale)}${moreTrucksBlock(input.moreTrucks ?? [], locale)}`;
   const load = picked.load;
   const header = `<dl class="lot-meta" data-field-load="${esc(load.id)}">
       <dt>${esc(t(locale, "Operator"))}</dt><dd>${esc(load.operator_name ?? "")}</dd>
@@ -342,6 +349,11 @@ function contentPane(
     </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+/** MT1, MORE TRUCKS COMING (canon 0.30.556). His proposal's words, through the investigator: "I cannot produce a
+ * harvest csv without closing the batch. Metrc will uptake multiple CSVs for one harvest batch but grip factory
+ * must close a batch to export to Metrc." YES lists each HBN on the truck with three radios: Not finished (the old
+ * unticked box, its lot keeps weighing on the next truck), More trucks coming (this truck's part finishes and its
+ * file pends; the HBN stays on the select) and Last truck (the old YES: the part finishes and the HBN closes). */
 function finishBlock(
   picked: NonNullable<FieldHarvestPageInput["picked"]>,
   locale: Locale
@@ -352,39 +364,59 @@ function finishBlock(
     locale,
     "Are you sure you want to finish adding weights to HBN(s): {list}? If finished, you will not be able to add any more weight without admin approval."
   );
+  const sureMore = t(
+    locale,
+    "This truck's part of HBN(s): {list} will be finished and its harvest file will pend. The HBN stays on the list for the next truck."
+  );
   const no = `<form method="post" action="${esc(PATH)}/load/${esc(loadId)}/send">
       <button type="submit">${esc(t(locale, "NO"))}</button>
     </form>`;
   const groups = hbnGroups(picked.totes);
   const showList = picked.finish === "ask" || picked.finish === "warn";
-  const boxes = groups
+  const moreIds = picked.moreIds ?? [];
+  const choices = groups
     .map((group) => {
       const label = `${shortLotId(group.hbn, null)} ${t(locale, "On this load")} ${formatGrams(group.onLoad)} g ${t(locale, "In all")} ${formatGrams(group.inAll)} g`;
-      return `<label class="field-finish-item"><input type="checkbox" name="hbn" value="${esc(group.id)}" data-hbn-label="${esc(group.hbn)}"> ${esc(label)}</label>`;
+      const name = `pick_${group.id}`;
+      const pickNow = picked.warnIds.includes(group.id) ? "last" : moreIds.includes(group.id) ? "more" : "";
+      const radio = (value: string, text: string) =>
+        `<label class="field-finish-choice"><input type="radio" name="${esc(name)}" value="${esc(value)}" data-hbn-label="${esc(group.hbn)}"${
+          pickNow === value ? " checked" : ""
+        }> ${esc(t(locale, text))}</label>`;
+      return `<fieldset class="field-finish-item" data-finish-hbn="${esc(group.id)}">
+          <legend>${esc(label)}</legend>
+          ${radio("", "Not finished")}
+          ${radio("more", "More trucks coming")}
+          ${radio("last", "Last truck")}
+        </fieldset>`;
     })
     .join("");
   const ask = `<div data-finish-list${showList ? "" : " hidden"}>
-      <form method="get" action="${esc(PATH)}" data-finish-ask data-send="${esc(PATH)}/load/${esc(loadId)}/send" data-confirm="${esc(sure)}">
+      <form method="get" action="${esc(PATH)}" data-finish-ask data-send="${esc(PATH)}/load/${esc(loadId)}/send" data-confirm="${esc(sure)}" data-confirm-more="${esc(sureMore)}">
         <input type="hidden" name="load" value="${esc(loadId)}">
         <input type="hidden" name="finish" value="warn">
-        ${boxes}
+        ${choices}
         <button type="submit">${esc(t(locale, "Confirm"))}</button>
       </form>
     </div>`;
-  const warnNames = groups.filter((group) => picked.warnIds.includes(group.id)).map((group) => group.hbn);
+  const lastNames = groups.filter((group) => picked.warnIds.includes(group.id)).map((group) => group.hbn);
+  const moreNames = groups.filter((group) => moreIds.includes(group.id)).map((group) => group.hbn);
+  const hidden = (name: string, hbns: string[]) =>
+    hbns
+      .map((hbn) => {
+        const group = groups.find((row) => row.hbn === hbn);
+        return group ? `<input type="hidden" name="${name}" value="${esc(group.id)}">` : "";
+      })
+      .join("");
   const warn =
     picked.finish === "warn"
-      ? warnNames.length === 0
+      ? lastNames.length === 0 && moreNames.length === 0
         ? `<p class="field-warn">${esc(t(locale, "Pick an HBN to finish, or send the load without finishing."))}</p>`
         : `<div class="field-warn" data-finish-warn>
-            <p>${esc(tFill(locale, "Are you sure you want to finish adding weights to HBN(s): {list}? If finished, you will not be able to add any more weight without admin approval.", { list: warnNames.join(", ") }))}</p>
+            ${moreNames.length ? `<p data-finish-warn-more>${esc(tFill(locale, "This truck's part of HBN(s): {list} will be finished and its harvest file will pend. The HBN stays on the list for the next truck.", { list: moreNames.join(", ") }))}</p>` : ""}
+            ${lastNames.length ? `<p data-finish-warn-last>${esc(tFill(locale, "Are you sure you want to finish adding weights to HBN(s): {list}? If finished, you will not be able to add any more weight without admin approval.", { list: lastNames.join(", ") }))}</p>` : ""}
             <form method="post" action="${esc(PATH)}/load/${esc(loadId)}/send">
-              ${warnNames
-                .map((hbn) => {
-                  const group = groups.find((row) => row.hbn === hbn);
-                  return group ? `<input type="hidden" name="hbn" value="${esc(group.id)}">` : "";
-                })
-                .join("")}
+              ${hidden("hbn", lastNames)}${hidden("hbn_more", moreNames)}
               <button type="submit">${esc(t(locale, "Confirm"))}</button>
             </form>
             <p><a href="${esc(PATH)}?load=${esc(loadId)}">${esc(t(locale, "Go Back"))}</a></p>
@@ -400,6 +432,35 @@ function finishBlock(
       ${ask}
       ${warn}
     </details>`;
+}
+
+/** MT1 (canon 0.30.556): the HBNs marked More trucks coming whose last truck has not come, on the station's home,
+ * each with the Admin close for one that gets no more trucks. Nothing renders when none waits. */
+function moreTrucksBlock(rows: MoreTrucksHbn[], locale: Locale): string {
+  if (rows.length === 0) return "";
+  const items = rows
+    .map((row) => {
+      const parts = tFill(locale, Number(row.parts) === 1 ? "{n} part finished, {grams} g" : "{n} parts finished, {grams} g", {
+        n: String(row.parts),
+        grams: formatGrams(row.grams),
+      });
+      const close = row.weighing
+        ? `<p class="muted">${esc(t(locale, "Weighing on an open load now."))}</p>`
+        : `<form method="post" action="${esc(PATH)}/hbn/${esc(row.id)}/close" class="field-more-close">
+            <input type="password" name="pin" inputmode="numeric" autocomplete="off" placeholder="${esc(t(locale, "PIN"))}" aria-label="${esc(t(locale, "PIN"))}">
+            <button type="submit" class="btn secondary">${esc(t(locale, "Close HBN"))}</button>
+          </form>`;
+      return `<li data-more-hbn="${esc(row.id)}">
+          <p><strong>${esc(shortLotId(row.hbn, null))}</strong> ${esc(row.label)} (${esc(row.hbn)})</p>
+          <p class="muted">${esc(parts)}. ${esc(t(locale, "Marked"))} <time datetime="${esc(row.more_trucks_at)}">${esc(etWallClock(row.more_trucks_at))}</time></p>
+          ${close}
+        </li>`;
+    })
+    .join("");
+  return `<section class="field-more" data-more-trucks>
+      <h2>${esc(t(locale, "HBNs waiting on more trucks"))} <span class="tile-count">${rows.length}</span></h2>
+      <ul>${items}</ul>
+    </section>`;
 }
 
 function hbnGroups(totes: FieldToteRow[]): Array<{ id: string; hbn: string; onLoad: number; inAll: number }> {
@@ -459,16 +520,23 @@ function finishScript(): string {
   form.addEventListener("submit", function (e) {
     if (form.getAttribute("data-posting") === "1") return;
     e.preventDefault();
-    var labels = [];
-    form.querySelectorAll('input[name="hbn"]:checked').forEach(function (box) {
-      labels.push(box.getAttribute("data-hbn-label") || box.value);
+    // MT1 (canon 0.30.556): Last truck reads the old sentence, More trucks coming its own.
+    var last = [];
+    var more = [];
+    form.querySelectorAll('input[type="radio"]:checked').forEach(function (box) {
+      var name = box.getAttribute("data-hbn-label") || box.name;
+      if (box.value === "last") last.push(name);
+      else if (box.value === "more") more.push(name);
     });
-    if (!labels.length) {
+    if (!last.length && !more.length) {
       form.setAttribute("data-posting", "1");
       form.submit();
       return;
     }
-    var msg = (form.getAttribute("data-confirm") || "").split("{list}").join(labels.join(", "));
+    var lines = [];
+    if (more.length) lines.push((form.getAttribute("data-confirm-more") || "").split("{list}").join(more.join(", ")));
+    if (last.length) lines.push((form.getAttribute("data-confirm") || "").split("{list}").join(last.join(", ")));
+    var msg = lines.join("\\n\\n");
     if (!window.confirm(msg)) return;
     form.setAttribute("data-posting", "1");
     form.method = "post";
