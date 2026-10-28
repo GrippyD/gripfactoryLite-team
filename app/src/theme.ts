@@ -752,6 +752,31 @@ body.device-phone .dd-silo:has([data-dd-silo-whole]:checked) .dd-silo-span-30 { 
 a.dd-tile-title, a.dd-companion-title { color: inherit; text-decoration: none; }
 a.dd-tile-title:hover, a.dd-companion-title:hover { text-decoration: underline; }
 .dd-enter { margin-left: 0.4rem; }
+/* CT1, THE C&T WALL IS THE REGISTER (canon 0.30.558): the register's seven cards in the walls' own tile, the lamp as the left edge. */
+.ct-cards { grid-template-columns: repeat(auto-fill, minmax(min(20rem, 100%), 1fr)); }
+.ct-card.ct-nominal { border-left: 4px solid var(--ok, var(--accent, currentColor)); }
+.ct-card.ct-watch { border-left: 4px solid var(--warn, var(--alert, #a15c07)); }
+.ct-card.ct-action { border-left: 4px solid var(--danger, var(--alert, currentColor)); }
+.ct-reg { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); margin-right: 0.25rem; white-space: nowrap; }
+.ct-status { flex: 0 0 auto; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.ct-nominal .ct-status { color: var(--ok, var(--accent, currentColor)); }
+.ct-watch .ct-status { color: var(--warn, var(--alert, #a15c07)); }
+.ct-action .ct-status { color: var(--danger, var(--alert, currentColor)); }
+.ct-headline { margin: 0.15rem 0 0.2rem; overflow-wrap: anywhere; }
+.ct-unread { margin: 0; font-size: 0.8rem; color: var(--warn, var(--alert, #a15c07)); overflow-wrap: anywhere; }
+.ct-nums { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4rem; margin: 0.2rem 0 0; }
+.ct-num { min-width: 0; padding: 0.35rem 0.45rem; border: 1px solid var(--line, var(--border, currentColor)); border-radius: 6px; }
+.ct-num dt { font-size: 0.72rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); overflow-wrap: anywhere; }
+.ct-num dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.ct-spark { min-width: 0; }
+.ct-spark-label { display: block; font-size: 0.72rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); overflow-wrap: anywhere; }
+.ct-spark-none { display: block; padding: 0.4rem 0; font-size: 0.72rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.ct-notes { font-size: 0.82rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.ct-notes summary { cursor: pointer; }
+.ct-notes ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+.ct-notes li { margin: 0.25rem 0; overflow-wrap: anywhere; }
+.ct-refusal { margin: 0.6rem 0; padding: 0.6rem 0.8rem; border: 2px solid var(--line, var(--border, currentColor)); border-radius: 8px; overflow-wrap: anywhere; }
+.dd-card-register .dd-card-foot { font-style: italic; }
 .dd-grid, .dd-detail, .dd-grid-page, .dd-checkin, .dd-import, .dd-question-list { min-width: 0; max-width: 100%; }
 .dd-checkin-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; margin: 0 0 0.4rem; }
 .dd-checkin-head h1 { margin: 0; flex: 1 1 12rem; min-width: 0; font-size: 1.35rem; }
