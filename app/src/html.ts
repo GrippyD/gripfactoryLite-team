@@ -803,7 +803,7 @@ export function reportPage(
   return `<h1>${esc(t(locale, view.title))}</h1>
     ${heading}
     ${filterBlock}
-    ${view.key === "environment_history" || view.key === "harvest_reconciliation" ? `<div class="report-scroll"><table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>` : `<table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`}
+    ${view.key === "environment_history" || view.key === "harvest_reconciliation" || view.key === "distillate_on_hand" ? `<div class="report-scroll"><table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>` : `<table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`}
     ${below}
     ${footnote}`;
 }

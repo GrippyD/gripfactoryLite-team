@@ -132,6 +132,13 @@ export const LOOKUP_LANDING: LookupLandingSection[] = [
         lookupFieldName: "Trim $/lb",
       },
       {
+        key: "processors",
+        title: "Processors",
+        href: "/admin/lookups/processors",
+        description: "The distillate processors. BowHouse, Mitten, Sauce, Cannalicious, Oakcanna, and Golden Lion start the list.",
+        lookupFieldName: "Processors",
+      },
+      {
         // TERP RECIPES (canon 0.30.321): blends for the Pasteurization schedule. Saved whole, retired, never edited.
         key: "terp_recipes",
         title: "Terp Recipes",

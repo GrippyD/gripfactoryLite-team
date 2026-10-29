@@ -40,6 +40,7 @@ export const REPORT_KEYS = [
   "environment_history",
   "harvest_reconciliation",
   "wip_lineage",
+  "distillate_on_hand",
 ] as const;
 export type ReportKey = (typeof REPORT_KEYS)[number];
 
@@ -381,6 +382,11 @@ export const REPORT_CARDS: Array<{ key: ReportKey; title: string; blurb: string 
     key: "wip_lineage",
     title: "WIP Lineage",
     blurb: "Packages from one METRC license, by source harvest: the root WIP, the splits, the lab bar, and what shipped for sale.",
+  },
+  {
+    key: "distillate_on_hand",
+    title: "Distillate on hand",
+    blurb: "Zoho liters on hand by harvest year and item, beside the physical count and the processor ledger.",
   },
 ];
 
