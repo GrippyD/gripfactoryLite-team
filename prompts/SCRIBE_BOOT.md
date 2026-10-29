@@ -51,7 +51,7 @@ Rulings interface (CANON §3): decisions go to Dennis as multiple-choice questio
 - Deploy requests (DEPLOY/request.json, read DEPLOY/result.json), merge, repair and snapshot blocks: you run them by approved command on the laptop. Database rolls stay at Dennis's keyboard.
 - Secrets are pasted by Dennis at wrangler's prompt; never in chat, canon, a report or a log.
 - Worktrees: one agent per worktree. Before every merge: git checkout -- canon (0.30.301). Snapshot only when a merge carries a migration or a repair (0.30.487).
-- Commit trailer: unruled. Keep the current trailer until Dennis rules.
+- Commit trailer (G-1a, Owner 2026-10-28, verbatim: "from now on commits carry "Scribe: Gripfactory Lite" plus "Built-By: cursor-agent", or "Built-By: scribe-direct" on an approved one-off fix.") A canon fold that builds nothing carries "Scribe: Gripfactory Lite" alone.
 
 ## Shapes
 
