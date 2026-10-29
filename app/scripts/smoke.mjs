@@ -634,8 +634,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 123 migration(s)")) {
-      throw new Error(`from-zero apply must say 123 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 124 migration(s)")) {
+      throw new Error(`from-zero apply must say 124 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -9346,10 +9346,29 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     assert(grid.res.status === 200 && grid.body.includes("Fulfillment Override") && grid.body.includes("data-fulfill-grid"), "the override page must load the grid");
     const fulfillToday = (grid.body.match(/name="date" value="(\d{4}-\d{2}-\d{2})"/) || [])[1];
     assert(fulfillToday, "the grid must load the farm's today");
-    assert(grid.body.includes('data-fulfill-cell="bulk_bud:shipping_today"') && grid.body.includes('data-fulfill-cell="vapes:accepted"') && grid.body.includes('data-fulfill-cell="bulk_infused:shipping_today"'), "the grid must carry the ten rows by three columns");
+    assert(grid.body.includes('data-fulfill-cell="bulk_bud:shipping_today"') && grid.body.includes('data-fulfill-cell="vapes:accepted"') && grid.body.includes('data-fulfill-cell="bulk_infused:shipping_today"'), "the grid must carry the standing rows by three columns");
+    assert(
+      grid.body.includes('data-fulfill-cell="prepack@3.5:shipping_today"') &&
+        grid.body.includes('data-fulfill-cell="prepack@7:accepted"') &&
+        grid.body.includes('data-fulfill-cell="prepack@14:shipping_today"') &&
+        grid.body.includes('data-fulfill-cell="prepack@28:submitted"') &&
+        grid.body.includes("Prepack 3.5 g") &&
+        grid.body.includes("Prepack 28 g"),
+      "the grid must carry a Prepack row for each bag size"
+    );
+    assert(!grid.body.includes('data-fulfill-cell="prepack:shipping_today"'), "the grid must not offer an unsplit Prepack count");
     const fulfillSave = await req("/admin/lookups/fulfillment_override", {
       method: "POST",
-      body: form({ entry_date: fulfillToday, "bulk_bud:shipping_today": "1000", "prepack:shipping_today": "40" }),
+      body: form({
+        entry_date: fulfillToday,
+        "bulk_bud:shipping_today": "3617",
+        "bulk_bud:submitted": "30",
+        "bulk_bud:accepted": "3617",
+        "prepack@28:shipping_today": "560",
+        "prepack@3.5:submitted": "160",
+        "prepack@28:submitted": "10",
+        "prepack@28:accepted": "2720",
+      }),
     });
     assert(fulfillSave.status === 303, `saving the grid expected 303 got ${fulfillSave.status} ${await fulfillSave.text()}`);
     const fulfillConsole = await text(`/harvest?day=${fulfillToday}`);
@@ -9363,20 +9382,38 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     const shippingPane = fillPane(fulfillConsole.body, "shipping_today");
     assert(shippingPane.includes('data-fulfill-segment="bulk_bud"') && shippingPane.includes('data-fulfill-segment="prepack"'), "Shipping today must draw Bulk Bud and Prepack");
     assert(!shippingPane.includes('data-fulfill-segment="vapes"'), "a blank Vapes cell must not draw a segment");
-    assert(fillPane(fulfillConsole.body, "submitted").includes("No figures typed for this day."), "Submitted must read the empty words");
-    assert(fillPane(fulfillConsole.body, "accepted").includes("No figures typed for this day."), "Accepted must read the empty words");
+    assert(shippingPane.includes("Bulk Bud 8.07 lbs") && shippingPane.includes("Prepack 35.00 lbs"), "Shipping today must read Bulk Bud and Prepack in lbs");
+    assert((shippingPane.match(/data-fulfill-grip-outline/g) || []).length === 1, "Shipping today must draw one Grip outline");
+    const submittedPane = fillPane(fulfillConsole.body, "submitted");
+    const acceptedPane = fillPane(fulfillConsole.body, "accepted");
+    assert(submittedPane.includes("Bulk Bud 0.07 lbs") && submittedPane.includes("Prepack 1.88 lbs"), "Submitted must read its figures in lbs");
+    assert(acceptedPane.includes("Bulk Bud 8.07 lbs") && acceptedPane.includes("Prepack 170.00 lbs"), "Accepted must read its figures in lbs");
+    assert(!submittedPane.includes("data-fulfill-grip-outline") && !acceptedPane.includes("data-fulfill-grip-outline"), "the Grip outline stays on Shipping today");
+    const emptyFulfill = await text("/harvest?day=2020-01-15");
+    const emptyShip = fillPane(emptyFulfill.body, "shipping_today");
+    assert(emptyShip.includes("No figures typed for this day.") && (emptyShip.match(/data-fulfill-grip-outline/g) || []).length === 1, "an empty Shipping today still draws the Grip outline");
+    assert(!fillPane(emptyFulfill.body, "submitted").includes("data-fulfill-grip-outline"), "an empty Submitted draws no Grip outline");
     const fulfillChange = await req("/admin/lookups/fulfillment_override", {
       method: "POST",
-      body: form({ entry_date: fulfillToday, "bulk_bud:shipping_today": "1000", "prepack:shipping_today": "50" }),
+      body: form({
+        entry_date: fulfillToday,
+        "bulk_bud:shipping_today": "3617",
+        "bulk_bud:submitted": "30",
+        "bulk_bud:accepted": "3617",
+        "prepack@28:shipping_today": "560",
+        "prepack@3.5:submitted": "160",
+        "prepack@28:submitted": "11",
+        "prepack@28:accepted": "2720",
+      }),
     });
     assert(fulfillChange.status === 303, `changing Prepack expected 303 got ${fulfillChange.status} ${await fulfillChange.text()}`);
     const fulfillLog = await text("/log");
     assert(
-      /fulfillment_overrides<\/td>\s*<td>[^<]*<\/td>\s*<td>value<\/td>\s*<td>40<\/td>\s*<td>50<\/td>/.test(fulfillLog.body),
-      "the change log must carry Prepack's old 40 and new 50"
+      /fulfillment_overrides<\/td>\s*<td>[^<]*<\/td>\s*<td>value<\/td>\s*<td>10<\/td>\s*<td>11<\/td>/.test(fulfillLog.body),
+      "the change log must carry the bag-size cell's old 10 and new 11"
     );
     const gridAgain = await text(`/admin/lookups/fulfillment_override?date=${fulfillToday}`);
-    assert(/data-fulfill-cell="prepack:shipping_today"[^>]*value="50"/.test(gridAgain.body), "the grid for that day must reload Prepack as 50");
+    assert(/data-fulfill-cell="prepack@28:submitted"[^>]*value="11"/.test(gridAgain.body), "the grid for that day must reload the 28 g cell as 11");
 
     // PRODUCT MIX TOTALS AND POUNDS (canon 0.30.307).
     const mixPage = await text("/reports/product_mix");

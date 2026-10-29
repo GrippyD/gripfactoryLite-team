@@ -3538,6 +3538,14 @@ export const DICT: Record<string, { en: string; es: string }> = {
   },
   "Figures saved.": { en: "Figures saved.", es: "Cifras guardadas." },
   "Pick a day.": { en: "Pick a day.", es: "Elija un dia." },
+  // FB1 (canon 0.30.564): Prepack by bag size, and the unsplit rows that stay.
+  "Prepack {size} g": { en: "Prepack {size} g", es: "Preempacado {size} g" },
+  "Prepack (unsplit)": { en: "Prepack (unsplit)", es: "Preempacado (sin dividir)" },
+  "Prepack (unsplit, legacy)": { en: "Prepack (unsplit, legacy)", es: "Preempacado (sin dividir, legado)" },
+  "A Prepack count needs a bag size.": {
+    en: "A Prepack count needs a bag size.",
+    es: "Un conteo de preempacado necesita el tamano de la bolsa.",
+  },
   // TERP RECIPES AND THE PASTEURIZATION SCHEDULE (canon 0.30.321).
   "Terp Recipes": { en: "Terp Recipes", es: "Recetas de terpenos" },
   "Named terpene blends for the Pasteurization schedule. A recipe is saved whole and retired, never edited.": {
