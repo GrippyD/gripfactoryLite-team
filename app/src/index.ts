@@ -531,7 +531,7 @@ import {
 import { anyPlantCount, queueRowsToCsv, toCsv, wetWeightsCsv, wetWeightsCsvWithCounts, wetWeightsCsvWithTags, wetWeightsFilename } from "./csv";
 import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePasteurizationHours, savePrepackHours, saveTrimHours, sheetInSeason } from "./console";
 import { loadStrainPerformance } from "./strainperformance";
-import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
+import { fulfillmentDateOf, fulfillmentOverridePage, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { loadFgInventory } from "./fginventory";
 import { harvestDashboardPage, loadHarvestDashboard } from "./harvestdashboard";
 import { ctRegisterWallPage, readCtRegister } from "./ctregister";
@@ -3967,8 +3967,8 @@ app.get("/admin/lookups/:section", async (c) => {
   if (section === "fulfillment_override") {
     const today = await farmToday(c.env.DB, nowIso());
     const date = fulfillmentDateOf(c.req.query("date"), today);
-    const cells = await listFulfillmentCells(c.env.DB, date);
-    return html(c, s, "Fulfillment Override", fulfillmentOverridePage(date, cells, s.locale, c.req.query("ok") || undefined));
+    const loaded = await loadFulfillmentSection(c.env.DB, date);
+    return html(c, s, "Fulfillment Override", fulfillmentOverridePage(date, loaded.cells, s.locale, c.req.query("ok") || undefined, loaded.prepackUnits));
   }
   const tables = {
     people: await listAdminRows(c.env.DB, "people"),
