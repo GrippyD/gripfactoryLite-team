@@ -287,6 +287,7 @@ describe("fulfillment tile (owner ruling 2026-08-31)", () => {
       "prepack",
       "fulfillment",
       "inventory",
+      "distillate",
     ]);
     expect(group.members[0]).toEqual({
       key: "production_scheduling",
