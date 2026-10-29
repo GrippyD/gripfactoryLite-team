@@ -98,7 +98,8 @@ describe("THE HARVEST CONSOLE (canon 0.30.73): the dashboard struck, the console
     expect(REPORT_KEYS).toContain("environment_history");
     expect(REPORT_KEYS).toContain("harvest_reconciliation");
     expect(REPORT_KEYS).toContain("wip_lineage");
-    expect(REPORT_KEYS).toHaveLength(17);
+    expect(REPORT_KEYS).toContain("distillate_on_hand");
+    expect(REPORT_KEYS).toHaveLength(18);
   });
 
   it("names the page and the hours post, and knows the three farms", () => {

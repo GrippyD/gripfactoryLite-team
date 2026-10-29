@@ -634,8 +634,8 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 122 migration(s)")) {
-      throw new Error(`from-zero apply must say 122 migrations\n${String(applyOut).slice(-2000)}`);
+    if (!String(applyOut).includes("About to apply 123 migration(s)")) {
+      throw new Error(`from-zero apply must say 123 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -11862,6 +11862,69 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     assert(!mtAfter.body.includes(`(${mtS2.hbn})`), "the close must take the HBN off the select");
     const mtHomeAfter = await text("/station/field_harvest?ok=hbn_closed");
     assert(mtHomeAfter.body.includes("HBN closed.") && !mtHomeAfter.body.includes("data-more-trucks"), "the closed HBN must leave the waiting list");
+
+    // LD1: the processors lookup, the distillate desk, and the on-hand report.
+    if (!jar.get("gf_pin")) jar.set("gf_pin", ADMIN_PIN);
+    const toEsDist = await req("/locale", { method: "POST", body: form({ locale: "es" }) });
+    assert(toEsDist.status === 303, `LD1 locale es expected 303 got ${toEsDist.status}`);
+    const processorsEs = await text("/admin/lookups/processors");
+    assert(processorsEs.res.status === 200, `processors es expected 200 got ${processorsEs.res.status}`);
+    assert(processorsEs.body.includes("Procesadores"), "the processors page must speak Spanish");
+    const toEnDist = await req("/locale", { method: "POST", body: form({ locale: "en" }) });
+    assert(toEnDist.status === 303, `LD1 locale en expected 303 got ${toEnDist.status}`);
+    const processors = await text("/admin/lookups/processors");
+    assert(processors.res.status === 200, `processors expected 200 got ${processors.res.status}`);
+    for (const name of ["BowHouse", "Mitten", "Sauce", "Cannalicious", "Oakcanna", "Golden Lion"]) {
+      assert(processors.body.includes(`data-processor="${name}"`), `processors must list ${name}`);
+    }
+    assert(processors.body.includes('data-bowhouse-yield=""'), "BowHouse yield stays blank");
+    const savedDistPin = jar.get("gf_pin");
+    jar.delete("gf_pin");
+    const lockedDist = await text("/ops/distillate");
+    assert(lockedDist.res.status === 401 && lockedDist.body.includes("Enter PIN"), "the distillate desk must sit behind the PIN");
+    jar.set("gf_pin", savedDistPin || ADMIN_PIN);
+    const desk = await text("/ops/distillate");
+    assert(desk.res.status === 200 && desk.body.includes('data-processor-option="BowHouse"'), "the desk must offer BowHouse");
+    const distFields = { moved_on: "2026-10-01", harvest_year: "2026", processor: "proc-bowhouse" };
+    const finishedPost = await req("/ops/distillate", {
+      method: "POST",
+      body: form({ action: "movement", ...distFields, kind: "finished", liters: "10.5", ref: "smoke", note: "smoke finished" }),
+    });
+    assert(finishedPost.status === 303, `finished post expected 303 got ${finishedPost.status} ${await finishedPost.text()}`);
+    const shippedPost = await req("/ops/distillate", {
+      method: "POST",
+      body: form({ action: "movement", ...distFields, kind: "shipped", liters: "2", ref: "smoke ship", note: "smoke shipped" }),
+    });
+    assert(shippedPost.status === 303, `shipped post expected 303 got ${shippedPost.status}`);
+    const countPost = await req("/ops/distillate", {
+      method: "POST",
+      body: form({ action: "count", counted_on: "2026-10-01", harvest_year: "2026", processor: "proc-bowhouse", liters: "9", note: "smoke count" }),
+    });
+    assert(countPost.status === 303, `count post expected 303 got ${countPost.status}`);
+    const zeroPost = await req("/ops/distillate", {
+      method: "POST",
+      body: form({ action: "movement", ...distFields, kind: "finished", liters: "0", note: "nope" }),
+    });
+    assert(zeroPost.status === 400, `zero liters expected 400 got ${zeroPost.status}`);
+    const onHand = await text("/reports/distillate_on_hand?year=2026&as_of=2026-10-28");
+    assert(onHand.res.status === 200, `distillate report expected 200 got ${onHand.res.status}`);
+    assert(onHand.body.includes('data-ledger-row="BowHouse"') && onHand.body.includes('data-ledger-liters="8.50"'), "ledger on hand is finished minus shipped");
+    assert(onHand.body.includes('data-variance-liters="0.50"'), "variance is the count minus the ledger");
+    const deskAfter = await text("/ops/distillate");
+    const shippedId = (deskAfter.body.match(/data-movement-kind="shipped" data-movement-id="([^"]+)"/) || [])[1];
+    assert(shippedId, "the shipped row must be on the desk");
+    const distVoid = await req("/ops/distillate", {
+      method: "POST",
+      body: form({ action: "void", table: "movements", id: shippedId, reason: "smoke void" }),
+    });
+    assert(distVoid.status === 303, `void expected 303 got ${distVoid.status}`);
+    const onHandAfter = await text("/reports/distillate_on_hand?year=2026&as_of=2026-10-28");
+    assert(onHandAfter.res.status === 200 && onHandAfter.body.includes('data-ledger-liters="10.50"'), "a voided shipment leaves the ledger");
+    assert(onHandAfter.body.includes('data-variance-liters="-1.50"') && onHandAfter.body.includes('data-flag="Over 1 L"'), "a variance over one liter is flagged");
+    const distCsv = await req("/reports/distillate_on_hand?year=2026&as_of=2026-10-28&format=csv");
+    assert(distCsv.status === 200, `distillate csv expected 200 got ${distCsv.status}`);
+    const distCsvText = await distCsv.text();
+    assert(distCsvText.includes("BowHouse") && distCsvText.includes("-1.50"), "the csv carries the ledger and the variance");
 
     process.stdout.write("SMOKE PASS\n");
   } finally {
