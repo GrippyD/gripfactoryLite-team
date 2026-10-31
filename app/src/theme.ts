@@ -777,6 +777,21 @@ a.dd-tile-title:hover, a.dd-companion-title:hover { text-decoration: underline; 
 .ct-notes li { margin: 0.25rem 0; overflow-wrap: anywhere; }
 .ct-refusal { margin: 0.6rem 0; padding: 0.6rem 0.8rem; border: 2px solid var(--line, var(--border, currentColor)); border-radius: 8px; overflow-wrap: anywhere; }
 .dd-card-register .dd-card-foot { font-style: italic; }
+/* WG1, THE WORKSGIVING POLL: the results behind the Admin PIN (the public page carries its own sheet). */
+.wg-admin { min-width: 0; max-width: 100%; }
+.wg-admin [data-wg-link] { overflow-wrap: anywhere; }
+.wg-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(8rem, 100%), 1fr)); gap: 0.6rem; margin: 0.6rem 0 1rem; }
+.wg-tile { display: flex; flex-direction: column; padding: 0.6rem 0.8rem; border: 1px solid var(--line, var(--border, currentColor)); border-radius: 8px; }
+.wg-tile b { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
+.wg-tile span { font-size: 0.85rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); }
+.wg-scroll { max-width: 100%; overflow-x: auto; }
+.wg-table { width: 100%; border-collapse: collapse; }
+.wg-table th, .wg-table td { padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--line, var(--border, currentColor)); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.wg-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.wg-table form { margin: 0; }
+.wg-event { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(16rem, 100%), 1fr)); gap: 0.6rem; align-items: end; }
+.wg-event label { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.wg-event input { min-width: 0; max-width: 100%; }
 .dd-grid, .dd-detail, .dd-grid-page, .dd-checkin, .dd-import, .dd-question-list { min-width: 0; max-width: 100%; }
 .dd-checkin-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; margin: 0 0 0.4rem; }
 .dd-checkin-head h1 { margin: 0; flex: 1 1 12rem; min-width: 0; font-size: 1.35rem; }

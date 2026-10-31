@@ -634,8 +634,9 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    if (!String(applyOut).includes("About to apply 122 migration(s)")) {
-      throw new Error(`from-zero apply must say 122 migrations\n${String(applyOut).slice(-2000)}`);
+    // WG1 (canon, 2026-10-30): 0125 rides; 0124 stays LD1's, so the count is 123 until LD1 lands.
+    if (!String(applyOut).includes("About to apply 123 migration(s)")) {
+      throw new Error(`from-zero apply must say 123 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -11136,6 +11137,56 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     );
     assert(!ctWall.body.includes(kpiStub.token), "the C&T wall must never carry the register's token");
     assert(kpiStub.hits.length >= 1 && kpiStub.hits.every((hit) => hit === "/api/kpi/feed?days=30"), `the wall must read /api/kpi/feed?days=30, got ${JSON.stringify(kpiStub.hits)}`);
+    // WG1, THE WORKSGIVING POLL (the owner, 2026-10-30): the public page stands alone and asks no login; one answer per
+    // email; the counts follow; the results and the CSV sit behind the PIN. The fixed instant keeps the poll open
+    // whatever day the smoke runs, and the walk puts the jar's language back when it is done.
+    const wgLocale = jar.get("gf_locale");
+    const wgAt = { "x-gf-now": "2026-11-01T15:00:00.000Z" };
+    const wgOpen = await text("/special/worksgiving26?lang=en", { noIdentity: true, headers: wgAt });
+    assert(
+      wgOpen.res.status === 200 &&
+        wgOpen.body.includes("Are you coming?") &&
+        wgOpen.body.includes('data-wg-count="hot_side">(none yet)') &&
+        !wgOpen.body.includes('href="/admin') &&
+        !/utensils|napkins/i.test(wgOpen.body),
+      `the poll's page expected 200, standalone, with no supplies option, got ${wgOpen.res.status}`
+    );
+    const wgElse = await req("/special/elsewhere", { noIdentity: true });
+    assert(wgElse.status === 404, `only the poll answers under /special, got ${wgElse.status}`);
+    const wgAnswer = { attending: "yes", category: "hot_side", dish: "Smoke casserole", email: " Smoke.Hand@Example.com " };
+    const wgReview = await text("/special/worksgiving26", { method: "POST", noIdentity: true, headers: wgAt, body: form({ action: "review", ...wgAnswer }) });
+    assert(
+      wgReview.res.status === 200 && wgReview.body.includes("Check it before you send.") && wgReview.body.includes("smoke.hand@example.com") && wgReview.body.includes("Smoke casserole (Hot side)"),
+      `the review expected the answer read back, got ${wgReview.res.status}`
+    );
+    const wgDone = await text("/special/worksgiving26", { method: "POST", noIdentity: true, headers: wgAt, body: form({ action: "submit", ...wgAnswer }) });
+    assert(wgDone.res.status === 201 && wgDone.body.includes("You're on the list."), `the submit expected 201, got ${wgDone.res.status}`);
+    const wgTwice = await text("/special/worksgiving26", {
+      method: "POST",
+      noIdentity: true,
+      headers: wgAt,
+      body: form({ action: "submit", ...wgAnswer, email: "SMOKE.HAND@example.com" }),
+    });
+    assert(wgTwice.res.status === 409 && wgTwice.body.includes("This email already submitted."), `a second answer from one email expected 409, got ${wgTwice.res.status}`);
+    const wgRows = localD1All("SELECT email, attending, category, dish FROM potluck_responses WHERE deleted_at IS NULL");
+    assert(
+      wgRows.length === 1 && wgRows[0].email === "smoke.hand@example.com" && wgRows[0].category === "hot_side" && wgRows[0].dish === "Smoke casserole",
+      `one stored answer expected, got ${JSON.stringify(wgRows)}`
+    );
+    const wgCount = await text("/special/worksgiving26", { noIdentity: true, headers: wgAt });
+    assert(wgCount.body.includes('data-wg-count="hot_side">(1 so far)'), "the poll's count must follow the answer");
+    const wgAdmin = await text("/admin/special/worksgiving26", { headers: wgAt });
+    assert(
+      wgAdmin.res.status === 200 && wgAdmin.body.includes('data-wg-tally="yes"><b>1</b>') && wgAdmin.body.includes("smoke.hand@example.com"),
+      `the results behind the PIN expected the answer, got ${wgAdmin.res.status}`
+    );
+    const wgCsv = await text("/admin/special/worksgiving26.csv", { headers: wgAt });
+    assert(
+      wgCsv.res.status === 200 && wgCsv.body.startsWith("email,attending,category,dish,submitted_at\r\nsmoke.hand@example.com,yes,Hot side,Smoke casserole,"),
+      `the CSV expected its header and the answer, got ${wgCsv.body.slice(0, 120)}`
+    );
+    if (wgLocale === undefined) jar.delete("gf_locale");
+    else jar.set("gf_locale", wgLocale);
     const dlhNow = new Date().toISOString();
     const dlhParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit" }).formatToParts(new Date(dlhNow));
     const dlhPick = (type) => (dlhParts.find((part) => part.type === type) || {}).value || "";
