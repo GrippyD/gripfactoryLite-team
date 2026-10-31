@@ -5501,6 +5501,103 @@ const SM_STRINGS: Array<[string, string]> = [
 ];
 for (const [en, es] of SM_STRINGS) if (!Object.prototype.hasOwnProperty.call(DICT, en)) DICT[en] = { en, es };
 
+// WG1, THE WORKSGIVING POLL (the owner, 2026-10-30): the public page at /special/worksgiving26 and its results
+// behind the Admin PIN. The public page reads to everyone, so its Spanish carries its accents. Keys that already
+// exist (Yes, No, none yet, Category, Remove, Save, Download CSV) keep their lines.
+const WG_STRINGS: ReadonlyArray<readonly [string, string]> = [
+  ["Worksgiving Potluck", "Comida compartida de Worksgiving"],
+  ["Are you coming?", "¿Vienes?"],
+  ["Maybe", "Tal vez"],
+  ["What are you bringing?", "¿Qué vas a traer?"],
+  ["Main / protein", "Plato fuerte / proteína"],
+  ["Hot side", "Guarnición caliente"],
+  ["Cold side / salad", "Guarnición fría / ensalada"],
+  ["Bread / rolls", "Pan / bolillos"],
+  ["Dessert", "Postre"],
+  ["Drinks", "Bebidas"],
+  ["Nothing this time, just eating", "Nada esta vez, solo vengo a comer"],
+  ["{n} so far", "{n} hasta ahora"],
+  ["What's the dish?", "¿Qué platillo?"],
+  ["e.g., green bean casserole", "p. ej., cacerola de ejotes"],
+  ["Your email", "Tu correo electrónico"],
+  ["One submission per email.", "Una respuesta por correo."],
+  ["Review", "Revisar"],
+  ["Check it before you send.", "Revísalo antes de enviar."],
+  ["Coming", "Asistencia"],
+  ["Bringing", "Traes"],
+  ["Email", "Correo"],
+  ["nothing, not coming", "nada, no vengo"],
+  ["nothing, just eating", "nada, solo vengo a comer"],
+  [
+    "One submission per email. Once you submit you can't change it from this page. Contact {contact} to fix anything.",
+    "Una respuesta por correo. Una vez enviada no puedes cambiarla desde esta página. Para corregir algo, contacta a {contact}.",
+  ],
+  ["Go back", "Regresar"],
+  ["Submit", "Enviar"],
+  ["Sending...", "Enviando..."],
+  ["You're on the list.", "Ya estás en la lista."],
+  ["Need a change? Contact {contact}.", "¿Necesitas un cambio? Contacta a {contact}."],
+  ["Sign-ups closed {when}.", "Las inscripciones cerraron el {when}."],
+  ["Sign-ups close {when}.", "Las inscripciones cierran el {when}."],
+  ["Contact {contact}.", "Contacta a {contact}."],
+  ["This poll is not open.", "Esta encuesta no está abierta."],
+  [
+    "Didn't get a reply. Try again. If it says this email already submitted, you're in.",
+    "No hubo respuesta. Inténtalo de nuevo. Si dice que este correo ya respondió, ya estás dentro.",
+  ],
+  ["the Ops office", "la oficina de Operaciones"],
+  ["Language", "Idioma"],
+  ["Pick Yes, Yes +1, No or Maybe.", "Elige Si, Si +1, No o Tal vez."],
+  ["Yes +1", "Si +1"],
+  ["People coming", "Personas que vienen"],
+  [
+    "People coming counts one for each Yes and two for each Yes +1; Maybe is not counted.",
+    "Personas que vienen cuenta uno por cada Si y dos por cada Si +1; Tal vez no cuenta.",
+  ],
+  ["Pick what you're bringing, or Nothing this time.", "Elige qué vas a traer, o Nada esta vez."],
+  ["Pick one of the listed categories.", "Elige una de las categorías de la lista."],
+  ["Name the dish.", "Escribe el platillo."],
+  ["Keep the dish between 2 and 80 characters.", "El platillo debe tener entre 2 y 80 caracteres."],
+  ["Enter a valid email address.", "Escribe un correo electrónico válido."],
+  [
+    "This email already submitted. Need a change? Contact {contact}.",
+    "Este correo ya respondió. ¿Necesitas un cambio? Contacta a {contact}.",
+  ],
+  ["Responses", "Respuestas"],
+  ["Just eating", "Solo a comer"],
+  ["What's coming", "Lo que va a llegar"],
+  ["Count", "Cuenta"],
+  ["Dishes", "Platillos"],
+  ["Answers", "Respuestas"],
+  ["Answered", "Respondió"],
+  ["Dish", "Platillo"],
+  ["Remove this answer? That email can then answer again.", "¿Quitar esta respuesta? Ese correo podrá responder de nuevo."],
+  ["No answers yet.", "Aún no hay respuestas."],
+  [
+    "The poll's link. Nothing in the app leads there; it opens for whoever has the link.",
+    "El enlace de la encuesta. Nada en la app lleva ahí; se abre para quien tenga el enlace.",
+  ],
+  ["The event", "El evento"],
+  [
+    "What the poll's page shows at its top. Leave Contact blank to show the Ops office.",
+    "Lo que la página de la encuesta muestra arriba. Deja Contacto en blanco para mostrar la oficina de Operaciones.",
+  ],
+  ["Event date", "Fecha del evento"],
+  ["Time and note", "Hora y nota"],
+  ["e.g., 4:00 PM, after your shift", "p. ej., 4:00 PM, después de tu turno"],
+  ["Where", "Dónde"],
+  ["Contact", "Contacto"],
+  ["Sign-ups close (date)", "Cierre de inscripciones (fecha)"],
+  ["Sign-ups close (time, farm time)", "Cierre de inscripciones (hora de la granja)"],
+  ["Event date must be YYYY-MM-DD.", "La fecha del evento debe ser AAAA-MM-DD."],
+  ["Sign-ups close needs a date and a time.", "El cierre de inscripciones necesita fecha y hora."],
+  ["That answer is not on the list.", "Esa respuesta no está en la lista."],
+  ["Event saved.", "Evento guardado."],
+  ["Answer removed. That email can answer again.", "Respuesta quitada. Ese correo puede responder de nuevo."],
+  ["{date} at {time}", "{date} a las {time}"],
+];
+for (const [en, es] of WG_STRINGS) if (!Object.prototype.hasOwnProperty.call(DICT, en)) DICT[en] = { en, es };
+
 /** Look a display string up by its English key; unknown keys render as-is. */
 export function t(locale: Locale, key: string): string {
   // Own keys only: a stored word or a code from a query string that names a

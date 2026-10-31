@@ -535,6 +535,30 @@ import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadF
 import { loadFgInventory } from "./fginventory";
 import { harvestDashboardPage, loadHarvestDashboard } from "./harvestdashboard";
 import { ctRegisterWallPage, readCtRegister } from "./ctregister";
+import {
+  EMPTY_DRAFT,
+  POTLUCK_ADMIN_PATH,
+  POTLUCK_EVENT_KEY,
+  POTLUCK_PATH,
+  PUBLIC_IDENTITY,
+  checkPotluckDraft,
+  draftFromForm,
+  isPotluckClosed,
+  isPublicSpecialRoute,
+  isSpecialPath,
+  loadPotluckAdmin,
+  loadPotluckEvent,
+  potluckAdminPage,
+  potluckCounts,
+  potluckCsv,
+  potluckEmailTaken,
+  potluckPage,
+  removePotluckResponse,
+  savePotluckResponse,
+  updatePotluckEvent,
+  type PotluckEvent,
+  type PotluckView,
+} from "./potluck";
 import { DIRECTOR_PATH, DIRECTOR_RECOMPUTE_LBS_PATH, directorDetailPage, directorGridPage, directorHomePage, directorWallPage, isDdDeptKey, loadDirectorDetail, loadDirectorGrid, loadDirectorHome, loadDirectorWall, saveDirectorGrid } from "./director";
 import { refreshLbsHarvested, refreshLbsPerDlh, refreshPctFinished, refreshSiloUtilization, refreshTrimThroughput } from "./ddsnapshot";
 import { addHarvestPlan, deleteHarvestPlan, doneHarvestPlan, HARVEST_PLAN_PATH, harvestPlanPage, loadHarvestPlanPage, updateHarvestPlan } from "./harvestschedule";
@@ -618,6 +642,17 @@ type AppContext = Context<AppEnv>;
 // with no login email is a service token's; it reads the machine doors alone
 // under the fixed service identity and everything else answers 403 in words.
 app.use("*", async (c, next) => {
+  // WG1, THE WORKSGIVING POLL (the owner, 2026-10-30): /special opens only with a shared link and without a login
+  // (Access bypasses /special). The poll's page is the one door there; it never reads or makes an identity, so a
+  // header on that path changes nothing. Anything else under /special is a plain 404.
+  const pathname = new URL(c.req.url).pathname;
+  if (isSpecialPath(pathname)) {
+    if (pathname === `${POTLUCK_PATH}/`) return c.redirect(POTLUCK_PATH, 301);
+    if (!isPublicSpecialRoute(c.req.method, pathname)) return c.text("Not found", 404, { "cache-control": "no-store" });
+    c.set("actor", PUBLIC_IDENTITY);
+    await next();
+    return;
+  }
   const email = loginEmailOf(c.req.header(ACCESS_EMAIL_HEADER));
   if (email == null && isAccessFronted(c.env)) {
     if (!isServiceRoute(c.req.method, new URL(c.req.url).pathname)) {
@@ -781,6 +816,9 @@ function flashFromQuery(url: URL, locale: Locale): Flash | undefined {
     return { kind: "ok", text: tFill(locale, "Adopted and scheduled {n}.", { n }) };
   }
   if (ok === "unscheduled") return { kind: "ok", text: t(locale, "Unscheduled.") };
+  // WG1, THE WORKSGIVING POLL: the event's words saved, an answer removed.
+  if (ok === "wg_saved") return { kind: "ok", text: t(locale, "Event saved.") };
+  if (ok === "wg_removed") return { kind: "ok", text: t(locale, "Answer removed. That email can answer again.") };
   // THE BLAST FREEZER(S) (canon 0.30.106): a freezer's unload removes the line and moves nothing.
   if (ok === "frozen") return { kind: "ok", text: t(locale, "Line removed. The packages stand as FFZ in METRC; nothing moved.") };
   if (ok === "completed") return { kind: "ok", text: t(locale, "Completed.") };
@@ -1888,6 +1926,100 @@ app.get(`${DIRECTOR_PATH}/:dept`, async (c) => {
   if (dept === "culttech") return html(c, s, "Cultivation and Technology", ctRegisterWallPage(await readCtRegister(c.env, fetch, now), s.locale));
   const model = await loadDirectorWall(c.env.DB, dept, await farmToday(c.env.DB, now), c.req.query("cadence") ?? null, c.req.query("period") ?? null, now);
   return html(c, s, model.title_en, directorWallPage(model, s.locale));
+});
+
+// WG1, THE WORKSGIVING POLL (the owner, 2026-10-30). The public page stands alone (no shell, no menu, never
+// cached or indexed); its own errors answer on its own page, never the app's.
+function potluckRespond(c: AppContext, event: PotluckEvent | null, counts: Record<string, number>, view: PotluckView, locale: Locale, status = 200) {
+  return c.html(potluckPage(event, counts, view, locale, nowIso()), {
+    status: status as ContentfulStatusCode,
+    headers: { "cache-control": "no-store", "x-robots-tag": "noindex, nofollow", "referrer-policy": "no-referrer" },
+  });
+}
+
+function potluckLocale(c: AppContext): Locale {
+  const lang = c.req.query("lang");
+  if (lang === "en" || lang === "es") {
+    setCookie(c, LOCALE_COOKIE, lang, { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "Lax" });
+    return lang;
+  }
+  return asLocale(getCookie(c, LOCALE_COOKIE));
+}
+
+app.get(POTLUCK_PATH, async (c) => {
+  const locale = potluckLocale(c);
+  try {
+    const event = await loadPotluckEvent(c.env.DB, POTLUCK_EVENT_KEY);
+    if (!event) return potluckRespond(c, null, {}, { screen: "missing" }, locale, 404);
+    if (isPotluckClosed(event, nowIso())) return potluckRespond(c, event, {}, { screen: "closed" }, locale);
+    return potluckRespond(c, event, await potluckCounts(c.env.DB, event.key), { screen: "form", draft: EMPTY_DRAFT }, locale);
+  } catch (err) {
+    console.error(err);
+    return potluckRespond(c, null, {}, { screen: "error" }, locale, 500);
+  }
+});
+
+app.post(POTLUCK_PATH, async (c) => {
+  const locale = potluckLocale(c);
+  try {
+    const event = await loadPotluckEvent(c.env.DB, POTLUCK_EVENT_KEY);
+    if (!event) return potluckRespond(c, null, {}, { screen: "missing" }, locale, 404);
+    const form = await c.req.formData();
+    // The honeypot: a field no person sees. A form that fills it hears done and stores nothing.
+    const trap = form.get("website");
+    if (typeof trap === "string" && trap.trim() !== "") return potluckRespond(c, event, {}, { screen: "done", answer: null }, locale);
+    if (isPotluckClosed(event, nowIso())) return potluckRespond(c, event, {}, { screen: "closed" }, locale, 410);
+    const draft = draftFromForm(form);
+    const counts = await potluckCounts(c.env.DB, event.key);
+    const action = String(form.get("action") ?? "review");
+    if (action === "back") return potluckRespond(c, event, counts, { screen: "form", draft }, locale);
+    const check = checkPotluckDraft(draft);
+    if (!check.ok) return potluckRespond(c, event, counts, { screen: "form", draft, error: { field: check.field, message: check.message } }, locale, 400);
+    const contact = (event.contact_text ?? "").trim() || t(locale, "the Ops office");
+    const taken = tFill(locale, "This email already submitted. Need a change? Contact {contact}.", { contact });
+    if (action !== "submit") {
+      if (await potluckEmailTaken(c.env.DB, check.value.email, event.key)) {
+        return potluckRespond(c, event, counts, { screen: "form", draft, banner: taken }, locale, 409);
+      }
+      return potluckRespond(c, event, counts, { screen: "review", answer: check.value }, locale);
+    }
+    const saved = await savePotluckResponse(c.env.DB, event, check.value, nowIso());
+    if (saved === "closed") return potluckRespond(c, event, {}, { screen: "closed" }, locale, 410);
+    if (saved === "duplicate") return potluckRespond(c, event, counts, { screen: "form", draft, banner: taken }, locale, 409);
+    return potluckRespond(c, event, {}, { screen: "done", answer: check.value }, locale, 201);
+  } catch (err) {
+    console.error(err);
+    return potluckRespond(c, null, {}, { screen: "error" }, locale, 500);
+  }
+});
+
+// The results, the CSV, the event's words and Remove: behind Access and the Admin PIN (/admin/*), linked from nowhere.
+app.get(POTLUCK_ADMIN_PATH, async (c) => {
+  const s = await shell(c);
+  const model = await loadPotluckAdmin(c.env.DB, nowIso(), POTLUCK_EVENT_KEY);
+  return html(c, s, model.event?.name ?? "Worksgiving Potluck", potluckAdminPage(model, s.locale, new URL(c.req.url).origin));
+});
+
+app.get(`${POTLUCK_ADMIN_PATH}.csv`, async (c) => {
+  const model = await loadPotluckAdmin(c.env.DB, nowIso(), POTLUCK_EVENT_KEY);
+  return new Response(potluckCsv(model.rows), {
+    headers: {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="${POTLUCK_EVENT_KEY}.csv"`,
+      "cache-control": "no-store",
+    },
+  });
+});
+
+app.post(`${POTLUCK_ADMIN_PATH}/event`, async (c) => {
+  await updatePotluckEvent(c.env.DB, await c.req.formData(), c.get("actor").id, nowIso(), POTLUCK_EVENT_KEY);
+  return c.redirect(`${POTLUCK_ADMIN_PATH}?ok=wg_saved`, 303);
+});
+
+app.post(`${POTLUCK_ADMIN_PATH}/remove`, async (c) => {
+  const form = await c.req.formData();
+  await removePotluckResponse(c.env.DB, String(form.get("id") ?? ""), c.get("actor").id, nowIso(), POTLUCK_EVENT_KEY);
+  return c.redirect(`${POTLUCK_ADMIN_PATH}?ok=wg_removed`, 303);
 });
 
 // THE SHEET SYNC (canon 0.30.162). The fixture workbook exists only when the
