@@ -42,7 +42,7 @@ function post(env: Env, fields: Record<string, string>, opts: { now?: string; co
 const ANSWER = { attending: "yes", category: "hot_side", dish: "Green bean casserole", email: "  Pat@Example.COM " };
 
 describe("WG1, the Worksgiving poll", () => {
-  it("0125 lays the two tables, the seed, one live answer per email and the pairs the page promises", async () => {
+  it("0126 lays the two tables, the seed, one live answer per email and the pairs the page promises", async () => {
     const m = await migratedDb();
     const ev = m.get(`SELECT * FROM potluck_events WHERE key = 'worksgiving26'`);
     expect(ev).toMatchObject({ name: "Worksgiving Potluck", event_date: "2026-11-20", where_text: "", contact_text: "", closes_at: CLOSED });

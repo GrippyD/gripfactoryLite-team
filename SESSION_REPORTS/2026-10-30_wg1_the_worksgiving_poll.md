@@ -18,11 +18,18 @@ Built and gated by the Claude session on 2026-10-30, on the owner's word, in the
 
 ## Trees
 - Received: `0dc10dd8baba39fa` (CT1, main b117b03; the worktree and the main folder's app both read it).
-- Left: `d4d7a4f84df9e1c8` (443 files, 123 migrations). Seven files:
-  - new: `src/potluck.ts`, `test/potluck.test.ts`, `migrations/0125_worksgiving_poll.sql`;
+- Built: `d4d7a4f84df9e1c8` (443 files). Seven files:
+  - new: `src/potluck.ts`, `test/potluck.test.ts`, and the migration;
   - changed: `src/index.ts`, `src/i18n.ts`, `src/theme.ts`, `scripts/smoke.mjs`.
-- The other 436 files are byte for byte the worktree's (`b0219cd1acce0a74` on both sides).
-- **The migration number:** 0124 is LD1's (the Ops Dashboard worktree), so the poll takes 0125. When LD1 lands, the smoke's count moves from 123 to 124.
+- **The first merge block (2026-10-30):**
+  - its first run stopped at the snapshot on a passing 7403 (the empty `20261030-205606_pre_wg1`);
+  - the second took `20261030-205613_pre_wg1` (132 tables, 721,205 rows; record_change_log failed on its size, as the guard allows), committed fa6392c in the worktree and merged it into the laptop's main (1dbebab);
+  - the push was refused, because GitHub's main had moved to d934734 (LD1 with 0124, and FB1 with `0125_fulfillment_prepack_bags.sql`).
+- **Merged onto d934734** (its app tree `3a3948949746b3b5`, exported by his hands, read as data):
+  - git merged `src/index.ts` and `src/i18n.ts` cleanly;
+  - the smoke's migration count was the one conflict, now 125;
+  - the poll's migration is renumbered `0126_worksgiving_poll.sql`, since FB1 holds 0125.
+- **Left:** `698a2413eef600bd` (447 files, 125 migrations), the tree his finishing block lands.
 
 ## What it is
 1. **The page,** `/special/worksgiving26`. One standalone page in Lite's colors: no app chrome, no menu, no login, never cached or indexed, English and Spanish (a switch at its top).
@@ -38,7 +45,7 @@ Built and gated by the Claude session on 2026-10-30, on the owner's word, in the
    - **Done:** "You're on the list.", the answers, and "Need a change? Contact {contact}."
    - **Refusals,** each said in words: an answer already in from that email (at Review and at Submit), a field that is off, and the close ("Sign-ups closed ...").
    - **A honeypot field** no person sees: a form that fills it hears done and stores nothing.
-2. **The guarantees are the database's** (0125):
+2. **The guarantees are the database's** (0126):
    - one live answer per email per event (a partial unique index);
    - the CHECKs: the email normalized, the four answers, the six category keys, a dish only with a category, nothing to bring on a No.
 3. **/special opens nothing else.** The identity middleware answers `/special/worksgiving26` (GET, HEAD, POST) and nothing more there:
@@ -79,15 +86,21 @@ Built and gated by the Claude session on 2026-10-30, on the owner's word, in the
   - the results page in all nine views: 0 px sideways, the tables inside their scroll.
 
 ## Gates on the tree
-- typecheck 0.
-- vitest TZ=UTC: Test Files 128 passed (128); Tests 1758 passed, 6 skipped (1764).
-- vitest TZ=America/New_York: the same.
-- `node --check scripts/smoke.mjs`: 0.
-- The from zero smoke: `About to apply 123 migration(s)`, SMOKE PASS, exit 0, no 500.
+- On the poll's own tree `d4d7a4f84df9e1c8`:
+  - vitest 1758 passed and 6 skipped in both zones (128 files);
+  - the from zero smoke `About to apply 123 migration(s)`, SMOKE PASS, no 500.
+- On the merged tree `698a2413eef600bd`:
+  - typecheck 0;
+  - vitest TZ=UTC: Test Files 129 passed (129); Tests 1772 passed, 6 skipped (1778);
+  - vitest TZ=America/New_York: the same;
+  - `node --check scripts/smoke.mjs`: 0;
+  - the from zero smoke: `About to apply 125 migration(s)`, SMOKE PASS, exit 0, no 500.
 - The scans of the seven files: no dash or CR, no personal name. The only non ASCII is the Spanish of the public page (accents and the opening question mark).
 
 ## His hands
-1. **The merge block** (the snapshot first: 0125 rides).
+1. **The merge blocks:**
+   - the first took the snapshot of record (`20261030-205613_pre_wg1`, before 0126 rides);
+   - the finishing block merges GitHub's main and pushes.
 2. **Zero Trust, once:**
    - add a self-hosted Access application for `gripfactory-lite-grip.gflite.workers.dev`, path `special`, with a Bypass policy for Everyone;
    - Cloudflare documents path rules but not this case on workers.dev, so test it on a phone off the farm WiFi, in a private window, before the email goes out.

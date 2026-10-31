@@ -634,9 +634,9 @@ function startWrangler() {
   return runCmd(
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
-    // WG1 (canon, 2026-10-30): 0125 rides; 0124 stays LD1's, so the count is 123 until LD1 lands.
-    if (!String(applyOut).includes("About to apply 123 migration(s)")) {
-      throw new Error(`from-zero apply must say 123 migrations\n${String(applyOut).slice(-2000)}`);
+    // WG1 (2026-10-30): 0124 is LD1's and 0125 is FB1's, so the poll's 0126 makes the count 125.
+    if (!String(applyOut).includes("About to apply 125 migration(s)")) {
+      throw new Error(`from-zero apply must say 125 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
   });
@@ -9347,10 +9347,29 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     assert(grid.res.status === 200 && grid.body.includes("Fulfillment Override") && grid.body.includes("data-fulfill-grid"), "the override page must load the grid");
     const fulfillToday = (grid.body.match(/name="date" value="(\d{4}-\d{2}-\d{2})"/) || [])[1];
     assert(fulfillToday, "the grid must load the farm's today");
-    assert(grid.body.includes('data-fulfill-cell="bulk_bud:shipping_today"') && grid.body.includes('data-fulfill-cell="vapes:accepted"') && grid.body.includes('data-fulfill-cell="bulk_infused:shipping_today"'), "the grid must carry the ten rows by three columns");
+    assert(grid.body.includes('data-fulfill-cell="bulk_bud:shipping_today"') && grid.body.includes('data-fulfill-cell="vapes:accepted"') && grid.body.includes('data-fulfill-cell="bulk_infused:shipping_today"'), "the grid must carry the standing rows by three columns");
+    assert(
+      grid.body.includes('data-fulfill-cell="prepack@3.5:shipping_today"') &&
+        grid.body.includes('data-fulfill-cell="prepack@7:accepted"') &&
+        grid.body.includes('data-fulfill-cell="prepack@14:shipping_today"') &&
+        grid.body.includes('data-fulfill-cell="prepack@28:submitted"') &&
+        grid.body.includes("Prepack 3.5 g") &&
+        grid.body.includes("Prepack 28 g"),
+      "the grid must carry a Prepack row for each bag size"
+    );
+    assert(!grid.body.includes('data-fulfill-cell="prepack:shipping_today"'), "the grid must not offer an unsplit Prepack count");
     const fulfillSave = await req("/admin/lookups/fulfillment_override", {
       method: "POST",
-      body: form({ entry_date: fulfillToday, "bulk_bud:shipping_today": "1000", "prepack:shipping_today": "40" }),
+      body: form({
+        entry_date: fulfillToday,
+        "bulk_bud:shipping_today": "3617",
+        "bulk_bud:submitted": "30",
+        "bulk_bud:accepted": "3617",
+        "prepack@28:shipping_today": "560",
+        "prepack@3.5:submitted": "160",
+        "prepack@28:submitted": "10",
+        "prepack@28:accepted": "2720",
+      }),
     });
     assert(fulfillSave.status === 303, `saving the grid expected 303 got ${fulfillSave.status} ${await fulfillSave.text()}`);
     const fulfillConsole = await text(`/harvest?day=${fulfillToday}`);
@@ -9364,20 +9383,38 @@ INSERT INTO gc_app_users (id, email, name, role, is_active, created_at, created_
     const shippingPane = fillPane(fulfillConsole.body, "shipping_today");
     assert(shippingPane.includes('data-fulfill-segment="bulk_bud"') && shippingPane.includes('data-fulfill-segment="prepack"'), "Shipping today must draw Bulk Bud and Prepack");
     assert(!shippingPane.includes('data-fulfill-segment="vapes"'), "a blank Vapes cell must not draw a segment");
-    assert(fillPane(fulfillConsole.body, "submitted").includes("No figures typed for this day."), "Submitted must read the empty words");
-    assert(fillPane(fulfillConsole.body, "accepted").includes("No figures typed for this day."), "Accepted must read the empty words");
+    assert(shippingPane.includes("Bulk Bud 8.07 lbs") && shippingPane.includes("Prepack 35.00 lbs"), "Shipping today must read Bulk Bud and Prepack in lbs");
+    assert((shippingPane.match(/data-fulfill-grip-outline/g) || []).length === 1, "Shipping today must draw one Grip outline");
+    const submittedPane = fillPane(fulfillConsole.body, "submitted");
+    const acceptedPane = fillPane(fulfillConsole.body, "accepted");
+    assert(submittedPane.includes("Bulk Bud 0.07 lbs") && submittedPane.includes("Prepack 1.88 lbs"), "Submitted must read its figures in lbs");
+    assert(acceptedPane.includes("Bulk Bud 8.07 lbs") && acceptedPane.includes("Prepack 170.00 lbs"), "Accepted must read its figures in lbs");
+    assert(!submittedPane.includes("data-fulfill-grip-outline") && !acceptedPane.includes("data-fulfill-grip-outline"), "the Grip outline stays on Shipping today");
+    const emptyFulfill = await text("/harvest?day=2020-01-15");
+    const emptyShip = fillPane(emptyFulfill.body, "shipping_today");
+    assert(emptyShip.includes("No figures typed for this day.") && (emptyShip.match(/data-fulfill-grip-outline/g) || []).length === 1, "an empty Shipping today still draws the Grip outline");
+    assert(!fillPane(emptyFulfill.body, "submitted").includes("data-fulfill-grip-outline"), "an empty Submitted draws no Grip outline");
     const fulfillChange = await req("/admin/lookups/fulfillment_override", {
       method: "POST",
-      body: form({ entry_date: fulfillToday, "bulk_bud:shipping_today": "1000", "prepack:shipping_today": "50" }),
+      body: form({
+        entry_date: fulfillToday,
+        "bulk_bud:shipping_today": "3617",
+        "bulk_bud:submitted": "30",
+        "bulk_bud:accepted": "3617",
+        "prepack@28:shipping_today": "560",
+        "prepack@3.5:submitted": "160",
+        "prepack@28:submitted": "11",
+        "prepack@28:accepted": "2720",
+      }),
     });
     assert(fulfillChange.status === 303, `changing Prepack expected 303 got ${fulfillChange.status} ${await fulfillChange.text()}`);
     const fulfillLog = await text("/log");
     assert(
-      /fulfillment_overrides<\/td>\s*<td>[^<]*<\/td>\s*<td>value<\/td>\s*<td>40<\/td>\s*<td>50<\/td>/.test(fulfillLog.body),
-      "the change log must carry Prepack's old 40 and new 50"
+      /fulfillment_overrides<\/td>\s*<td>[^<]*<\/td>\s*<td>value<\/td>\s*<td>10<\/td>\s*<td>11<\/td>/.test(fulfillLog.body),
+      "the change log must carry the bag-size cell's old 10 and new 11"
     );
     const gridAgain = await text(`/admin/lookups/fulfillment_override?date=${fulfillToday}`);
-    assert(/data-fulfill-cell="prepack:shipping_today"[^>]*value="50"/.test(gridAgain.body), "the grid for that day must reload Prepack as 50");
+    assert(/data-fulfill-cell="prepack@28:submitted"[^>]*value="11"/.test(gridAgain.body), "the grid for that day must reload the 28 g cell as 11");
 
     // PRODUCT MIX TOTALS AND POUNDS (canon 0.30.307).
     const mixPage = await text("/reports/product_mix");
@@ -11913,6 +11950,69 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     assert(!mtAfter.body.includes(`(${mtS2.hbn})`), "the close must take the HBN off the select");
     const mtHomeAfter = await text("/station/field_harvest?ok=hbn_closed");
     assert(mtHomeAfter.body.includes("HBN closed.") && !mtHomeAfter.body.includes("data-more-trucks"), "the closed HBN must leave the waiting list");
+
+    // LD1: the processors lookup, the distillate desk, and the on-hand report.
+    if (!jar.get("gf_pin")) jar.set("gf_pin", ADMIN_PIN);
+    const toEsDist = await req("/locale", { method: "POST", body: form({ locale: "es" }) });
+    assert(toEsDist.status === 303, `LD1 locale es expected 303 got ${toEsDist.status}`);
+    const processorsEs = await text("/admin/lookups/processors");
+    assert(processorsEs.res.status === 200, `processors es expected 200 got ${processorsEs.res.status}`);
+    assert(processorsEs.body.includes("Procesadores"), "the processors page must speak Spanish");
+    const toEnDist = await req("/locale", { method: "POST", body: form({ locale: "en" }) });
+    assert(toEnDist.status === 303, `LD1 locale en expected 303 got ${toEnDist.status}`);
+    const processors = await text("/admin/lookups/processors");
+    assert(processors.res.status === 200, `processors expected 200 got ${processors.res.status}`);
+    for (const name of ["BowHouse", "Mitten", "Sauce", "Cannalicious", "Oakcanna", "Golden Lion"]) {
+      assert(processors.body.includes(`data-processor="${name}"`), `processors must list ${name}`);
+    }
+    assert(processors.body.includes('data-bowhouse-yield=""'), "BowHouse yield stays blank");
+    const savedDistPin = jar.get("gf_pin");
+    jar.delete("gf_pin");
+    const lockedDist = await text("/ops/distillate");
+    assert(lockedDist.res.status === 401 && lockedDist.body.includes("Enter PIN"), "the distillate desk must sit behind the PIN");
+    jar.set("gf_pin", savedDistPin || ADMIN_PIN);
+    const desk = await text("/ops/distillate");
+    assert(desk.res.status === 200 && desk.body.includes('data-processor-option="BowHouse"'), "the desk must offer BowHouse");
+    const distFields = { moved_on: "2026-10-01", harvest_year: "2026", processor: "proc-bowhouse" };
+    const finishedPost = await req("/ops/distillate", {
+      method: "POST",
+      body: form({ action: "movement", ...distFields, kind: "finished", liters: "10.5", ref: "smoke", note: "smoke finished" }),
+    });
+    assert(finishedPost.status === 303, `finished post expected 303 got ${finishedPost.status} ${await finishedPost.text()}`);
+    const shippedPost = await req("/ops/distillate", {
+      method: "POST",
+      body: form({ action: "movement", ...distFields, kind: "shipped", liters: "2", ref: "smoke ship", note: "smoke shipped" }),
+    });
+    assert(shippedPost.status === 303, `shipped post expected 303 got ${shippedPost.status}`);
+    const countPost = await req("/ops/distillate", {
+      method: "POST",
+      body: form({ action: "count", counted_on: "2026-10-01", harvest_year: "2026", processor: "proc-bowhouse", liters: "9", note: "smoke count" }),
+    });
+    assert(countPost.status === 303, `count post expected 303 got ${countPost.status}`);
+    const zeroPost = await req("/ops/distillate", {
+      method: "POST",
+      body: form({ action: "movement", ...distFields, kind: "finished", liters: "0", note: "nope" }),
+    });
+    assert(zeroPost.status === 400, `zero liters expected 400 got ${zeroPost.status}`);
+    const onHand = await text("/reports/distillate_on_hand?year=2026&as_of=2026-10-28");
+    assert(onHand.res.status === 200, `distillate report expected 200 got ${onHand.res.status}`);
+    assert(onHand.body.includes('data-ledger-row="BowHouse"') && onHand.body.includes('data-ledger-liters="8.50"'), "ledger on hand is finished minus shipped");
+    assert(onHand.body.includes('data-variance-liters="0.50"'), "variance is the count minus the ledger");
+    const deskAfter = await text("/ops/distillate");
+    const shippedId = (deskAfter.body.match(/data-movement-kind="shipped" data-movement-id="([^"]+)"/) || [])[1];
+    assert(shippedId, "the shipped row must be on the desk");
+    const distVoid = await req("/ops/distillate", {
+      method: "POST",
+      body: form({ action: "void", table: "movements", id: shippedId, reason: "smoke void" }),
+    });
+    assert(distVoid.status === 303, `void expected 303 got ${distVoid.status}`);
+    const onHandAfter = await text("/reports/distillate_on_hand?year=2026&as_of=2026-10-28");
+    assert(onHandAfter.res.status === 200 && onHandAfter.body.includes('data-ledger-liters="10.50"'), "a voided shipment leaves the ledger");
+    assert(onHandAfter.body.includes('data-variance-liters="-1.50"') && onHandAfter.body.includes('data-flag="Over 1 L"'), "a variance over one liter is flagged");
+    const distCsv = await req("/reports/distillate_on_hand?year=2026&as_of=2026-10-28&format=csv");
+    assert(distCsv.status === 200, `distillate csv expected 200 got ${distCsv.status}`);
+    const distCsvText = await distCsv.text();
+    assert(distCsvText.includes("BowHouse") && distCsvText.includes("-1.50"), "the csv carries the ledger and the variance");
 
     process.stdout.write("SMOKE PASS\n");
   } finally {

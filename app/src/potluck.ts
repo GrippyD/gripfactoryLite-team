@@ -30,7 +30,7 @@ export const POTLUCK_PATH = "/special/worksgiving26";
 export const POTLUCK_ADMIN_PATH = "/admin/special/worksgiving26";
 export const SPECIAL_PREFIX = "/special";
 
-/** The categories, in the order the page lists them. The keys match the migration's CHECK (0125). */
+/** The categories, in the order the page lists them. The keys match the migration's CHECK (0126). */
 export const POTLUCK_CATEGORIES = [
   { key: "main", label: "Main / protein" },
   { key: "hot_side", label: "Hot side" },

@@ -1139,6 +1139,7 @@ export const OPS_GROUPS: OpsGroup[] = [
       { key: "prepack", title: "Prepack", href: "/station/prepack" },
       { key: "fulfillment", title: "Fulfillment", href: "/fulfillment" },
       { key: "inventory", title: "Inventory", href: "/inventory" },
+      { key: "distillate", title: "Distillate", href: "/ops/distillate" },
     ],
   },
   {

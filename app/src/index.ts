@@ -504,6 +504,17 @@ import { floorVsMetrcCsv, floorVsMetrcPage, loadFloorVsMetrc, shownFloorVsMetrc 
 import { wipLineagePage } from "./wiplineage";
 import { DRY_STRAIN_FARMS, DRY_STRAIN_GROW_METHODS, dryStrainNames, dryStrainRefused, dryStrainView, listDryStrainLots, resolveDryStrainRange } from "./drystrain";
 import { HARVEST_RECONCILE_KEY, loadHarvestReconciliation } from "./harvestreconciliation";
+import {
+  DISTILLATE_ENTRY_PATH,
+  DISTILLATE_ON_HAND_KEY,
+  distillateEntryPage,
+  loadDistillateDesk,
+  loadDistillateOnHand,
+  listProcessors,
+  processorsPage,
+  saveDistillateEntry,
+  saveProcessor,
+} from "./distillate";
 import { deleteFieldEstimate, fieldEstimatesPage, loadFieldEstimatesPage, saveFieldEstimate } from "./fieldestimates";
 import {
   PREPACK_PLAN_XLSX_PATH,
@@ -531,7 +542,7 @@ import {
 import { anyPlantCount, queueRowsToCsv, toCsv, wetWeightsCsv, wetWeightsCsvWithCounts, wetWeightsCsvWithTags, wetWeightsFilename } from "./csv";
 import { harvestConsolePage, loadHarvestConsole, loadPrepackSection, loadTestingSection, saveHarvestHours, savePasteurizationHours, savePrepackHours, saveTrimHours, sheetInSeason } from "./console";
 import { loadStrainPerformance } from "./strainperformance";
-import { fulfillmentDateOf, fulfillmentOverridePage, listFulfillmentCells, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
+import { fulfillmentDateOf, fulfillmentOverridePage, loadFulfillmentSection, saveFulfillmentOverride } from "./fulfillmentboard";
 import { loadFgInventory } from "./fginventory";
 import { harvestDashboardPage, loadHarvestDashboard } from "./harvestdashboard";
 import { ctRegisterWallPage, readCtRegister } from "./ctregister";
@@ -705,6 +716,9 @@ app.use("/compliance/*", pinGate);
 // THE TESTING DESK (canon 0.30.164): the lab tech's station, same PIN as Admin.
 app.use("/testing", pinGate);
 app.use("/testing/*", pinGate);
+// LD1: the distillate desk is admin, same PIN as the other admin doors.
+app.use(DISTILLATE_ENTRY_PATH, pinGate);
+app.use(`${DISTILLATE_ENTRY_PATH}/*`, pinGate);
 app.use("/purchasing", pinGate);
 app.use("/purchasing/*", pinGate);
 app.use("/marketplace", pinGate);
@@ -1121,6 +1135,15 @@ app.get("/reports/:key", async (c) => {
     view = loaded.view;
     filterHtml = loaded.filterHtml;
     csvBody = loaded.csv;
+  } else if (key === DISTILLATE_ON_HAND_KEY) {
+    const today = await farmToday(c.env.DB, nowIso());
+    const loaded = await loadDistillateOnHand(c.env.DB, url.searchParams, today, s.locale);
+    url.searchParams.set("as_of", loaded.asOf);
+    if (loaded.year) url.searchParams.set("year", loaded.year);
+    else url.searchParams.delete("year");
+    view = loaded.view;
+    filterHtml = loaded.filterHtml;
+    csvBody = loaded.csv;
   } else if (key === "dry_weight_by_strain") {
     const today = await farmToday(c.env.DB, nowIso());
     const range = resolveDryStrainRange(url.searchParams.get("from"), url.searchParams.get("to"), today);
@@ -1178,6 +1201,18 @@ app.get("/reports/:key", async (c) => {
     );
   }
   return html(c, s, view.title, reportPage(view, filterHtml, reportQuery(url.searchParams), s.locale));
+});
+
+app.get(DISTILLATE_ENTRY_PATH, async (c) => {
+  const s = await shell(c);
+  const today = await farmToday(c.env.DB, nowIso());
+  const desk = await loadDistillateDesk(c.env.DB, today);
+  return html(c, s, "Distillate", distillateEntryPage(desk, s.locale, c.req.query("ok") || undefined));
+});
+
+app.post(DISTILLATE_ENTRY_PATH, async (c) => {
+  const result = await saveDistillateEntry(c.env.DB, actorForm(c, await c.req.formData()));
+  return c.redirect(result.redirect, 303);
 });
 
 // Owner ruling 2026-09-02: group subpages. No PIN on /ops itself; a tile that
@@ -4052,6 +4087,10 @@ app.get("/admin/lookups/:section", async (c) => {
     const labs = await listTestingLabs(c.env.DB);
     return html(c, s, "Testing labs", testingLabsPage(labs, s.locale));
   }
+  if (section === "processors") {
+    const rows = await listProcessors(c.env.DB);
+    return html(c, s, "Processors", processorsPage(rows, s.locale, c.req.query("ok") || undefined));
+  }
   // THE TRIM BOGEY (canon 0.30.249): one whole percent, the plume's product line.
   if (section === "harvest_dashboard") {
     const page = await loadHarvestDashboard(c.env.DB);
@@ -4099,8 +4138,8 @@ app.get("/admin/lookups/:section", async (c) => {
   if (section === "fulfillment_override") {
     const today = await farmToday(c.env.DB, nowIso());
     const date = fulfillmentDateOf(c.req.query("date"), today);
-    const cells = await listFulfillmentCells(c.env.DB, date);
-    return html(c, s, "Fulfillment Override", fulfillmentOverridePage(date, cells, s.locale, c.req.query("ok") || undefined));
+    const loaded = await loadFulfillmentSection(c.env.DB, date);
+    return html(c, s, "Fulfillment Override", fulfillmentOverridePage(date, loaded.cells, s.locale, c.req.query("ok") || undefined, loaded.prepackUnits));
   }
   const tables = {
     people: await listAdminRows(c.env.DB, "people"),
@@ -4122,6 +4161,7 @@ app.post("/admin/lookups/:table", async (c) => {
   const action = String(form.get("action") ?? "add");
   let result;
   if (table === "testing_labs") result = await saveTestingLab(c.env.DB, form);
+  else if (table === "processors") result = await saveProcessor(c.env.DB, form);
   else if (table === "harvest_dashboard") result = await saveHarvestDashboard(c.env.DB, form);
   else if (table === "trim_bogey") result = await saveTrimBogey(c.env.DB, form);
   else if (table === "max_tote_lbs") result = await saveMaxToteLbs(c.env.DB, form);

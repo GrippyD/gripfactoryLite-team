@@ -1,6 +1,6 @@
 -- WG1, THE WORKSGIVING POLL (the owner, 2026-10-30): the public poll at /special/worksgiving26.
--- Additive: two new tables and their seed row; nothing else changes. 0124 is held by LD1 (the distillate ledger,
--- the Ops Dashboard worktree), so this takes 0125.
+-- Additive: two new tables and their seed row; nothing else changes. 0124 is LD1's (the distillate ledger) and 0125
+-- is FB1's (the prepack bags), so this takes 0126.
 --
 -- potluck_events: the event's words, typed at /admin/special/worksgiving26 behind the Admin PIN, so no name rides
 -- in a repo file. The seed carries the date, a neutral time note, no place, and the close: Tuesday 2026-11-17 at
