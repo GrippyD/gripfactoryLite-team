@@ -12,7 +12,14 @@
  * The board lives at /admin/whiteboard behind Access and the Admin PIN (the /admin/* gate). One board, notes
  * at fixed board coordinates on a 3200 by 2000 surface that scrolls inside its own frame, so no page ever
  * scrolls sideways. Every content change and every delete is logged; a move is not (position is not content).
- * Clear all asks for the Admin PIN again and soft deletes, so a clear can be recovered in the database. */
+ * Clear all asks for the Admin PIN again and soft deletes, so a clear can be recovered in the database.
+ *
+ * WB2, ONE NOTE AT A TIME (the owner, 2026-11-17): "In retrospect, I think one-note-at-a-time needs to be a rule.
+ * The whole board is a mess for the parser (hence why we need the whiteboard in GFLite in the first place)." His
+ * pick: "One picture, one note". The pane reads a picture into a single note, kept as written, line breaks and
+ * numbering included; the lines that look like a PIN, a password, an email or a phone number are held out of the
+ * note, each with Add back. A picture with more than WB_MANY_LINES lines says to photograph one note at a time,
+ * and the server takes one note per picture: a page still holding WB1's line list is answered in words. */
 import { HttpError } from "./audit";
 import { CONFIG_KEYS } from "./config";
 import { getConfigValue, insertLog } from "./db";
@@ -184,8 +191,8 @@ async function notesByIds(db: D1Database, ids: string[]): Promise<WbNote[]> {
   return ids.map((id) => byId.get(id)).filter((n): n is WbNote => Boolean(n));
 }
 
-/** One batch for any number of notes: the rows and their log lines land together or not at all. A 60 line
- * import is seven note INSERTs and six log INSERTs, well inside a Worker's query budget. */
+/** One batch for any number of notes: the rows and their log lines land together or not at all. Sixty notes are
+ * seven note INSERTs and six log INSERTs, well inside a Worker's query budget. From WB2 a picture places one. */
 export async function createWbNotes(
   db: D1Database,
   inputs: Array<{ body: unknown; x: unknown; y: unknown }>,
@@ -194,6 +201,8 @@ export async function createWbNotes(
   source: WbSource
 ): Promise<WbNote[]> {
   if (inputs.length === 0) throw new HttpError(400, "Nothing to put on the board.");
+  // WB2, the owner's rule: one picture is one note.
+  if (source === "import" && inputs.length > 1) throw new HttpError(400, "One picture is one note.");
   if (inputs.length > WB_MAX_IMPORT_LINES) throw new HttpError(400, "Up to 60 notes go on the board at once.");
   const email = emailOf(actor);
   const actorId = actor.id || null;
@@ -381,15 +390,17 @@ export function screenLine(text: string): WbFlag[] {
   return flags;
 }
 
-/** The model's answer as lines: fences, bullets and numbering dropped, blanks and NONE gone, capped. */
+/** The model's answer as the note's lines, kept as written (WB2: a list's own bullets and numbers are the note's):
+ * code fences, blank lines and NONE gone, a line wrapped whole in quotes unwrapped, 60 lines of 500 at most. */
 export function linesFromModel(raw: string): string[] {
   const out: string[] = [];
   for (const piece of String(raw ?? "").replace(/\r\n?/g, "\n").split("\n")) {
     let line = piece.trim();
     if (!line || /^```/.test(line)) continue;
+    // Handwriting has one dash: the model's en and em dashes are hyphens, and a dot or star bullet is a hyphen.
     line = line
-      .replace(/^(?:[-*\u2013\u2014\u2022\u25CF\u25AA]+\s+)/u, "")
-      .replace(/^(?:\(?\d{1,3}[.)]\s+)/, "")
+      .replace(/[\u2013\u2014]/g, "-")
+      .replace(/^[*\u2022\u25CF\u25AA]\s+/u, "- ")
       .replace(/^"(.*)"$/, "$1")
       .trim();
     if (!line || /^none\.?$/i.test(line)) continue;
@@ -400,10 +411,14 @@ export function linesFromModel(raw: string): string[] {
 }
 
 export const WB_OCR_PROMPT =
-  "This is a photo or screenshot of handwritten or printed notes, such as a whiteboard, sticky notes or a page. " +
-  "Transcribe every separate note or line of text exactly as written, in its own language, in reading order " +
-  "(top to bottom, left to right). Put each note on its own line. Do not add numbering, bullets, headings, " +
-  "commentary or any description of the picture. If you cannot read any text, answer with exactly: NONE";
+  "This is a photo of one note: a sticky note, a card, or one section of a whiteboard. " +
+  "Transcribe its text exactly as written, in its own language, top to bottom, keeping its line breaks and any " +
+  "numbering or bullets it has. Do not add headings, commentary or any description of the picture. " +
+  "If you cannot read any text, answer with exactly: NONE";
+
+/** WB2: more lines than this and the pane says the picture looks like more than one note. The longest section on
+ * the board of 2026-11-17 ran 19 lines; a whole board reads as many more. */
+export const WB_MANY_LINES = 24;
 
 const DATA_URL_RE = /^data:image\/(jpeg|png);base64,([A-Za-z0-9+/]+={0,2})$/;
 
@@ -521,8 +536,9 @@ const WB_WORD_KEYS = [
   "That file isn't a picture this board takes. Use JPEG, PNG, GIF, WebP or HEIC.",
   "Converting the HEIC picture...",
   "That HEIC picture couldn't be opened. Save it as JPEG and try again.",
-  "Placed {n} notes on the board.",
-  "Pick at least one line to place.",
+  "The note is on the board.",
+  "The note is empty.",
+  "Add back",
   "Looks like a PIN",
   "Looks like a password",
   "Looks like an email",
@@ -533,6 +549,7 @@ const WB_WORD_KEYS = [
   "Type a note. Click outside it to save; Esc cancels.",
   "Note",
   "{n} notes",
+  "{n} note",
   "Your Admin PIN timed out. Reload the page and enter it again.",
   "Delete this note?",
 ];
@@ -554,7 +571,7 @@ function noteHtml(n: WbNote): string {
 
 export function whiteboardPage(notes: WbNote[], locale: Locale): string {
   const tr = (key: string) => esc(t(locale, key));
-  return `<section class="wb" data-wb data-wb-w="${WB_W}" data-wb-h="${WB_H}" data-wb-path="${WB_PATH}" data-wb-heic="${WB_HEIC_PATH}" data-wb-edge="${WB_IMAGE_EDGE}" data-wb-poll="${WB_POLL_MS}">
+  return `<section class="wb" data-wb data-wb-w="${WB_W}" data-wb-h="${WB_H}" data-wb-path="${WB_PATH}" data-wb-heic="${WB_HEIC_PATH}" data-wb-edge="${WB_IMAGE_EDGE}" data-wb-poll="${WB_POLL_MS}" data-wb-many-lines="${WB_MANY_LINES}">
   <h1>${tr("Team Whiteboard")}</h1>
   <p class="wb-help">${tr("Double click anywhere on the board to write a note. Drag a note to move it. Click a note, then press Delete to remove it.")}</p>
   <div class="wb-tools">
@@ -562,12 +579,12 @@ export function whiteboardPage(notes: WbNote[], locale: Locale): string {
     <a class="btn" href="${WB_PATH}/export.xlsx" download data-wb-export>${tr("Export to clean list")}</a>
     <button type="button" data-wb-import-open aria-expanded="false">${tr("Import a picture")}</button>
     <button type="button" class="secondary wb-danger" data-wb-clear-open>${tr("Clear all")}</button>
-    <span class="wb-count" data-wb-count>${esc(tFill(locale, "{n} notes", { n: String(notes.length) }))}</span>
+    <span class="wb-count" data-wb-count>${esc(tFill(locale, notes.length === 1 ? "{n} note" : "{n} notes", { n: String(notes.length) }))}</span>
   </div>
   <p class="wb-status" data-wb-status role="status" aria-live="polite"></p>
   <div class="wb-import" data-wb-import hidden>
     <h2>${tr("Import a picture")}</h2>
-    <p class="wb-help">${tr("JPEG, PNG, GIF, WebP or HEIC. The text is read, then you check each line before anything goes on the board.")}</p>
+    <p class="wb-help">${tr("One picture is one note: photograph one sticky note, card or section at a time. JPEG, PNG, GIF, WebP or HEIC. The text is read, then you check the note before it goes on the board.")}</p>
     <div class="wb-import-pick">
       <label for="wb-file">${tr("Choose a picture")}</label>
       <input id="wb-file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,.heic,.heif,.jpg,.jpeg,.png,.gif,.webp" data-wb-file>
@@ -579,11 +596,17 @@ export function whiteboardPage(notes: WbNote[], locale: Locale): string {
       <button type="button" data-wb-agree>${tr("Accept the model's license")}</button>
     </div>
     <div class="wb-review" data-wb-review hidden>
-      <h3>${tr("Check each line")}</h3>
-      <p class="wb-help">${tr("Unchecked lines stay off the board. Lines flagged as a PIN, password, email or phone number start unchecked.")}</p>
-      <ol class="wb-lines" data-wb-lines></ol>
+      <h3>${tr("Check the note")}</h3>
+      <p class="wb-many" data-wb-many hidden>${tr("This picture looks like more than one note. Photograph one note at a time.")}</p>
+      <label class="wb-import-note-label">${tr("The note, as it will go on the board")}
+        <textarea class="wb-import-note" data-wb-import-note rows="6" maxlength="${WB_MAX_BODY}"></textarea>
+      </label>
+      <div class="wb-held" data-wb-held hidden>
+        <p class="wb-help">${tr("Held out because they look like a PIN, password, email or phone number. Add one back only if it belongs on the board.")}</p>
+        <ul class="wb-lines" data-wb-held-list></ul>
+      </div>
       <div class="wb-tools">
-        <button type="button" data-wb-apply>${tr("Put the checked lines on the board")}</button>
+        <button type="button" data-wb-apply>${tr("Put this note on the board")}</button>
         <button type="button" class="secondary" data-wb-import-cancel>${tr("Cancel")}</button>
       </div>
     </div>
@@ -670,7 +693,8 @@ const WB_CLIENT = String.raw`
   function clampY(y) { return Math.max(0, Math.min(H, Math.round(y))); }
   function updateCount() {
     var n = Object.keys(notes).length;
-    countEl.textContent = (words['{n} notes'] || '{n} notes').split('{n}').join(String(n));
+    var key = n === 1 ? '{n} note' : '{n} notes';
+    countEl.textContent = (words[key] || key).split('{n}').join(String(n));
   }
 
   function render(note) {
@@ -976,7 +1000,11 @@ const WB_CLIENT = String.raw`
   var fileInput = root.querySelector('[data-wb-file]');
   var preview = root.querySelector('[data-wb-preview]');
   var review = root.querySelector('[data-wb-review]');
-  var list = root.querySelector('[data-wb-lines]');
+  var importNote = root.querySelector('[data-wb-import-note]');
+  var held = root.querySelector('[data-wb-held]');
+  var heldList = root.querySelector('[data-wb-held-list]');
+  var many = root.querySelector('[data-wb-many]');
+  var MANY = Number(root.getAttribute('data-wb-many-lines')) || 24;
   var license = root.querySelector('[data-wb-license]');
   var lastPicture = null;
   function resetPane() {
@@ -986,7 +1014,10 @@ const WB_CLIENT = String.raw`
     preview.removeAttribute('src');
     review.hidden = true;
     license.hidden = true;
-    list.innerHTML = '';
+    importNote.value = '';
+    heldList.innerHTML = '';
+    held.hidden = true;
+    many.hidden = true;
     lastPicture = null;
   }
   openBtn.addEventListener('click', function () {
@@ -1038,23 +1069,17 @@ const WB_CLIENT = String.raw`
   function flagWord(f) {
     return w({ pin: 'Looks like a PIN', password: 'Looks like a password', email: 'Looks like an email', phone: 'Looks like a phone number' }[f] || f);
   }
-  function showLines(lines) {
-    list.innerHTML = '';
-    lines.forEach(function (line, i) {
+  function showNote(lines) {
+    importNote.value = lines.filter(function (line) { return !line.flags.length; }).map(function (line) { return line.text; }).join('\n');
+    heldList.innerHTML = '';
+    lines.forEach(function (line) {
+      if (!line.flags.length) return;
       var li = document.createElement('li');
-      li.className = 'wb-line' + (line.flags.length ? ' wb-flagged' : '');
-      var box = document.createElement('input');
-      box.type = 'checkbox';
-      box.checked = line.flags.length === 0;
-      box.id = 'wb-line-' + i;
-      box.setAttribute('data-wb-line-check', String(i));
-      var text = document.createElement('input');
-      text.type = 'text';
-      text.value = line.text;
-      text.maxLength = 2000;
-      text.setAttribute('data-wb-line-text', String(i));
-      text.setAttribute('aria-label', w('Note') + ' ' + (i + 1));
-      li.appendChild(box);
+      li.className = 'wb-line wb-flagged';
+      li.setAttribute('data-wb-held-line', '');
+      var text = document.createElement('span');
+      text.className = 'wb-held-text';
+      text.textContent = line.text;
       li.appendChild(text);
       line.flags.forEach(function (f) {
         var tag = document.createElement('span');
@@ -1062,9 +1087,26 @@ const WB_CLIENT = String.raw`
         tag.textContent = flagWord(f);
         li.appendChild(tag);
       });
-      list.appendChild(li);
+      var back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'secondary';
+      back.setAttribute('data-wb-add-back', '');
+      back.textContent = w('Add back');
+      back.addEventListener('click', function () {
+        importNote.value = importNote.value ? importNote.value + '\n' + line.text : line.text;
+        li.remove();
+        held.hidden = !heldList.children.length;
+      });
+      li.appendChild(back);
+      heldList.appendChild(li);
     });
+    held.hidden = !heldList.children.length;
+    many.hidden = lines.length <= MANY;
     review.hidden = false;
+    // A computer gets the box ready to type in; a phone or tablet keeps its keyboard down and scrolls to the check.
+    var touch = document.body.classList.contains('device-phone') || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    if (touch) review.scrollIntoView({ block: 'start' });
+    else importNote.focus();
   }
   function readPicture() {
     if (!lastPicture) return;
@@ -1076,7 +1118,7 @@ const WB_CLIENT = String.raw`
       if (r.status === 200 && d.ok) {
         if (!d.lines.length) { say(w('No text found in that picture.'), true); return; }
         say('');
-        showLines(d.lines);
+        showNote(d.lines);
       } else if (d.reason === 'license') {
         license.hidden = false;
         say(w('The picture reader needs its license accepted once.'), true);
@@ -1109,30 +1151,17 @@ const WB_CLIENT = String.raw`
     }, function () { say(w("Couldn't accept the license."), true); });
   });
   root.querySelector('[data-wb-apply]').addEventListener('click', function () {
-    var picked = [];
-    list.querySelectorAll('[data-wb-line-check]').forEach(function (box) {
-      var i = box.getAttribute('data-wb-line-check');
-      var text = list.querySelector('[data-wb-line-text="' + i + '"]').value;
-      if (box.checked && text.trim()) picked.push(text);
-    });
-    if (!picked.length) { say(w('Pick at least one line to place.'), true); return; }
+    var body = importNote.value;
+    if (!body.trim()) { say(w('The note is empty.'), true); return; }
     var o = visibleOrigin();
-    var col = 0;
-    var row = 0;
-    var rows = Math.max(1, Math.floor((Math.min(frame.clientHeight, H) - 48) / 72));
-    var placed = picked.map(function (body) {
-      var p = { body: body, x: clampX(o.x + col * 260), y: clampY(o.y + row * 72) };
-      row += 1;
-      if (row >= rows) { row = 0; col += 1; }
-      return p;
-    });
-    api('POST', PATH + '/import/apply', { notes: placed }).then(function (r) {
+    api('POST', PATH + '/import/apply', { notes: [{ body: body, x: clampX(o.x), y: clampY(o.y) }] }).then(function (r) {
       if (r.status === 201 && r.data.notes) {
         r.data.notes.forEach(render);
+        if (r.data.notes[0]) select(r.data.notes[0].id);
         resetPane();
         pane.hidden = true;
         openBtn.setAttribute('aria-expanded', 'false');
-        say(w('Placed {n} notes on the board.', { n: r.data.notes.length }), true);
+        say(w('The note is on the board.'), true);
       } else say(r.data.error || w("Couldn't save the note. Try again."), true);
     }, function () { say(w("Couldn't save the note. Try again."), true); });
   });

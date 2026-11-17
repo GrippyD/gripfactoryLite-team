@@ -823,8 +823,13 @@ body.device-phone .wb-note .wb-note-del { width: 2.75rem; height: 2.75rem; min-h
 .wb-preview { display: block; max-width: min(100%, 24rem); max-height: 16rem; margin: 0.5rem 0; border-radius: var(--radius, 8px); }
 .wb-lines { padding-left: 1.5rem; margin: 0.5rem 0; }
 .wb-line { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: 0.35rem 0; min-width: 0; }
-.wb-line input[type=text] { flex: 1 1 14rem; min-width: 0; max-width: 100%; min-height: 44px; }
-.wb-line input[type=checkbox] { width: 1.5rem; height: 1.5rem; margin: 0.6rem; }
+.wb-many { padding: 0.5rem 0.75rem; border: 1px solid var(--warn, var(--alert, currentColor)); border-radius: var(--radius, 8px); overflow-wrap: anywhere; }
+.wb-import-note-label { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.wb-import-note { box-sizing: border-box; width: 100%; max-width: 40rem; min-height: 9rem; font: inherit; resize: vertical; }
+.wb-held { margin-top: 0.5rem; min-width: 0; }
+.wb-held .wb-lines { list-style: none; padding-left: 0; }
+.wb-held-text { flex: 0 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wb-line button { min-height: 44px; }
 .wb-flag { font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 999px; border: 1px solid var(--warn, var(--alert, currentColor)); color: var(--warn, var(--alert, currentColor)); }
 .wb-dialog { max-width: min(28rem, 92vw); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); background: var(--panel, var(--surface, Canvas)); color: var(--text, var(--ink, CanvasText)); }
 .wb-dialog::backdrop { background: color-mix(in srgb, CanvasText 40%, transparent); }
@@ -832,7 +837,7 @@ body.device-phone .wb-note .wb-note-del { width: 2.75rem; height: 2.75rem; min-h
 .wb-dialog input { min-height: 44px; max-width: 100%; }
 .wb-confirm-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 8rem; overflow: auto; }
 .wb-error { color: var(--danger, var(--alert, currentColor)); }
-body.device-phone .wb-tools .btn, body.device-phone .wb-tools button, body.device-phone .wb-line input[type=text] { min-height: 48px; }
+body.device-phone .wb-tools .btn, body.device-phone .wb-tools button, body.device-phone .wb-line button { min-height: 48px; }
 body.device-phone .wb-count { margin-left: 0; }
 @media (max-width: 600px) { .wb-tools .btn, .wb-tools button, .wb-dialog input, .wb-import-pick input[type=file] { min-height: 48px; } .wb-count { margin-left: 0; } }
 .dd-grid, .dd-detail, .dd-grid-page, .dd-checkin, .dd-import, .dd-question-list { min-width: 0; max-width: 100%; }
