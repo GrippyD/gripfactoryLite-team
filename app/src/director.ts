@@ -99,6 +99,8 @@ import {
 } from "./yieldseasons";
 import { countAssetsForSale } from "./equipment";
 import { farmopsHeadTabs, MAINTENANCE_PATH, PROJECTS_PATH } from "./maintenance";
+// WB2 (the owner, 2026-11-17: "Yes, add it there too"): the Team Whiteboard from the Director home as well as Admin.
+import { WB_PATH } from "./whiteboard";
 import { t, tFill, type Locale } from "./i18n";
 import { esc, tabBar } from "./ui";
 import { CT_REGISTER_CARDS } from "./ctregister";
@@ -1013,7 +1015,8 @@ export function directorHomePage(model: DirectorHomeModel, locale: Locale = "en"
       <a href="${esc(LABOR_TASKS_PATH)}" data-dd-labor-tasks>${esc(t(locale, "Labor tasks"))}</a>
       <a href="${esc(PAST_SEASONS_PATH)}" data-dd-past-seasons>${esc(t(locale, "Past Seasons"))}</a>
       <a href="${esc(PROJECTS_PATH)}" data-dd-projects>${esc(t(locale, "Projects"))}</a>
-      <a href="${esc(MAINTENANCE_PATH)}" data-dd-maintenance>${esc(t(locale, "Maintenance"))}</a>`;
+      <a href="${esc(MAINTENANCE_PATH)}" data-dd-maintenance>${esc(t(locale, "Maintenance"))}</a>
+      <a href="${esc(WB_PATH)}" data-dd-whiteboard>${esc(t(locale, "Team Whiteboard"))}</a>`;
   const q = model.questions;
   return `<h1>${esc(t(locale, "Director Dashboard"))}</h1>
     <p class="muted">${esc(t(locale, "Five walls, one per department. Each card counts the department's own KPIs by status and shows the last time a value was computed."))} ${esc(t(locale, "The Cultivation and Technology card is the exception: its wall reads the C&T register live."))}</p>

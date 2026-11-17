@@ -11252,14 +11252,23 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     assert(wbXlsx.status === 200 && wbBytes[0] === 0x50 && wbBytes[1] === 0x4b && /team-whiteboard-\d{4}-\d{2}-\d{2}\.xlsx/.test(wbXlsx.headers.get("content-disposition") || ""), "the clean list must download as team-whiteboard-<day>.xlsx");
     const wbRead = await wbPost("/admin/whiteboard/import/read", { image: "data:image/jpeg;base64,/9j/4AAQ" });
     assert(wbRead.status === 200 && wbRead.data.ok === false && wbRead.data.reason === "not_set_up", `the picture door expected not_set_up here, got ${JSON.stringify(wbRead.data)}`);
+    // WB2 (the owner, 2026-11-17): one picture is one note (two from one picture are refused, nothing written), the
+    // pane checks one note, and the Director home links the board.
+    assert(wbPage.body.includes("data-wb-import-note") && !wbPage.body.includes("data-wb-line-check"), "the import pane must check one note");
+    const wbTwo = await wbPost("/admin/whiteboard/import/apply", { notes: [{ body: "a", x: 0, y: 0 }, { body: "b", x: 0, y: 0 }] });
+    assert(wbTwo.status === 400 && Number(localD1All("SELECT count(*) AS n FROM wb_notes")[0].n) === 1, `two notes from one picture expected 400 and nothing written, got ${wbTwo.status}`);
+    const wbOne = await wbPost("/admin/whiteboard/import/apply", { notes: [{ body: "Smoke picture\n1) one note", x: 80, y: 400 }] });
+    assert(wbOne.status === 201 && wbOne.data.notes.length === 1 && wbOne.data.notes[0].source === "import" && wbOne.data.notes[0].body === "Smoke picture\n1) one note", `one note from a picture expected 201, got ${wbOne.status} ${JSON.stringify(wbOne.data)}`);
+    const wbDd = await text("/admin/director");
+    assert(wbDd.res.status === 200 && wbDd.body.includes('<a href="/admin/whiteboard" data-dd-whiteboard>'), "the Director home must link the Team Whiteboard");
     const wbForm = await req("/admin/whiteboard/notes", { method: "POST", body: form({ body: "x", x: "1", y: "1" }) });
     assert(wbForm.status === 415, `a form post to the board expected 415, got ${wbForm.status}`);
     const wbWrong = await wbPost("/admin/whiteboard/clear", { pin: "00000" });
-    assert(wbWrong.status === 403 && Number(localD1All("SELECT count(*) AS n FROM wb_notes WHERE deleted_at IS NULL")[0].n) === 1, "a wrong PIN must clear nothing");
+    assert(wbWrong.status === 403 && Number(localD1All("SELECT count(*) AS n FROM wb_notes WHERE deleted_at IS NULL")[0].n) === 2, "a wrong PIN must clear nothing");
     const wbCleared = await wbPost("/admin/whiteboard/clear", { pin: ADMIN_PIN });
-    assert(wbCleared.status === 200 && wbCleared.data.cleared === 1, `Clear all on the PIN expected one note cleared, got ${JSON.stringify(wbCleared.data)}`);
+    assert(wbCleared.status === 200 && wbCleared.data.cleared === 2, `Clear all on the PIN expected two notes cleared, got ${JSON.stringify(wbCleared.data)}`);
     const wbAfter = localD1All("SELECT delete_kind, clear_batch FROM wb_notes");
-    assert(wbAfter.length === 1 && wbAfter[0].delete_kind === "clear_all" && wbAfter[0].clear_batch, "the clear must be soft, under one batch");
+    assert(wbAfter.length === 2 && wbAfter.every((r) => r.delete_kind === "clear_all" && r.clear_batch && r.clear_batch === wbAfter[0].clear_batch), "the clear must be soft, under one batch");
     const wbHeic = await req("/admin/whiteboard/heic-to-1.6.7.js");
     const wbHeicText = await wbHeic.text();
     assert(wbHeic.status === 200 && (wbHeic.headers.get("content-type") || "").startsWith("text/javascript") && wbHeicText.startsWith("var HeicTo"), `the HEIC converter expected 200 as a script, got ${wbHeic.status}`);

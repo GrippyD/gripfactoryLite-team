@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 import { app } from "../src/index";
 import { adminHomePage } from "../src/html";
 import { backLinkFor } from "../src/nav";
+import { directorHomePage, loadDirectorHome } from "../src/director";
 import {
   WB_EXPORT_HEADERS,
   WB_HEIC_PATH,
+  WB_MANY_LINES,
   WB_OCR_MODEL_DEFAULT,
   WB_OCR_PROMPT,
   WB_PATH,
   checkPictureDataUrl,
   cleanBody,
+  createWbNotes,
   linesFromModel,
   readingOrder,
   safeJson,
@@ -114,16 +117,18 @@ describe("WB1, the team whiteboard", () => {
     expect(screenLine("pin 1234, call 734-555-0199")).toEqual(["pin", "phone"]);
   });
 
-  it("reads the model's answer as lines: bullets, numbers, fences and NONE go, 60 lines at most, 500 characters each", () => {
-    expect(linesFromModel("```\n- Order totes\n2) Fix the scale\n\u2022 Ask about labels\n\n \"Quoted note\" \n```")).toEqual([
-      "Order totes",
-      "Fix the scale",
-      "Ask about labels",
+  it("reads the model's answer as the note's lines, kept as written: numbers and bullets stay, every dash a hyphen, fences and NONE go, 60 lines at most, 500 characters each", () => {
+    expect(linesFromModel("```\nBusiness Team\n- Order totes\n2) Fix the scale\n\u2022 Ask about labels\n* Count bags\n\n \"Quoted note\" \n```")).toEqual([
+      "Business Team",
+      "- Order totes",
+      "2) Fix the scale",
+      "- Ask about labels",
+      "- Count bags",
       "Quoted note",
     ]);
     expect(linesFromModel("NONE")).toEqual([]);
     expect(linesFromModel("none.")).toEqual([]);
-    expect(linesFromModel("\u2013 dash bullet\n\u2014 another")).toEqual(["dash bullet", "another"]);
+    expect(linesFromModel("\u2013 dash bullet\n\u2014 another\n11/12 \u2013 11/14\n*starred")).toEqual(["- dash bullet", "- another", "11/12 - 11/14", "*starred"]);
     expect(linesFromModel(Array.from({ length: 80 }, (_, i) => `line ${i}`).join("\n"))).toHaveLength(60);
     expect(linesFromModel("y".repeat(900))[0]).toHaveLength(500);
     expect(linesFromModel("26193 Gelato\n12 trays")).toEqual(["26193 Gelato", "12 trays"]);
@@ -173,12 +178,19 @@ describe("WB1, the team whiteboard", () => {
     for (const bit of ["Team Whiteboard", "data-wb-surface", "Export to clean list", "Import a picture", "Clear all", "data-wb-confirm", "data-wb-clear", "image/heic", "image/webp", "image/gif"]) {
       expect(page.text).toContain(bit);
     }
+    // WB2: the pane checks one note, not a list of lines.
+    for (const bit of ["One picture is one note", "data-wb-import-note", "data-wb-held-list", "data-wb-many", `data-wb-many-lines="${WB_MANY_LINES}"`, "Put this note on the board"]) {
+      expect(page.text).toContain(bit);
+    }
+    expect(page.text).not.toContain("data-wb-line-check");
     expect(page.text).not.toMatch(/[\u2013\u2014]/);
     const es = await app.request(WB_PATH, { headers: { ...headers(m), cookie: `gf_pin=${pinOf(m)}; gf_locale=es` } }, env);
     const esText = await es.text();
     expect(esText).toContain("Pizarra del equipo");
     expect(esText).toContain("Exportar a lista limpia");
     expect(esText).toContain("¿Borrar toda la pizarra?");
+    expect(esText).toContain("Una imagen es una nota");
+    expect(esText).toContain("Poner esta nota en la pizarra");
   });
 
   it("writes a note where it lands with its originator, moves it, edits it under the version lock, and logs content, not moves", async () => {
@@ -284,40 +296,72 @@ describe("WB1, the team whiteboard", () => {
     expect(((await es.json()) as { error: string }).error).toBe("Ese PIN no es correcto. No se borró nada.");
   });
 
-  it("reads a picture through Workers AI, flags what looks private, and places only what was checked", async () => {
+  it("reads a picture through Workers AI, flags what looks private, and places it as one note (WB2: one picture, one note)", async () => {
     const m = await migratedDb();
     const none = await call(m, envOf(m), "POST", `${WB_PATH}/import/read`, { image: JPEG });
     expect(none.status).toBe(200);
     expect(none.data).toMatchObject({ ok: false, reason: "not_set_up", model: WB_OCR_MODEL_DEFAULT });
 
     const calls: Calls = [];
-    const env = envOf(m, { calls, ai: async () => ({ response: "- Order totes\n- Gate code 4417\n- jo@grip.example\n- Fix the scale" }) });
+    const env = envOf(m, { calls, ai: async () => ({ response: "Gate list\n1) Order totes\n2) Gate code 4417\n3) jo@grip.example\n4) Fix the scale" }) });
     const read = await call(m, env, "POST", `${WB_PATH}/import/read`, { image: JPEG });
     expect(read.status).toBe(200);
     expect(read.data.lines).toEqual([
-      { text: "Order totes", flags: [] },
-      { text: "Gate code 4417", flags: ["pin"] },
-      { text: "jo@grip.example", flags: ["email"] },
-      { text: "Fix the scale", flags: [] },
+      { text: "Gate list", flags: [] },
+      { text: "1) Order totes", flags: [] },
+      { text: "2) Gate code 4417", flags: ["pin"] },
+      { text: "3) jo@grip.example", flags: ["email"] },
+      { text: "4) Fix the scale", flags: [] },
     ]);
     expect(calls[0].model).toBe(WB_OCR_MODEL_DEFAULT);
     expect(JSON.stringify(calls[0].input)).toContain(JPEG);
+    expect(JSON.stringify(calls[0].input)).toContain("one note");
     expect((await call(m, env, "POST", `${WB_PATH}/import/read`, { image: "data:image/gif;base64,AAAA" })).status).toBe(400);
 
-    const applied = await call(m, env, "POST", `${WB_PATH}/import/apply`, { notes: [{ body: "Order totes", x: 24, y: 24 }, { body: "Fix the scale", x: 24, y: 96 }] });
-    expect(applied.status).toBe(201);
-    expect((applied.data.notes as WbNote[]).map((n) => [n.body, n.source, n.originator])).toEqual([
-      ["Order totes", "import", "lead.person@example.com"],
-      ["Fix the scale", "import", "lead.person@example.com"],
-    ]);
-    expect(m.get(`SELECT count(*) AS n FROM record_change_log WHERE reason LIKE 'WB1: note placed from a picture%'`)).toEqual({ n: 2 });
-    const tooMany = await call(m, env, "POST", `${WB_PATH}/import/apply`, { notes: Array.from({ length: 61 }, (_, i) => ({ body: `n${i}`, x: 0, y: 0 })) });
-    expect(tooMany.status).toBe(400);
+    const two = await call(m, env, "POST", `${WB_PATH}/import/apply`, { notes: [{ body: "Order totes", x: 24, y: 24 }, { body: "Fix the scale", x: 24, y: 96 }] });
+    expect(two.status).toBe(400);
+    expect(two.data.error).toBe("One picture is one note.");
+    expect(m.get(`SELECT count(*) AS n FROM wb_notes`)).toEqual({ n: 0 });
+    const es = await app.request(`${WB_PATH}/import/apply`, {
+      method: "POST",
+      headers: { ...headers(m), cookie: `gf_pin=${pinOf(m)}; gf_locale=es` },
+      body: JSON.stringify({ notes: [{ body: "a", x: 0, y: 0 }, { body: "b", x: 0, y: 0 }] }),
+    }, env);
+    expect(((await es.json()) as { error: string }).error).toBe("Una imagen es una sola nota.");
     const empty = await call(m, env, "POST", `${WB_PATH}/import/apply`, { notes: [] });
     expect(empty.status).toBe(400);
-    const sixty = await call(m, env, "POST", `${WB_PATH}/import/apply`, { notes: Array.from({ length: 60 }, (_, i) => ({ body: `note ${i}`, x: i, y: i })) });
-    expect(sixty.status).toBe(201);
-    expect((sixty.data.notes as WbNote[]).map((n) => n.body)).toEqual(Array.from({ length: 60 }, (_, i) => `note ${i}`));
+
+    const body = "Gate list\n1) Order totes\n4) Fix the scale";
+    const applied = await call(m, env, "POST", `${WB_PATH}/import/apply`, { notes: [{ body, x: 24, y: 24 }] });
+    expect(applied.status).toBe(201);
+    expect((applied.data.notes as WbNote[]).map((n) => [n.body, n.source, n.originator, n.x, n.y])).toEqual([[body, "import", "lead.person@example.com", 24, 24]]);
+    expect(m.get(`SELECT count(*) AS n FROM record_change_log WHERE reason LIKE 'WB1: note placed from a picture%'`)).toEqual({ n: 1 });
+
+    // A typed batch keeps its own cap of 60 (the function is general; only a picture is held to one).
+    const actor = { id: "", email: LEAD };
+    await expect(createWbNotes(m.db, Array.from({ length: 61 }, (_, i) => ({ body: `n${i}`, x: 0, y: 0 })), actor, "2026-11-17T15:00:00.000Z", "typed")).rejects.toThrow("Up to 60 notes go on the board at once.");
+    const sixty = await createWbNotes(m.db, Array.from({ length: 60 }, (_, i) => ({ body: `note ${i}`, x: i, y: i })), actor, "2026-11-17T15:00:00.000Z", "typed");
+    expect(sixty.map((n) => n.body)).toEqual(Array.from({ length: 60 }, (_, i) => `note ${i}`));
+  });
+
+  it("WB2: the count reads 1 note, and 2 notes, in both languages", async () => {
+    const m = await migratedDb();
+    const env = envOf(m);
+    await call(m, env, "POST", `${WB_PATH}/notes`, { body: "One", x: 10, y: 10 });
+    const one = await call(m, env, "GET", WB_PATH);
+    expect(one.text).toContain('data-wb-count>1 note</span>');
+    const es = await app.request(WB_PATH, { headers: { ...headers(m), cookie: `gf_pin=${pinOf(m)}; gf_locale=es` } }, env);
+    expect(await es.text()).toContain('data-wb-count>1 nota</span>');
+    await call(m, env, "POST", `${WB_PATH}/notes`, { body: "Two", x: 10, y: 90 });
+    expect((await call(m, env, "GET", WB_PATH)).text).toContain('data-wb-count>2 notes</span>');
+  });
+
+  it("WB2: the Director home links the board, in both languages", async () => {
+    const m = await migratedDb();
+    const en = directorHomePage(await loadDirectorHome(m.db, "2026-11-17", "2026-11-17T15:00:00.000Z"), "en");
+    expect(en).toContain(`<a href="${WB_PATH}" data-dd-whiteboard>Team Whiteboard</a>`);
+    const es = directorHomePage(await loadDirectorHome(m.db, "2026-11-17", "2026-11-17T15:00:00.000Z"), "es");
+    expect(es).toContain(`<a href="${WB_PATH}" data-dd-whiteboard>Pizarra del equipo</a>`);
   });
 
   it("hands a license refusal to the owner's button, which sends agree through the worker's binding; other failures say so", async () => {
