@@ -362,7 +362,7 @@ export async function resolvedCursorMode(env: MetrcEnv): Promise<CursorMode> {
 }
 
 export async function loadMetrcAdminPage(env: MetrcEnv, at: string = nowIso()): Promise<MetrcAdmin> {
-  const base = await loadMetrcAdmin(env);
+  const base = await loadMetrcAdmin(env, at);
   const host = base.host;
   const config = await loadMetrcSweepConfig(env.DB);
   const resolved = resolveSweepMode(env, config.sweepMode);

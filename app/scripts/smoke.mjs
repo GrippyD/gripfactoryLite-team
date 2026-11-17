@@ -635,7 +635,7 @@ function startWrangler() {
     "npx wrangler d1 migrations apply gripfactory-lite-local --local --persist-to .smoke-persist"
   ).then((applyOut) => {
     // WG1 (2026-10-30): 0124 is LD1's and 0125 is FB1's, so the poll's 0126 makes the count 125.
-    if (!String(applyOut).includes("About to apply 125 migration(s)")) {
+    if (!String(applyOut).includes("About to apply 126 migration(s)")) {
       throw new Error(`from-zero apply must say 125 migrations\n${String(applyOut).slice(-2000)}`);
     }
     return spawnWrangler("");
@@ -11157,7 +11157,9 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     assert(
       ddKpis.every((key, i) => {
         const status = ddStatuses[i];
-        if (key === "bizops.lbs_processed" || key === "bizops.pct_finished_plants" || key === "harvest.dry_lb_per_plant_vs_plan_pct") return status === "no_goal" || status === "no_data";
+        // WB1 riding fix (2026-11-17): Yield per plant vs plan is seasonal (09-01 to 10-31, migration 0105), so from
+        // November it reads out_of_season, which the general rule already allows for every other tile.
+        if (key === "bizops.lbs_processed" || key === "bizops.pct_finished_plants" || key === "harvest.dry_lb_per_plant_vs_plan_pct") return status === "no_goal" || status === "no_data" || status === "out_of_season";
         return status === "no_data" || status === "out_of_season" || status === "parked";
       }),
       `a from-zero wall reads no_data, out_of_season or parked, and Lbs Harvested may already be stored by the hourly cron, got ${ddTallyText}`
@@ -11224,6 +11226,43 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     );
     if (wgLocale === undefined) jar.delete("gf_locale");
     else jar.set("gf_locale", wgLocale);
+    // WB1, THE TEAM WHITEBOARD (the owner, 2026-11-17): the tile on Admin, the board behind the PIN, a note written
+    // with its originator, moved, refused on a stale version, the clean list as a real xlsx, the picture door saying
+    // reading is not set up here (Workers AI rides the grip env only), Clear all refused on a wrong PIN and done on
+    // the right one, and the HEIC converter served from its vendored copy.
+    const wbAdminHome = await text("/admin");
+    assert(wbAdminHome.res.status === 200 && wbAdminHome.body.includes('data-admin-group="whiteboard"') && wbAdminHome.body.includes('href="/admin/whiteboard"'), "Admin must carry the Team Whiteboard tile");
+    const wbPage = await text("/admin/whiteboard");
+    assert(wbPage.res.status === 200 && wbPage.body.includes("data-wb-surface") && wbPage.body.includes("data-wb-export") && wbPage.body.includes("data-wb-clear"), `the board expected 200, got ${wbPage.res.status}`);
+    const wbPost = async (path, payload) => {
+      const res = await req(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      return { status: res.status, data: await res.json() };
+    };
+    const wbMade = await wbPost("/admin/whiteboard/notes", { body: "Smoke note", x: 40, y: 60 });
+    assert(wbMade.status === 201 && wbMade.data.note.body === "Smoke note" && wbMade.data.note.originator === SMOKE_EMAIL, `a note expected 201 with its originator, got ${wbMade.status} ${JSON.stringify(wbMade.data)}`);
+    const wbMoved = await wbPost(`/admin/whiteboard/notes/${wbMade.data.note.id}`, { x: 300, y: 200, version: wbMade.data.note.updatedAt });
+    assert(wbMoved.status === 200 && wbMoved.data.note.x === 300 && wbMoved.data.note.y === 200, `a move expected 200, got ${wbMoved.status}`);
+    const wbStale = await wbPost(`/admin/whiteboard/notes/${wbMade.data.note.id}`, { body: "stale", version: wbMade.data.note.updatedAt });
+    assert(wbStale.status === 409 && wbStale.data.note.body === "Smoke note", `a stale edit expected 409, got ${wbStale.status}`);
+    const wbList = await req("/admin/whiteboard/notes.json");
+    const wbListed = await wbList.json();
+    assert(wbList.status === 200 && wbListed.notes.length === 1 && wbListed.notes[0].x === 300, "notes.json must list the moved note");
+    const wbXlsx = await req("/admin/whiteboard/export.xlsx");
+    const wbBytes = new Uint8Array(await wbXlsx.arrayBuffer());
+    assert(wbXlsx.status === 200 && wbBytes[0] === 0x50 && wbBytes[1] === 0x4b && /team-whiteboard-\d{4}-\d{2}-\d{2}\.xlsx/.test(wbXlsx.headers.get("content-disposition") || ""), "the clean list must download as team-whiteboard-<day>.xlsx");
+    const wbRead = await wbPost("/admin/whiteboard/import/read", { image: "data:image/jpeg;base64,/9j/4AAQ" });
+    assert(wbRead.status === 200 && wbRead.data.ok === false && wbRead.data.reason === "not_set_up", `the picture door expected not_set_up here, got ${JSON.stringify(wbRead.data)}`);
+    const wbForm = await req("/admin/whiteboard/notes", { method: "POST", body: form({ body: "x", x: "1", y: "1" }) });
+    assert(wbForm.status === 415, `a form post to the board expected 415, got ${wbForm.status}`);
+    const wbWrong = await wbPost("/admin/whiteboard/clear", { pin: "00000" });
+    assert(wbWrong.status === 403 && Number(localD1All("SELECT count(*) AS n FROM wb_notes WHERE deleted_at IS NULL")[0].n) === 1, "a wrong PIN must clear nothing");
+    const wbCleared = await wbPost("/admin/whiteboard/clear", { pin: ADMIN_PIN });
+    assert(wbCleared.status === 200 && wbCleared.data.cleared === 1, `Clear all on the PIN expected one note cleared, got ${JSON.stringify(wbCleared.data)}`);
+    const wbAfter = localD1All("SELECT delete_kind, clear_batch FROM wb_notes");
+    assert(wbAfter.length === 1 && wbAfter[0].delete_kind === "clear_all" && wbAfter[0].clear_batch, "the clear must be soft, under one batch");
+    const wbHeic = await req("/admin/whiteboard/heic-to-1.6.7.js");
+    const wbHeicText = await wbHeic.text();
+    assert(wbHeic.status === 200 && (wbHeic.headers.get("content-type") || "").startsWith("text/javascript") && wbHeicText.startsWith("var HeicTo"), `the HEIC converter expected 200 as a script, got ${wbHeic.status}`);
     const dlhNow = new Date().toISOString();
     const dlhParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit" }).formatToParts(new Date(dlhNow));
     const dlhPick = (type) => (dlhParts.find((part) => part.type === type) || {}).value || "";

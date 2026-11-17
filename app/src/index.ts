@@ -547,6 +547,22 @@ import { loadFgInventory } from "./fginventory";
 import { harvestDashboardPage, loadHarvestDashboard } from "./harvestdashboard";
 import { ctRegisterWallPage, readCtRegister } from "./ctregister";
 import {
+  WB_HEIC_ASSET,
+  WB_HEIC_PATH,
+  WB_PATH,
+  acceptModelLicense,
+  checkPictureDataUrl,
+  clearWbBoard,
+  createWbNotes,
+  deleteWbNote,
+  listWbNotes,
+  readPictureText,
+  updateWbNote,
+  wbExportFilename,
+  wbExportXlsx,
+  whiteboardPage,
+} from "./whiteboard";
+import {
   EMPTY_DRAFT,
   POTLUCK_ADMIN_PATH,
   POTLUCK_EVENT_KEY,
@@ -2055,6 +2071,120 @@ app.post(`${POTLUCK_ADMIN_PATH}/remove`, async (c) => {
   const form = await c.req.formData();
   await removePotluckResponse(c.env.DB, String(form.get("id") ?? ""), c.get("actor").id, nowIso(), POTLUCK_EVENT_KEY);
   return c.redirect(`${POTLUCK_ADMIN_PATH}?ok=wg_removed`, 303);
+});
+
+// WB1, THE TEAM WHITEBOARD (the owner, 2026-11-17): a tile on Admin, behind Access and the Admin PIN
+// (/admin/*). The page draws the board; the JSON doors below keep it current. Every write takes JSON only,
+// so a form posted from another site cannot reach them. Errors answer in the reader's language.
+type WbAnswer = { status: number; body: Record<string, unknown> };
+
+async function wbJson(c: AppContext, run: (locale: Locale) => Promise<WbAnswer>): Promise<Response> {
+  const locale = asLocale(getCookie(c, LOCALE_COOKIE));
+  const headers = { "cache-control": "no-store" };
+  if (c.req.method === "POST" && !String(c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+    return c.json({ error: t(locale, "The board only takes its own requests.") }, 415, headers);
+  }
+  try {
+    const out = await run(locale);
+    return c.json(out.body, out.status as 200, headers);
+  } catch (err) {
+    if (err instanceof HttpError) return c.json({ error: t(locale, err.message) }, err.status as 400, headers);
+    if (err instanceof SyntaxError) return c.json({ error: t(locale, "The board only takes its own requests.") }, 400, headers);
+    console.error(err);
+    return c.json({ error: t(locale, "Couldn't save the note. Try again.") }, 500, headers);
+  }
+}
+
+function wbActor(c: AppContext) {
+  const actor = c.get("actor");
+  return { id: actor.id, email: actor.email };
+}
+
+app.get(WB_PATH, async (c) => {
+  const s = await shell(c);
+  return html(c, s, "Team Whiteboard", whiteboardPage(await listWbNotes(c.env.DB), s.locale));
+});
+
+app.get(`${WB_PATH}/notes.json`, (c) => wbJson(c, async () => ({ status: 200, body: { notes: await listWbNotes(c.env.DB), at: nowIso() } })));
+
+app.post(`${WB_PATH}/notes`, (c) =>
+  wbJson(c, async () => {
+    const body = (await c.req.json()) as { body?: unknown; x?: unknown; y?: unknown };
+    const [note] = await createWbNotes(c.env.DB, [{ body: body.body, x: body.x, y: body.y }], wbActor(c), nowIso(), "typed");
+    return { status: 201, body: { note } };
+  })
+);
+
+app.post(`${WB_PATH}/notes/:id`, (c) =>
+  wbJson(c, async (locale) => {
+    const body = (await c.req.json()) as { body?: unknown; x?: unknown; y?: unknown; version?: unknown };
+    const result = await updateWbNote(c.env.DB, c.req.param("id"), body, wbActor(c), nowIso());
+    if (result.status === "gone") return { status: 404, body: { error: t(locale, "Someone else deleted that note.") } };
+    if (result.status === "conflict") return { status: 409, body: { error: t(locale, "Someone else changed this note. Showing their version."), note: result.note } };
+    return { status: 200, body: { note: result.note } };
+  })
+);
+
+app.post(`${WB_PATH}/notes/:id/delete`, (c) =>
+  wbJson(c, async (locale) => {
+    const gone = await deleteWbNote(c.env.DB, c.req.param("id"), wbActor(c), nowIso());
+    return gone ? { status: 200, body: { ok: true } } : { status: 404, body: { error: t(locale, "Someone else deleted that note.") } };
+  })
+);
+
+app.post(`${WB_PATH}/clear`, (c) =>
+  wbJson(c, async () => {
+    const body = (await c.req.json()) as { pin?: unknown };
+    const out = await clearWbBoard(c.env.DB, body.pin, wbActor(c), nowIso());
+    return { status: 200, body: { cleared: out.cleared } };
+  })
+);
+
+app.get(`${WB_PATH}/export.xlsx`, async (c) => {
+  const now = nowIso();
+  const bytes = wbExportXlsx(await listWbNotes(c.env.DB));
+  return new Response(bytes, {
+    headers: {
+      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content-disposition": `attachment; filename="${wbExportFilename(now)}"`,
+      "cache-control": "no-store",
+    },
+  });
+});
+
+app.post(`${WB_PATH}/import/read`, (c) =>
+  wbJson(c, async () => {
+    const body = (await c.req.json()) as { image?: unknown };
+    const picture = checkPictureDataUrl(body.image);
+    const out = await readPictureText(c.env, picture);
+    return { status: 200, body: out as unknown as Record<string, unknown> };
+  })
+);
+
+app.post(`${WB_PATH}/import/apply`, (c) =>
+  wbJson(c, async () => {
+    const body = (await c.req.json()) as { notes?: unknown };
+    const list = Array.isArray(body.notes) ? (body.notes as Array<{ body?: unknown; x?: unknown; y?: unknown }>) : [];
+    const notes = await createWbNotes(c.env.DB, list.map((n) => ({ body: n?.body, x: n?.x, y: n?.y })), wbActor(c), nowIso(), "import");
+    return { status: 201, body: { notes } };
+  })
+);
+
+app.post(`${WB_PATH}/import/agree`, (c) =>
+  wbJson(c, async () => {
+    const out = await acceptModelLicense(c.env);
+    return { status: 200, body: { ok: out.ok } };
+  })
+);
+
+// The HEIC converter (heic-to 1.6.7, LGPL-3.0, an unmodified copy under public/vendor/heic-to with its license):
+// loaded by the board only when a HEIC picture will not open by itself.
+app.get(WB_HEIC_PATH, async (c) => {
+  const asset = await c.env.ASSETS.fetch(new Request(new URL(WB_HEIC_ASSET, c.req.url)));
+  if (!asset.ok) return c.text("Not found", 404);
+  return new Response(asset.body, {
+    headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "private, max-age=604800, immutable" },
+  });
 });
 
 // THE SHEET SYNC (canon 0.30.162). The fixture workbook exists only when the

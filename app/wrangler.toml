@@ -55,6 +55,12 @@ SENSORPUSH_API_BASE = "https://api.sensorpush.com/api/v1"
 [env.grip.triggers]
 crons = ["15 * * * *", "*/5 * * * *", "45 * * * *"]
 
+# WB1, THE TEAM WHITEBOARD (the owner, 2026-11-17): Workers AI reads the text in a picture for the board's
+# import pane (his pick). Bound on the grip env only; the default env (wrangler dev, smoke) carries no AI, so
+# the pane says reading is not set up there. The deploy token needs Account, Workers AI, Read.
+[env.grip.ai]
+binding = "AI"
+
 [env.grip.assets]
 directory = "public"
 binding = "ASSETS"

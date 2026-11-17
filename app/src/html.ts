@@ -2096,6 +2096,9 @@ export const ADMIN_GROUPS: AdminGroup[] = [
       { href: "/admin/director/finance", kind: "Director", title: "Accounting and Finance" },
     ],
   },
+  // WB1, THE TEAM WHITEBOARD (the owner, 2026-11-17): "I need a team whiteboard in Admin." Its tile opens the
+  // board itself (/admin/whiteboard draws it), so adminGroupPage("whiteboard") is never served.
+  { key: "whiteboard", href: "/admin/whiteboard", title: "Team Whiteboard", members: [] },
 ];
 
 function adminTiles(members: AdminGroupMember[], locale: Locale): string {

@@ -792,6 +792,49 @@ a.dd-tile-title:hover, a.dd-companion-title:hover { text-decoration: underline; 
 .wg-event { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(16rem, 100%), 1fr)); gap: 0.6rem; align-items: end; }
 .wg-event label { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
 .wg-event input { min-width: 0; max-width: 100%; }
+/* WB1, THE TEAM WHITEBOARD: the board scrolls inside its own frame, so the page never scrolls sideways. */
+.wb { min-width: 0; max-width: 100%; }
+.wb-tools { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0; min-width: 0; }
+.wb-tools .btn, .wb-tools button { min-height: 44px; }
+.wb-count { margin-left: auto; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); font-variant-numeric: tabular-nums; }
+.wb-status { min-height: 1.4em; margin: 0.25rem 0; overflow-wrap: anywhere; }
+.wb-help { color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); overflow-wrap: anywhere; }
+.wb-danger, .wb-danger:hover { border-color: var(--danger, var(--alert, currentColor)); color: var(--danger, var(--alert, currentColor)); }
+.wb-frame { position: relative; overflow: auto; max-width: 100%; height: min(70vh, 2000px); min-height: 320px; border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); background: var(--surface, var(--panel, transparent)); overscroll-behavior: contain; }
+.wb-surface { position: relative; touch-action: manipulation; background-image: radial-gradient(color-mix(in srgb, currentColor 22%, transparent) 1px, transparent 1px); background-size: 24px 24px; }
+.wb-note { position: absolute; box-sizing: border-box; max-width: 18rem; min-width: 7rem; padding: 0.45rem 0.6rem 0.35rem; background: var(--panel-2, var(--panel, var(--surface, Canvas))); color: var(--text, var(--ink, CanvasText)); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); box-shadow: var(--shadow, none); cursor: grab; touch-action: none; user-select: none; }
+.wb-note:focus { outline: none; }
+.wb-note.wb-active { outline: 2px solid var(--focus, var(--accent, var(--primary, currentColor))); outline-offset: 2px; z-index: 2; }
+.wb-note.wb-moving { cursor: grabbing; opacity: 0.85; z-index: 3; }
+.wb-note[data-wb-source="import"] { border-style: dashed; }
+.wb-note-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.95rem; line-height: 1.3; }
+.wb-note-del { display: none; position: absolute; top: -0.9rem; right: -0.9rem; width: 2rem; height: 2rem; min-height: 0; padding: 0; border-radius: 999px; border: 1px solid var(--danger, var(--alert, currentColor)); background: var(--panel, var(--surface, Canvas)); color: var(--danger, var(--alert, currentColor)); font-size: 1.1rem; line-height: 1; cursor: pointer; }
+.wb-note.wb-active .wb-note-del { display: block; }
+.wb-note.wb-editing .wb-note-del { display: none; }
+body.device-phone .wb-note .wb-note-del { width: 2.75rem; height: 2.75rem; min-height: 0; top: -1.3rem; right: -1.3rem; }
+.wb-note-who { margin-top: 0.25rem; font-size: 0.72rem; color: var(--text-dim, var(--muted, var(--ink-dim, currentColor))); overflow-wrap: anywhere; }
+.wb-note.wb-editing, .wb-draft { cursor: text; user-select: text; z-index: 4; }
+.wb-edit { display: block; box-sizing: border-box; width: 16rem; max-width: 70vw; min-height: 3rem; font: inherit; color: inherit; background: transparent; border: 0; resize: both; }
+.wb-import { margin: 0.5rem 0 1rem; padding: 0.75rem; border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); min-width: 0; max-width: 100%; }
+.wb-import h2, .wb-review h3 { margin-top: 0; }
+.wb-import-pick { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; min-width: 0; }
+.wb-import-pick input[type=file] { min-width: 0; max-width: 100%; min-height: 44px; }
+.wb-file-name { overflow-wrap: anywhere; }
+.wb-preview { display: block; max-width: min(100%, 24rem); max-height: 16rem; margin: 0.5rem 0; border-radius: var(--radius, 8px); }
+.wb-lines { padding-left: 1.5rem; margin: 0.5rem 0; }
+.wb-line { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: 0.35rem 0; min-width: 0; }
+.wb-line input[type=text] { flex: 1 1 14rem; min-width: 0; max-width: 100%; min-height: 44px; }
+.wb-line input[type=checkbox] { width: 1.5rem; height: 1.5rem; margin: 0.6rem; }
+.wb-flag { font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 999px; border: 1px solid var(--warn, var(--alert, currentColor)); color: var(--warn, var(--alert, currentColor)); }
+.wb-dialog { max-width: min(28rem, 92vw); border: 1px solid var(--line, var(--border, currentColor)); border-radius: var(--radius, 8px); background: var(--panel, var(--surface, Canvas)); color: var(--text, var(--ink, CanvasText)); }
+.wb-dialog::backdrop { background: color-mix(in srgb, CanvasText 40%, transparent); }
+.wb-dialog label { display: flex; flex-direction: column; gap: 0.25rem; }
+.wb-dialog input { min-height: 44px; max-width: 100%; }
+.wb-confirm-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 8rem; overflow: auto; }
+.wb-error { color: var(--danger, var(--alert, currentColor)); }
+body.device-phone .wb-tools .btn, body.device-phone .wb-tools button, body.device-phone .wb-line input[type=text] { min-height: 48px; }
+body.device-phone .wb-count { margin-left: 0; }
+@media (max-width: 600px) { .wb-tools .btn, .wb-tools button, .wb-dialog input, .wb-import-pick input[type=file] { min-height: 48px; } .wb-count { margin-left: 0; } }
 .dd-grid, .dd-detail, .dd-grid-page, .dd-checkin, .dd-import, .dd-question-list { min-width: 0; max-width: 100%; }
 .dd-checkin-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; margin: 0 0 0.4rem; }
 .dd-checkin-head h1 { margin: 0; flex: 1 1 12rem; min-width: 0; font-size: 1.35rem; }
