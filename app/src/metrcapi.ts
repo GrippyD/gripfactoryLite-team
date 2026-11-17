@@ -1167,9 +1167,12 @@ function flagOrNull(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export async function loadMetrcAdmin(env: MetrcEnv): Promise<MetrcAdmin> {
+// WB1 riding fix (2026-11-17): the month comes from the caller's instant. The Metrc API page passes its own
+// at; reading nowIso() here made test/metrcadmin.test.ts count October's seeded calls as last month once the
+// calendar reached November, which fails CI on every push. Production passes the real now, as before.
+export async function loadMetrcAdmin(env: MetrcEnv, at: string = nowIso()): Promise<MetrcAdmin> {
   const keys = keysPresent(env);
-  const month = nowIso().slice(0, 7);
+  const month = at.slice(0, 7);
   const host = metrcHost(env);
   // MA1 A18: "Calls this month" counts the current host only (rows written
   // before 0098 carry no host and are counted, the conservative reading).

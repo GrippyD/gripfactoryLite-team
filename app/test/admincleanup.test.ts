@@ -6,11 +6,12 @@ import { themeStylesheet } from "../src/theme";
 const REMOVED = ["Testing Override", "Environment", "Sheet sync", "Testing desk"];
 
 describe("Admin cleanup (canon 0.30.418)", () => {
-  it("Admin shows the four buttons in order, and each group lists today's URLs", () => {
+  it("Admin shows the five buttons in order, and each group lists today's URLs", () => {
     const home = adminHomePage("en");
     const titles = [...home.matchAll(/tile-title">([^<]+)/g)].map((hit) => hit[1]);
     // DD S1: the Director Dashboard button joins the three (its own test covers its tiles).
-    expect(titles).toEqual(["Data Connections", "Admin Settings", "Continuum10", "Director Dashboard"]);
+    // WB1: the Team Whiteboard button follows it (test/whiteboard.test.ts covers the board).
+    expect(titles).toEqual(["Data Connections", "Admin Settings", "Continuum10", "Director Dashboard", "Team Whiteboard"]);
     expect(home).toContain('href="/admin/data-connections"');
     expect(home).toContain('href="/admin/settings"');
     expect(home).toContain('href="/admin/continuum10"');
@@ -51,6 +52,7 @@ describe("Admin cleanup (canon 0.30.418)", () => {
       "/admin/settings",
       "/admin/continuum10",
       "/admin/director",
+      "/admin/whiteboard",
     ]);
   });
 
