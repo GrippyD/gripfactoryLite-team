@@ -10,6 +10,9 @@ Read this before you change anything. You are working with a teammate (not a dev
 - `node tools/sandbox/sandbox.mjs start` runs the app at `http://localhost:8787` on a canned copy of live data. Saving a file reloads it.
 - Start with `--keep` to keep a change in progress. Without it, start refuses to run over a change, and on a clean copy it resets the code to main.
 - Every PIN in the sandbox is `0000` (Admin and Models). The app signs you in as `dev`; anything entered lands in this copy only.
+- Every page here wears a burnt orange page ground and a frame around the window, in all three looks: that is how the sandbox says it is not live (`OFF_LIVE` in the default env of `app/wrangler.toml`; `app/src/sandbox.ts`). It is not part of any design. Never remove or restyle it, and judge colors on the page itself, not on the orange.
+- The strip at the top of the home page, with **Refresh D1**, is the sandbox's own. A refresh replaces the whole local database with the newest can (anything the teammate typed in is lost). Never press it or call `/sandbox/refresh-d1` yourself; the teammate does that.
+- The code is the team copy of the repository (`gripfactoryLite-team` on GitHub). Its main is what is live now.
 - The canned data has no phones, emails, drivers' license numbers or plates (blanked on purpose). Do not treat their absence as a bug.
 - The app's laws are in `canon/CANON.md`. It is long; search it for the page or the word you need instead of reading it whole.
 
@@ -39,7 +42,7 @@ Read this before you change anything. You are working with a teammate (not a dev
 ## What you must never do here
 - Never run `git push`, `git merge`, `git commit` on main, `git switch main`, or anything that changes GitHub. The hand-back is the only way out.
 - Never run `wrangler deploy`, `npm run deploy:*`, or any wrangler command with `--remote`. Never log in to Cloudflare. Never ask for or use a token, a password or an API key.
-- Never edit `canon/`, `BRIEFS/`, `SESSION_REPORTS/`, `.github/`, `app/wrangler.toml` or `app/migrations/`.
+- Never edit `canon/`, `BRIEFS/`, `SESSION_REPORTS/`, `.github/`, `app/wrangler.toml`, `app/migrations/`, `app/src/sandbox.ts` or `tools/sandbox/sandbox.mjs`.
 - Never copy rows, names, buyers, licenses or manifest numbers from the canned data into `IDEA.md`, a screenshot you share outside the team, or a chat. Describe the idea with counts and invented examples.
 - Never run `reset --yes` without the teammate saying so: it throws away their change.
 

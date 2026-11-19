@@ -70,3 +70,15 @@ Built and gated by the Claude scribe on 2026-11-17, on the owner's word, in the 
 1. **The merge block,** the snapshot first by habit (no migration rides).
 2. **After the deploy:** Admin, Team Whiteboard, Import a picture: photograph one note and read it. That is also WB1's first real picture read on live, still owed.
 3. **A page open from before the deploy** needs a reload before its import works.
+
+## Sealed final check (G-10), read on the worktree after the write
+```
+src/whiteboard.ts        51195 bytes  sha256 a66af2fabea35067aebb14d71a32d0bc6aec877fa238102a04517e68a7c05c6c  tail: `;
+src/director.ts         108109 bytes  sha256 0fb12e67be2b112d6edf79629dac3597cce3ceeedd834f894a375d835796ef8c  tail: }
+src/i18n.ts             419336 bytes  sha256 9021ca9c51379144354a597eddd42079d02f60490afd9c3b6fd6463ca0dfe0ba  tail: }
+src/theme.ts            263172 bytes  sha256 38673b9348dd183daf7cf96085ac198a8d9501812fb3631eeb294fb6b638af00  tail: }
+test/whiteboard.test.ts  25710 bytes  sha256 a014bcf72b02709d863957f632968864dc3002bb9519124e1bc449a10c75ebf1  tail: });
+scripts/smoke.mjs       999641 bytes  sha256 f8c849cc5ea9587d613905648892da2c1f7f114280336a03861fff54bd53bbff  tail: });
+parse: tsc --noEmit exit 0 on these bytes; node --check scripts/smoke.mjs ok; node --experimental-strip-types --check ok on the five .ts files
+tree: 3c6a68c0331de685 (450 files, 126 migrations), equal in the Scribe's workspace and the worktree
+```

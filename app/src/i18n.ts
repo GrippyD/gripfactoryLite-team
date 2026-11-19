@@ -5739,6 +5739,34 @@ const WB_STRINGS: ReadonlyArray<readonly [string, string]> = [
 ];
 for (const [en, es] of WB_STRINGS) if (!Object.prototype.hasOwnProperty.call(DICT, en)) DICT[en] = { en, es };
 
+// TS2, THE TEAM COPY (the owner, 2026-11-19): the home page's Refresh D1 strip and page, off live only. In Spanish a
+// can is "instantánea" (the snapshot it is made from).
+const TS2_STRINGS: ReadonlyArray<readonly [string, string]> = [
+  ["Local copy, not live", "Copia local, no es la versión en vivo"],
+  ["Data from", "Datos de"],
+  ["{can} (dumped {when})", "{can} (copiada el {when})"],
+  ["A newer can is in the shared folder: {can}.", "Hay una instantánea más nueva en la carpeta compartida: {can}."],
+  ["Refresh D1", "Actualizar D1"],
+  ["The sandbox tool isn't answering.", "La herramienta del sandbox no responde."],
+  ["A refresh is running.", "Hay una actualización en curso."],
+  ["unknown", "desconocida"],
+  ["Building the new database from {can}. The app keeps working until it restarts.", "Construyendo la nueva base de datos desde {can}. La app sigue funcionando hasta que se reinicie."],
+  ["Restarting the app with the new data...", "Reiniciando la app con los datos nuevos..."],
+  ["Done. Opening the home page...", "Listo. Abriendo la página de inicio..."],
+  ["The refresh failed: {error} Your data was not changed.", "La actualización falló: {error} Tus datos no cambiaron."],
+  ["Waiting for the app to come back...", "Esperando a que la app vuelva..."],
+  ["A refresh is already running.", "Ya hay una actualización en curso."],
+  ["The sandbox tool isn't answering. Stop the app and start it again with the sandbox tool.", "La herramienta del sandbox no responde. Detén la app y vuelve a iniciarla con la herramienta del sandbox."],
+  ["Data now", "Datos ahora"],
+  ["Newest can", "Instantánea más nueva"],
+  ["Your data is already from the newest can. Refreshing loads it again from the start.", "Tus datos ya son de la instantánea más nueva. Actualizar la vuelve a cargar desde el principio."],
+  ["Refresh now", "Actualizar ahora"],
+  ["Refresh D1 loads the newest can from the shared folder into this copy's database. Your code and any change in progress stay as they are; anything you entered in this copy is replaced. The app restarts by itself, which takes a few minutes.", "Actualizar D1 carga la instantánea más nueva de la carpeta compartida en la base de datos de esta copia. Tu código y cualquier cambio en curso se quedan como están; lo que hayas ingresado en esta copia se reemplaza. La app se reinicia sola, lo que toma unos minutos."],
+  ["This button only takes its own requests.", "Este botón solo acepta sus propias solicitudes."],
+  ["The newest can in the shared folder is older than your data. Refreshing loads that older can.", "La instantánea más nueva de la carpeta compartida es más antigua que tus datos. Actualizar carga esa instantánea más antigua."],
+];
+for (const [en, es] of TS2_STRINGS) if (!Object.prototype.hasOwnProperty.call(DICT, en)) DICT[en] = { en, es };
+
 /** Look a display string up by its English key; unknown keys render as-is. */
 export function t(locale: Locale, key: string): string {
   // Own keys only: a stored word or a code from a query string that names a

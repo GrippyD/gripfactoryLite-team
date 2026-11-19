@@ -11272,6 +11272,16 @@ INSERT INTO local_inventory_items (id, item_kind, package_code, metrc_tag, qty, 
     const wbHeic = await req("/admin/whiteboard/heic-to-1.6.7.js");
     const wbHeicText = await wbHeic.text();
     assert(wbHeic.status === 200 && (wbHeic.headers.get("content-type") || "").startsWith("text/javascript") && wbHeicText.startsWith("var HeicTo"), `the HEIC converter expected 200 as a script, got ${wbHeic.status}`);
+    // TS2, THE TEAM COPY (the owner, 2026-11-19): this run is the default env, so every page wears the off live block
+    // (the burnt orange ground); with no sandbox tool behind it, the home page has no Refresh D1 strip and the
+    // refresh routes do not exist. Every page this smoke walks has passed through the off live middleware.
+    const ts2Home = await text("/");
+    assert(ts2Home.res.status === 200 && ts2Home.body.includes("<style data-off-live>") && ts2Home.body.indexOf("data-off-live") < ts2Home.body.indexOf("</head>"), "the home page off live must carry the off live block in its head");
+    assert(!ts2Home.body.includes("data-sbx-strip"), "without the sandbox tool the home page must not show Refresh D1");
+    const ts2Refresh = await req("/sandbox/refresh-d1");
+    assert(ts2Refresh.status === 404, `the refresh page without the sandbox tool expected 404, got ${ts2Refresh.status}`);
+    const ts2Json = await req("/admin/whiteboard/notes.json");
+    assert(ts2Json.status === 200 && !(await ts2Json.text()).includes("data-off-live"), "a JSON answer must pass through untouched");
     const dlhNow = new Date().toISOString();
     const dlhParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit" }).formatToParts(new Date(dlhNow));
     const dlhPick = (type) => (dlhParts.find((part) => part.type === type) || {}).value || "";

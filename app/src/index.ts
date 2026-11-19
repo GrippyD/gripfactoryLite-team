@@ -562,6 +562,7 @@ import {
   wbExportXlsx,
   whiteboardPage,
 } from "./whiteboard";
+import { controlRefresh, controlStatus, localRequest, offLive, SANDBOX_REFRESH_PATH, SANDBOX_STATUS_PATH, sandboxControl, sandboxRefreshPage, sandboxStrip, VENDORED_HEADER, withOffLive } from "./sandbox";
 import {
   EMPTY_DRAFT,
   POTLUCK_ADMIN_PATH,
@@ -646,6 +647,24 @@ import {
 
 type AppEnv = { Bindings: Env; Variables: { actor: Identity } };
 const app = new Hono<AppEnv>();
+
+// TS2, THE TEAM COPY (the owner, 2026-11-19): off live (the default env's OFF_LIVE, which env.grip and env.c10 never
+// inherit) every HTML page carries the burnt orange ground, so a local copy can never pass for live. Outermost, so
+// it sees every page, the error pages included.
+app.use("*", async (c, next) => {
+  await next();
+  if (!offLive(c.env ?? {}) || c.req.method === "HEAD") return;
+  const res = c.res;
+  if (!res || res.status === 204 || res.status === 304) return;
+  if (!(res.headers.get("content-type") ?? "").toLowerCase().startsWith("text/html")) return;
+  if (res.headers.get(VENDORED_HEADER) === "1") return;
+  const text = await res.text();
+  const headers = new Headers(res.headers);
+  headers.delete("content-length");
+  // Unset first: Hono's setter would otherwise carry the old response's headers onto the new one.
+  c.res = undefined;
+  c.res = new Response(withOffLive(text), { status: res.status, statusText: res.statusText, headers });
+});
 
 // Smoke only (GF_ALLOW_FIXTURE_NOW=1). A request may name its instant. Production leaves the var unset.
 app.use("*", async (c, next) => {
@@ -1025,8 +1044,43 @@ app.get("/", async (c) => {
   const s = await shell(c);
   // Canon 0.30.28: the home page carries the Continuum crumb only in the co view.
   const now = nowIso();
-  const lines = await homeMenuBlocks(c.env.DB, now, s.farmDayStart, s.locale);
-  return html(c, s, "Home", homePage(PIPELINE, s.locale, s.view, lines) + clockScript());
+  // TS2: on a copy the sandbox tool runs, the strip names the data's can and carries Refresh D1.
+  const control = sandboxControl(c.env);
+  const [lines, status] = await Promise.all([
+    homeMenuBlocks(c.env.DB, now, s.farmDayStart, s.locale),
+    control ? controlStatus(control) : Promise.resolve(null),
+  ]);
+  const strip = control ? sandboxStrip(status, s.locale) : "";
+  return html(c, s, "Home", strip + homePage(PIPELINE, s.locale, s.view, lines) + clockScript());
+});
+
+// TS2, REFRESH D1 (the owner, 2026-11-19; his pick: "Load the newest can"): only on a copy the sandbox tool runs.
+// Live, the smoke and a plain wrangler dev answer 404 here.
+app.get(SANDBOX_REFRESH_PATH, async (c) => {
+  const control = sandboxControl(c.env);
+  if (!control || !localRequest(c.req.url, c.req.header("origin"))) return c.notFound();
+  const s = await shell(c);
+  return html(c, s, "Refresh D1", sandboxRefreshPage(await controlStatus(control), s.locale));
+});
+
+app.get(SANDBOX_STATUS_PATH, async (c) => {
+  const control = sandboxControl(c.env);
+  if (!control || !localRequest(c.req.url, c.req.header("origin"))) return c.notFound();
+  return c.json((await controlStatus(control)) ?? { state: null }, 200, { "cache-control": "no-store" });
+});
+
+app.post(SANDBOX_REFRESH_PATH, async (c) => {
+  const control = sandboxControl(c.env);
+  if (!control || !localRequest(c.req.url, c.req.header("origin"))) return c.notFound();
+  const locale = asLocale(getCookie(c, LOCALE_COOKIE));
+  const headers = { "cache-control": "no-store" };
+  // JSON only: a form posted from another site cannot start a refresh.
+  if (!String(c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+    return c.json({ ok: false, error: t(locale, "This button only takes its own requests.") }, 415, headers);
+  }
+  const answer = await controlRefresh(control);
+  if (answer.ok) return c.json(answer, 202, headers);
+  return c.json({ ok: false, error: t(locale, answer.error) }, 409, headers);
 });
 
 // Owner standing word: /reports carries no PIN.
@@ -4420,6 +4474,7 @@ async function vendoredHtml(
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
+      [VENDORED_HEADER]: "1",
     },
   });
 }
@@ -4464,6 +4519,7 @@ async function salesHelperApp(c: AppContext) {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
+      [VENDORED_HEADER]: "1",
     },
   });
 }
