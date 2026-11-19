@@ -10,6 +10,10 @@ head_sampling_rate = 1
 
 [vars]
 THEME = "grip"
+# TS2, THE TEAM COPY (canon 0.30.569): this default env is every copy that is not live (the sandbox, the smoke, a plain
+# wrangler dev). Named envs never inherit vars, so env.grip (live) and env.c10 never carry it. Off live, every page
+# wears the burnt orange ground and the sandbox tool's Refresh D1 may appear.
+OFF_LIVE = "1"
 # THE TESTING DESK part 3. Sandbox on this env. The two keys are secrets, never vars.
 METRC_API_BASE = "https://sandbox-api-mi.metrc.com"
 

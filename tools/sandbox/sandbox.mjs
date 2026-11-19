@@ -24,10 +24,19 @@
 // 0000), the SensorPush tokens, anyone's phone or email, the drivers' license
 // numbers and plates, or the raw uploaded files. pack applies it to the files
 // the owner shares, and the build applies it again to the database.
+// REFRESH D1 (TS2, canon 0.30.569; the owner, 2026-11-19: "add a refresh D1 button
+// to the homepage", his pick "Load the newest can"): start also runs a control
+// server on 127.0.0.1 (a random port and a random token, never reachable from
+// another computer) and hands its address to the app as SANDBOX_CONTROL. The
+// home page's Refresh D1 asks it to build the newest can in the shared folder
+// beside the running app (a second Node runs the build, so the app keeps
+// working), then it stops the app, swaps the database in (the old one moves
+// aside first, so a failed swap loses nothing) and starts the app again.
 
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 import readline from "node:readline";
@@ -38,6 +47,9 @@ const ROOT = path.resolve(HERE, "..", "..");
 const APP = path.join(ROOT, "app");
 const MIGRATIONS = path.join(APP, "migrations");
 const WRANGLER_JS = path.join(APP, "node_modules", "wrangler", "bin", "wrangler.js");
+// The dev server runs wrangler's own CLI, not its launcher: a stop signal then reaches the process that shuts the
+// local runtime down (the launcher would die alone and leave it running). The launcher stays the fallback.
+const WRANGLER_CLI = path.join(APP, "node_modules", "wrangler", "wrangler-dist", "cli.js");
 const LOCAL = path.join(HERE, "sandbox.local.json");
 const IDEA = path.join(HERE, "IDEA.md");
 const IDEA_TEMPLATE = path.join(HERE, "IDEA_TEMPLATE.md");
@@ -46,6 +58,7 @@ const PERSIST_NAME = ".sandbox-persist";
 const NEXT_NAME = ".sandbox-next-persist";
 const PERSIST = path.join(APP, PERSIST_NAME);
 const NEXT = path.join(APP, NEXT_NAME);
+const OLD = path.join(APP, ".sandbox-old-persist");
 const CAN_INFO = "sandbox-can.json";
 const BRANCH = "sandbox";
 const DB = "gripfactory-lite-local";
@@ -63,7 +76,7 @@ export function blankHit(table, column) {
   return BLANK_COLUMNS.some((re) => re.test(String(column))) || BLANK_EXACT.some(([t, c]) => t === table && c === column);
 }
 // A sandbox change belongs in the app's code, tests and assets; these paths are the team's.
-const TEAM_PATHS = [/^canon\//, /^BRIEFS\//, /^SESSION_REPORTS\//, /^\.github\//, /^app\/wrangler\.toml$/, /^app\/migrations\//, /^app\/package(-lock)?\.json$/];
+const TEAM_PATHS = [/^canon\//, /^BRIEFS\//, /^SESSION_REPORTS\//, /^\.github\//, /^app\/wrangler\.toml$/, /^app\/migrations\//, /^app\/package(-lock)?\.json$/, /^app\/src\/sandbox\.ts$/, /^tools\/sandbox\//];
 const WRANGLER_ENV = { ...process.env, CI: "1", BROWSER: "none", WRANGLER_SEND_METRICS: "false" };
 
 // ---------------------------------------------------------------- words
@@ -555,7 +568,7 @@ export function scrubCan(db) {
   return done;
 }
 
-async function buildCan(snapshotDir) {
+async function buildCan(snapshotDir, { swap = true } = {}) {
   const manifestPath = path.join(snapshotDir, "_manifest.json");
   if (!fs.existsSync(manifestPath)) fail(`No _manifest.json in ${snapshotDir}. Point --can at a snapshot folder from db_backups.`);
   const manifest = readJson(manifestPath);
@@ -659,14 +672,19 @@ async function buildCan(snapshotDir) {
     path.join(NEXT, CAN_INFO),
     `${JSON.stringify({ snapshot: path.basename(snapshotDir), dumped_at: manifest.dumped_at ?? null, level: files[floor].file, replayed: replays.map((m) => m.file), rows: total, built_at: new Date().toISOString(), scrubbed, notes }, null, 2)}\n`
   );
+  for (const note of notes) say(`  ${note}`);
+  say(`  scrubbed: ${scrubbed.length ? scrubbed.join("; ") : "nothing to scrub"}`);
+  // REFRESH D1: the app is still running on the old data; the control server swaps once it has stopped the app.
+  if (!swap) {
+    say(`Built ${path.basename(snapshotDir)} beside the running app: ${total.toLocaleString("en-US")} rows.`);
+    return;
+  }
   try {
     fs.rmSync(PERSIST, { recursive: true, force: true });
     fs.renameSync(NEXT, PERSIST);
   } catch (err) {
     fail(`Could not put the new data in place (${err.code || err.message}). Is the app still running? Stop it (Ctrl+C in its window) and run this again.`);
   }
-  for (const note of notes) say(`  ${note}`);
-  say(`  scrubbed: ${scrubbed.length ? scrubbed.join("; ") : "nothing to scrub"}`);
   say(`Canned data ready: ${total.toLocaleString("en-US")} rows. Every PIN in the sandbox is ${SANDBOX_PIN}.`);
 }
 
@@ -684,15 +702,188 @@ function openBrowser(url) {
   }
 }
 
-async function serve({ open = true, port = DEFAULT_PORT } = {}) {
+// ---------------------------------------------------------------- REFRESH D1
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function manifestOf(dir) {
+  try {
+    return readJson(path.join(dir, "_manifest.json"));
+  } catch {
+    return null;
+  }
+}
+
+/** A can as the app shows it: its folder name and when its snapshot was dumped. */
+function canRefOf(dir) {
+  if (!dir) return null;
+  return { name: path.basename(dir), dumped_at: manifestOf(dir)?.dumped_at ?? null };
+}
+
+/** The can the running data came from, as the build recorded it. */
+function currentCan() {
+  const info = path.join(PERSIST, CAN_INFO);
+  if (!fs.existsSync(info)) return null;
+  try {
+    const can = readJson(info);
+    return { name: String(can.snapshot ?? ""), dumped_at: can.dumped_at ?? null };
+  } catch {
+    return null;
+  }
+}
+
+/** The newest can beside the one in the settings: same kind (a packed can, or a snapshot), newest dump first,
+ * never inside the repo. When the shared folder cannot be read, the can in the settings stands. */
+export function newestCan(configured) {
+  const own = manifestOf(configured);
+  // The can in the settings may be gone (an old can cleared from the shared folder): then any packed can will do.
+  const kind = own ? Boolean(own.sandbox_can) : true;
+  // Later dump first, then the later name; a can whose manifest has no dump time sorts first.
+  const later = (a, b) => (a[0] !== b[0] ? a[0] > b[0] : a[1] > b[1]);
+  let best = own ? configured : null;
+  let bestKey = own ? [String(own.dumped_at ?? ""), path.basename(configured)] : null;
+  let names = [];
+  try {
+    names = fs.readdirSync(path.dirname(configured));
+  } catch {
+    return configured;
+  }
+  for (const name of names) {
+    const dir = path.join(path.dirname(configured), name);
+    if (inside(ROOT, dir)) continue;
+    const m = manifestOf(dir);
+    if (!m || Boolean(m.sandbox_can) !== kind) continue;
+    const key = [String(m.dumped_at ?? ""), name];
+    if (!bestKey || later(key, bestKey)) {
+      best = dir;
+      bestKey = key;
+    }
+  }
+  return best ?? configured;
+}
+
+/** The new database in place of the old: the old moves aside first, so a failed swap puts it back. */
+async function swapInWhenFree() {
+  fs.rmSync(OLD, { recursive: true, force: true });
+  for (let i = 0; ; i += 1) {
+    try {
+      if (fs.existsSync(PERSIST)) fs.renameSync(PERSIST, OLD);
+      break;
+    } catch (err) {
+      if (i >= 40) throw new Error(`the old database is still in use (${err.code || err.message})`);
+      await sleep(500);
+    }
+  }
+  try {
+    fs.renameSync(NEXT, PERSIST);
+  } catch (err) {
+    if (fs.existsSync(OLD) && !fs.existsSync(PERSIST)) fs.renameSync(OLD, PERSIST);
+    throw new Error(`could not put the new data in place (${err.code || err.message})`);
+  }
+  fs.rmSync(OLD, { recursive: true, force: true });
+}
+
+async function waitPortFree(port) {
+  for (let i = 0; i < 60; i += 1) {
+    if (await portFree(port)) return;
+    await sleep(500);
+  }
+  throw new Error(`port ${port} is still busy after the app stopped`);
+}
+
+/** The build in a second Node, so this one keeps serving the app and the status while it runs. */
+function runBuildChild(target) {
+  return new Promise((resolve) => {
+    const args = [...process.execArgv, fileURLToPath(import.meta.url), "__build-next", target];
+    const child = spawn(process.execPath, args, { cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    let tail = "";
+    const onData = (chunk) => {
+      const text = chunk.toString();
+      process.stdout.write(text);
+      tail = (tail + text).slice(-4000);
+    };
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+    child.on("error", (err) => resolve({ ok: false, error: `the build could not start (${err.message})` }));
+    child.on("exit", (code) => {
+      if (code === 0) return resolve({ ok: true });
+      const last = tail
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("[sandbox] "))
+        .pop();
+      resolve({ ok: false, error: last ? last.slice("[sandbox] ".length) : `the build stopped (exit ${code})` });
+    });
+  });
+}
+
+/** The control server: GET <token>/status and POST <token>/refresh, on 127.0.0.1 only. */
+async function controlServer(cfg, port, app) {
+  const token = randomBytes(16).toString("hex");
+  let state = { state: "idle", target: null, error: null, at: null };
+  const now = () => new Date().toISOString();
+  const status = () => ({ ...state, can: currentCan(), newest: canRefOf(newestCan(cfg.can)) });
+
+  async function refresh(target) {
+    say(`Refresh D1: building ${path.basename(target)} beside the running app. It keeps working until the restart.`);
+    const built = await runBuildChild(target);
+    if (!built.ok) {
+      fs.rmSync(NEXT, { recursive: true, force: true });
+      state = { ...state, state: "failed", error: built.error, at: now() };
+      say(`Refresh D1 failed: ${built.error} The data was not changed.`);
+      return;
+    }
+    state = { ...state, state: "restarting", at: now() };
+    say("Refresh D1: restarting the app on the new data.");
+    try {
+      await app.stopApp();
+      await waitPortFree(port);
+      await swapInWhenFree();
+      cfg.can = target;
+      writeLocal(cfg);
+      state = { state: "idle", target: null, error: null, at: now() };
+      say(`Refresh D1: done, the data now comes from ${path.basename(target)}.`);
+    } catch (err) {
+      fs.rmSync(NEXT, { recursive: true, force: true });
+      state = { ...state, state: "failed", error: `${err.message}.`, at: now() };
+      say(`Refresh D1 failed: ${err.message}. The data was not changed.`);
+    }
+    await app.startApp();
+  }
+
+  const server = http.createServer((req, res) => {
+    const send = (code, body) => {
+      res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(body));
+    };
+    const [, tok, action, extra] = String(req.url || "").split("?")[0].split("/");
+    if (tok !== token || extra !== undefined) return send(404, { error: "not found" });
+    if (req.method === "GET" && action === "status") return send(200, status());
+    if (req.method === "POST" && action === "refresh") {
+      if (state.state === "building" || state.state === "restarting") return send(409, status());
+      const target = newestCan(cfg.can);
+      state = { state: "building", target: canRefOf(target), error: null, at: now() };
+      send(202, status());
+      refresh(target).catch((err) => {
+        state = { ...state, state: "failed", error: String(err?.message || err), at: now() };
+      });
+      return;
+    }
+    send(404, { error: "not found" });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen({ port: 0, host: "127.0.0.1" }, resolve);
+  });
+  server.unref();
+  return { base: `http://127.0.0.1:${server.address().port}/${token}` };
+}
+
+async function serve({ open = true, port = DEFAULT_PORT, cfg = null } = {}) {
   const url = `http://localhost:${port}`;
-  const inspector = await freePort();
-  say(`Starting the app on ${url} (Ctrl+C stops it). It reloads by itself when a file is saved.`);
-  const child = spawn(
-    process.execPath,
-    [WRANGLER_JS, "dev", "--persist-to", PERSIST_NAME, "--port", String(port), "--ip", "127.0.0.1", "--inspector-port", String(inspector)],
-    { cwd: APP, env: WRANGLER_ENV, stdio: ["inherit", "pipe", "pipe"] }
-  );
+  let child = null;
+  let restarting = false;
   let opened = !open;
   let announced = false;
   const onData = (chunk) => {
@@ -707,20 +898,62 @@ async function serve({ open = true, port = DEFAULT_PORT } = {}) {
       }
     }
   };
-  child.stdout.on("data", onData);
-  child.stderr.on("data", onData);
-  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 0 : 1)));
+  const app = {
+    async startApp() {
+      const inspector = await freePort();
+      const entry = fs.existsSync(WRANGLER_CLI) ? ["--no-warnings", WRANGLER_CLI] : [WRANGLER_JS];
+      const args = [...entry, "dev", "--persist-to", PERSIST_NAME, "--port", String(port), "--ip", "127.0.0.1", "--inspector-port", String(inspector)];
+      if (control) args.push("--var", `SANDBOX_CONTROL:${control.base}`);
+      announced = false;
+      child = spawn(process.execPath, args, { cwd: APP, env: WRANGLER_ENV, stdio: ["inherit", "pipe", "pipe"] });
+      child.stdout.on("data", onData);
+      child.stderr.on("data", onData);
+      child.on("exit", (code, signal) => {
+        if (restarting) return;
+        process.exit(code ?? (signal ? 0 : 1));
+      });
+    },
+    stopApp() {
+      return new Promise((resolve) => {
+        // This app, by its own handle: child is reassigned by the restart, and a late timer must never touch the new one.
+        const proc = child;
+        if (!proc || proc.exitCode !== null || proc.signalCode !== null) return resolve();
+        restarting = true;
+        const kill = (force) => {
+          if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(proc.pid), "/t", "/f"], { stdio: "ignore" });
+          else proc.kill(force ? "SIGKILL" : "SIGINT");
+        };
+        const timer = setTimeout(() => {
+          if (proc.exitCode === null && proc.signalCode === null) kill(true);
+        }, 15000);
+        proc.once("exit", () => {
+          clearTimeout(timer);
+          restarting = false;
+          resolve();
+        });
+        kill(false);
+      });
+    },
+  };
+  const control = cfg ? await controlServer(cfg, port, app) : null;
+  say(`Starting the app on ${url} (Ctrl+C stops it). It reloads by itself when a file is saved.`);
+  if (control) say("The home page's Refresh D1 loads the newest can from the shared folder.");
+  await app.startApp();
   // Ctrl+C reaches wrangler too; wait for it to close the database, and force it on a second press.
   let presses = 0;
   const stop = () => {
     presses += 1;
-    if (presses > 1) {
-      child.kill("SIGKILL");
+    if (presses > 1 || restarting || !child || child.exitCode !== null) {
+      try {
+        child?.kill("SIGKILL");
+      } catch {
+        // gone already
+      }
       process.exit(130);
     }
   };
   process.on("SIGINT", stop);
-  process.on("SIGTERM", () => child.kill("SIGTERM"));
+  process.on("SIGTERM", () => child?.kill("SIGTERM"));
 }
 
 // ---------------------------------------------------------------- commands
@@ -756,7 +989,7 @@ async function cmdStart(args) {
   if (!fs.existsSync(path.join(PERSIST, CAN_INFO))) await buildCan(cfg.can);
   else applyMigrations(PERSIST_NAME);
   if (!serveIt) return;
-  await serve({ open: !args.includes("--no-open"), port });
+  await serve({ open: !args.includes("--no-open"), port, cfg });
 }
 
 function slug(text) {
@@ -847,6 +1080,10 @@ function cmdStatus() {
     const can = readJson(info);
     say(`Canned data: ${can.snapshot} (dumped ${can.dumped_at}, level ${can.level}), ${Number(can.rows).toLocaleString("en-US")} rows, built ${can.built_at}.`);
   } else say("No canned data yet (start builds it).");
+  if (cfg?.can) {
+    const newest = newestCan(cfg.can);
+    say(samePath(newest, cfg.can) ? "No newer can in the shared folder." : `A newer can is in the shared folder: ${path.basename(newest)} (Refresh D1 on the home page loads it).`);
+  }
   if (cfg) say(`Ideas go to ${cfg.ideas}.`);
 }
 
@@ -956,6 +1193,14 @@ async function cmdCan(args) {
   if (!samePath(dir, cfg.can)) writeLocal({ ...cfg, can: dir });
 }
 
+/** REFRESH D1's build, run by start's control server in a second Node: the newest can built beside the running app. */
+async function cmdBuildNext(args) {
+  requireRepo();
+  const dir = path.resolve(cleanArg(args[0] ?? ""));
+  if (!args[0] || inside(ROOT, dir)) fail("Keep the snapshot folder outside the repo folder.");
+  await buildCan(dir, { swap: false });
+}
+
 const HELP = `GripFactory Lite team sandbox. From the repo's top folder:
   node tools/sandbox/sandbox.mjs setup --can <snapshot folder> --ideas <ideas folder> --name <first name>
   node tools/sandbox/sandbox.mjs start [--keep] [--no-open] [--no-serve] [--port <n>]
@@ -963,13 +1208,14 @@ const HELP = `GripFactory Lite team sandbox. From the repo's top folder:
   node tools/sandbox/sandbox.mjs reset --yes
   node tools/sandbox/sandbox.mjs status
   node tools/sandbox/sandbox.mjs can [<snapshot folder>]
+While the app runs, the home page's Refresh D1 loads the newest can from the shared folder.
 For the owner, a scrubbed copy of a snapshot to share:
   node tools/sandbox/sandbox.mjs pack <snapshot folder> <can folder>`;
 
 const isMain = Boolean(process.argv[1]) && samePath(process.argv[1], fileURLToPath(import.meta.url));
 if (isMain) {
   const [command, ...rest] = process.argv.slice(2);
-  const run = { setup: cmdSetup, start: cmdStart, handback: cmdHandback, reset: cmdReset, status: cmdStatus, can: cmdCan, pack: cmdPack }[command];
+  const run = { setup: cmdSetup, start: cmdStart, handback: cmdHandback, reset: cmdReset, status: cmdStatus, can: cmdCan, pack: cmdPack, "__build-next": cmdBuildNext }[command];
   if (!run) {
     console.log(HELP);
     process.exit(command ? 1 : 0);
@@ -977,7 +1223,7 @@ if (isMain) {
   const [major, minor] = process.versions.node.split(".").map(Number);
   if (major < 22 || (major === 22 && minor < 5)) fail(`The sandbox needs Node.js 22.5 or newer; this is ${process.versions.node}. Install the current Node 22 LTS from nodejs.org.`);
   // Node 22.5 to 22.12 keeps SQLite behind a flag; run again with it.
-  if (["setup", "start", "can"].includes(command) && !(await loadSqlite())) {
+  if (["setup", "start", "can", "__build-next"].includes(command) && !(await loadSqlite())) {
     if (process.execArgv.includes("--experimental-sqlite")) fail("This Node.js has no built in SQLite. Install the current Node 22 LTS from nodejs.org.");
     const again = spawnSync(process.execPath, ["--experimental-sqlite", ...process.execArgv, ...process.argv.slice(1)], { stdio: "inherit" });
     process.exit(again.status ?? 1);
